@@ -118,6 +118,64 @@ PowerShell (Windows):
 Invoke-WebRequest -Method POST http://localhost:8765/groups/drums/toggle
 ```
 
+## Dateien und Programme auf Netzwerk-PCs oeffnen
+
+Die Webseite zeigt je Profil aus `desktop_display.profiles` einen Button.
+Jedes Profil hat seine eigene `target_ip`; Bild und Programmeinstellungen
+werden auf dem jeweiligen Ziel-PC ausgefuehrt. Der Windows-Agent muss dort als
+angemeldeter Benutzer laufen, weil der Mixer-Webdienst als Windows-Dienst keine
+Fenster auf dem Desktop anzeigen kann.
+
+Beispielprofil fuer das QR-Bild auf PC `.11`:
+
+```yaml
+desktop_display:
+  enabled: true
+  token_env: "DESKTOP_AGENT_TOKEN"
+  profiles:
+    gemeindegaben:
+      title: "Gemeindegaben-QR"
+      kind: "image"
+      path: 'I:\Googledrive\Streamingbilder\GemeindegabenQR.png'
+      target_ip: "192.168.188.11"
+      fullscreen: true
+      monitor: 2
+```
+
+Weitere Profile erhalten eigene IDs und Ziel-IPs. `kind` ist `image`,
+`program` oder `file`. Bei `program` muss `path` auf eine `.exe` zeigen;
+`args` ist eine Liste separater Argumente, die ohne Shell gestartet werden.
+Bei `file` oeffnet Windows die Datei mit der Standardanwendung. `monitor` ist
+1-basiert; `fullscreen` aktiviert fuer Bilder bzw. Programmfenster den
+Vollbildmodus. Nach Aenderung der Konfiguration den Service neu starten.
+
+Der Desktop-Agent und sein Installer liegen in `desktop_agent/`; der
+Windows-Release-Build legt diesen Ordner neben die Installationsskripte. Auf
+jedem Ziel-PC Python 3 mit Tkinter bereitstellen, den Agentenordner kopieren und
+als angemeldeter Benutzer `install-agent.ps1` ausfuehren. Das Skript installiert
+Pillow, registriert den Start bei Benutzeranmeldung und erlaubt TCP 8766 in der
+Firewall nur von `192.168.188.20`.
+
+Erzeuge einen gemeinsamen Token auf dem Webserver-PC `.20` in einer
+administrativen PowerShell:
+
+```powershell
+$bytes = New-Object byte[] 32
+$rng = [Security.Cryptography.RandomNumberGenerator]::Create()
+$rng.GetBytes($bytes)
+$token = [Convert]::ToBase64String($bytes)
+$rng.Dispose()
+[Environment]::SetEnvironmentVariable("DESKTOP_AGENT_TOKEN", $token, "Machine")
+$token
+```
+
+Setze denselben Wert als Systemvariable `DESKTOP_AGENT_TOKEN` auf jedem
+Ziel-PC. Nach dem Setzen ab- und wieder anmelden, damit der Agent den Wert
+einliest; den Mixer-Service auf `.20` neu starten. In der Produktivkonfiguration
+unter `C:\\ProgramData\\MixerMuteService\\config.yaml` muss
+`desktop_display.enabled: true` stehen. Die API listet Profile ueber
+`GET /desktop/profiles`; ein Button sendet `POST /desktop/{profile_id}/open`.
+
 ## Configuration (`config.yaml`)
 
 - `mixer.ip` / `mixer.port` / `mixer.max_channels`

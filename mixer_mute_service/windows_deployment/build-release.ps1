@@ -118,6 +118,7 @@ foreach ($File in $FilesToCopy) {
 
 Copy-Item (Join-Path $ProjectDirectory "config.yaml") (Join-Path $ReleaseDirectory "config-template.yaml") -Force
 Copy-Item (Join-Path $ProjectDirectory "groups.json") (Join-Path $ReleaseDirectory "groups-template.json") -Force
+Copy-Item (Join-Path $ProjectDirectory "desktop_agent") (Join-Path $ReleaseDirectory "desktop_agent") -Recurse -Force
 [System.IO.File]::WriteAllText((Join-Path $ReleaseDirectory "build-id.txt"), $BuildId + [Environment]::NewLine, [System.Text.UTF8Encoding]::new($false))
 
 # Built by GitHub Actions: tell the updater where releases come from and which

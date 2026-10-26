@@ -4,8 +4,9 @@ hardcoded first-milestone defaults from the briefing."""
 from __future__ import annotations
 
 import os
+from ipaddress import IPv4Address
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Literal, Optional
 
 import yaml
 from pydantic import BaseModel, Field, field_validator
@@ -100,10 +101,33 @@ class ServerConfig(BaseModel):
     port: int = 8765
 
 
+class DesktopProfileConfig(BaseModel):
+    title: str
+    kind: Literal["image", "program", "file"]
+    path: str
+    target_ip: str = "192.168.188.11"
+    args: List[str] = Field(default_factory=list)
+    fullscreen: bool = True
+    monitor: int = Field(default=1, ge=1)
+
+    @field_validator("target_ip")
+    @classmethod
+    def _valid_target_ip(cls, value: str) -> str:
+        IPv4Address(value)
+        return value
+
+
+class DesktopDisplayConfig(BaseModel):
+    enabled: bool = False
+    token_env: str = "DESKTOP_AGENT_TOKEN"
+    profiles: Dict[str, DesktopProfileConfig] = Field(default_factory=dict)
+
+
 class Config(BaseModel):
     mixer: MixerConfig = Field(default_factory=MixerConfig)
     safety: SafetyConfig = Field(default_factory=SafetyConfig)
     server: ServerConfig = Field(default_factory=ServerConfig)
+    desktop_display: DesktopDisplayConfig = Field(default_factory=DesktopDisplayConfig)
     groups: Dict[str, GroupConfig] = Field(default_factory=dict)
 
     def valid_channels(self) -> set:

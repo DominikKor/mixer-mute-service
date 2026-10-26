@@ -172,6 +172,15 @@ check("latest: unknown fader blocked", check_channel_send(2, empty, cfg).reason 
 check("latest: invalid channel blocked", check_channel_send(99, seen, cfg).reason == "invalid channel")
 check("latest: malformed fader blocked",
       check_channel_send(2, ChannelState(fader_hex="zz", fader_updated_at=now), cfg).reason == "invalid fader value")
+try:
+    Config(desktop_display={"profiles": {"bad": {
+        "title": "Bad target", "kind": "image", "path": "C:/image.png",
+        "target_ip": "999.999.999.999",
+    }}})
+    invalid_desktop_ip_rejected = False
+except ValueError:
+    invalid_desktop_ip_rejected = True
+check("desktop profile rejects invalid IPv4", invalid_desktop_ip_rejected)
 
 # "session" mode
 cfg_s = Config(safety={"freshness_mode": "session"})
@@ -202,6 +211,14 @@ pathlib.Path(_tmp, "config.yaml").write_text(
     "  drums:\n    channels: [1, 2, 3, 4]\n"
     "  vocals:\n    channels: [5, 6]\n"
     "  all:\n    channels: [1, 2, 3, 4, 5, 6, 7, 8]\n"
+    "desktop_display:\n"
+    "  enabled: false\n"
+    "  profiles:\n"
+    "    sample:\n"
+    "      title: Sample\n"
+    "      kind: image\n"
+    "      path: C:/sample.png\n"
+    "      target_ip: 192.168.188.42\n"
 )
 os.environ["MIXER_CONFIG"] = str(pathlib.Path(_tmp, "config.yaml"))
 
@@ -211,6 +228,26 @@ from app.main import app
 with TestClient(app) as client:
     h = client.get("/health").json()
     check("/health ok", h["ok"] is True and h["mixer_connected"] is False)
+    desktop = client.get("/desktop/profiles").json()
+    check("desktop profile target IP", desktop["profiles"][0]["target_ip"] == "192.168.188.42")
+    check("desktop action disabled by default",
+          client.post("/desktop/sample/open").status_code == 503)
+    check("unknown desktop profile -> 404",
+          client.post("/desktop/not-configured/open").status_code == 404)
+    import os
+    from unittest.mock import patch
+    old_token = os.environ.get("DESKTOP_AGENT_TOKEN")
+    os.environ["DESKTOP_AGENT_TOKEN"] = "selftest-token"
+    app.state.cfg.desktop_display.enabled = True
+    with patch("app.routes._forward_display_request", return_value={"ok": True}) as forward:
+        check("desktop profile open", client.post("/desktop/sample/open").status_code == 200)
+        check("desktop profile routed to configured IP",
+              forward.call_args.args[0] == "http://192.168.188.42:8766/display")
+    app.state.cfg.desktop_display.enabled = False
+    if old_token is None:
+        os.environ.pop("DESKTOP_AGENT_TOKEN", None)
+    else:
+        os.environ["DESKTOP_AGENT_TOKEN"] = old_token
     s = client.get("/state").json()
     check("/state has 8 channels", len(s["channels"]) == 8)
     check("/state channels unsafe (no data)", all(not c["safe"] for c in s["channels"].values()))
@@ -266,7 +303,8 @@ with TestClient(app) as client:
 
     print("== UI served ==")
     ui = client.get("/")
-    check("/ serves html", ui.status_code == 200 and "Mixer Mute Service" in ui.text)
+    check("/ serves html with desktop profile controls",
+          ui.status_code == 200 and "Mixer Mute Service" in ui.text and "desktop-profiles" in ui.text)
 
 print(f"\n{PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)

@@ -24,3 +24,4 @@ mixer_mute_service/captures/
 # Hand-made bundles and unpacked copies
 *.zip
 /mixer_mute_service 2/
+/MixerMuteService-src-*/

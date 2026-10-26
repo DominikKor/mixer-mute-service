@@ -63,6 +63,18 @@ server:
   host: "0.0.0.0"
   port: 8765
 
+desktop_display:
+  enabled: false
+  token_env: "DESKTOP_AGENT_TOKEN"
+  profiles:
+    gemeindegaben:
+      title: "Gemeindegaben-QR"
+      kind: "image"
+      path: 'I:\Googledrive\Streamingbilder\GemeindegabenQR.png'
+      target_ip: "192.168.188.11"
+      fullscreen: true
+      monitor: 2
+
 groups:
   drums:
     channels: [1, 2, 3, 4]

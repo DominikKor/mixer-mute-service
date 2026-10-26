@@ -173,6 +173,10 @@
   /* Page layout: the group master section sits right next to the channel
      strips instead of at the window edge; below ~1160px it moves above them. */
   .page { max-width: 1480px; margin: 0 auto; padding: 0 24px 48px; }
+  .desktop-launch { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 14px 0; border-bottom: 1px solid var(--line); }
+  .desktop-launch h2 { margin: 0; }
+  .desktop-launch-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .desktop-launch-status { color: var(--muted); font-size: 12px; }
   .console {
     display: grid; gap: 0 24px; align-items: start;
     grid-template-columns: minmax(0, calc(8 * 128px + 70px)) minmax(220px, 280px);
@@ -377,6 +381,12 @@
 </header>
 
 <div class="page">
+<section class="desktop-launch" aria-label="Desktop-Aktionen">
+  <h2>Desktop</h2>
+  <div id="desktop-profiles" class="desktop-launch-actions">
+    <span id="desktop-launch-status" class="desktop-launch-status">Profile werden geladen</span>
+  </div>
+</section>
 <div class="console">
   <h2 class="channels-label">Channels</h2>
   <h2 class="master-label">Mute Gruppen</h2>
@@ -1319,6 +1329,26 @@ async function act(method, path, body, label) {
 
 function fmtAge(a) { return a === null || a === undefined ? "—" : a.toFixed(2) + "s"; }
 
+let DESKTOP_PROFILES_SIGNATURE = "";
+function renderDesktopProfiles(data) {
+  const wrap = $("desktop-profiles");
+  const signature = JSON.stringify({ ready: data.ready, profiles: data.profiles || [] });
+  if (signature === DESKTOP_PROFILES_SIGNATURE) return;
+  DESKTOP_PROFILES_SIGNATURE = signature;
+
+  const status = $("desktop-launch-status");
+  wrap.querySelectorAll("button[data-display-profile]").forEach(button => button.remove());
+  for (const profile of data.profiles || []) {
+    const button = document.createElement("button");
+    button.className = "primary";
+    button.dataset.displayProfile = profile.id;
+    button.disabled = !data.ready;
+    button.textContent = `${profile.title} · ${profile.target_ip} · Monitor ${profile.monitor}${profile.fullscreen ? " · Vollbild" : ""}`;
+    wrap.insertBefore(button, status);
+  }
+  status.textContent = data.ready ? "Profile bereit" : "Desktop-Agent nicht eingerichtet";
+}
+
 // Cards are built once per channel and then updated in place, so a fader that
 // is being dragged is never replaced by the once-per-second refresh.
 const CARDS = {};
@@ -1397,8 +1427,8 @@ let refreshSeq = 0;
 async function refresh() {
   const seq = ++refreshSeq;
   try {
-    const [health, state] = await Promise.all([
-      api("GET", "/health"), api("GET", "/state"),
+    const [health, state, desktop] = await Promise.all([
+      api("GET", "/health"), api("GET", "/state"), api("GET", "/desktop/profiles"),
     ]);
     // Drop a stale response if a newer refresh has since started (e.g. the
     // per-second poll resolving after a click's own refresh) -- otherwise it
@@ -1407,6 +1437,7 @@ async function refresh() {
     LAST_STATE = state.data;
     await bootstrapPersonsFromBackend();
     const h = health.data;
+    renderDesktopProfiles(desktop.data);
     $("dot-conn").className = "dot " + (h.mixer_connected ? "ok" : "bad");
     $("txt-conn").textContent = h.mixer_connected ? "mixer connected" : "mixer offline";
     $("dot-en").className = "dot " + (h.enabled ? "ok" : "bad");
@@ -1511,6 +1542,11 @@ $("new-person-name").addEventListener("keydown", (e) => {
 $("panic-btn").addEventListener("click", () => {
   const path = LAST_STATE.enabled ? "/panic/disable" : "/panic/enable";
   act("POST", path, undefined, "panic");
+});
+$("desktop-profiles").addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-display-profile]");
+  if (!button || button.disabled) return;
+  act("POST", `/desktop/${encodeURIComponent(button.dataset.displayProfile)}/open`, undefined, button.textContent);
 });
 
 applyBuildMigrations();

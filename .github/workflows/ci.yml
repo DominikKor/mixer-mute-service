@@ -35,6 +35,15 @@ jobs:
             echo "== $t"
             python -m "tests.$(basename "$t" .py)"
           done
+      - name: Web UI script syntax
+        run: |
+          python - <<'EOF'
+          s = open("app/static/index.html", encoding="utf-8").read()
+          open("/tmp/ui.js", "w", encoding="utf-8").write(s[s.index("<script>") + 8:s.index("</script>")])
+          EOF
+          node --check /tmp/ui.js
+      - name: Desktop agent compiles
+        run: python -m py_compile desktop_agent/show_image_agent.py
 
   windows-release:
     needs: test
@@ -52,7 +61,7 @@ jobs:
       - name: Check PowerShell scripts parse
         run: |
           $failed = $false
-          foreach ($f in Get-ChildItem windows_deployment\*.ps1) {
+          foreach ($f in Get-ChildItem windows_deployment\*.ps1, desktop_agent\*.ps1) {
             $errors = $null
             [System.Management.Automation.Language.Parser]::ParseFile($f.FullName, [ref]$null, [ref]$errors) | Out-Null
             if ($errors) { $failed = $true; $errors | ForEach-Object { Write-Error "$($f.Name): $_" } }

@@ -4,7 +4,13 @@ returns 4xx with a clear reason (never a silent success)."""
 
 from __future__ import annotations
 
+import asyncio
+import json
+import logging
+import os
 import time
+import urllib.error
+import urllib.request
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
@@ -15,6 +21,7 @@ from .protocol import fader_hex_to_value
 from .safety import is_channel_safe
 
 router = APIRouter()
+_logger = logging.getLogger("mixer.desktop_display")
 
 
 def _ctx(request: Request):
@@ -39,6 +46,18 @@ def _respond(result: dict) -> JSONResponse:
     return JSONResponse(result, status_code=_status_for(result))
 
 
+def _forward_display_request(url: str, token: str, profile: dict) -> dict:
+    payload = json.dumps(profile).encode("utf-8")
+    req = urllib.request.Request(
+        url,
+        data=payload,
+        headers={"Content-Type": "application/json", "X-Display-Token": token},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=3) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
 @router.get("/health")
 async def health(request: Request):
     cfg, store, client, controller = _ctx(request)
@@ -50,7 +69,65 @@ async def health(request: Request):
         "last_update_age_seconds": _round(await store.last_update_age()),
         "build_id": getattr(request.app.state, "build_id", "dev"),
         "group_count": len(groups),
+        "desktop_display_enabled": cfg.desktop_display.enabled,
+        "desktop_display_ready": (
+            cfg.desktop_display.enabled
+            and bool(os.environ.get(cfg.desktop_display.token_env, ""))
+        ),
     }
+
+
+def _display_ready(cfg) -> bool:
+    return cfg.enabled and bool(os.environ.get(cfg.token_env, ""))
+
+
+@router.get("/desktop/profiles")
+async def desktop_profiles(request: Request):
+    cfg = request.app.state.cfg.desktop_display
+    return {
+        "ready": _display_ready(cfg),
+        "profiles": [
+            {
+                "id": profile_id,
+                "title": profile.title,
+                "kind": profile.kind,
+                "target_ip": profile.target_ip,
+                "fullscreen": profile.fullscreen,
+                "monitor": profile.monitor,
+            }
+            for profile_id, profile in cfg.profiles.items()
+        ],
+    }
+
+
+@router.post("/desktop/{profile_id}/open")
+async def open_desktop_profile(profile_id: str, request: Request):
+    cfg = request.app.state.cfg.desktop_display
+    profile = cfg.profiles.get(profile_id)
+    if profile is None:
+        return JSONResponse({"ok": False, "reason": "unknown desktop profile"}, 404)
+    token = os.environ.get(cfg.token_env, "")
+    if not cfg.enabled or not token:
+        return JSONResponse(
+            {"ok": False, "reason": "desktop display is not configured"}, 503
+        )
+    try:
+        return await asyncio.to_thread(
+            _forward_display_request,
+            f"http://{profile.target_ip}:8766/display",
+            token,
+            {"id": profile_id, **profile.model_dump(exclude={"target_ip"})},
+        )
+    except urllib.error.HTTPError as exc:
+        _logger.warning("Display agent rejected request: HTTP %s", exc.code)
+        return JSONResponse(
+            {"ok": False, "reason": "display agent rejected the request"}, 502
+        )
+    except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
+        _logger.warning("Display agent unavailable: %s", exc)
+        return JSONResponse(
+            {"ok": False, "reason": "display agent unavailable"}, 502
+        )
 
 
 @router.get("/state")
