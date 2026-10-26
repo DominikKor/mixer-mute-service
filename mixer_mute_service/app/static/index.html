@@ -219,15 +219,12 @@
   button.display-edit {
     position: absolute; top: 0; right: 0; width: 44px; height: 44px; padding: 5px 5px 0 0;
     display: flex; align-items: flex-start; justify-content: flex-end;
-    color: #8fb3bd; background: none; border: none; box-shadow: none;
+    color: #6f8a93; background: none; border: none; box-shadow: none; transition: color .12s;
   }
-  button.display-edit:hover:not(:disabled) { filter: none; }
+  /* No background of its own: the pencil only lights up on hover */
+  button.display-edit:hover:not(:disabled) { color: #e6f4f8; filter: none; }
   button.display-edit:active:not(:disabled) { transform: none; box-shadow: none; }
-  .display-edit-chip {
-    display: grid; place-items: center; width: 22px; height: 22px; border-radius: 4px; font-size: 11px; line-height: 1;
-    background: rgba(0,0,0,.3); box-shadow: inset 0 1px 2px rgba(0,0,0,.55), 0 1px 0 rgba(255,255,255,.05);
-  }
-  button.display-edit:hover .display-edit-chip { color: #fff; background: rgba(79,156,255,.35); }
+  .display-edit-chip { display: grid; place-items: center; width: 22px; height: 22px; font-size: 13px; line-height: 1; }
   /* The grey "+" tile after the last profile */
   button.display-add {
     display: grid; place-items: center; align-self: stretch; min-width: 72px; min-height: 48px; padding: 0 20px;
