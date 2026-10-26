@@ -195,10 +195,19 @@
   /* Page layout: the group master section sits right next to the channel
      strips instead of at the window edge; below ~1160px it moves above them. */
   .page { max-width: 1480px; margin: 0 auto; padding: 0 24px 48px; }
-  .desktop-launch { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 14px 0; border-bottom: 1px solid var(--line); }
-  .desktop-launch h2 { margin: 0; }
-  .desktop-launch-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-  .desktop-launch-status { color: var(--muted); font-size: 12px; }
+  /* Desktop display keys: two-line keys with a readiness LED */
+  .desktop-launch-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .desktop-launch-status { font: 600 11px/1 var(--mono); color: var(--lcd-dim); }
+  button.display-key {
+    display: inline-grid; grid-template-columns: auto 1fr; align-items: center; gap: 4px 10px;
+    min-width: 200px; max-width: 100%; padding: 8px 14px 9px 12px; text-align: left;
+  }
+  .display-key .led { grid-row: span 2; }
+  .display-key-title {
+    font-size: 12px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .display-key-meta { font: 600 10px/1 var(--mono); color: #7f8b98; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .console {
     display: grid; gap: 0 24px; align-items: start;
     grid-template-columns: minmax(0, calc(8 * 128px + 70px)) minmax(220px, 280px);
@@ -1376,11 +1385,22 @@ function renderDesktopProfiles(data) {
   const status = $("desktop-launch-status");
   wrap.querySelectorAll("button[data-display-profile]").forEach(button => button.remove());
   for (const profile of data.profiles || []) {
+    const meta = `${profile.target_ip} · Monitor ${profile.monitor}${profile.fullscreen ? " · Vollbild" : ""}`;
     const button = document.createElement("button");
-    button.className = "primary";
+    button.className = "display-key";
     button.dataset.displayProfile = profile.id;
+    button.dataset.label = profile.title;
     button.disabled = !data.ready;
-    button.textContent = `${profile.title} · ${profile.target_ip} · Monitor ${profile.monitor}${profile.fullscreen ? " · Vollbild" : ""}`;
+    button.title = `${profile.title} · ${meta}`;
+    const led = document.createElement("span");
+    led.className = "led" + (data.ready ? " safe" : "");
+    const title = document.createElement("span");
+    title.className = "display-key-title";
+    title.textContent = profile.title;
+    const metaEl = document.createElement("span");
+    metaEl.className = "display-key-meta";
+    metaEl.textContent = meta;
+    button.append(led, title, metaEl);
     wrap.insertBefore(button, status);
   }
   status.textContent = data.ready ? "Profile bereit" : "Desktop-Agent nicht eingerichtet";
@@ -1730,7 +1750,7 @@ $("panic-btn").addEventListener("click", () => {
 $("desktop-profiles").addEventListener("click", (event) => {
   const button = event.target.closest("button[data-display-profile]");
   if (!button || button.disabled) return;
-  act("POST", `/desktop/${encodeURIComponent(button.dataset.displayProfile)}/open`, undefined, button.textContent);
+  act("POST", `/desktop/${encodeURIComponent(button.dataset.displayProfile)}/open`, undefined, button.dataset.label);
 });
 
 applyBuildMigrations();
