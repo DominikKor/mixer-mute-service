@@ -73,7 +73,26 @@
     background: linear-gradient(to bottom, #2b2f36, #1f2228 30%, #1a1d22);
     box-shadow: inset 1px 0 0 rgba(255,255,255,.05), inset -1px 0 0 rgba(0,0,0,.45),
       inset 0 1px 0 rgba(255,255,255,.08), 0 3px 8px rgba(0,0,0,.5);
+    position: relative;
   }
+  /* Optional strip colour (picked while renaming): coloured border with a soft glow */
+  .card[data-color] {
+    border-color: rgb(var(--strip-rgb));
+    box-shadow: 0 0 0 1px rgb(var(--strip-rgb)), 0 0 12px rgba(var(--strip-rgb), .45),
+      inset 0 1px 0 rgba(255,255,255,.08), 0 3px 8px rgba(0,0,0,.5);
+  }
+  .color-pop {
+    position: absolute; top: 66px; left: 50%; transform: translateX(-50%); z-index: 20;
+    display: grid; grid-template-columns: repeat(3, 26px); gap: 6px; padding: 8px; border-radius: 6px;
+    background: var(--panel-bg); border: 1px solid #000;
+    box-shadow: 0 10px 24px rgba(0,0,0,.65), inset 0 1px 0 rgba(255,255,255,.08);
+  }
+  button.swatch {
+    width: 26px; height: 26px; padding: 0; border-radius: 50%; border: 2px solid #07080a; background: var(--sw);
+    box-shadow: inset 0 1px 2px rgba(255,255,255,.35), 0 1px 2px rgba(0,0,0,.6);
+  }
+  button.swatch.none { background: repeating-linear-gradient(45deg, #3b4049 0 4px, #1a1d22 4px 8px); }
+  button.swatch[aria-checked="true"] { outline: 2px solid #f4f6f8; outline-offset: 2px; }
   /* Scribble strip: number, safety LED, name and fader level */
   .scribble {
     width: 100%; padding: 5px 6px 6px; border-radius: 4px; text-align: center;
@@ -909,7 +928,12 @@ function startRenameChannel(ch, currentName) {
   input.className = "rename-input";
   input.value = currentName;
   input.maxLength = 32;
+  const pop = buildColorPopover(ch);
+  let done = false;
   const finish = () => {
+    if (done) return;
+    done = true;
+    pop.remove();
     const val = input.value.trim();
     if (!input.dataset.cancel && val && val !== currentName) {
       const names = loadChannelNames();
@@ -924,11 +948,92 @@ function startRenameChannel(ch, currentName) {
     if (e.key === "Enter") { e.preventDefault(); input.blur(); }
     if (e.key === "Escape") { input.dataset.cancel = "1"; input.blur(); }
   });
-  input.addEventListener("blur", finish);
+  // Delayed, so a tap on a colour that takes the focus away still lands.
+  input.addEventListener("blur", () => setTimeout(finish, 200));
   wrap.innerHTML = "";
   wrap.appendChild(input);
+  if (CARDS[ch]) CARDS[ch].appendChild(pop);
   input.focus();
   input.select();
+}
+
+// ---- Strip colours --------------------------------------------------------
+// One optional colour per channel, stored by the service (channel_colors.json)
+// so every device shows the same. Purely cosmetic: nothing is sent to the mixer.
+
+const STRIP_COLORS = {
+  red: "255,75,58", orange: "255,159,28", yellow: "241,210,28", green: "62,224,127",
+  cyan: "53,208,230", blue: "79,156,255", purple: "166,107,255", pink: "255,107,193",
+};
+const STRIP_COLOR_NAMES = {
+  red: "Rot", orange: "Orange", yellow: "Gelb", green: "Grün",
+  cyan: "Cyan", blue: "Blau", purple: "Lila", pink: "Pink",
+};
+let CHANNEL_COLORS = {};
+
+function applyStripColor(ch) {
+  const card = CARDS[ch];
+  if (!card) return;
+  const color = CHANNEL_COLORS[String(ch)];
+  if (color && STRIP_COLORS[color]) {
+    card.dataset.color = color;
+    card.style.setProperty("--strip-rgb", STRIP_COLORS[color]);
+  } else {
+    delete card.dataset.color;
+    card.style.removeProperty("--strip-rgb");
+  }
+}
+
+async function loadChannelColors() {
+  let r;
+  try { r = await api("GET", "/channel-colors"); } catch (_) { return; }
+  if (!r.ok || !r.data || typeof r.data.colors !== "object") return;
+  CHANNEL_COLORS = r.data.colors;
+  for (const ch of Object.keys(CARDS)) applyStripColor(ch);
+}
+
+function markSwatches(pop, color) {
+  for (const b of pop.querySelectorAll(".swatch")) {
+    b.setAttribute("aria-checked", String((b.dataset.color || null) === color));
+  }
+}
+
+async function setChannelColor(ch, color, pop) {
+  const key = String(ch);
+  const prev = CHANNEL_COLORS[key] || null;
+  if (color) CHANNEL_COLORS[key] = color; else delete CHANNEL_COLORS[key];
+  applyStripColor(ch);
+  markSwatches(pop, color);
+  let r;
+  try { r = await api("POST", `/channels/${ch}/color`, { color }); } catch (_) { r = { ok: false, status: 0, data: {} }; }
+  if (!(r.ok && r.data.ok !== false)) {
+    if (prev) CHANNEL_COLORS[key] = prev; else delete CHANNEL_COLORS[key];
+    applyStripColor(ch);
+    markSwatches(pop, prev);
+    toast(`Kanal ${ch} Farbe: ${r.data.reason || "HTTP " + r.status}`, false);
+  }
+}
+
+function buildColorPopover(ch) {
+  const pop = document.createElement("div");
+  pop.className = "color-pop";
+  pop.setAttribute("role", "radiogroup");
+  pop.setAttribute("aria-label", `Farbe Kanal ${ch}`);
+  for (const color of [null, ...Object.keys(STRIP_COLORS)]) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "swatch" + (color ? "" : " none");
+    if (color) b.style.setProperty("--sw", `rgb(${STRIP_COLORS[color]})`);
+    b.dataset.color = color || "";
+    b.title = color ? STRIP_COLOR_NAMES[color] : "Keine Farbe";
+    b.setAttribute("role", "radio");
+    // Keep the focus in the name field where the browser allows it.
+    b.addEventListener("mousedown", e => e.preventDefault());
+    b.addEventListener("click", () => setChannelColor(ch, color, pop));
+    pop.appendChild(b);
+  }
+  markSwatches(pop, CHANNEL_COLORS[String(ch)] || null);
+  return pop;
 }
 
 function startRenamePerson(personId, currentName) {
@@ -1632,6 +1737,7 @@ function updateChannelCard(ch, c) {
   key.setAttribute("aria-pressed", known ? String(c.muted) : "mixed");
   key.title = !known ? "Mute-Status unbekannt – gesperrt"
     : c.muted ? "Gemutet – klicken zum Unmuten" : "Live – klicken zum Muten";
+  applyStripColor(ch);
   syncFader(ch, c);
 }
 
@@ -2009,6 +2115,8 @@ refresh();
 setInterval(refresh, 1000);
 refreshUpdateButton();
 setInterval(refreshUpdateButton, 30000);
+loadChannelColors();
+setInterval(loadChannelColors, 5000);
 </script>
 </body>
 </html>
