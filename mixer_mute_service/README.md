@@ -71,6 +71,8 @@ The page polls `/state`, `/health` and `/groups` once per second.
 | POST | `/groups/{group}/delete` | delete a group |
 | PUT  | `/groups/{group}` | legacy alias for group update |
 | DELETE | `/groups/{group}` | legacy alias for group deletion |
+| GET  | `/update/status` | installed release, update progress and log tail |
+| POST | `/update/start` | start the GitHub update (Windows release only) |
 | POST | `/panic/disable` | block all sends (tracking continues) |
 | POST | `/panic/enable` | re-enable sends |
 

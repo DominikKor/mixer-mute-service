@@ -98,6 +98,16 @@ the streaming PC has a desktop shortcut **"Mixer Service aktualisieren"**:
    downloads it, checks its SHA-256 checksum and installs it. Config, groups,
    discovered buses and logs in ProgramData are kept.
 
+**Or from the web UI:** the **Update** key in the header (left of the status
+display) opens a dialog that starts the same update, shows its progress and
+log, waits through the service restart and closes itself when done (reloading
+the page after an update). It needs the token to be stored once via the desktop
+shortcut. Behind it, the service starts the scheduled task
+`MixerMuteServiceUpdate` (runs the updater as SYSTEM with `-NonInteractive`),
+because the service cannot replace itself while it runs. Progress:
+`C:\ProgramData\MixerMuteService\update-status.json`, log: `logs\update.log`.
+The control is unavailable for about a minute during an update.
+
 Buses no longer need to be configured by hand: the service discovers them from
 the mixer's state dump and remembers their channel numbers in
 `C:\ProgramData\MixerMuteService\buses.json`.

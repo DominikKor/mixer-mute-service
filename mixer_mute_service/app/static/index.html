@@ -153,6 +153,28 @@
   button.mute-key.on:hover:not(:disabled) { color: #fff; border-color: #4a0c06; }
   button.mute-key.unk { background: #1a1d22; border: 1px dashed #4a505b; color: #6c7482; box-shadow: none; letter-spacing: .06em; }
   button.mute-key.busy { cursor: progress; filter: brightness(.85); }
+  /* Update key in the header and its progress dialog */
+  button.update-key { padding: 8px 14px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
+  button.update-key.running { color: #8fd3e6; text-shadow: 0 0 6px rgba(120,220,255,.5); }
+  dialog.update-dialog {
+    width: min(560px, calc(100vw - 32px)); padding: 0; border: 1px solid #000; border-radius: 8px;
+    color: var(--text); background: var(--panel-bg); box-shadow: var(--panel-shadow), 0 20px 60px rgba(0,0,0,.7);
+  }
+  dialog.update-dialog::backdrop { background: rgba(0,0,0,.6); }
+  .update-body { display: flex; flex-direction: column; gap: 12px; padding: 18px 20px; }
+  .update-body h3 { margin: 0; font-size: 12px; font-weight: 800; letter-spacing: .18em; text-transform: uppercase; color: #d9dde3; }
+  .update-lcd {
+    padding: 10px 12px; border-radius: 5px; border: 1px solid #000;
+    background: var(--lcd-bg); box-shadow: var(--lcd-shadow); color: var(--lcd-text); font: 600 12px/1.45 var(--mono);
+  }
+  .update-lcd .dim { color: var(--lcd-dim); }
+  .update-lcd.ok { color: #7ff0a8; } .update-lcd.err { color: #ff8576; }
+  .update-warn { margin: 0; font-size: 13px; color: #c9ced6; }
+  .update-log {
+    max-height: 220px; overflow: auto; margin: 0; padding: 8px 10px; border-radius: 5px; border: 1px solid #000;
+    background: #07090b; color: #8fb3bd; font: 11px/1.4 var(--mono); white-space: pre-wrap;
+  }
+  .update-actions { display: flex; justify-content: flex-end; gap: 8px; }
   /* Toasts read like a message on the console display */
   .toast-wrap {
     position: fixed; right: 16px; bottom: 16px; z-index: 50;
@@ -370,6 +392,7 @@
 <header>
   <h1>Mixer Mute Service</h1>
   <div class="status">
+    <button id="update-btn" class="update-key" hidden title="Mixer Service von GitHub aktualisieren">Update</button>
     <div class="status-display">
       <span class="pill"><span id="dot-conn" class="dot"></span><span id="txt-conn">mixer ...</span></span>
       <span class="pill"><span id="dot-en" class="dot"></span><span id="txt-en">...</span></span>
@@ -536,6 +559,20 @@ curl -X POST http://localhost:8765/groups/horns/delete</pre>
     </details>
   </section>
 </div>
+
+<dialog id="update-dialog" class="update-dialog" aria-labelledby="update-title">
+  <div class="update-body">
+    <h3 id="update-title">Update</h3>
+    <div id="update-lcd" class="update-lcd">—</div>
+    <p id="update-warn" class="update-warn">Während des Updates ist der Mixer-Service etwa eine Minute nicht
+      erreichbar. Bitte nicht während einer laufenden Veranstaltung starten.</p>
+    <pre id="update-log" class="update-log" hidden></pre>
+    <div class="update-actions">
+      <button id="update-cancel">Abbrechen</button>
+      <button id="update-start" class="primary">Jetzt aktualisieren</button>
+    </div>
+  </div>
+</dialog>
 
 <div id="toasts" class="toast-wrap"></div>
 
@@ -1455,6 +1492,153 @@ async function refresh() {
   }
 }
 
+// ---- update from GitHub ---------------------------------------------------
+// The service cannot update itself; POST /update/start launches a Windows task
+// that stops, replaces and restarts it. The dialog keeps polling /update/status
+// through the restart and closes itself once the run has finished.
+
+const UPDATE_POLL_MS = 1500;
+const UPDATE_TIMEOUT_MS = 10 * 60 * 1000;
+const UPDATE_CLOSE_MS = 5000;
+const UPDATE = { runId: null, timer: null, startedAt: 0, running: false, sawRestart: false };
+
+async function fetchUpdateStatus() {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), 3000);
+  try {
+    const res = await fetch("/update/status", { signal: ctrl.signal, cache: "no-store" });
+    return res.ok ? await res.json() : null;
+  } catch (_) {
+    return null;  // service down, e.g. restarting during the update
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+function setUpdateLcd(html, cls) {
+  const el = $("update-lcd");
+  el.className = "update-lcd" + (cls ? " " + cls : "");
+  el.innerHTML = html;
+}
+
+function showUpdateLog(lines) {
+  const el = $("update-log");
+  if (!lines || !lines.length) { el.hidden = true; return; }
+  el.hidden = false;
+  el.textContent = lines.join("\n");
+  el.scrollTop = el.scrollHeight;
+}
+
+async function refreshUpdateButton() {
+  const data = await fetchUpdateStatus();
+  const btn = $("update-btn");
+  if (!data) return;
+  btn.hidden = !data.available;
+  btn.classList.toggle("running", !!data.active);
+  btn.textContent = data.active ? "Update läuft" : "Update";
+  btn.title = data.installed ? `Installiert: ${data.installed} — von GitHub aktualisieren` : "Von GitHub aktualisieren";
+}
+
+async function openUpdateDialog() {
+  const dlg = $("update-dialog");
+  $("update-start").hidden = false;
+  $("update-start").disabled = true;
+  $("update-cancel").textContent = "Abbrechen";
+  $("update-warn").hidden = false;
+  showUpdateLog([]);
+  setUpdateLcd('<span class="dim">Status wird geladen…</span>');
+  if (!dlg.open) dlg.showModal();
+  const data = await fetchUpdateStatus();
+  if (!data) { setUpdateLcd("Service nicht erreichbar.", "err"); return; }
+  if (data.active && data.status) {
+    UPDATE.runId = data.status.run_id;  // join a run that is already going
+    beginUpdatePolling();
+    return;
+  }
+  if (!data.available) { setUpdateLcd(escapeHtml(data.reason || "Update nicht verfügbar."), "err"); return; }
+  setUpdateLcd(`Installiert: ${escapeHtml(data.installed || "unbekannt")}<br><span class="dim">Es wird die neueste Version von GitHub geladen, geprüft und installiert.</span>`);
+  $("update-start").disabled = false;
+}
+
+async function startUpdate() {
+  $("update-start").disabled = true;
+  const r = await api("POST", "/update/start");
+  if (!(r.ok && r.data.ok)) {
+    setUpdateLcd(`Update nicht gestartet: ${escapeHtml(r.data.reason || "HTTP " + r.status)}`, "err");
+    $("update-start").disabled = false;
+    return;
+  }
+  UPDATE.runId = r.data.run_id;
+  beginUpdatePolling();
+}
+
+function beginUpdatePolling() {
+  UPDATE.running = true;
+  UPDATE.sawRestart = false;
+  UPDATE.startedAt = Date.now();
+  $("update-start").hidden = true;
+  $("update-warn").hidden = true;
+  $("update-cancel").textContent = "Im Hintergrund weiter";
+  setUpdateLcd('<span class="dim">Update gestartet…</span>');
+  clearTimeout(UPDATE.timer);
+  UPDATE.timer = setTimeout(pollUpdate, UPDATE_POLL_MS);
+}
+
+async function pollUpdate() {
+  if (!UPDATE.running) return;
+  if (Date.now() - UPDATE.startedAt > UPDATE_TIMEOUT_MS) {
+    finishUpdate(false, "Keine Rückmeldung vom Update. Details im Log unter C:\\ProgramData\\MixerMuteService\\logs\\update.log.");
+    return;
+  }
+  const data = await fetchUpdateStatus();
+  if (!data) {
+    UPDATE.sawRestart = true;
+    setUpdateLcd('Service startet neu…<br><span class="dim">Die Seite verbindet sich danach automatisch wieder.</span>');
+  } else {
+    const st = data.status;
+    showUpdateLog(data.log);
+    if (st && st.run_id === UPDATE.runId) {
+      if (st.state === "up_to_date") return finishUpdate(true, escapeHtml(st.message || "Bereits aktuell."), false);
+      if (st.state === "updated") return finishUpdate(true, escapeHtml(st.message || "Aktualisiert."), true);
+      if (st.state === "failed") return finishUpdate(false, "Update fehlgeschlagen: " + escapeHtml(st.message || ""));
+      setUpdateLcd(escapeHtml(st.message || "Update läuft…") + (st.to ? `<br><span class="dim">${escapeHtml(st.from || "?")} → ${escapeHtml(st.to)}</span>` : ""));
+    }
+  }
+  UPDATE.timer = setTimeout(pollUpdate, UPDATE_POLL_MS);
+}
+
+function finishUpdate(ok, message, reload) {
+  UPDATE.running = false;
+  clearTimeout(UPDATE.timer);
+  refreshUpdateButton();
+  $("update-cancel").textContent = "Schließen";
+  if (!ok) { setUpdateLcd(message, "err"); return; }  // stays open so the error can be read
+  let left = Math.round(UPDATE_CLOSE_MS / 1000);
+  const tick = () => {
+    setUpdateLcd(`${message}<br><span class="dim">Schließt in ${left} s${reload ? " und lädt die neue Version" : ""}…</span>`, "ok");
+    if (left-- <= 0) {
+      $("update-dialog").close();
+      if (reload) location.reload();
+      return;
+    }
+    UPDATE.timer = setTimeout(tick, 1000);
+  };
+  tick();
+}
+
+function closeUpdateDialog() {
+  // While an update runs, closing only hides the dialog; the run continues.
+  clearTimeout(UPDATE.timer);
+  UPDATE.running = false;
+  $("update-dialog").close();
+  refreshUpdateButton();
+}
+
+$("update-btn").addEventListener("click", openUpdateDialog);
+$("update-start").addEventListener("click", startUpdate);
+$("update-cancel").addEventListener("click", closeUpdateDialog);
+$("update-dialog").addEventListener("cancel", (e) => { e.preventDefault(); closeUpdateDialog(); });
+
 // ---- events -------------------------------------------------------------
 
 // Optimistically reflect an action in the UI right away; the follow-up refresh
@@ -1555,6 +1739,8 @@ normalizeCollapsedGroups();
 migrateFaderPresets();
 refresh();
 setInterval(refresh, 1000);
+refreshUpdateButton();
+setInterval(refreshUpdateButton, 30000);
 </script>
 </body>
 </html>

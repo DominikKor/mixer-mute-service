@@ -69,6 +69,28 @@ if (Test-Path $RepoFile) {
     $Shortcut.Description = "Mixer Mute Service auf die neueste GitHub-Version aktualisieren"
     $Shortcut.Save()
     Write-Host "Updater: $ShortcutPath"
+
+    # On-demand task for the web UI's update button: the service itself cannot
+    # run the update (it is stopped and replaced during it), so it only starts
+    # this task, which runs as SYSTEM independently of the service.
+    $UpdateTaskName = "MixerMuteServiceUpdate"
+    $UpdateScript = Join-Path $DataDirectory "update-from-github.ps1"
+    $UpdateArgs = "-NoProfile -ExecutionPolicy Bypass -File `"$UpdateScript`" -NonInteractive"
+    $ExistingTask = Get-ScheduledTask -TaskName $UpdateTaskName -ErrorAction SilentlyContinue
+    $TaskUpToDate = $null -ne $ExistingTask -and @($ExistingTask.Actions)[0].Arguments -eq $UpdateArgs
+    if (-not $TaskUpToDate) {
+        # Never re-register while it runs: that would be the update installing us.
+        if ($null -ne $ExistingTask -and $ExistingTask.State -eq "Running") {
+            Write-Warning "Update task is running; its definition is refreshed on the next install."
+        }
+        else {
+            $Action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument $UpdateArgs -WorkingDirectory $DataDirectory
+            $TaskPrincipal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
+            $TaskSettings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Minutes 15) -MultipleInstances IgnoreNew
+            Register-ScheduledTask -TaskName $UpdateTaskName -Action $Action -Principal $TaskPrincipal -Settings $TaskSettings -Description "Mixer Mute Service: update from GitHub (started by the web UI)" -Force | Out-Null
+            Write-Host "Update task registered: $UpdateTaskName"
+        }
+    }
 }
 
 $Wrapper = Join-Path $InstallDirectory "MixerMuteServiceService.exe"

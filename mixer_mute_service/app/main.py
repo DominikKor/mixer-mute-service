@@ -25,6 +25,7 @@ from .groups import GroupStore
 from .mixer_client import MixerClient
 from .proxy import ProxyServer
 from .routes import router
+from .updater import router as updater_router
 from .state import StateStore
 
 import sys
@@ -103,6 +104,7 @@ async def lifespan(app: FastAPI):
 _configure_logging()
 app = FastAPI(title="Mixer Mute Service", version="0.1.0", lifespan=lifespan)
 app.include_router(router)
+app.include_router(updater_router)
 app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="ui")
 
 
