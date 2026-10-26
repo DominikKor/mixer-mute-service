@@ -86,6 +86,27 @@ def main():
               json.loads(status_file.read_text())["state"] == "failed"
               and client.get("/update/status").json()["active"] is False)
 
+        print("== German schtasks output (cp850 umlauts) ==")
+        check("cp850 output decoded", updater._decode(b"ERFOLG: Versucht, ... auszuf\x81hren.", "cp850")
+              == "ERFOLG: Versucht, ... auszuf\u00fchren.")
+        check("undecodable output never raises", "auszuf" in updater._decode(b"auszuf\x81hren", "no-such-codec"))
+
+        def broken_task():
+            raise UnicodeDecodeError("charmap", b"\x81", 0, 1, "character maps to <undefined>")
+        updater._run_task = broken_task
+        r = client.post("/update/start")
+        check("exception while starting -> JSON reason, not a bare 500",
+              r.status_code == 502 and "UnicodeDecodeError" in r.json()["reason"])
+
+        def broken_status(*_args):
+            raise PermissionError("access denied")
+        real_write = updater._write_status
+        updater._write_status = broken_status
+        r = client.post("/update/start")
+        check("unexpected error -> 500 with JSON reason",
+              r.status_code == 500 and "PermissionError" in r.json()["reason"])
+        updater._write_status = real_write
+
         print("== UI ==")
         ui = client.get("/").text
         check("update button and dialog served", 'id="update-btn"' in ui and 'id="update-dialog"' in ui)

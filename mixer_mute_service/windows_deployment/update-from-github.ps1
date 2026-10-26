@@ -115,6 +115,45 @@ function Read-StoredToken {
     }
 }
 
+function Show-TokenDialog([string]$Repo) {
+    # A small window instead of Read-Host: in the console's secure prompt,
+    # Ctrl+V inserts a control character instead of pasting the token.
+    Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+    $Form = New-Object System.Windows.Forms.Form
+    $Form.Text = "Mixer Service: GitHub-Token"
+    $Form.ClientSize = New-Object System.Drawing.Size 520, 120
+    $Form.FormBorderStyle = "FixedDialog"
+    $Form.StartPosition = "CenterScreen"
+    $Form.MaximizeBox = $false
+    $Form.MinimizeBox = $false
+    $Form.TopMost = $true
+    $Label = New-Object System.Windows.Forms.Label
+    $Label.Text = "Token mit Lesezugriff auf $Repo einfuegen (Strg+V):"
+    $Label.Location = New-Object System.Drawing.Point 12, 14
+    $Label.AutoSize = $true
+    $Box = New-Object System.Windows.Forms.TextBox
+    $Box.Location = New-Object System.Drawing.Point 12, 40
+    $Box.Width = 496
+    $Box.UseSystemPasswordChar = $true
+    $Ok = New-Object System.Windows.Forms.Button
+    $Ok.Text = "OK"
+    $Ok.Location = New-Object System.Drawing.Point 352, 80
+    $Ok.DialogResult = [System.Windows.Forms.DialogResult]::OK
+    $Cancel = New-Object System.Windows.Forms.Button
+    $Cancel.Text = "Abbrechen"
+    $Cancel.Location = New-Object System.Drawing.Point 433, 80
+    $Cancel.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+    $Form.AcceptButton = $Ok
+    $Form.CancelButton = $Cancel
+    $Form.Controls.AddRange(@($Label, $Box, $Ok, $Cancel))
+    $Form.Add_Shown({ $Form.Activate(); $Box.Focus() })
+    try {
+        if ($Form.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) { return $null }
+        return $Box.Text
+    }
+    finally { $Form.Dispose() }
+}
+
 function Request-Token([string]$Repo) {
     if ($NonInteractive) {
         throw "No GitHub token stored yet. Double-click 'Mixer Service aktualisieren' on this PC once and enter it."
@@ -124,12 +163,20 @@ function Request-Token([string]$Repo) {
     Write-Host "Create it at https://github.com/settings/personal-access-tokens/new :"
     Write-Host "  Repository access: Only select repositories -> $Repo"
     Write-Host "  Permissions: Contents = Read-only"
-    $Secure = Read-Host -Prompt "Paste the token" -AsSecureString
-    $Bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($Secure)
-    try { $Token = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($Bstr) }
-    finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($Bstr) }
+    try {
+        $Token = Show-TokenDialog $Repo
+    }
+    catch {
+        # No desktop (e.g. remote shell): plain prompt, where pasting works.
+        $Token = Read-Host -Prompt "Paste the token"
+    }
     if ([string]::IsNullOrWhiteSpace($Token)) { throw "No token entered." }
-    return $Token.Trim()
+    $Token = $Token.Trim()
+    # Fine-grained tokens start with github_pat_, classic ones with ghp_.
+    if ($Token -notmatch '^(github_pat_|ghp_)[A-Za-z0-9_]{20,}$') {
+        throw "That is not a GitHub token ($($Token.Length) characters; it should start with github_pat_). Nothing was saved, please try again."
+    }
+    return $Token
 }
 
 function Get-HttpStatus($ErrorRecord) {

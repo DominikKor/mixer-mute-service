@@ -108,12 +108,29 @@ def _log_tail() -> list:
     return [line for line in lines if line and not line.startswith("*****")][-LOG_TAIL_LINES:]
 
 
+def _oem_encoding() -> str:
+    """Code page of console programs such as schtasks (cp850 on German Windows)."""
+    if sys.platform == "win32":
+        import ctypes
+        return f"cp{ctypes.windll.kernel32.GetOEMCP()}"
+    return "utf-8"
+
+
+def _decode(raw: bytes, encoding: Optional[str] = None) -> str:
+    # Never fail on the text of a message: umlauts in schtasks' output
+    # ("ausführen") once made the whole request fail with HTTP 500.
+    try:
+        return raw.decode(encoding or _oem_encoding())
+    except (LookupError, UnicodeDecodeError):
+        return raw.decode("utf-8", errors="replace")
+
+
 def _run_task() -> Tuple[bool, str]:
     proc = subprocess.run(
         ["schtasks", "/Run", "/TN", UPDATE_TASK],
-        capture_output=True, text=True, timeout=15,
+        capture_output=True, timeout=15,
     )
-    return proc.returncode == 0, (proc.stdout + proc.stderr).strip()
+    return proc.returncode == 0, _decode(proc.stdout + proc.stderr).strip()
 
 
 def _is_active(status: Optional[dict]) -> bool:
@@ -139,6 +156,14 @@ async def update_status():
 
 @router.post("/update/start")
 async def update_start():
+    try:
+        return await _start()
+    except Exception as exc:  # noqa: BLE001 - the dialog must show a reason
+        log.exception("update start failed")
+        return JSONResponse({"ok": False, "reason": f"{type(exc).__name__}: {exc}"}, 500)
+
+
+async def _start():
     available, reason = _support_check()
     if not available:
         return JSONResponse({"ok": False, "reason": reason}, 409)
@@ -149,8 +174,8 @@ async def update_start():
     _write_status("requested", run_id, "Update requested")
     try:
         started, output = await asyncio.to_thread(_run_task)
-    except (OSError, subprocess.SubprocessError) as exc:
-        started, output = False, str(exc)
+    except Exception as exc:  # noqa: BLE001 - always answer with a reason
+        started, output = False, f"{type(exc).__name__}: {exc}"
     if not started:
         _write_status("failed", run_id, f"could not start the update task: {output}")
         log.error("update task %s could not be started: %s", UPDATE_TASK, output)
