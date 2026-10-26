@@ -156,18 +156,11 @@
   /* Update key in the header and its progress dialog */
   button.update-key { padding: 8px 14px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
   button.update-key.running { color: #8fd3e6; text-shadow: 0 0 6px rgba(120,220,255,.5); }
-  /* Download link for the display agent update, styled as a header key */
-  a.key-link {
-    display: inline-flex; align-items: center; padding: 8px 14px; border-radius: 6px; text-decoration: none;
-    font-size: 12px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase;
-    color: #c9ced6; border: 1px solid #07080a; text-shadow: 0 -1px 0 rgba(0,0,0,.6);
-    background: linear-gradient(to bottom, #3b4049, #2b2f36 55%, #24272d);
-    box-shadow: inset 0 1px 0 rgba(255,255,255,.13), inset 0 -2px 0 rgba(0,0,0,.3), 0 2px 3px rgba(0,0,0,.55);
-  }
-  a.key-link:hover { color: #fff; filter: brightness(1.12); }
-  a.key-link:active { transform: translateY(1px); box-shadow: inset 0 1px 3px rgba(0,0,0,.55), 0 1px 1px rgba(0,0,0,.5); }
-  a.key-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-  a.key-link[hidden] { display: none; }
+  /* Plain download link for the display agent update, left of UPDATE */
+  a.download-link { font-size: 12px; color: #9aa1ad; text-decoration: underline; text-underline-offset: 2px; white-space: nowrap; }
+  a.download-link:hover { color: #d9dde3; }
+  a.download-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
+  a.download-link[hidden] { display: none; }
   dialog.update-dialog {
     width: min(560px, calc(100vw - 32px)); padding: 0; border: 1px solid #000; border-radius: 8px;
     color: var(--text); background: var(--panel-bg); box-shadow: var(--panel-shadow), 0 20px 60px rgba(0,0,0,.7);
@@ -400,8 +393,8 @@
 <header>
   <h1>Mixer Mute Service</h1>
   <div class="status">
-    <a id="agent-update-link" class="key-link" href="/desktop/agent/update.cmd" download hidden
-       title="Update-Datei für den Display-Agent laden und auf dem Anzeige-PC ausführen">Agent-Update</a>
+    <a id="agent-update-link" class="download-link" href="/desktop/agent/update.cmd" download hidden
+       title="Update-Datei für den Display-Agent laden und auf dem Anzeige-PC ausführen">Display Service herunterladen</a>
     <button id="update-btn" class="update-key" hidden title="Mixer Service von GitHub aktualisieren">Update</button>
     <div class="status-display">
       <span class="pill"><span id="dot-conn" class="dot"></span><span id="txt-conn">mixer ...</span></span>
