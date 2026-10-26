@@ -151,8 +151,19 @@ Bei `file` oeffnet Windows die Datei mit der Standardanwendung. `monitor` ist
 1-basiert; `fullscreen` aktiviert fuer Bilder bzw. Programmfenster den
 Vollbildmodus. Bei `fullscreen: false` legt `position` die Ausrichtung des
 Fensters fest: `top-left` (Standard), `top-right`, `bottom-left`,
-`bottom-right` oder `center`. Nach Aenderung der Konfiguration den Service
-neu starten.
+`bottom-right` oder `center`. Nach Aenderung der Konfiguration von Hand den
+Service neu starten.
+
+Profile lassen sich auch in der Weboberflaeche anlegen (graue **+**-Kachel
+hinter den Profilen) und bearbeiten (kleiner Stift oben rechts auf der
+Kachel); die Buttons erscheinen sofort, ohne Neustart. Dabei wird `config.yaml` nie neu geschrieben: ein neues Profil wird
+hinter dem letzten eingefuegt, beim Bearbeiten werden nur die geaenderten Werte
+ersetzt. Kommentare, andere Profile und alle anderen Einstellungen bleiben
+unveraendert. Vor dem Speichern wird geprueft, dass sich wirklich nur dieses
+Profil geaendert hat, sonst wird nichts geschrieben. Die vorige Fassung liegt
+als `config.yaml.bak` daneben. API: `POST /desktop/profiles` (mit `id`) und
+`PUT /desktop/profiles/{id}` bzw. `POST /desktop/profiles/{id}/update`. Updates
+ueberschreiben die `config.yaml` in ProgramData ebenfalls nie.
 
 Der Desktop-Agent und sein Installer liegen in `desktop_agent/`; der
 Windows-Release-Build legt diesen Ordner neben die Installationsskripte. Auf

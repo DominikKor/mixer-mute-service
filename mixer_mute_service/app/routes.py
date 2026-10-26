@@ -12,9 +12,12 @@ import time
 import urllib.error
 import urllib.request
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Body, Request
 from fastapi.responses import JSONResponse
+from pydantic import ValidationError
 
+from .config import DesktopProfileConfig, default_config_path
+from .desktop_profiles import ProfileEditError, add_profile, update_profile
 from .groups import GroupError
 from .models import FaderRequest, GroupCreate, GroupUpdate, RecallFaderRequest
 from .protocol import fader_hex_to_value
@@ -22,6 +25,8 @@ from .safety import is_channel_safe
 
 router = APIRouter()
 _logger = logging.getLogger("mixer.desktop_display")
+# One config.yaml edit at a time.
+_profile_lock = asyncio.Lock()
 
 
 def _ctx(request: Request):
@@ -91,6 +96,8 @@ async def desktop_profiles(request: Request):
                 "id": profile_id,
                 "title": profile.title,
                 "kind": profile.kind,
+                "path": profile.path,
+                "args": profile.args,
                 "target_ip": profile.target_ip,
                 "fullscreen": profile.fullscreen,
                 "monitor": profile.monitor,
@@ -99,6 +106,55 @@ async def desktop_profiles(request: Request):
             for profile_id, profile in cfg.profiles.items()
         ],
     }
+
+
+def _validation_reason(exc: ValidationError) -> str:
+    err = exc.errors()[0]
+    field = ".".join(str(part) for part in err.get("loc", ())) or "profile"
+    return f"{field}: {err.get('msg', 'invalid value')}"
+
+
+async def _save_profile(request: Request, profile_id: str, body: dict, create: bool):
+    if not isinstance(body, dict):
+        return JSONResponse({"ok": False, "reason": "profile must be a JSON object"}, 400)
+    fields = {k: v for k, v in body.items() if k != "id"}
+    try:
+        profile = DesktopProfileConfig(**fields)
+    except ValidationError as exc:
+        return JSONResponse({"ok": False, "reason": _validation_reason(exc)}, 400)
+    edit = add_profile if create else update_profile
+    path = default_config_path()
+    async with _profile_lock:
+        try:
+            cfg = await asyncio.to_thread(edit, path, profile_id, profile)
+        except ProfileEditError as exc:
+            _logger.warning("Desktop profile %s not saved: %s", profile_id, exc)
+            return JSONResponse({"ok": False, "id": profile_id, "reason": str(exc)}, exc.status)
+        except OSError as exc:
+            _logger.warning("Desktop profile %s not saved: %s", profile_id, exc)
+            return JSONResponse({"ok": False, "id": profile_id, "reason": f"config.yaml not writable: {exc}"}, 500)
+        # Buttons appear/change without a restart; other settings still need one.
+        request.app.state.cfg.desktop_display.profiles = cfg.desktop_display.profiles
+    _logger.info("Desktop profile %s %s in %s", profile_id, "added" if create else "updated", path)
+    return {"ok": True, "id": profile_id, "created": create}
+
+
+@router.post("/desktop/profiles")
+async def create_desktop_profile(request: Request, body: dict = Body(...)):
+    profile_id = body.get("id") if isinstance(body, dict) else None
+    if not isinstance(profile_id, str):
+        return JSONResponse({"ok": False, "reason": "id is required"}, 400)
+    return await _save_profile(request, profile_id, body, create=True)
+
+
+@router.put("/desktop/profiles/{profile_id}")
+async def update_desktop_profile(profile_id: str, request: Request, body: dict = Body(...)):
+    return await _save_profile(request, profile_id, body, create=False)
+
+
+@router.post("/desktop/profiles/{profile_id}/update")
+async def update_desktop_profile_post(profile_id: str, request: Request, body: dict = Body(...)):
+    return await _save_profile(request, profile_id, body, create=False)
 
 
 @router.post("/desktop/{profile_id}/open")
