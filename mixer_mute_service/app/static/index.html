@@ -230,9 +230,13 @@
   button.display-edit:hover .display-edit-chip { color: #fff; background: rgba(79,156,255,.35); }
   /* The grey "+" tile after the last profile */
   button.display-add {
-    align-self: stretch; min-width: 72px; min-height: 48px; padding: 0 20px;
-    font-size: 26px; font-weight: 400; line-height: 1; color: #9aa1ad;
+    display: grid; place-items: center; align-self: stretch; min-width: 72px; min-height: 48px; padding: 0 20px;
+    color: #9aa1ad;
   }
+  /* Drawn plus: a text "+" sits off-centre depending on the font */
+  .plus-icon { display: block; width: 22px; height: 22px; }
+  button.add-key { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 16px 0 12px; }
+  button.add-key .plus-icon { width: 16px; height: 16px; }
 
   /* Desktop profile editor */
   dialog.profile-dialog { width: min(640px, calc(100vw - 32px)); max-height: calc(100vh - 32px); overflow: auto; }
@@ -524,7 +528,7 @@
   </div>
   <div id="desktop-body" class="panel-body">
     <div id="desktop-profiles" class="desktop-launch-actions">
-      <button id="new-profile-btn" class="display-add" title="Neues Profil" aria-label="Neues Profil">+</button>
+      <button id="new-profile-btn" class="display-add" title="Neues Profil" aria-label="Neues Profil"><svg class="plus-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 4v16M4 12h16"/></svg></button>
       <span id="desktop-launch-status" class="desktop-launch-status">Profile werden geladen</span>
     </div>
   </div>
@@ -546,7 +550,7 @@
   <div class="panel-head">
     <button class="section-toggle" aria-expanded="true" aria-controls="groups-body">Mute Gruppen</button>
     <div class="panel-tools">
-      <button id="new-person-btn" class="primary">+ Neue Mute Gruppe</button>
+      <button id="new-person-btn" class="add-key"><svg class="plus-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 4v16M4 12h16"/></svg>Neue Mute Gruppe</button>
     </div>
   </div>
   <div id="groups-body" class="panel-body">
