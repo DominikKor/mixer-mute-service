@@ -67,7 +67,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $tag = (git describe --tags --match "v*" --always).Trim()
+          # Only real version tags (v1.2.1) count as base, not build tags (v1.2.1-4-g...).
+          $tag = (git describe --tags --match "v*" --exclude "v*-*" --always).Trim()
           if ($tag -notmatch '^v') { $tag = "v0.0.0-$tag" }
           gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
           $exists = $LASTEXITCODE -eq 0
