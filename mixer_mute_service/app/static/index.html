@@ -27,7 +27,8 @@
   }
   header {
     display: flex; align-items: center; gap: 10px 20px; flex-wrap: wrap; min-height: var(--header-h);
-    padding: 10px 24px; position: sticky; top: 0; z-index: 10;
+    /* Bar spans the window; its content lines up with the page column. */
+    padding: 10px max(var(--page-pad), calc((100% - var(--strips-max)) / 2)); position: sticky; top: 0; z-index: 10;
     background: linear-gradient(to bottom, #2a2e35, #1c1f24);
     border-bottom: 1px solid #000; box-shadow: inset 0 1px 0 rgba(255,255,255,.07), 0 4px 14px rgba(0,0,0,.45);
   }
@@ -62,7 +63,13 @@
     background: linear-gradient(to right, #343a45, transparent);
   }
   /* Channel strips, laid out like the console: at most 8 per row, fewer when narrow */
-  :root { --strip-gap: 10px; --strips-max: calc(8 * 128px + 7 * var(--strip-gap)); }
+  :root {
+    --strip-gap: 10px; --strips-max: calc(8 * 128px + 7 * var(--strip-gap));
+    /* The page is as wide as one bank of 8 strips, centred: every section and
+       the header share the strips' left and right edges, and wide screens get
+       even margins instead of an empty band right of the channels. */
+    --page-pad: 24px; --page-max: calc(var(--strips-max) + 2 * var(--page-pad));
+  }
   .strips {
     display: grid; gap: 14px var(--strip-gap); max-width: var(--strips-max);
     grid-template-columns: repeat(auto-fill, minmax(max(92px, calc((100% - 7 * var(--strip-gap)) / 8)), 1fr));
@@ -217,7 +224,7 @@
   .muted-text { color: var(--muted); }
 
   /* Page layout: three collapsible sections (Desktop, Channels, Mute Gruppen) */
-  .page { max-width: 1480px; margin: 0 auto; padding: 0 24px 48px; }
+  .page { max-width: var(--page-max); margin: 0 auto; padding: 0 var(--page-pad) 48px; }
   /* Desktop display keys: two-line keys with a readiness LED */
   .desktop-launch-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
   .desktop-launch-status { font: 600 11px/1 var(--mono); color: var(--lcd-dim); }
@@ -371,9 +378,6 @@
   .compact-switch input:focus-visible + .track { outline: 2px solid var(--accent); outline-offset: 2px; }
   /* Compact channels: name and mute key only, more strips per row */
   .strips.compact { max-width: none; grid-template-columns: repeat(auto-fill, minmax(124px, 1fr)); }
-  /* The channel strips stop at 8 x 128 px on wide (desktop) screens: end the
-     section head, and with it the Kompakt switch, flush with the last strip. */
-  .panel[data-section="channels"]:has(.strips:not(.compact)) .panel-head { max-width: var(--strips-max); }
   .strips.compact .fader-strip, .strips.compact .scribble .fader-db { display: none; }
   .strips.compact .card { gap: 10px; padding-bottom: 10px; }
   .strips.compact .card-title { font-size: 16px; }
