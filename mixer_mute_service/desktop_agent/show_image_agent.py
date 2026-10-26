@@ -70,6 +70,12 @@ def _find_window(process_id: int):
         return True
 
     user32.EnumWindows(callback, 0)
+    foreground = user32.GetForegroundWindow()
+    if foreground in found:
+        return foreground
+    for hwnd in found:
+        if not user32.IsIconic(hwnd):
+            return hwnd
     return found[0] if found else None
 
 
@@ -174,6 +180,18 @@ def _place_process_window(
         flags = 0x0040
     if not user32.SetWindowPos(hwnd, insert_after, x, y, width, height, flags):
         raise ctypes.WinError()
+    logger.info(
+        "Positioned window pid=%s hwnd=%s monitor=%s fullscreen=%s position=%s rect=%sx%s+%s+%s",
+        process_id,
+        hwnd,
+        monitor,
+        fullscreen,
+        position,
+        width,
+        height,
+        x,
+        y,
+    )
 
 
 def _launch_profile(profile: dict) -> None:
@@ -199,7 +217,8 @@ def _show_image(root: tk.Tk, image_label: tk.Label, profile: dict) -> None:
         if profile["fullscreen"]:
             image = ImageOps.fit(source.convert("RGB"), bounds)
         else:
-            image = ImageOps.contain(source.convert("RGB"), bounds)
+            image = source.convert("RGB")
+            image.thumbnail(bounds, Image.Resampling.LANCZOS)
     photo = ImageTk.PhotoImage(image)
     root.withdraw()
     root.overrideredirect(profile["fullscreen"])
@@ -207,11 +226,80 @@ def _show_image(root: tk.Tk, image_label: tk.Label, profile: dict) -> None:
     x, y = _window_position(
         (left, top, right, bottom), image.width, image.height, profile["position"]
     )
+    logger.info(
+        "Preparing image path=%s size=%sx%s monitor_bounds=%s position=%s fullscreen=%s",
+        profile["path"],
+        image.width,
+        image.height,
+        (left, top, right, bottom),
+        profile["position"],
+        profile["fullscreen"],
+    )
     root.geometry(f"{image.width}x{image.height}+{x}+{y}")
     image_label.configure(image=photo)
     image_label.image = photo
     root.deiconify()
+    root.state("normal")
+    root.update_idletasks()
+    root.geometry(f"{image.width}x{image.height}+{x}+{y}")
     root.lift()
+    hwnd = root.winfo_id()
+    if not hwnd:
+        raise RuntimeError("Image window was not found")
+    import ctypes
+    from ctypes import wintypes
+
+    user32 = ctypes.windll.user32
+    user32.GetParent.argtypes = [wintypes.HWND]
+    user32.GetParent.restype = wintypes.HWND
+    user32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+    user32.GetClientRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+    user32.SetWindowPos.argtypes = [
+        wintypes.HWND,
+        wintypes.HWND,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_int,
+        wintypes.UINT,
+    ]
+    parent = user32.GetParent(hwnd)
+    if parent:
+        hwnd = parent
+    outer = wintypes.RECT()
+    client = wintypes.RECT()
+    if not user32.GetWindowRect(hwnd, ctypes.byref(outer)):
+        raise ctypes.WinError()
+    if not user32.GetClientRect(hwnd, ctypes.byref(client)):
+        raise ctypes.WinError()
+    frame_width = (outer.right - outer.left) - (client.right - client.left)
+    frame_height = (outer.bottom - outer.top) - (client.bottom - client.top)
+    window_width = right - left if profile["fullscreen"] else image.width + frame_width
+    window_height = bottom - top if profile["fullscreen"] else image.height + frame_height
+    insert_after = -1 if profile["fullscreen"] else -2
+    flags = 0x0040 | (0x0020 if profile["fullscreen"] else 0)
+    if not user32.SetWindowPos(
+        hwnd, insert_after, x, y, window_width, window_height, flags
+    ):
+        raise ctypes.WinError()
+    positioned = wintypes.RECT()
+    if not user32.GetWindowRect(hwnd, ctypes.byref(positioned)):
+        raise ctypes.WinError()
+    logger.info(
+        "Positioned image hwnd=%s monitor=%s fullscreen=%s position=%s target=%s,%s,%s,%s rect=%s,%s,%s,%s",
+        hwnd,
+        profile["monitor"],
+        profile["fullscreen"],
+        profile["position"],
+        x,
+        y,
+        window_width,
+        window_height,
+        positioned.left,
+        positioned.top,
+        positioned.right,
+        positioned.bottom,
+    )
 
 
 class DisplayHandler(BaseHTTPRequestHandler):
