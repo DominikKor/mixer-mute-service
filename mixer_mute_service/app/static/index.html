@@ -238,20 +238,21 @@
   button.display-edit {
     position: absolute; top: 0; right: 0; width: 44px; height: 44px; padding: 5px 5px 0 0;
     display: flex; align-items: flex-start; justify-content: flex-end;
-    color: #8fb3bd; background: none; border: none; box-shadow: none;
+    color: #6f8a93; background: none; border: none; box-shadow: none; transition: color .12s;
   }
-  button.display-edit:hover:not(:disabled) { filter: none; }
+  /* No background of its own: the pencil only lights up on hover */
+  button.display-edit:hover:not(:disabled) { color: #e6f4f8; filter: none; }
   button.display-edit:active:not(:disabled) { transform: none; box-shadow: none; }
-  .display-edit-chip {
-    display: grid; place-items: center; width: 22px; height: 22px; border-radius: 4px; font-size: 11px; line-height: 1;
-    background: rgba(0,0,0,.3); box-shadow: inset 0 1px 2px rgba(0,0,0,.55), 0 1px 0 rgba(255,255,255,.05);
-  }
-  button.display-edit:hover .display-edit-chip { color: #fff; background: rgba(79,156,255,.35); }
+  .display-edit-chip { display: grid; place-items: center; width: 22px; height: 22px; font-size: 13px; line-height: 1; }
   /* The grey "+" tile after the last profile */
   button.display-add {
-    align-self: stretch; min-width: 72px; min-height: 48px; padding: 0 20px;
-    font-size: 26px; font-weight: 400; line-height: 1; color: #9aa1ad;
+    display: grid; place-items: center; align-self: stretch; min-width: 72px; min-height: 48px; padding: 0 20px;
+    color: #9aa1ad;
   }
+  /* Drawn plus: a text "+" sits off-centre depending on the font */
+  .plus-icon { display: block; width: 22px; height: 22px; }
+  button.add-key { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 16px 0 12px; }
+  button.add-key .plus-icon { width: 16px; height: 16px; }
 
   /* Desktop profile editor */
   dialog.profile-dialog { width: min(640px, calc(100vw - 32px)); max-height: calc(100vh - 32px); overflow: auto; }
@@ -385,30 +386,43 @@
 
   /* Mute group editor */
   .person-name-wrap .led { flex-shrink: 0; }
-  #persons { display: grid; gap: 14px; align-items: start; grid-template-columns: repeat(auto-fill, minmax(min(100%, 540px), 1fr)); }
+  /* Three groups side by side on desktop and iPad landscape, two in iPad
+     portrait, one on phones */
+  #persons { display: grid; gap: 14px; align-items: start; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  @media (max-width: 1199px) { #persons { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  @media (max-width: 759px) { #persons { grid-template-columns: minmax(0, 1fr); } }
   .person-card {
     min-width: 0; padding: 12px; border-radius: 8px; border: 1px solid #08090b;
     background: var(--panel-bg); box-shadow: var(--panel-shadow);
   }
-  .person-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-  .person-name-wrap { display: flex; align-items: center; gap: 6px; min-width: 0; }
+  .person-head { display: flex; align-items: center; gap: 10px; }
+  .person-name-wrap { display: flex; align-items: center; gap: 6px; min-width: 0; flex: 1; }
   .person-name {
     min-width: 0; padding: 4px 10px; border-radius: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     background: var(--lcd-bg); border: 1px solid #000; box-shadow: var(--lcd-shadow);
     font-size: 14px; font-weight: 700; color: var(--lcd-text); text-shadow: var(--lcd-glow);
   }
-  .person-actions { margin-left: auto; display: flex; gap: 6px; flex-wrap: wrap; }
+  /* Duplicate and delete as icon keys in the head; Mute/Solo/Use All below */
+  .person-tools { display: flex; gap: 6px; flex-shrink: 0; }
+  button.icon-btn { display: grid; place-items: center; width: 44px; height: 44px; padding: 0; }
+  .person-actions { display: flex; gap: 6px; margin-top: 10px; }
+  .person-actions button { flex: 1; min-height: 44px; }
   .collapse-btn { width: 28px; height: 28px; padding: 0; font-size: 13px; flex-shrink: 0; }
-  .person-body { margin-top: 12px; overflow-x: auto; }
+  .person-body { margin-top: 12px; }
   .person-body.collapsed { display: none; }
-  .person-channels { width: 100%; border-collapse: collapse; margin-bottom: 10px; }
-  .person-channels th {
-    padding: 4px 8px; border-bottom: 1px solid #08090b; box-shadow: 0 1px 0 rgba(255,255,255,.04);
-    font-size: 10px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; text-align: left; color: #7d8594;
+  .person-channels { margin-bottom: 10px; border-top: 1px solid #08090b; box-shadow: 0 -1px 0 rgba(255,255,255,.04); }
+  /* One channel: name | saved value + time | keys, fader across below */
+  .pc-row {
+    display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 6px 10px;
+    padding: 9px 2px; border-bottom: 1px solid rgba(255,255,255,.05); font-size: 13px;
   }
-  .person-channels td { padding: 7px 8px; border-bottom: 1px solid rgba(255,255,255,.05); font-size: 13px; vertical-align: middle; white-space: nowrap; }
-  .person-channels tr:last-child td { border-bottom: none; }
-  .person-channels td button { padding: 5px 9px; font-size: 11px; }
+  .pc-row:last-child { border-bottom: none; }
+  .pc-name { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .pc-saved { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; white-space: nowrap; }
+  .pc-keys { display: flex; gap: 4px; }
+  .pc-keys button { min-width: 44px; min-height: 44px; padding: 5px 9px; font-size: 11px; }
+  .pc-row .person-fader-wrap { grid-column: 1 / -1; }
+  .pc-row .fader-slider { flex: 1; width: auto; min-width: 0; }
   .ch-tag { font: 600 10px/1 var(--mono); color: var(--muted); }
   .set-at { font: 11px/1 var(--mono); color: var(--muted); }
   .fader-saved { font: 600 12px/1 var(--mono); color: var(--lcd-text); }
@@ -432,7 +446,6 @@
   .rename-btn:hover:not(:disabled) { opacity: 1; filter: none; }
 
   /* Horizontal faders in the group editor (same cap as the channel faders) */
-  .person-fader-cell { min-width: 220px; }
   .person-fader-wrap { display: flex; align-items: center; gap: 10px; }
   .fader-slider { -webkit-appearance: none; appearance: none; width: 140px; height: 24px; margin: 0; background: transparent; cursor: pointer; }
   .fader-slider:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
@@ -531,7 +544,7 @@
   </div>
   <div id="desktop-body" class="panel-body">
     <div id="desktop-profiles" class="desktop-launch-actions">
-      <button id="new-profile-btn" class="display-add" title="Neues Profil" aria-label="Neues Profil">+</button>
+      <button id="new-profile-btn" class="display-add" title="Neues Profil" aria-label="Neues Profil"><svg class="plus-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 4v16M4 12h16"/></svg></button>
       <span id="desktop-launch-status" class="desktop-launch-status">Profile werden geladen</span>
     </div>
   </div>
@@ -553,7 +566,7 @@
   <div class="panel-head">
     <button class="section-toggle" aria-expanded="true" aria-controls="groups-body">Mute Gruppen</button>
     <div class="panel-tools">
-      <button id="new-person-btn" class="primary">+ Neue Mute Gruppe</button>
+      <button id="new-person-btn" class="add-key"><svg class="plus-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 4v16M4 12h16"/></svg>Neue Mute Gruppe</button>
     </div>
   </div>
   <div id="groups-body" class="panel-body">
@@ -1341,6 +1354,9 @@ function addPersonChannel(personId, ch) {
   renderPersons();
 }
 
+const ICON_COPY = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/></svg>`;
+const ICON_TRASH = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6"/></svg>`;
+
 function renderPersons() {
   // Skip re-render if a select/input inside persons or the person create row is focused
   const focused = document.activeElement;
@@ -1381,32 +1397,32 @@ function renderPersons() {
       const liveValue = chInfo && chInfo.fader_value !== undefined ? chInfo.fader_value : null;
       const baseValue = savedValue !== null ? savedValue : (liveValue !== null ? liveValue : 0);
       const setAt = entry.set_at ? new Date(entry.set_at).toLocaleTimeString() : "never";
-      return `<tr>
-        <td>${chName} <span class="ch-tag">CH ${ch}</span></td>
-        <td>${faderSaved}</td>
-        <td class="person-fader-cell">
-          <div class="person-fader-wrap">
-            <input
-              type="range"
-              min="0"
-              max="${FADER_MAX}"
-              step="1"
-              class="fader-slider"
-              data-action="person-fader-input"
-              data-pid="${escapeAttr(person.id)}"
-              data-ch="${ch}"
-              value="${baseValue.toFixed(0)}"
-            />
-            <span class="fader-label" data-person-fader-label="${escapeAttr(person.id)}-${ch}">${formatDb(baseValue)}</span>
-          </div>
-        </td>
-        <td class="set-at">${setAt}</td>
-        <td>
+      // Two lines per channel so three groups fit side by side: name, saved
+      // value and keys on top, the fader below.
+      return `<div class="pc-row">
+        <div class="pc-name">${chName} <span class="ch-tag">CH ${ch}</span></div>
+        <div class="pc-saved">${faderSaved} <span class="set-at" title="Gespeichert um">${setAt}</span></div>
+        <div class="pc-keys">
           <button data-action="person-set-fader" data-pid="${escapeAttr(person.id)}" data-ch="${ch}">Set</button>
           <button data-action="person-use-fader" data-pid="${escapeAttr(person.id)}" data-ch="${ch}" class="primary" ${entry.fader_hex ? "" : "disabled"}>Use</button>
-          <button data-action="person-remove-ch" data-pid="${escapeAttr(person.id)}" data-ch="${ch}" class="danger">&#x2715;</button>
-        </td>
-      </tr>`;
+          <button data-action="person-remove-ch" data-pid="${escapeAttr(person.id)}" data-ch="${ch}" class="danger" title="Kanal entfernen" aria-label="Kanal entfernen">&#x2715;</button>
+        </div>
+        <div class="person-fader-wrap">
+          <input
+            type="range"
+            min="0"
+            max="${FADER_MAX}"
+            step="1"
+            class="fader-slider"
+            data-action="person-fader-input"
+            data-pid="${escapeAttr(person.id)}"
+            data-ch="${ch}"
+            value="${baseValue.toFixed(0)}"
+            aria-label="Fader ${chName}"
+          />
+          <span class="fader-label" data-person-fader-label="${escapeAttr(person.id)}-${ch}">${formatDb(baseValue)}</span>
+        </div>
+      </div>`;
     }).join("");
 
     const addSelect = availableChs.length
@@ -1431,19 +1447,19 @@ function renderPersons() {
           <span class="person-name" data-rename-person="${escapeAttr(person.id)}">${escapeHtml(person.name)}</span>
           <button class="rename-btn" data-action="person-rename" data-pid="${escapeAttr(person.id)}" data-name="${escapeAttr(person.name)}" title="Rename">&#9998;</button>
         </div>
-        <div class="person-actions">
-          <button data-action="person-mute" data-pid="${escapeAttr(person.id)}" class="key-mute">Mute</button>
-          <button data-action="person-solo" data-pid="${escapeAttr(person.id)}" class="key-solo">Solo</button>
-          <button data-action="person-use-all" data-pid="${escapeAttr(person.id)}" ${Object.values(person.channels || {}).some(e => e.fader_hex) ? "" : "disabled"}>Use All</button>
-          <button data-action="person-duplicate" data-pid="${escapeAttr(person.id)}">Duplicate</button>
-          <button data-action="person-delete" data-pid="${escapeAttr(person.id)}" class="danger">Delete</button>
+        <div class="person-tools">
+          <button class="icon-btn" data-action="person-duplicate" data-pid="${escapeAttr(person.id)}" title="Duplizieren" aria-label="${escapeAttr(person.name)} duplizieren">${ICON_COPY}</button>
+          <button class="icon-btn danger" data-action="person-delete" data-pid="${escapeAttr(person.id)}" title="Löschen" aria-label="${escapeAttr(person.name)} löschen">${ICON_TRASH}</button>
         </div>
       </div>
+      <div class="person-actions">
+        <button data-action="person-mute" data-pid="${escapeAttr(person.id)}" class="key-mute">Mute</button>
+        <button data-action="person-solo" data-pid="${escapeAttr(person.id)}" class="key-solo">Solo</button>
+        <button data-action="person-use-all" data-pid="${escapeAttr(person.id)}" ${Object.values(person.channels || {}).some(e => e.fader_hex) ? "" : "disabled"}>Use All</button>
+      </div>
       <div class="person-body ${collapsed ? "collapsed" : ""}">
-      ${assignedChs.length ? `<table class="person-channels">
-        <thead><tr><th>Channel</th><th>Saved fader</th><th>Fader</th><th>Set at</th><th></th></tr></thead>
-        <tbody>${rows}</tbody>
-      </table>` : `<div class="muted-text" style="font-size:12px;margin-bottom:8px;">Keine Kanäle zugewiesen.</div>`}
+      ${assignedChs.length ? `<div class="person-channels">${rows}</div>`
+        : `<div class="muted-text" style="font-size:12px;margin-bottom:8px;">Keine Kanäle zugewiesen.</div>`}
       ${addSelect}
       </div>`;
     wrap.appendChild(div);
