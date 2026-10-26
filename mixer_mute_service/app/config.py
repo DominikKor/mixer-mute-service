@@ -109,6 +109,7 @@ class DesktopProfileConfig(BaseModel):
     args: List[str] = Field(default_factory=list)
     fullscreen: bool = True
     monitor: int = Field(default=1, ge=1)
+    position: Literal["top-left", "top-right", "bottom-left", "bottom-right", "center"] = "top-left"
 
     @field_validator("target_ip")
     @classmethod

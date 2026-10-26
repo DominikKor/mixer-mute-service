@@ -94,6 +94,7 @@ async def desktop_profiles(request: Request):
                 "target_ip": profile.target_ip,
                 "fullscreen": profile.fullscreen,
                 "monitor": profile.monitor,
+                "position": profile.position,
             }
             for profile_id, profile in cfg.profiles.items()
         ],

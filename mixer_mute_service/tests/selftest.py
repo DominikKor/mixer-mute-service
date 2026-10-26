@@ -181,6 +181,20 @@ try:
 except ValueError:
     invalid_desktop_ip_rejected = True
 check("desktop profile rejects invalid IPv4", invalid_desktop_ip_rejected)
+position_config = Config(desktop_display={"profiles": {"app": {
+    "title": "App", "kind": "program", "path": "C:/app.exe", "position": "top-right",
+}}})
+check("desktop profile accepts top-right position",
+      position_config.desktop_display.profiles["app"].position == "top-right")
+try:
+    Config(desktop_display={"profiles": {"bad": {
+        "title": "Bad position", "kind": "program", "path": "C:/app.exe",
+        "position": "somewhere",
+    }}})
+    invalid_desktop_position_rejected = False
+except ValueError:
+    invalid_desktop_position_rejected = True
+check("desktop profile rejects invalid position", invalid_desktop_position_rejected)
 
 # "session" mode
 cfg_s = Config(safety={"freshness_mode": "session"})
@@ -230,6 +244,7 @@ with TestClient(app) as client:
     check("/health ok", h["ok"] is True and h["mixer_connected"] is False)
     desktop = client.get("/desktop/profiles").json()
     check("desktop profile target IP", desktop["profiles"][0]["target_ip"] == "192.168.188.42")
+    check("desktop profile defaults to top-left", desktop["profiles"][0]["position"] == "top-left")
     check("desktop action disabled by default",
           client.post("/desktop/sample/open").status_code == 503)
     check("unknown desktop profile -> 404",
@@ -239,6 +254,7 @@ with TestClient(app) as client:
     old_token = os.environ.get("DESKTOP_AGENT_TOKEN")
     os.environ["DESKTOP_AGENT_TOKEN"] = "selftest-token"
     app.state.cfg.desktop_display.enabled = True
+    app.state.cfg.desktop_display.profiles["sample"].position = "top-right"
     with patch("app.routes._forward_display_request", return_value={"ok": True}) as forward:
         check("desktop profile open", client.post("/desktop/sample/open").status_code == 200)
         check("desktop profile routed to configured IP",

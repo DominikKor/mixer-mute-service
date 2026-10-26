@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import hmac
 import json
+import logging
 import os
 import queue
 import subprocess
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 import tkinter as tk
@@ -19,6 +21,7 @@ from PIL import Image, ImageOps, ImageTk
 HOST = "0.0.0.0"
 PORT = 8766
 requests: queue.Queue[dict] = queue.Queue()
+logger = logging.getLogger("display-agent")
 
 
 def monitor_bounds(display_number: int) -> tuple[int, int, int, int]:
@@ -113,9 +116,31 @@ def _shell_open_file(path: Path) -> int:
         ctypes.windll.kernel32.CloseHandle(info.hProcess)
 
 
-def _place_process_window(process_id: int, monitor: int, fullscreen: bool) -> None:
+def _window_position(
+    bounds: tuple[int, int, int, int], width: int, height: int, position: str
+) -> tuple[int, int]:
+    left, top, right, bottom = bounds
+    positions = {
+        "top-left": (left, top),
+        "top-right": (right - width, top),
+        "bottom-left": (left, bottom - height),
+        "bottom-right": (right - width, bottom - height),
+        "center": (
+            left + (right - left - width) // 2,
+            top + (bottom - top - height) // 2,
+        ),
+    }
+    try:
+        return positions[position]
+    except KeyError as exc:
+        raise ValueError(f"Unsupported window position: {position}") from exc
+
+
+def _place_process_window(
+    process_id: int, monitor: int, fullscreen: bool, position: str
+) -> None:
     if not process_id:
-        print("No process handle was returned; window placement skipped", flush=True)
+        logger.warning("No process handle was returned; window placement skipped")
         return
     deadline = time.monotonic() + 20
     hwnd = None
@@ -137,6 +162,7 @@ def _place_process_window(process_id: int, monitor: int, fullscreen: bool) -> No
         raise ctypes.WinError()
     width = right - left if fullscreen else rect.right - rect.left
     height = bottom - top if fullscreen else rect.bottom - rect.top
+    x, y = _window_position((left, top, right, bottom), width, height, position)
     if fullscreen:
         style = user32.GetWindowLongW(hwnd, -16)
         user32.SetWindowLongW(hwnd, -16, (style & ~0x00CF0000) | 0x80000000)
@@ -146,19 +172,24 @@ def _place_process_window(process_id: int, monitor: int, fullscreen: bool) -> No
         insert_after = -2
         flags = 0x0040
     user32.ShowWindow(hwnd, 9)
-    if not user32.SetWindowPos(hwnd, insert_after, left, top, width, height, flags):
+    if not user32.SetWindowPos(hwnd, insert_after, x, y, width, height, flags):
         raise ctypes.WinError()
 
 
 def _launch_profile(profile: dict) -> None:
-    path = Path(profile["path"])
-    if profile["kind"] == "program":
-        process_id = subprocess.Popen(
-            [str(path), *profile["args"]], cwd=str(path.parent), shell=False
-        ).pid
-    else:
-        process_id = _shell_open_file(path)
-    _place_process_window(process_id, profile["monitor"], profile["fullscreen"])
+    try:
+        path = Path(profile["path"])
+        if profile["kind"] == "program":
+            process_id = subprocess.Popen(
+                [str(path), *profile["args"]], cwd=str(path.parent), shell=False
+            ).pid
+        else:
+            process_id = _shell_open_file(path)
+        _place_process_window(
+            process_id, profile["monitor"], profile["fullscreen"], profile["position"]
+        )
+    except Exception:
+        logger.exception("Profile %s failed", profile["id"])
 
 
 def _show_image(root: tk.Tk, image_label: tk.Label, profile: dict) -> None:
@@ -173,7 +204,10 @@ def _show_image(root: tk.Tk, image_label: tk.Label, profile: dict) -> None:
     root.withdraw()
     root.overrideredirect(profile["fullscreen"])
     root.attributes("-topmost", profile["fullscreen"])
-    root.geometry(f"{image.width}x{image.height}+{left}+{top}")
+    x, y = _window_position(
+        (left, top, right, bottom), image.width, image.height, profile["position"]
+    )
+    root.geometry(f"{image.width}x{image.height}+{x}+{y}")
     image_label.configure(image=photo)
     image_label.image = photo
     root.deiconify()
@@ -200,7 +234,9 @@ class DisplayHandler(BaseHTTPRequestHandler):
         except (ValueError, json.JSONDecodeError):
             self.send_error(400)
             return
-        required = {"id", "title", "kind", "path", "args", "fullscreen", "monitor"}
+        required = {
+            "id", "title", "kind", "path", "args", "fullscreen", "monitor", "position"
+        }
         if not isinstance(body, dict) or set(body) != required:
             self.send_error(400)
             return
@@ -215,6 +251,8 @@ class DisplayHandler(BaseHTTPRequestHandler):
             or not isinstance(body["fullscreen"], bool)
             or not isinstance(body["monitor"], int)
             or body["monitor"] < 1
+            or body["position"]
+            not in ("top-left", "top-right", "bottom-left", "bottom-right", "center")
         ):
             self.send_error(400)
             return
@@ -232,7 +270,7 @@ class DisplayHandler(BaseHTTPRequestHandler):
         self.wfile.write(result)
 
     def log_message(self, fmt, *args):
-        print("%s - %s" % (self.client_address[0], fmt % args), flush=True)
+        logger.info("%s - %s", self.client_address[0], fmt % args)
 
 
 def drain_requests(root: tk.Tk, image_label: tk.Label) -> None:
@@ -245,15 +283,27 @@ def drain_requests(root: tk.Tk, image_label: tk.Label) -> None:
                 else:
                     threading.Thread(target=_launch_profile, args=(profile,), daemon=True).start()
             except Exception as exc:
-                print(f"Profile {profile['id']} failed: {exc}", flush=True)
+                logger.exception("Profile %s failed: %s", profile["id"], exc)
     except queue.Empty:
         pass
     root.after(100, drain_requests, root, image_label)
 
 
 def main() -> None:
+    log_directory = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "MixerMuteDisplayAgent"
+    log_directory.mkdir(parents=True, exist_ok=True)
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(message)s",
+        handlers=[
+            RotatingFileHandler(
+                log_directory / "agent.log", maxBytes=1_000_000, backupCount=3, encoding="utf-8"
+            )
+        ],
+    )
     if not os.environ.get("DESKTOP_AGENT_TOKEN"):
-        raise SystemExit("Set DESKTOP_AGENT_TOKEN before starting the agent")
+        logger.error("Set DESKTOP_AGENT_TOKEN before starting the agent")
+        return
 
     root = tk.Tk()
     root.withdraw()
@@ -266,7 +316,7 @@ def main() -> None:
     server = ThreadingHTTPServer((HOST, PORT), DisplayHandler)
     server.daemon_threads = True
     threading.Thread(target=server.serve_forever, daemon=True).start()
-    print(f"Display agent listening on {HOST}:{PORT}", flush=True)
+    logger.info("Display agent listening on %s:%s", HOST, PORT)
     root.mainloop()
 
 

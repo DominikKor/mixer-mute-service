@@ -10,7 +10,13 @@ $PythonLauncher = (Get-Command py.exe -ErrorAction Stop).Source
 & $PythonLauncher -3 -m pip install -r (Join-Path $AgentDirectory "requirements.txt")
 if ($LASTEXITCODE -ne 0) { throw "Could not install Pillow for the display agent." }
 
-$Action = New-ScheduledTaskAction -Execute $PythonLauncher -Argument "-3 `"$(Join-Path $AgentDirectory 'show_image_agent.py')`""
+$PythonExecutable = & $PythonLauncher -3 -c "import sys; print(sys.executable)"
+if ($LASTEXITCODE -ne 0 -or -not $PythonExecutable) { throw "Could not locate Python 3." }
+$Pythonw = Join-Path (Split-Path -Parent $PythonExecutable.Trim()) "pythonw.exe"
+if (-not (Test-Path $Pythonw)) { throw "pythonw.exe was not found next to $PythonExecutable." }
+
+$AgentScript = Join-Path $AgentDirectory "show_image_agent.py"
+$Action = New-ScheduledTaskAction -Execute $Pythonw -Argument "`"$AgentScript`""
 $Trigger = New-ScheduledTaskTrigger -AtLogOn -User "$env:USERDOMAIN\$env:USERNAME"
 $Principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType Interactive -RunLevel Limited
 $Settings = New-ScheduledTaskSettingsSet -StartWhenAvailable

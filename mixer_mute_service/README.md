@@ -149,14 +149,19 @@ Weitere Profile erhalten eigene IDs und Ziel-IPs. `kind` ist `image`,
 `args` ist eine Liste separater Argumente, die ohne Shell gestartet werden.
 Bei `file` oeffnet Windows die Datei mit der Standardanwendung. `monitor` ist
 1-basiert; `fullscreen` aktiviert fuer Bilder bzw. Programmfenster den
-Vollbildmodus. Nach Aenderung der Konfiguration den Service neu starten.
+Vollbildmodus. Bei `fullscreen: false` legt `position` die Ausrichtung des
+Fensters fest: `top-left` (Standard), `top-right`, `bottom-left`,
+`bottom-right` oder `center`. Nach Aenderung der Konfiguration den Service
+neu starten.
 
 Der Desktop-Agent und sein Installer liegen in `desktop_agent/`; der
 Windows-Release-Build legt diesen Ordner neben die Installationsskripte. Auf
 jedem Ziel-PC Python 3 mit Tkinter bereitstellen, den Agentenordner kopieren und
 als angemeldeter Benutzer `install-agent.ps1` ausfuehren. Das Skript installiert
-Pillow, registriert den Start bei Benutzeranmeldung und erlaubt TCP 8766 in der
-Firewall nur von `192.168.188.20`.
+Pillow, registriert den unsichtbaren Hintergrundstart bei Benutzeranmeldung
+(ohne Konsolenfenster) und erlaubt TCP 8766 in der Firewall nur von
+`192.168.188.20`. Agentenmeldungen werden unter
+`%LOCALAPPDATA%\MixerMuteDisplayAgent\agent.log` gespeichert.
 
 Erzeuge einen gemeinsamen Token auf dem Webserver-PC `.20` in einer
 administrativen PowerShell:
