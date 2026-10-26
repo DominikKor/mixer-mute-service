@@ -18,6 +18,7 @@ import os
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
+from .agent_download import router as agent_download_router
 from .buses import BusRegistry
 from .config import default_config_path, load_config
 from .controller import Controller
@@ -105,6 +106,7 @@ _configure_logging()
 app = FastAPI(title="Mixer Mute Service", version="0.1.0", lifespan=lifespan)
 app.include_router(router)
 app.include_router(updater_router)
+app.include_router(agent_download_router)
 app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="ui")
 
 
