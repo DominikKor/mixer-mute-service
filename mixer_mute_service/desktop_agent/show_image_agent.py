@@ -157,6 +157,7 @@ def _place_process_window(
 
     left, top, right, bottom = monitor_bounds(monitor)
     user32 = ctypes.windll.user32
+    user32.ShowWindow(hwnd, 9)
     rect = wintypes.RECT()
     if not user32.GetWindowRect(hwnd, ctypes.byref(rect)):
         raise ctypes.WinError()
@@ -171,7 +172,6 @@ def _place_process_window(
     else:
         insert_after = -2
         flags = 0x0040
-    user32.ShowWindow(hwnd, 9)
     if not user32.SetWindowPos(hwnd, insert_after, x, y, width, height, flags):
         raise ctypes.WinError()
 
