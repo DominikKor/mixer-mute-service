@@ -126,8 +126,14 @@ Copy-Item (Join-Path $ProjectDirectory "desktop_agent") (Join-Path $ReleaseDirec
 if (-not [string]::IsNullOrWhiteSpace($env:GITHUB_REPOSITORY)) {
     [System.IO.File]::WriteAllText((Join-Path $ReleaseDirectory "github-repo.txt"), $env:GITHUB_REPOSITORY + [Environment]::NewLine, [System.Text.UTF8Encoding]::new($false))
 }
-if ($env:GITHUB_REF_TYPE -eq "tag" -and -not [string]::IsNullOrWhiteSpace($env:GITHUB_REF_NAME)) {
-    [System.IO.File]::WriteAllText((Join-Path $ReleaseDirectory "release-tag.txt"), $env:GITHUB_REF_NAME + [Environment]::NewLine, [System.Text.UTF8Encoding]::new($false))
+# RELEASE_TAG is the GitHub release this build is published as (set by the
+# workflow for every build, also for untagged commits on main).
+$ReleaseTag = $env:RELEASE_TAG
+if ([string]::IsNullOrWhiteSpace($ReleaseTag) -and $env:GITHUB_REF_TYPE -eq "tag") {
+    $ReleaseTag = $env:GITHUB_REF_NAME
+}
+if (-not [string]::IsNullOrWhiteSpace($ReleaseTag)) {
+    [System.IO.File]::WriteAllText((Join-Path $ReleaseDirectory "release-tag.txt"), $ReleaseTag + [Environment]::NewLine, [System.Text.UTF8Encoding]::new($false))
 }
 
 $UiIndexPath = Join-Path $ReleaseDirectory "_internal\app\static\index.html"

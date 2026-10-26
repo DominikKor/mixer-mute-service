@@ -86,9 +86,13 @@ Start-Service MixerMuteService
 
 ## Updating from GitHub (recommended)
 
-Releases are built automatically by GitHub Actions whenever a version tag
-(`v1.2.0`, ...) is pushed. From the first installation of such a release on,
-the streaming PC has a desktop shortcut **"Mixer Service aktualisieren"**:
+Releases are built automatically by GitHub Actions for **every push to
+`main`** (after the tests pass). A commit with a version tag is released as
+that version (`v1.3.0`); later commits get names from `git describe`, e.g.
+`v1.3.0-2-gabc1234` (2 commits after v1.3.0). So everything pushed to `main`
+becomes installable on the streaming PC -- push only finished work. From the
+first installation of such a release on, the streaming PC has a desktop
+shortcut **"Mixer Service aktualisieren"**:
 
 1. Double-click it and confirm the Administrator prompt.
 2. The first time only: paste a GitHub token with read access to the
@@ -112,11 +116,12 @@ Buses no longer need to be configured by hand: the service discovers them from
 the mixer's state dump and remembers their channel numbers in
 `C:\ProgramData\MixerMuteService\buses.json`.
 
-Publishing a new version (developer):
+Publishing (developer): push to `main` -- that is all. To give a build a
+version number, tag it and push both together, so only one release is built:
 
 ```bash
-git tag v1.2.0
-git push origin main --tags
+git tag -a v1.3.0 -m "v1.3.0: ..."
+git push origin main --follow-tags
 ```
 
 ## Updating manually
