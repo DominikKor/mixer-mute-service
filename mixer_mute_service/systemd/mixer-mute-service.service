@@ -1,0 +1,16 @@
+[Unit]
+Description=Mixer Mute Service (safe mute groups for the digital mixer)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Adjust to where you deployed the project and your venv.
+WorkingDirectory=/opt/mixer_mute_service
+Environment=MIXER_CONFIG=/opt/mixer_mute_service/config.yaml
+ExecStart=/opt/mixer_mute_service/.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8765
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,1524 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Mixer Mute Service</title>
+<style>
+  :root {
+    --bg: #121418; --panel: #1d2026; --panel2: #23272f; --line: #2e333d;
+    --text: #e6e8ec; --muted: #8b93a1; --accent: #4f9cff;
+    --green: #2ecc71; --red: #e74c3c; --amber: #f1c40f;
+    /* Console surfaces shared by strips, master section, editor and toasts */
+    --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+    --lcd-bg: linear-gradient(to bottom, #0a1316, #0e1a1f);
+    --lcd-text: #d4eef5; --lcd-dim: #5f8590; --lcd-glow: 0 0 6px rgba(120,220,255,.3);
+    --lcd-shadow: inset 0 2px 6px rgba(0,0,0,.9), 0 1px 0 rgba(255,255,255,.06);
+    --panel-bg: linear-gradient(to bottom, #2b2f36, #1f2228 30%, #1a1d22);
+    --panel-shadow: inset 1px 0 0 rgba(255,255,255,.05), inset -1px 0 0 rgba(0,0,0,.45),
+      inset 0 1px 0 rgba(255,255,255,.08), 0 3px 8px rgba(0,0,0,.5);
+    --header-h: 60px;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; color: var(--text);
+    background: radial-gradient(ellipse 120% 60% at 50% 0%, #1d2026, var(--bg) 70%) fixed, var(--bg);
+    font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  header {
+    display: flex; align-items: center; gap: 10px 20px; flex-wrap: wrap; min-height: var(--header-h);
+    padding: 10px 24px; position: sticky; top: 0; z-index: 10;
+    background: linear-gradient(to bottom, #2a2e35, #1c1f24);
+    border-bottom: 1px solid #000; box-shadow: inset 0 1px 0 rgba(255,255,255,.07), 0 4px 14px rgba(0,0,0,.45);
+  }
+  header h1 {
+    margin: 0; font-size: 13px; font-weight: 800; letter-spacing: .18em; text-transform: uppercase;
+    color: #d9dde3; text-shadow: 0 1px 0 #000;
+  }
+  .status { display: flex; gap: 12px; align-items: center; margin-left: auto; flex-wrap: wrap; }
+  .status-display { /* recessed status LCD */
+    display: flex; gap: 6px 16px; align-items: center; flex-wrap: wrap; padding: 8px 12px; border-radius: 5px;
+    background: var(--lcd-bg); border: 1px solid #000; box-shadow: var(--lcd-shadow);
+  }
+  .pill { display: inline-flex; align-items: center; gap: 7px; font: 600 11px/1 var(--mono); color: var(--lcd-text); }
+  .pill .muted-text { color: var(--lcd-dim); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: #3a3f47; box-shadow: inset 0 1px 1px rgba(0,0,0,.6); }
+  .dot.ok { background: #3ee07f; box-shadow: 0 0 6px rgba(46,204,113,.85); }
+  .dot.bad { background: #ff4b3a; box-shadow: 0 0 6px rgba(255,75,58,.85); }
+  /* The panic key sits in a striped guard frame */
+  .panic-guard {
+    display: inline-flex; padding: 3px; border-radius: 8px;
+    background: repeating-linear-gradient(-45deg, #d9ad10 0 6px, #16181c 6px 12px);
+    box-shadow: inset 0 0 0 1px rgba(0,0,0,.6), 0 2px 4px rgba(0,0,0,.6);
+  }
+  /* Engraved section labels */
+  h2 {
+    display: flex; align-items: center; gap: 12px; margin: 26px 0 12px;
+    font-size: 11px; font-weight: 800; letter-spacing: .18em; text-transform: uppercase;
+    color: #7d8594; text-shadow: 0 1px 0 #000;
+  }
+  h2::after {
+    content: ""; flex: 1; height: 1px; box-shadow: 0 1px 0 rgba(0,0,0,.6);
+    background: linear-gradient(to right, #343a45, transparent);
+  }
+  /* Channel strips, laid out like the console: at most 8 per row, fewer when narrow */
+  .strips {
+    --strip-gap: 10px;
+    display: grid; gap: 14px var(--strip-gap); max-width: calc(8 * 128px + 7 * var(--strip-gap));
+    grid-template-columns: repeat(auto-fill, minmax(max(92px, calc((100% - 7 * var(--strip-gap)) / 8)), 1fr));
+  }
+  .card {
+    display: flex; flex-direction: column; align-items: center; gap: 12px; min-width: 0;
+    padding: 8px 7px 12px; border-radius: 7px; border: 1px solid #08090b;
+    background: linear-gradient(to bottom, #2b2f36, #1f2228 30%, #1a1d22);
+    box-shadow: inset 1px 0 0 rgba(255,255,255,.05), inset -1px 0 0 rgba(0,0,0,.45),
+      inset 0 1px 0 rgba(255,255,255,.08), 0 3px 8px rgba(0,0,0,.5);
+  }
+  /* Scribble strip: number, safety LED, name and fader level */
+  .scribble {
+    width: 100%; padding: 5px 6px 6px; border-radius: 4px; text-align: center;
+    background: linear-gradient(to bottom, #0a1316, #0e1a1f);
+    border: 1px solid #000; box-shadow: inset 0 2px 6px rgba(0,0,0,.9), 0 1px 0 rgba(255,255,255,.06);
+  }
+  .scribble-top { display: flex; justify-content: space-between; align-items: center; font: 600 10px/1 ui-monospace, SFMono-Regular, Menlo, monospace; color: #5f8590; }
+  .led { width: 7px; height: 7px; border-radius: 50%; background: #3a3f47; box-shadow: inset 0 1px 1px rgba(0,0,0,.6); }
+  .led.safe { background: #3ee07f; box-shadow: 0 0 5px rgba(46,204,113,.85); }
+  .led.mute { background: #ff4b3a; box-shadow: 0 0 6px rgba(255,75,58,.85); }
+  .led.unsafe { background: #f1c40f; box-shadow: 0 0 5px rgba(241,196,15,.75); }
+  .card .card-title-wrap { justify-content: center; gap: 2px; min-height: 18px; margin-top: 5px; }
+  .card-title {
+    min-width: 0; font-size: 12px; font-weight: 600; color: #d4eef5; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    text-shadow: 0 0 6px rgba(120,220,255,.3);
+  }
+  .card .rename-btn { display: none; flex-shrink: 0; padding: 0 2px; border: none; background: none; color: #8fb3bd; }
+  .scribble:hover .rename-btn { display: inline-block; }
+  @media (hover: none) { .card .rename-btn { display: inline-block; } }
+  .card .rename-input { width: 100%; font-size: 12px; padding: 1px 4px; }
+  .scribble .fader-db { margin-top: 4px; font-size: 11px; color: #8fd3e6; }
+  .scribble .fader-db.unk { color: #4d6a72; }
+  .btns { display: flex; gap: 6px; flex-wrap: wrap; }
+  /* Raised console keys: neutral by default, backlit blue for primary actions,
+     red and yellow caps for group mute and solo */
+  button {
+    font: inherit; font-size: 12px; font-weight: 600; padding: 7px 12px; border-radius: 6px; cursor: pointer;
+    color: #c9ced6; border: 1px solid #07080a; text-shadow: 0 -1px 0 rgba(0,0,0,.6);
+    background: linear-gradient(to bottom, #3b4049, #2b2f36 55%, #24272d);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.13), inset 0 -2px 0 rgba(0,0,0,.3), 0 2px 3px rgba(0,0,0,.55);
+  }
+  button:hover:not(:disabled) { color: #fff; filter: brightness(1.12); }
+  button:active:not(:disabled) {
+    transform: translateY(1px);
+    box-shadow: inset 0 1px 3px rgba(0,0,0,.55), 0 1px 1px rgba(0,0,0,.5);
+  }
+  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  button.primary {
+    color: #fff; border-color: #0a2550;
+    background: linear-gradient(to bottom, #62adff, #3584e6 55%, #2a6cc4);
+    box-shadow: 0 0 10px rgba(79,156,255,.3), inset 0 1px 0 rgba(255,255,255,.35),
+      inset 0 -2px 0 rgba(0,0,0,.25), 0 2px 3px rgba(0,0,0,.55);
+  }
+  button.danger { color: #ff8576; }
+  button.warn { color: var(--amber); }
+  button.key-mute { color: #fff; border-color: #3d0a05; background: linear-gradient(to bottom, #d9483a, #b02a1e 55%, #8f1f15); }
+  button.key-solo {
+    color: #2a2000; text-shadow: 0 1px 0 rgba(255,255,255,.3); border-color: #4a3a00;
+    background: linear-gradient(to bottom, #ffd84a, #e9b612 55%, #c99a08);
+  }
+  button.key-solo:hover:not(:disabled) { color: #000; }
+  button:disabled { opacity: .4; cursor: not-allowed; }
+  #panic-btn { min-width: 132px; padding: 8px 14px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
+  #panic-btn.danger {
+    color: #fff; border-color: #3d0a05;
+    background: radial-gradient(ellipse at 50% 30%, #ff6a58, #d6301f 55%, #9a170d);
+  }
+  /* Channel mute key: lit red while muted, dark while live, greyed when unknown */
+  button.mute-key { /* same width as the fader above it */
+    width: 70px; height: 36px; padding: 0; flex-shrink: 0;
+    font-size: 11px; font-weight: 800; letter-spacing: .12em; color: #9aa1ad;
+    border-radius: 5px; border: 1px solid #07080a;
+    background: linear-gradient(to bottom, #3d424b, #2b2f36 55%, #23262c);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.15), inset 0 -2px 0 rgba(0,0,0,.35), 0 2px 4px rgba(0,0,0,.65);
+  }
+  button.mute-key:hover:not(:disabled) { border-color: #07080a; color: #e6e8ec; filter: brightness(1.1); }
+  button.mute-key:active:not(:disabled) {
+    transform: translateY(1px);
+    box-shadow: inset 0 1px 3px rgba(0,0,0,.55), 0 1px 1px rgba(0,0,0,.6);
+  }
+  button.mute-key.on { /* lit key */
+    color: #fff; border-color: #4a0c06; text-shadow: 0 0 6px rgba(255,255,255,.55);
+    background: radial-gradient(ellipse at 50% 35%, #ff7c68, #e5382a 48%, #a0180e);
+    box-shadow: 0 0 16px rgba(255,70,50,.6), inset 0 1px 0 rgba(255,255,255,.4),
+      inset 0 -2px 0 rgba(0,0,0,.25), 0 2px 4px rgba(0,0,0,.65);
+  }
+  button.mute-key.on:hover:not(:disabled) { color: #fff; border-color: #4a0c06; }
+  button.mute-key.unk { background: #1a1d22; border: 1px dashed #4a505b; color: #6c7482; box-shadow: none; letter-spacing: .06em; }
+  button.mute-key.busy { cursor: progress; filter: brightness(.85); }
+  /* Toasts read like a message on the console display */
+  .toast-wrap {
+    position: fixed; right: 16px; bottom: 16px; z-index: 50;
+    display: flex; flex-direction: column; align-items: flex-end; gap: 8px; max-width: calc(100vw - 32px);
+  }
+  .toast {
+    display: flex; align-items: center; gap: 10px; max-width: 380px; padding: 10px 14px; border-radius: 6px;
+    background: var(--lcd-bg); border: 1px solid #000; color: var(--lcd-text);
+    font: 600 12px/1.35 var(--mono);
+    box-shadow: 0 10px 28px rgba(0,0,0,.6), inset 0 0 0 1px rgba(255,255,255,.05);
+  }
+  .toast::before { content: ""; flex-shrink: 0; width: 8px; height: 8px; border-radius: 50%; }
+  .toast.ok::before { background: #3ee07f; box-shadow: 0 0 6px rgba(46,204,113,.85); }
+  .toast.err { color: #ffc6bf; }
+  .toast.err::before { background: #ff4b3a; box-shadow: 0 0 6px rgba(255,75,58,.85); }
+  .muted-text { color: var(--muted); }
+
+  /* Page layout: the group master section sits right next to the channel
+     strips instead of at the window edge; below ~1160px it moves above them. */
+  .page { max-width: 1480px; margin: 0 auto; padding: 0 24px 48px; }
+  .console {
+    display: grid; gap: 0 24px; align-items: start;
+    grid-template-columns: minmax(0, calc(8 * 128px + 70px)) minmax(220px, 280px);
+  }
+  .master {
+    position: sticky; top: calc(var(--header-h) + 16px);
+    max-height: calc(100vh - var(--header-h) - 32px); overflow-y: auto;
+    padding: 10px; border-radius: 8px; border: 1px solid #08090b;
+    background: var(--panel-bg); box-shadow: var(--panel-shadow);
+  }
+  @media (max-width: 1159px) {
+    .console { grid-template-columns: minmax(0, 1fr); }
+    .master-label { order: 1; }
+    .master { order: 2; position: static; max-height: none; }
+    .channels-label { order: 3; }
+    #channels { order: 4; }
+  }
+  @media (max-width: 700px) {
+    header { padding: 8px 12px; }
+    .pill.opt { display: none; }
+    .page { padding: 0 12px 40px; }
+  }
+
+  /* Group modules in the master section */
+  #sidebar-persons { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 220px), 1fr)); }
+  .master-empty { color: var(--muted); font-size: 12px; }
+  .sb-person {
+    padding: 8px; border-radius: 6px; background: rgba(0,0,0,.2);
+    box-shadow: inset 0 1px 3px rgba(0,0,0,.55), 0 1px 0 rgba(255,255,255,.04);
+  }
+  .sb-display {
+    margin-bottom: 8px; padding: 5px 8px 6px; border-radius: 4px;
+    background: var(--lcd-bg); border: 1px solid #000; box-shadow: var(--lcd-shadow);
+  }
+  .sb-top { display: flex; justify-content: space-between; align-items: center; gap: 8px; font: 600 10px/1 var(--mono); color: var(--lcd-dim); }
+  .sb-chs { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .sb-person-name {
+    margin-top: 4px; font-size: 13px; font-weight: 700; color: var(--lcd-text); text-shadow: var(--lcd-glow);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .sb-btns { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+  .sb-btns button { padding: 9px 2px; font-size: 11px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
+
+  /* Mute group editor */
+  .section-head { display: flex; align-items: center; gap: 14px; margin: 36px 0 12px; }
+  .section-head h2 { flex: 1; margin: 0; }
+  #persons { display: grid; gap: 14px; align-items: start; grid-template-columns: repeat(auto-fill, minmax(min(100%, 540px), 1fr)); }
+  .person-card {
+    min-width: 0; padding: 12px; border-radius: 8px; border: 1px solid #08090b;
+    background: var(--panel-bg); box-shadow: var(--panel-shadow);
+  }
+  .person-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .person-name-wrap { display: flex; align-items: center; gap: 6px; min-width: 0; }
+  .person-name {
+    min-width: 0; padding: 4px 10px; border-radius: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    background: var(--lcd-bg); border: 1px solid #000; box-shadow: var(--lcd-shadow);
+    font-size: 14px; font-weight: 700; color: var(--lcd-text); text-shadow: var(--lcd-glow);
+  }
+  .person-actions { margin-left: auto; display: flex; gap: 6px; flex-wrap: wrap; }
+  .collapse-btn { width: 28px; height: 28px; padding: 0; font-size: 13px; flex-shrink: 0; }
+  .person-body { margin-top: 12px; overflow-x: auto; }
+  .person-body.collapsed { display: none; }
+  .person-channels { width: 100%; border-collapse: collapse; margin-bottom: 10px; }
+  .person-channels th {
+    padding: 4px 8px; border-bottom: 1px solid #08090b; box-shadow: 0 1px 0 rgba(255,255,255,.04);
+    font-size: 10px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; text-align: left; color: #7d8594;
+  }
+  .person-channels td { padding: 7px 8px; border-bottom: 1px solid rgba(255,255,255,.05); font-size: 13px; vertical-align: middle; white-space: nowrap; }
+  .person-channels tr:last-child td { border-bottom: none; }
+  .person-channels td button { padding: 5px 9px; font-size: 11px; }
+  .ch-tag { font: 600 10px/1 var(--mono); color: var(--muted); }
+  .set-at { font: 11px/1 var(--mono); color: var(--muted); }
+  .fader-saved { font: 600 12px/1 var(--mono); color: var(--lcd-text); }
+  .fader-saved.none { color: var(--muted); }
+  .add-ch-row { display: flex; gap: 8px; align-items: center; margin-top: 6px; flex-wrap: wrap; }
+  .person-create-row { display: none; margin: 0 0 14px; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .person-create-row.visible { display: flex; }
+  .person-create-row input { width: 260px; max-width: 100%; }
+
+  /* Recessed input fields */
+  .rename-input, .add-ch-row select {
+    font: inherit; font-size: 13px; font-weight: 600; padding: 6px 9px; border-radius: 5px; color: var(--lcd-text);
+    background: #0b1418; border: 1px solid #000; box-shadow: inset 0 2px 4px rgba(0,0,0,.8), 0 1px 0 rgba(255,255,255,.05);
+  }
+  .rename-input { width: 180px; }
+  .rename-input:focus, .add-ch-row select:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .add-ch-row select { cursor: pointer; }
+  /* Channel rename */
+  .card-title-wrap { display: flex; align-items: center; gap: 6px; }
+  .rename-btn { padding: 2px 5px; font-size: 11px; opacity: .55; color: #8fb3bd; background: none; border: none; box-shadow: none; }
+  .rename-btn:hover:not(:disabled) { opacity: 1; filter: none; }
+
+  /* Horizontal faders in the group editor (same cap as the channel faders) */
+  .person-fader-cell { min-width: 220px; }
+  .person-fader-wrap { display: flex; align-items: center; gap: 10px; }
+  .fader-slider { -webkit-appearance: none; appearance: none; width: 140px; height: 24px; margin: 0; background: transparent; cursor: pointer; }
+  .fader-slider:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+  .fader-slider::-webkit-slider-runnable-track {
+    height: 6px; border-radius: 3px; background: linear-gradient(to bottom, #050608, #121419 60%, #050608);
+    box-shadow: inset 0 1px 3px rgba(0,0,0,.9), 0 1px 0 rgba(255,255,255,.05);
+  }
+  .fader-slider::-moz-range-track {
+    height: 6px; border-radius: 3px; background: linear-gradient(to bottom, #050608, #121419 60%, #050608);
+    box-shadow: inset 0 1px 3px rgba(0,0,0,.9), 0 1px 0 rgba(255,255,255,.05);
+  }
+  .fader-slider::-webkit-slider-thumb {
+    -webkit-appearance: none; width: 16px; height: 24px; margin-top: -9px; border-radius: 3px; border: 1px solid #0a0b0d; cursor: grab;
+    background: linear-gradient(to right, transparent 42%, #f4f6f8 42%, #f4f6f8 58%, transparent 58%),
+      linear-gradient(to right, #7a808a, #4b5058 22%, #2c3036 46%, #2c3036 54%, #4b5058 78%, #6d737d);
+    box-shadow: 0 2px 4px rgba(0,0,0,.65), inset 0 1px 0 rgba(255,255,255,.35);
+  }
+  .fader-slider::-moz-range-thumb {
+    width: 14px; height: 22px; border-radius: 3px; border: 1px solid #0a0b0d; cursor: grab;
+    background: linear-gradient(to right, transparent 42%, #f4f6f8 42%, #f4f6f8 58%, transparent 58%),
+      linear-gradient(to right, #7a808a, #4b5058 22%, #2c3036 46%, #2c3036 54%, #4b5058 78%, #6d737d);
+    box-shadow: 0 2px 4px rgba(0,0,0,.65), inset 0 1px 0 rgba(255,255,255,.35);
+  }
+  .fader-label { display: inline-block; min-width: 72px; font: 600 11px/1 var(--mono); color: var(--lcd-text); }
+
+  /* Vertical channel fader */
+  .fader-strip { width: 70px; flex-shrink: 0; display: flex; flex-direction: column; align-items: center; gap: 6px; }
+  .fader {
+    --travel-pad: 14px; /* half the cap height: the cap centre runs from top to bottom pad */
+    position: relative; width: 70px; height: 300px; outline: none; touch-action: none; user-select: none;
+  }
+  .fader-scale { position: absolute; left: 0; top: var(--travel-pad); bottom: var(--travel-pad); width: 70px; pointer-events: none; }
+  .fader-tick { position: absolute; left: 0; width: 70px; height: 0; }
+  .fader-tick::before, .fader-tick::after {
+    content: ""; position: absolute; top: 0; height: 1px; width: 9px; background: #4a505b;
+  }
+  .fader-tick::before { left: 21px; } .fader-tick::after { right: 6px; }
+  .fader-tick.unity::before, .fader-tick.unity::after { background: #8b93a1; width: 11px; }
+  .fader-tick span {
+    position: absolute; left: 0; width: 19px; transform: translateY(-50%); text-align: right;
+    font: 600 9px/1 ui-monospace, SFMono-Regular, Menlo, monospace; color: #6c7482;
+  }
+  .fader-tick.unity span { color: var(--text); }
+  .fader-slot {
+    position: absolute; left: 41px; top: 4px; bottom: 4px; width: 6px; margin-left: -3px; border-radius: 3px;
+    background: linear-gradient(to right, #050608, #121419 60%, #050608);
+    box-shadow: inset 0 1px 3px rgba(0,0,0,.9), 0 1px 0 rgba(255,255,255,.05);
+  }
+  .fader-cap {
+    position: absolute; left: 41px; width: 40px; height: 28px; margin-left: -20px; margin-top: -14px;
+    border-radius: 4px; cursor: grab; touch-action: none;
+    background:
+      linear-gradient(to bottom, transparent 46%, rgba(0,0,0,.55) 46%, rgba(0,0,0,.55) 54%, transparent 54%),
+      repeating-linear-gradient(to bottom, rgba(255,255,255,.10) 0 1px, rgba(0,0,0,.18) 1px 2px, transparent 2px 4px),
+      linear-gradient(to bottom, #7a808a 0%, #4b5058 22%, #2c3036 46%, #2c3036 54%, #4b5058 78%, #6d737d 100%);
+    box-shadow: 0 4px 8px rgba(0,0,0,.65), 0 1px 2px rgba(0,0,0,.8),
+      inset 0 1px 0 rgba(255,255,255,.35), inset 0 -1px 0 rgba(0,0,0,.6);
+  }
+  .fader-cap::after { /* the indicator line across the cap */
+    content: ""; position: absolute; left: 3px; right: 3px; top: 50%; height: 2px; margin-top: -1px;
+    background: #f4f6f8; border-radius: 1px; box-shadow: 0 0 4px rgba(255,255,255,.45);
+  }
+  .card.muted .fader-cap::after { background: var(--red); box-shadow: 0 0 5px rgba(231,76,60,.7); }
+  .fader.dragging .fader-cap { cursor: grabbing; filter: brightness(1.12); }
+  .fader:focus-visible .fader-cap { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .fader.disabled .fader-cap { cursor: not-allowed; filter: grayscale(1) brightness(.6); }
+  .fader.disabled .fader-cap::after { background: #8b93a1; box-shadow: none; }
+  .fader-db { font: 600 12px/1 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--text); min-height: 12px; }
+  .fader-db.unk { color: var(--muted); font-weight: 400; }
+
+  /* API documentation block */
+  .docs { margin-top: 40px; }
+  .docs details { border-bottom: 1px solid var(--line); }
+  .docs summary { cursor: pointer; padding: 14px 2px; font-size: 14px; font-weight: 600; list-style: none; }
+  .docs summary::-webkit-details-marker { display: none; }
+  .docs summary::before { content: "▸ "; color: var(--muted); }
+  .docs details[open] summary::before { content: "▾ "; }
+  .docs-body { padding: 4px 2px 20px; color: var(--text); }
+  .docs-body p { margin: 8px 0; }
+  .docs table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 13px; }
+  .docs th, .docs td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  .docs th { color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .05em; font-size: 11px; }
+  .docs td.method { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; white-space: nowrap; }
+  .docs .verb { display: inline-block; min-width: 48px; font-weight: 700; }
+  .docs .verb.get { color: var(--green); }
+  .docs .verb.post { color: var(--accent); }
+  .docs .verb.put { color: var(--amber); }
+  .docs .verb.delete { color: var(--red); }
+  .docs code, .docs pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .docs code { background: var(--panel2); border: 1px solid var(--line); border-radius: 5px; padding: 1px 6px; font-size: 12px; }
+  .docs pre { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; overflow-x: auto; font-size: 12px; line-height: 1.5; }
+  .docs ul { margin: 8px 0; padding-left: 20px; }
+  .docs li { margin: 4px 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Mixer Mute Service</h1>
+  <div class="status">
+    <div class="status-display">
+      <span class="pill"><span id="dot-conn" class="dot"></span><span id="txt-conn">mixer ...</span></span>
+      <span class="pill"><span id="dot-en" class="dot"></span><span id="txt-en">...</span></span>
+      <span class="pill opt"><span id="txt-age" class="muted-text">updates: —</span></span>
+      <span class="pill opt"><span id="txt-build" class="muted-text">build: dev</span></span>
+    </div>
+    <span class="panic-guard"><button id="panic-btn" class="danger">Panic</button></span>
+  </div>
+</header>
+
+<div class="page">
+<div class="console">
+  <h2 class="channels-label">Channels</h2>
+  <h2 class="master-label">Mute Gruppen</h2>
+  <div id="channels" class="strips"></div>
+  <aside class="master">
+    <div id="sidebar-persons"><span class="master-empty">Keine Mute Gruppen</span></div>
+  </aside>
+</div>
+
+<section class="groups-editor">
+  <div class="section-head">
+    <h2>Mute Gruppen verwalten</h2>
+    <button id="new-person-btn" class="primary">+ Neue Mute Gruppe</button>
+  </div>
+  <div id="person-create-row" class="person-create-row">
+    <input id="new-person-name" class="rename-input" type="text" placeholder="Name der Mute Gruppe" autocomplete="off" maxlength="64" />
+    <button id="create-person-save" class="primary">Save</button>
+    <button id="create-person-cancel">Cancel</button>
+  </div>
+  <div id="persons"></div>
+</section>
+
+  <section class="docs">
+    <h2>API Reference</h2>
+
+    <details>
+      <summary>Addressing channels</summary>
+      <div class="docs-body">
+        <p><strong>Channels</strong> are addressed by their <em>1-based number</em>
+        in the URL path — channel 2 is <code>/channels/2</code>. Valid range is
+        <code>1</code>...<code>max_channels</code> (set in <code>config.yaml</code>).
+        An out-of-range number returns <code>400 invalid channel</code>.</p>
+        <p>Every action only sends to the mixer if the channel is
+        <strong>safe</strong> — i.e. the service has observed a valid fader value
+        and the mixer link is live. Otherwise it is blocked with a reason (the
+        fader is never moved to a guessed position).</p>
+      </div>
+    </details>
+
+    <details>
+      <summary>Status endpoints</summary>
+      <div class="docs-body">
+        <table>
+          <tr><th>Endpoint</th><th>Description</th></tr>
+          <tr><td class="method"><span class="verb get">GET</span> /health</td>
+              <td>Service + connection status: <code>enabled</code>, <code>mixer_connected</code>, <code>last_update_age_seconds</code>.</td></tr>
+          <tr><td class="method"><span class="verb get">GET</span> /state</td>
+              <td>All channels with <code>fader_hex</code>, ages, <code>muted</code>, and <code>safe</code>.</td></tr>
+          <tr><td class="method"><span class="verb get">GET</span> /channels/{n}</td>
+              <td>State for a single channel.</td></tr>
+        </table>
+      </div>
+    </details>
+
+    <details>
+      <summary>Channel control</summary>
+      <div class="docs-body">
+        <table>
+          <tr><th>Endpoint</th><th>Description</th></tr>
+          <tr><td class="method"><span class="verb post">POST</span> /channels/{n}/mute</td>
+              <td>Mute channel <code>n</code>. Reuses the last observed fader value (never guesses).</td></tr>
+          <tr><td class="method"><span class="verb post">POST</span> /channels/{n}/unmute</td>
+              <td>Unmute channel <code>n</code>. Reuses the last observed fader value.</td></tr>
+          <tr><td class="method"><span class="verb post">POST</span> /channels/{n}/fader</td>
+              <td>Move the fader. Body: <code>{"value": 750}</code> — position <code>0</code> (−∞) to <code>1000</code> (top), about <code>750</code> = 0&nbsp;dB. Keeps the current mute state; blocked if that state is unknown.</td></tr>
+          <tr><td class="method"><span class="verb post">POST</span> /channels/{n}/recall-fader</td>
+              <td>Same, with a stored fader value as hex. Body: <code>{"fader_hex": "00803b44"}</code>. Used by the <em>Use</em> / <em>Use All</em> buttons.</td></tr>
+        </table>
+        <pre>curl -X POST http://localhost:8765/channels/2/mute
+curl -X POST http://localhost:8765/channels/2/unmute
+curl -X POST http://localhost:8765/channels/2/fader \
+  -H 'Content-Type: application/json' \
+  -d '{"value":750}'</pre>
+      </div>
+    </details>
+
+    <details>
+      <summary>Group control (backend API)</summary>
+      <div class="docs-body">
+        <p>Groups are managed via API and persisted in <code>groups.json</code>.
+        The API remains fully functional for Stream Deck or other HTTP clients.</p>
+        <table>
+          <tr><th>Endpoint</th><th>Description</th></tr>
+          <tr><td class="method"><span class="verb get">GET</span> /groups</td>
+              <td>List all groups and their channels.</td></tr>
+          <tr><td class="method"><span class="verb post">POST</span> /groups</td>
+              <td>Create a group. Body: <code>{"name": "...", "channels": [..]}</code></td></tr>
+          <tr><td class="method"><span class="verb get">GET</span> /groups/{name}</td>
+              <td>A single group's channels.</td></tr>
+            <tr><td class="method"><span class="verb post">POST</span> /groups/{name}/update</td>
+              <td>Replace a group's channels. Body: <code>{"channels": [..]}</code></td></tr>
+            <tr><td class="method"><span class="verb post">POST</span> /groups/{name}/delete</td>
+              <td>Delete a group.</td></tr>
+            <tr><td class="method"><span class="verb put">PUT</span> /groups/{name}</td>
+              <td>Legacy alias for group update.</td></tr>
+            <tr><td class="method"><span class="verb delete">DELETE</span> /groups/{name}</td>
+              <td>Legacy alias for group deletion.</td></tr>
+          <tr><td class="method"><span class="verb post">POST</span> /groups/{name}/mute</td>
+              <td>Mute every channel in the group (all-or-nothing).</td></tr>
+          <tr><td class="method"><span class="verb post">POST</span> /groups/{name}/unmute</td>
+              <td>Unmute every channel in the group.</td></tr>
+          <tr><td class="method"><span class="verb post">POST</span> /groups/{name}/toggle</td>
+              <td>Unmute if all channels are muted, otherwise mute.</td></tr>
+        </table>
+        <pre>curl -X POST http://localhost:8765/groups/drums/toggle
+curl -X POST http://localhost:8765/groups \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"horns","channels":[5,6,7]}'
+curl -X POST http://localhost:8765/groups/horns/update \\
+  -H 'Content-Type: application/json' \\
+  -d '{"channels":[5,6]}'
+curl -X POST http://localhost:8765/groups/horns/delete</pre>
+      </div>
+    </details>
+
+    <details>
+      <summary>Panic (disable / enable sending)</summary>
+      <div class="docs-body">
+        <table>
+          <tr><th>Endpoint</th><th>Description</th></tr>
+          <tr><td class="method"><span class="verb post">POST</span> /panic/disable</td>
+              <td>Block all sends immediately. State tracking keeps running.</td></tr>
+          <tr><td class="method"><span class="verb post">POST</span> /panic/enable</td>
+              <td>Re-enable sending.</td></tr>
+        </table>
+      </div>
+    </details>
+
+    <details>
+      <summary>Responses &amp; status codes</summary>
+      <div class="docs-body">
+        <p>Successful sends return <code>200</code>:</p>
+        <pre>{"ok": true, "channel": 2, "target_muted": true,
+ "fader_hex": "1f14b643", "sent_hex": "5a5a..."}</pre>
+        <p>Blocked requests carry a clear reason:</p>
+        <ul>
+          <li><code>400</code> — invalid channel number or fader_hex</li>
+          <li><code>404</code> — unknown group</li>
+          <li><code>409</code> — unsafe: no mixer link, stale/unknown fader,
+            service disabled (panic), or group with an unsafe channel</li>
+        </ul>
+        <pre>{"ok": false, "channel": 2, "reason": "no fader value known"}
+
+{"ok": false, "group": "drums", "reason": "unsafe group operation",
+ "details": [{"channel": 4, "reason": "no fader value known"}]}</pre>
+      </div>
+    </details>
+  </section>
+</div>
+
+<div id="toasts" class="toast-wrap"></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let LAST_STATE = { channels: {}, enabled: true, mixer_connected: false };
+let MAX_CH = 8;
+const UI_BUILD_ID = "__BUILD_ID__";
+let PERSONS_BOOTSTRAPPED = false;
+
+function resolvedBuildId() {
+  return UI_BUILD_ID && UI_BUILD_ID !== "__BUILD_ID__" ? UI_BUILD_ID : "dev";
+}
+
+function applyBuildMigrations() {
+  const key = "mixer_ui_build_id";
+  const cur = resolvedBuildId();
+  const prev = localStorage.getItem(key);
+  if (prev === cur) return;
+  // Channel names are local-only overrides; clear stale values after updates
+  // so server-configured names are visible on every device by default.
+  localStorage.removeItem("mixer_channel_names");
+  localStorage.setItem(key, cur);
+}
+
+// ---- Channel custom names (localStorage) --------------------------------
+
+function loadChannelNames() {
+  try { return JSON.parse(localStorage.getItem("mixer_channel_names") || "{}"); } catch { return {}; }
+}
+function saveChannelNames(names) { localStorage.setItem("mixer_channel_names", JSON.stringify(names)); }
+
+function getChannelDisplayName(ch, serverName) {
+  const names = loadChannelNames();
+  return names[String(ch)] || serverName || `Channel ${ch}`;
+}
+
+// ---- Fader values -------------------------------------------------------
+// The mixer encodes a fader as a little-endian float32 position from 0 (-inf,
+// bottom) to 1000 (top). The dB law below is inferred from captures (it matches
+// a Behringer-X32-style curve: 750 ~ 0 dB, 1000 = +10 dB) and is only used for
+// display -- what is sent is always the position.
+
+const FADER_MAX = 1000;
+// Labels below -30 dB crowd together on this law, so the scale jumps to -50.
+const FADER_TICKS = [10, 5, 0, -5, -10, -20, -30, -50, -Infinity];
+
+function isValidFaderHex(v) {
+  return typeof v === "string" && /^[0-9a-f]{8}$/i.test(v);
+}
+
+function faderHexToValue(hex) {
+  if (!isValidFaderHex(hex)) return null;
+  const dv = new DataView(new ArrayBuffer(4));
+  for (let i = 0; i < 4; i++) dv.setUint8(i, parseInt(hex.substr(i * 2, 2), 16));
+  const v = dv.getFloat32(0, true);
+  return Number.isFinite(v) && v >= 0 && v <= FADER_MAX ? v + 0 : null;
+}
+
+function faderValueToHex(value) {
+  const dv = new DataView(new ArrayBuffer(4));
+  dv.setFloat32(0, value, true);
+  let out = "";
+  for (let i = 0; i < 4; i++) out += dv.getUint8(i).toString(16).padStart(2, "0");
+  return out;
+}
+
+function faderToDb(value) {
+  const f = value / FADER_MAX;
+  if (f <= 0) return -Infinity;
+  if (f >= 0.5) return 40 * f - 30;
+  if (f >= 0.25) return 80 * f - 50;
+  if (f >= 0.0625) return 160 * f - 70;
+  return 480 * f - 90;
+}
+
+function dbToFader(db) {
+  let f;
+  if (db <= -90) f = 0;
+  else if (db >= -10) f = (db + 30) / 40;
+  else if (db >= -30) f = (db + 50) / 80;
+  else if (db >= -60) f = (db + 70) / 160;
+  else f = (db + 90) / 480;
+  return Math.max(0, Math.min(FADER_MAX, f * FADER_MAX));
+}
+
+function formatDb(value) {
+  if (value === null || value === undefined) return "—";
+  const db = faderToDb(value);
+  if (db === -Infinity) return "−∞";
+  const r = Math.round(db * 10) / 10;
+  return (r > 0 ? "+" : r < 0 ? "−" : "") + Math.abs(r).toFixed(1) + " dB";
+}
+
+// ---- Vertical channel faders ---------------------------------------------
+// Only the cap can be dragged (clicking the track never jumps the fader). While
+// dragging, the position is sent at most every FADER_SEND_MS and once more on
+// release. Every fader command also rewrites the channel's mute flag, so a
+// channel whose mute state is unknown cannot be moved at all.
+
+const FADER_SEND_MS = 100;
+const FADER_HOLD_MS = 1500;  // after a local move, ignore polled positions this long
+const FADER_CAP_PX = 28;     // must match .fader-cap height
+const FADERS = {};           // channel -> fader controller state
+
+function faderScaleHtml() {
+  return FADER_TICKS.map(db => {
+    const top = (1 - dbToFader(db) / FADER_MAX) * 100;
+    const label = db === -Infinity ? "−∞" : db > 0 ? `+${db}` : String(db).replace("-", "−");
+    return `<div class="fader-tick${db === 0 ? " unity" : ""}" style="top:${top.toFixed(2)}%"><span>${label}</span></div>`;
+  }).join("");
+}
+
+function faderStripHtml(ch) {
+  return `<div class="fader disabled" data-fader="${ch}" role="slider" tabindex="0" aria-orientation="vertical"
+      aria-valuemin="0" aria-valuemax="${FADER_MAX}" aria-label="Fader Kanal ${ch}">
+      <div class="fader-scale">${faderScaleHtml()}</div>
+      <div class="fader-slot"></div>
+      <div class="fader-cap"></div>
+    </div>
+    <div class="fader-db unk">—</div>`;
+}
+
+function faderBlockReason(c) {
+  if (!LAST_STATE.mixer_connected) return "keine Mixer-Verbindung";
+  if (!LAST_STATE.enabled) return "Panic aktiv";
+  if (!c || c.fader_value === null || c.fader_value === undefined) return "Faderwert unbekannt";
+  if (c.muted === null || c.muted === undefined) return "Mute-Status unbekannt";
+  if (!c.safe) return "Kanal unsicher";
+  return null;
+}
+
+function setFaderVisual(f, value) {
+  f.value = value;
+  const frac = value === null ? 1 : 1 - value / FADER_MAX;
+  f.cap.style.top = `calc(${FADER_CAP_PX / 2}px + ${frac.toFixed(4)} * (100% - ${FADER_CAP_PX}px))`;
+  f.db.textContent = formatDb(value);
+  f.db.classList.toggle("unk", value === null);
+  if (value === null) {
+    f.el.removeAttribute("aria-valuenow");
+  } else {
+    f.el.setAttribute("aria-valuenow", value.toFixed(1));
+  }
+  f.el.setAttribute("aria-valuetext", formatDb(value));
+}
+
+function moveFaderTo(f, value) {
+  if (f.failed || f.value === null) return;
+  const v = Math.round(Math.max(0, Math.min(FADER_MAX, value)) * 10) / 10;
+  if (v === f.value) return;
+  setFaderVisual(f, v);
+  f.pending = v;
+  f.holdUntil = Date.now() + FADER_HOLD_MS;
+  pumpFader(f);
+}
+
+async function pumpFader(f) {
+  if (f.inflight || f.timer || f.pending === null) return;
+  const wait = f.lastSent + FADER_SEND_MS - Date.now();
+  if (wait > 0) {
+    f.timer = setTimeout(() => { f.timer = null; pumpFader(f); }, wait);
+    return;
+  }
+  const value = f.pending;
+  f.pending = null;
+  f.inflight = true;
+  f.lastSent = Date.now();
+  let r;
+  try {
+    r = await api("POST", `/channels/${f.ch}/fader`, { value });
+  } catch (_) {
+    r = { ok: false, status: 0, data: { reason: "service unreachable" } };
+  }
+  f.inflight = false;
+  f.holdUntil = Date.now() + FADER_HOLD_MS;
+  if (!(r.ok && r.data.ok !== false)) {
+    // Stop this gesture and let the next poll show the real position again.
+    f.pending = null;
+    f.failed = true;
+    f.holdUntil = 0;
+    toast(`Kanal ${f.ch} Fader: ${r.data.reason || "HTTP " + r.status}`, false);
+    return;
+  }
+  pumpFader(f);
+}
+
+function endFaderDrag(f) {
+  if (!f.dragging) return;
+  f.dragging = false;
+  f.el.classList.remove("dragging");
+  f.holdUntil = Date.now() + FADER_HOLD_MS;
+}
+
+function attachFader(ch, el, dbEl) {
+  const f = {
+    ch, el, db: dbEl, cap: el.querySelector(".fader-cap"), value: null,
+    dragging: false, lastY: 0, holdUntil: 0, pending: null, inflight: false,
+    lastSent: 0, timer: null, failed: false, state: null,
+  };
+  FADERS[ch] = f;
+  setFaderVisual(f, null);
+
+  f.cap.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    if (el.classList.contains("disabled")) {
+      toast(`Kanal ${ch} Fader gesperrt: ${faderBlockReason(f.state) || "unsicher"}`, false);
+      return;
+    }
+    f.cap.setPointerCapture(e.pointerId);
+    f.dragging = true;
+    f.failed = false;
+    f.lastY = e.clientY;
+    el.classList.add("dragging");
+    el.focus({ preventScroll: true });
+  });
+  f.cap.addEventListener("pointermove", (e) => {
+    if (!f.dragging) return;
+    const travel = el.clientHeight - FADER_CAP_PX;
+    const dy = e.clientY - f.lastY;
+    f.lastY = e.clientY;
+    const fine = e.shiftKey ? 0.25 : 1;  // Shift = fine adjustment
+    moveFaderTo(f, f.value - (dy / travel) * FADER_MAX * fine);
+  });
+  for (const type of ["pointerup", "pointercancel", "lostpointercapture"]) {
+    f.cap.addEventListener(type, () => endFaderDrag(f));
+  }
+  el.addEventListener("keydown", (e) => {
+    const steps = { ArrowUp: 10, ArrowDown: -10, PageUp: 50, PageDown: -50 };
+    if (!(e.key in steps)) return;
+    e.preventDefault();
+    if (el.classList.contains("disabled")) return;
+    f.failed = false;
+    moveFaderTo(f, f.value + steps[e.key] * (e.shiftKey ? 0.1 : 1));
+  });
+}
+
+function syncFader(ch, c) {
+  const f = FADERS[ch];
+  if (!f) return;
+  f.state = c;
+  const reason = faderBlockReason(c);
+  const enabled = reason === null;
+  f.el.classList.toggle("disabled", !enabled);
+  f.el.setAttribute("aria-disabled", String(!enabled));
+  f.el.title = enabled ? "Ziehen am Griff (Shift = fein), Pfeiltasten" : `Gesperrt: ${reason}`;
+  if (!enabled) endFaderDrag(f);
+  const busy = f.dragging || f.inflight || f.timer || f.pending !== null || Date.now() < f.holdUntil;
+  if (!busy) {
+    const v = c && c.fader_value !== undefined ? c.fader_value : null;
+    setFaderVisual(f, v);
+  }
+}
+
+function migrateFaderPresets() {
+  // Presets saved before the fader encoding was fixed hold bytes from the old
+  // percent/calibration mapping, which are not real fader positions.
+  const key = "mixer_fader_presets_float";
+  if (localStorage.getItem(key)) return;
+  const list = loadPersons();
+  let cleared = 0;
+  for (const p of list) {
+    for (const entry of Object.values(p.channels || {})) {
+      if (entry && entry.fader_hex) { entry.fader_hex = null; entry.set_at = null; cleared++; }
+    }
+  }
+  savePersons(list);
+  localStorage.removeItem("mixer_fader_calibration");
+  localStorage.setItem(key, "1");
+  if (cleared) {
+    setTimeout(() => toast(`${cleared} gespeicherte Fader-Werte zurückgesetzt (altes Format). Bitte neu mit „Set“ speichern.`, false), 500);
+  }
+}
+
+function startRenameChannel(ch, currentName) {
+  const titleEl = document.querySelector(`[data-rename-ch="${ch}"]`);
+  if (!titleEl) return;
+  const wrap = titleEl.closest(".card-title-wrap");
+  if (!wrap) return;
+  const input = document.createElement("input");
+  input.className = "rename-input";
+  input.value = currentName;
+  input.maxLength = 32;
+  const finish = () => {
+    const val = input.value.trim();
+    if (!input.dataset.cancel && val && val !== currentName) {
+      const names = loadChannelNames();
+      names[String(ch)] = val;
+      saveChannelNames(names);
+    }
+    wrap.innerHTML = "";
+    wrap.dataset.name = "";
+    renderChannels(LAST_STATE);
+  };
+  input.addEventListener("keydown", e => {
+    if (e.key === "Enter") { e.preventDefault(); input.blur(); }
+    if (e.key === "Escape") { input.dataset.cancel = "1"; input.blur(); }
+  });
+  input.addEventListener("blur", finish);
+  wrap.innerHTML = "";
+  wrap.appendChild(input);
+  input.focus();
+  input.select();
+}
+
+function startRenamePerson(personId, currentName) {
+  const nameEl = document.querySelector(`[data-rename-person="${personId}"]`);
+  if (!nameEl) return;
+  const wrap = nameEl.closest(".person-name-wrap");
+  if (!wrap) return;
+  const input = document.createElement("input");
+  input.className = "rename-input";
+  input.value = currentName;
+  input.maxLength = 64;
+  const finish = () => {
+    const val = input.value.trim();
+    if (val && val !== currentName) {
+      const list = loadPersons();
+      const p = list.find(x => x.id === personId);
+      if (p) {
+        p.name = val;
+        savePersons(list);
+      }
+    }
+    renderPersons();
+    renderSidebar();
+  };
+  input.addEventListener("keydown", e => {
+    if (e.key === "Enter") { e.preventDefault(); input.blur(); }
+    if (e.key === "Escape") { renderPersons(); renderSidebar(); }
+  });
+  input.addEventListener("blur", finish);
+  wrap.innerHTML = "";
+  wrap.appendChild(input);
+  input.focus();
+  input.select();
+}
+
+// ---- Sidebar ------------------------------------------------------------
+
+function renderSidebar() {
+  const wrap = document.getElementById("sidebar-persons");
+  if (!wrap) return;
+  const list = loadPersons();
+  if (!list.length) {
+    wrap.innerHTML = `<span class="master-empty">Keine Mute Gruppen</span>`;
+    return;
+  }
+  const chans = LAST_STATE.channels || {};
+  wrap.innerHTML = list.map(p => {
+    const chs = Object.keys(p.channels || {}).map(Number).sort((a, b) => a - b);
+    // The LED only lights when every channel of the group is observed muted.
+    const allMuted = chs.length > 0 && chs.every(ch => chans[ch] && chans[ch].muted === true);
+    return `
+    <div class="sb-person">
+      <div class="sb-display">
+        <div class="sb-top">
+          <span class="sb-chs">${chs.length ? "CH " + chs.join(" · ") : "keine Kanäle"}</span>
+          <span class="led${allMuted ? " mute" : ""}" title="${allMuted ? "alle Kanäle gemutet" : "nicht alle Kanäle gemutet"}"></span>
+        </div>
+        <div class="sb-person-name" title="${escapeAttr(p.name)}">${escapeHtml(p.name)}</div>
+      </div>
+      <div class="sb-btns">
+        <button data-action="person-mute" data-pid="${escapeAttr(p.id)}" class="key-mute">Mute</button>
+        <button data-action="person-solo" data-pid="${escapeAttr(p.id)}" class="key-solo">Solo</button>
+        <button data-action="person-use-all" data-pid="${escapeAttr(p.id)}" ${Object.values(p.channels || {}).some(e => e.fader_hex) ? "" : "disabled"}>Use All</button>
+      </div>
+    </div>`;
+  }).join("");
+}
+
+function loadPersons() {
+  try { return JSON.parse(localStorage.getItem("mixer_persons") || "[]"); } catch { return []; }
+}
+function savePersons(list) {
+  localStorage.setItem("mixer_persons", JSON.stringify(list));
+}
+async function bootstrapPersonsFromBackend() {
+  if (PERSONS_BOOTSTRAPPED) return;
+
+  const existing = loadPersons();
+  if (existing.length) {
+    PERSONS_BOOTSTRAPPED = true;
+    return;
+  }
+
+  const r = await api("GET", "/groups");
+  if (!r.ok || !r.data || typeof r.data !== "object") return;
+
+  const names = Object.keys(r.data);
+  if (!names.length) {
+    PERSONS_BOOTSTRAPPED = true;
+    return;
+  }
+
+  const persons = names.map((name) => {
+    const channels = {};
+    for (const ch of (r.data[name] || [])) {
+      channels[String(ch)] = { fader_hex: null, set_at: null };
+    }
+    return { id: genId(), name, channels };
+  });
+
+  savePersons(persons);
+  normalizeCollapsedGroups();
+  PERSONS_BOOTSTRAPPED = true;
+}
+function loadCollapsedGroups() {
+  try { return JSON.parse(localStorage.getItem("mixer_person_collapsed") || "{}"); } catch { return {}; }
+}
+function saveCollapsedGroups(state) {
+  localStorage.setItem("mixer_person_collapsed", JSON.stringify(state || {}));
+}
+function isGroupCollapsed(personId) {
+  const state = loadCollapsedGroups();
+  return state[String(personId)] !== false;
+}
+function toggleGroupCollapsed(personId) {
+  const state = loadCollapsedGroups();
+  const key = String(personId);
+  const current = isGroupCollapsed(personId);
+  state[key] = !current;
+  saveCollapsedGroups(state);
+  renderPersons();
+}
+
+function normalizeCollapsedGroups() {
+  const list = loadPersons();
+  if (!list.length) return;
+  const state = loadCollapsedGroups();
+  let changed = false;
+  for (const p of list) {
+    if (typeof p.name === "string" && p.name.trim().toLowerCase() === "all") {
+      const key = String(p.id);
+      if (state[key] !== true) {
+        state[key] = true;
+        changed = true;
+      }
+    }
+  }
+  if (changed) saveCollapsedGroups(state);
+}
+function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
+
+function openPersonCreateRow() {
+  const row = $("person-create-row");
+  const input = $("new-person-name");
+  row.classList.add("visible");
+  input.value = "";
+  input.focus();
+}
+
+function closePersonCreateRow() {
+  const row = $("person-create-row");
+  const input = $("new-person-name");
+  row.classList.remove("visible");
+  input.value = "";
+}
+
+function savePerson() {
+  const name = $("new-person-name").value.trim();
+  if (!name) { toast("Name required", false); return; }
+  const list = loadPersons();
+  list.push({ id: genId(), name, channels: {} });
+  savePersons(list);
+  closePersonCreateRow();
+  renderPersons();
+  renderSidebar();
+}
+
+function deletePerson(id) {
+  const list = loadPersons().filter(p => p.id !== id);
+  savePersons(list);
+  renderPersons();
+  renderSidebar();
+}
+
+function duplicatePerson(id) {
+  const list = loadPersons();
+  const src = list.find(p => p.id === id);
+  if (!src) return;
+  let name = `${src.name} copy`;
+  const names = list.map(p => p.name);
+  for (let n = 2; names.includes(name); n++) name = `${src.name} copy ${n}`;
+  list.push({ id: genId(), name, channels: JSON.parse(JSON.stringify(src.channels || {})) });
+  savePersons(list);
+  renderPersons();
+  renderSidebar();
+  toast(`Mute Gruppe dupliziert als "${name}"`, true);
+}
+
+function setPersonChannelFader(personId, ch) {
+  const c = LAST_STATE.channels && LAST_STATE.channels[ch];
+  if (!c || !c.fader_hex) { toast(`Channel ${ch}: no fader value known`, false); return; }
+  const list = loadPersons();
+  const p = list.find(p => p.id === personId);
+  if (!p) return;
+  if (!p.channels) p.channels = {};
+  p.channels[ch] = { fader_hex: c.fader_hex, set_at: Date.now() };
+  savePersons(list);
+  renderPersons();
+  toast(`Channel ${ch}: fader ${c.fader_hex} saved`, true);
+}
+
+// ---- Group actions: all or nothing ---------------------------------------
+// A group action checks every channel it would touch against a fresh /state
+// and sends nothing if any of them is unsafe. If the service still blocks a
+// command mid-way (the state changed between check and send), the rest is not
+// sent; channels already sent stay as they are -- no automatic recovery writes.
+
+function channelUnsafeReason(state, ch) {
+  if (!state.mixer_connected) return "keine Mixer-Verbindung";
+  if (!state.enabled) return "Panic aktiv";
+  const c = state.channels && state.channels[ch];
+  if (!c) return "Kanal unbekannt";
+  if (c.fader_value === null || c.fader_value === undefined) return "Faderwert unbekannt";
+  if (c.muted === null || c.muted === undefined) return "Mute-Status unbekannt";
+  if (!c.safe) return "Kanal unsicher";
+  return null;
+}
+
+// buildSteps(state) returns the commands as [{ ch, path, body }], in send order.
+async function runGroupAction(label, buildSteps) {
+  let st;
+  try { st = await api("GET", "/state"); } catch (_) { st = { ok: false }; }
+  if (!st.ok) { toast(`${label}: Status nicht abrufbar, nichts gesendet`, false); return; }
+  const steps = buildSteps(st.data);
+  if (!steps.length) { toast(`${label}: nichts zu tun`, true); await refresh(); return; }
+  const blocked = steps
+    .map(s => ({ ch: s.ch, reason: channelUnsafeReason(st.data, s.ch) }))
+    .filter(b => b.reason);
+  if (blocked.length) {
+    toast(`${label} blockiert, nichts gesendet — ${blocked.map(b => `ch${b.ch}: ${b.reason}`).join(", ")}`, false);
+    await refresh();
+    return;
+  }
+  let sent = 0;
+  for (const s of steps) {
+    let r;
+    try { r = await api("POST", s.path, s.body); } catch (_) { r = { ok: false, status: 0, data: { reason: "service unreachable" } }; }
+    if (!(r.ok && r.data.ok !== false)) {
+      toast(`${label} abgebrochen bei ch${s.ch}: ${r.data.reason || "HTTP " + r.status} (${sent} von ${steps.length} gesendet)`, false);
+      await refresh();
+      return;
+    }
+    sent++;
+  }
+  toast(`${label}: ${sent} ok`, true);
+  await refresh();
+}
+
+function personChannelList(p) {
+  return Object.keys(p.channels || {}).map(Number).sort((a, b) => a - b);
+}
+
+async function useAllPersonFaders(personId) {
+  const p = loadPersons().find(p => p.id === personId);
+  if (!p) return;
+  const chs = personChannelList(p).filter(ch => p.channels[String(ch)].fader_hex);
+  if (!chs.length) { toast("Keine gespeicherten Faderwerte", false); return; }
+  await runGroupAction(`${p.name} Use All`, () => chs.map(ch => ({
+    ch, path: `/channels/${ch}/recall-fader`, body: { fader_hex: p.channels[String(ch)].fader_hex },
+  })));
+}
+
+async function mutePersonChannels(personId) {
+  const p = loadPersons().find(p => p.id === personId);
+  if (!p) return;
+  const chs = personChannelList(p);
+  if (!chs.length) { toast("Keine Kanäle zugewiesen", false); return; }
+  // Channels already observed muted need no command.
+  await runGroupAction(`${p.name} Mute`, (state) => chs
+    .filter(ch => !(state.channels[ch] && state.channels[ch].muted === true))
+    .map(ch => ({ ch, path: `/channels/${ch}/mute` })));
+}
+
+async function soloPersonChannels(personId) {
+  const p = loadPersons().find(p => p.id === personId);
+  if (!p) return;
+  const groupChs = personChannelList(p);
+  if (!groupChs.length) { toast("Keine Kanäle zugewiesen", false); return; }
+  // Mute the others first: if the action is cut short, more stays muted
+  // rather than less.
+  await runGroupAction(`${p.name} Solo`, (state) => {
+    const chans = state.channels || {};
+    const inGroup = new Set(groupChs);
+    const others = Object.keys(chans).map(Number).sort((a, b) => a - b).filter(ch => !inGroup.has(ch));
+    return [
+      ...others.filter(ch => chans[ch].muted !== true).map(ch => ({ ch, path: `/channels/${ch}/mute` })),
+      ...groupChs.filter(ch => !(chans[ch] && chans[ch].muted === false)).map(ch => ({ ch, path: `/channels/${ch}/unmute` })),
+    ];
+  });
+}
+
+async function usePersonChannelFader(personId, ch) {
+  const list = loadPersons();
+  const p = list.find(p => p.id === personId);
+  if (!p || !p.channels || !p.channels[String(ch)] || !p.channels[String(ch)].fader_hex) {
+    toast(`Channel ${ch}: no saved fader value`, false); return;
+  }
+  const fader_hex = p.channels[String(ch)].fader_hex;
+  const r = await api("POST", `/channels/${ch}/recall-fader`, { fader_hex });
+  if (r.ok && r.data.ok !== false) {
+    toast(`Channel ${ch}: fader ${fader_hex} set`, true);
+  } else {
+    toast(`Channel ${ch}: ${r.data.reason || "HTTP " + r.status}`, false);
+  }
+}
+
+async function setPersonChannelFaderValue(personId, ch, value) {
+  const fader_hex = faderValueToHex(value);
+  const list = loadPersons();
+  const p = list.find(x => x.id === personId);
+  if (!p) return;
+  if (!p.channels) p.channels = {};
+  p.channels[String(ch)] = { fader_hex, set_at: Date.now() };
+  savePersons(list);
+  renderPersons();
+  renderSidebar();
+
+  const r = await api("POST", `/channels/${ch}/fader`, { value });
+  if (r.ok && r.data.ok !== false) {
+    toast(`${p.name}: ch ${ch} Fader ${formatDb(value)} gesetzt`, true);
+  } else {
+    toast(`${p.name}: ch ${ch} ${r.data.reason || "HTTP " + r.status}`, false);
+  }
+  await refresh();
+}
+
+function removePersonChannel(personId, ch) {
+  const list = loadPersons();
+  const p = list.find(p => p.id === personId);
+  if (p && p.channels) delete p.channels[String(ch)];
+  savePersons(list);
+  renderPersons();
+}
+
+function addPersonChannel(personId, ch) {
+  if (!ch) return;
+  const list = loadPersons();
+  const p = list.find(p => p.id === personId);
+  if (!p) return;
+  if (!p.channels) p.channels = {};
+  if (!p.channels[String(ch)]) p.channels[String(ch)] = { fader_hex: null, set_at: null };
+  savePersons(list);
+  renderPersons();
+}
+
+function renderPersons() {
+  // Skip re-render if a select/input inside persons or the person create row is focused
+  const focused = document.activeElement;
+  const personsEl = $("persons");
+  const createEl = $("person-create-row");
+  if (focused) {
+    const tag = focused.tagName;
+    if (tag === "INPUT" || tag === "SELECT") {
+      if ((personsEl && personsEl.contains(focused)) || (createEl && createEl.contains(focused))) return;
+    }
+  }
+
+  const wrap = $("persons");
+  const list = loadPersons();
+  wrap.innerHTML = "";
+  if (!list.length) {
+    wrap.innerHTML = `<div class="muted-text">Noch keine Mute Gruppen. Oben erstellen.</div>`;
+    return;
+  }
+  const chans = LAST_STATE.channels || {};
+  const allChNums = Object.keys(chans).map(Number).sort((a, b) => a - b);
+
+  for (const person of list) {
+    const collapsed = isGroupCollapsed(person.id);
+    const assignedChs = Object.keys(person.channels || {}).map(Number).sort((a, b) => a - b);
+    const availableChs = allChNums.filter(ch => !assignedChs.includes(ch));
+
+    const rows = assignedChs.map(ch => {
+      const entry = person.channels[String(ch)] || {};
+      const chInfo = chans[ch];
+      const chName = escapeHtml(getChannelDisplayName(ch, chInfo && chInfo.name));
+      const savedValue = faderHexToValue(entry.fader_hex);
+      const faderSaved = entry.fader_hex
+        ? `<code class="fader-saved" title="${escapeAttr(entry.fader_hex)}">${savedValue === null ? "ungültig" : formatDb(savedValue)}</code>`
+        : `<span class="fader-saved none">—</span>`;
+      const liveValue = chInfo && chInfo.fader_value !== undefined ? chInfo.fader_value : null;
+      const baseValue = savedValue !== null ? savedValue : (liveValue !== null ? liveValue : 0);
+      const setAt = entry.set_at ? new Date(entry.set_at).toLocaleTimeString() : "never";
+      return `<tr>
+        <td>${chName} <span class="ch-tag">CH ${ch}</span></td>
+        <td>${faderSaved}</td>
+        <td class="person-fader-cell">
+          <div class="person-fader-wrap">
+            <input
+              type="range"
+              min="0"
+              max="${FADER_MAX}"
+              step="1"
+              class="fader-slider"
+              data-action="person-fader-input"
+              data-pid="${escapeAttr(person.id)}"
+              data-ch="${ch}"
+              value="${baseValue.toFixed(0)}"
+            />
+            <span class="fader-label" data-person-fader-label="${escapeAttr(person.id)}-${ch}">${formatDb(baseValue)}</span>
+          </div>
+        </td>
+        <td class="set-at">${setAt}</td>
+        <td>
+          <button data-action="person-set-fader" data-pid="${escapeAttr(person.id)}" data-ch="${ch}">Set</button>
+          <button data-action="person-use-fader" data-pid="${escapeAttr(person.id)}" data-ch="${ch}" class="primary" ${entry.fader_hex ? "" : "disabled"}>Use</button>
+          <button data-action="person-remove-ch" data-pid="${escapeAttr(person.id)}" data-ch="${ch}" class="danger">&#x2715;</button>
+        </td>
+      </tr>`;
+    }).join("");
+
+    const addSelect = availableChs.length
+      ? `<div class="add-ch-row">
+          <select id="add-ch-${escapeAttr(person.id)}">
+            <option value="">Add channel...</option>
+            ${availableChs.map(ch => {
+              return `<option value="${ch}">${escapeHtml(getChannelDisplayName(ch, chans[ch] && chans[ch].name))} (ch ${ch})</option>`;
+            }).join("")}
+          </select>
+          <button data-action="person-add-ch" data-pid="${escapeAttr(person.id)}">Add</button>
+        </div>`
+      : "";
+
+    const div = document.createElement("div");
+    div.className = "person-card";
+    div.innerHTML = `
+      <div class="person-head">
+        <div class="person-name-wrap">
+          <button class="collapse-btn" data-action="person-toggle-collapse" data-pid="${escapeAttr(person.id)}" title="${collapsed ? "Ausklappen" : "Einklappen"}">${collapsed ? "▸" : "▾"}</button>
+          <span class="person-name" data-rename-person="${escapeAttr(person.id)}">${escapeHtml(person.name)}</span>
+          <button class="rename-btn" data-action="person-rename" data-pid="${escapeAttr(person.id)}" data-name="${escapeAttr(person.name)}" title="Rename">&#9998;</button>
+        </div>
+        <div class="person-actions">
+          <button data-action="person-mute" data-pid="${escapeAttr(person.id)}" class="key-mute">Mute</button>
+          <button data-action="person-solo" data-pid="${escapeAttr(person.id)}" class="key-solo">Solo</button>
+          <button data-action="person-use-all" data-pid="${escapeAttr(person.id)}" ${Object.values(person.channels || {}).some(e => e.fader_hex) ? "" : "disabled"}>Use All</button>
+          <button data-action="person-duplicate" data-pid="${escapeAttr(person.id)}">Duplicate</button>
+          <button data-action="person-delete" data-pid="${escapeAttr(person.id)}" class="danger">Delete</button>
+        </div>
+      </div>
+      <div class="person-body ${collapsed ? "collapsed" : ""}">
+      ${assignedChs.length ? `<table class="person-channels">
+        <thead><tr><th>Channel</th><th>Saved fader</th><th>Fader</th><th>Set at</th><th></th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>` : `<div class="muted-text" style="font-size:12px;margin-bottom:8px;">Keine Kanäle zugewiesen.</div>`}
+      ${addSelect}
+      </div>`;
+    wrap.appendChild(div);
+  }
+}
+
+
+
+function toast(msg, ok = true) {
+  const el = document.createElement("div");
+  el.className = "toast " + (ok ? "ok" : "err");
+  el.textContent = msg;
+  $("toasts").appendChild(el);
+  setTimeout(() => el.remove(), 4000);
+}
+
+async function api(method, path, body) {
+  const opt = { method, headers: {} };
+  if (body !== undefined) { opt.headers["Content-Type"] = "application/json"; opt.body = JSON.stringify(body); }
+  const res = await fetch(path, opt);
+  let data = {};
+  try { data = await res.json(); } catch (_) {}
+  return { ok: res.ok, status: res.status, data };
+}
+
+// Report the outcome of a control/CRUD action, then refresh.
+async function act(method, path, body, label) {
+  const r = await api(method, path, body);
+  if (r.ok && r.data.ok !== false) {
+    toast(`${label}: ok`, true);
+  } else {
+    const reason = r.data.reason || `HTTP ${r.status}`;
+    const extra = r.data.age_seconds !== undefined ? ` (age ${r.data.age_seconds}s)` : "";
+    let detail = "";
+    if (Array.isArray(r.data.details)) {
+      detail = " — " + r.data.details.map(d => `ch${d.channel}: ${d.reason}`).join(", ");
+    }
+    toast(`${label}: ${reason}${extra}${detail}`, false);
+  }
+  await refresh();
+}
+
+// ---- rendering ----------------------------------------------------------
+
+function fmtAge(a) { return a === null || a === undefined ? "—" : a.toFixed(2) + "s"; }
+
+// Cards are built once per channel and then updated in place, so a fader that
+// is being dragged is never replaced by the once-per-second refresh.
+const CARDS = {};
+let CARD_KEYS = "";
+
+function buildChannelCard(ch) {
+  const card = document.createElement("div");
+  card.className = "card";
+  card.innerHTML = `
+    <div class="scribble">
+      <div class="scribble-top"><span>CH ${ch}</span><span class="led"></span></div>
+      <div class="card-title-wrap"></div>
+    </div>
+    <div class="fader-strip">${faderStripHtml(ch)}</div>
+    <button class="mute-key unk" data-action="channel-toggle" data-channel="${ch}" disabled>MUTE</button>`;
+  // The level readout sits in the scribble strip under the name.
+  const db = card.querySelector(".fader-db");
+  card.querySelector(".scribble").appendChild(db);
+  CARDS[ch] = card;
+  attachFader(ch, card.querySelector(".fader"), db);
+  return card;
+}
+
+function updateChannelCard(ch, c) {
+  const card = CARDS[ch];
+  const known = c.muted !== null && c.muted !== undefined;
+  card.className = "card " + (known ? (c.muted ? "muted" : "unmuted") : "");
+
+  const displayName = getChannelDisplayName(ch, c.name || ("Channel " + ch));
+  const titleWrap = card.querySelector(".card-title-wrap");
+  if (!titleWrap.querySelector("input") && titleWrap.dataset.name !== displayName) {
+    titleWrap.dataset.name = displayName;
+    titleWrap.innerHTML = `
+      <span class="card-title" data-rename-ch="${ch}" title="${escapeAttr(displayName)}">${escapeHtml(displayName)}</span>
+      <button class="rename-btn" data-action="channel-rename" data-channel="${ch}" data-name="${escapeAttr(displayName)}" title="Rename">&#9998;</button>`;
+  }
+
+  const led = card.querySelector(".led");
+  led.className = "led " + (c.safe ? "safe" : "unsafe");
+  led.title = (c.safe ? "sicher" : "unsicher: " + (faderBlockReason(c) || "Kanal unsicher"))
+    + ` · Fader ${fmtAge(c.fader_age_seconds)} alt`;
+
+  // Toggling needs an observed mute state; without one the key stays locked.
+  const key = card.querySelector(".mute-key");
+  const busy = TOGGLE_BUSY.has(String(ch));
+  key.className = "mute-key " + (!known ? "unk" : c.muted ? "on" : "off") + (busy ? " busy" : "");
+  key.disabled = !known;
+  key.textContent = known ? "MUTE" : "MUTE ?";
+  key.setAttribute("aria-pressed", known ? String(c.muted) : "mixed");
+  key.title = !known ? "Mute-Status unbekannt – gesperrt"
+    : c.muted ? "Gemutet – klicken zum Unmuten" : "Live – klicken zum Muten";
+  syncFader(ch, c);
+}
+
+function renderChannels(state) {
+  const wrap = $("channels");
+  const chans = state.channels || {};
+  const keys = Object.keys(chans).map(Number).sort((a, b) => a - b);
+  MAX_CH = keys.length || MAX_CH;
+  if (keys.join(",") !== CARD_KEYS) {
+    CARD_KEYS = keys.join(",");
+    wrap.innerHTML = "";
+    for (const k of Object.keys(CARDS)) delete CARDS[k];
+    for (const k of Object.keys(FADERS)) { clearTimeout(FADERS[k].timer); delete FADERS[k]; }
+    for (const ch of keys) wrap.appendChild(buildChannelCard(ch));
+  }
+  for (const ch of keys) updateChannelCard(ch, chans[ch]);
+}
+
+function escapeHtml(s) { return s.replace(/[&<>"']/g, m => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m])); }
+function escapeAttr(s) { return escapeHtml(s); }
+
+// ---- refresh loop -------------------------------------------------------
+
+let refreshSeq = 0;
+async function refresh() {
+  const seq = ++refreshSeq;
+  try {
+    const [health, state] = await Promise.all([
+      api("GET", "/health"), api("GET", "/state"),
+    ]);
+    // Drop a stale response if a newer refresh has since started (e.g. the
+    // per-second poll resolving after a click's own refresh) -- otherwise it
+    // would overwrite the fresh state with pre-click data.
+    if (seq !== refreshSeq) return;
+    LAST_STATE = state.data;
+    await bootstrapPersonsFromBackend();
+    const h = health.data;
+    $("dot-conn").className = "dot " + (h.mixer_connected ? "ok" : "bad");
+    $("txt-conn").textContent = h.mixer_connected ? "mixer connected" : "mixer offline";
+    $("dot-en").className = "dot " + (h.enabled ? "ok" : "bad");
+    $("txt-en").textContent = h.enabled ? "sending enabled" : "PANIC (disabled)";
+    $("txt-age").textContent = "updates: " + fmtAge(h.last_update_age_seconds);
+    const pb = $("panic-btn");
+    pb.textContent = h.enabled ? "Panic (disable)" : "Re-enable";
+    pb.className = h.enabled ? "danger" : "primary";
+    renderChannels(state.data);
+    renderPersons();
+    renderSidebar();
+  } catch (e) {
+    $("txt-conn").textContent = "service unreachable";
+    $("dot-conn").className = "dot bad";
+  }
+}
+
+// ---- events -------------------------------------------------------------
+
+// Optimistically reflect an action in the UI right away; the follow-up refresh
+// reconciles with the server (and reverts if the action was blocked).
+function optimistic(channels, muted) {
+  refreshSeq++;  // a poll already in flight carries pre-click state; drop it
+  for (const ch of channels) {
+    const c = LAST_STATE.channels && LAST_STATE.channels[ch];
+    if (c && c.safe) c.muted = muted === "toggle" ? !c.muted : muted;
+  }
+  renderChannels(LAST_STATE);
+}
+
+// One toggle per channel at a time: a double tap while the first request is
+// still pending would otherwise mute and immediately unmute again.
+const TOGGLE_BUSY = new Set();
+async function toggleChannel(ch) {
+  if (TOGGLE_BUSY.has(ch)) return;
+  TOGGLE_BUSY.add(ch);
+  try {
+    optimistic([ch], "toggle");
+    await act("POST", `/channels/${ch}/toggle`, undefined, `ch${ch} toggle`);
+  } finally {
+    TOGGLE_BUSY.delete(ch);
+    renderChannels(LAST_STATE);
+  }
+}
+
+document.addEventListener("click", (e) => {
+  const btn = e.target.closest("[data-action]");
+  if (!btn) return;
+  const a = btn.dataset.action;
+  const ch = btn.dataset.channel;
+  switch (a) {
+    case "channel-toggle": return toggleChannel(ch);
+    case "channel-rename": return startRenameChannel(Number(ch), btn.dataset.name);
+    case "person-mute":        return mutePersonChannels(btn.dataset.pid);
+    case "person-solo":        return soloPersonChannels(btn.dataset.pid);
+    case "person-use-all":     return useAllPersonFaders(btn.dataset.pid);
+    case "person-toggle-collapse": return toggleGroupCollapsed(btn.dataset.pid);
+    case "person-duplicate":   return duplicatePerson(btn.dataset.pid);
+    case "person-rename":      return startRenamePerson(btn.dataset.pid, btn.dataset.name || "");
+    case "person-delete":
+      if (confirm("Diese Mute Gruppe loeschen?")) { deletePerson(btn.dataset.pid); } return;
+    case "person-set-fader":   return setPersonChannelFader(btn.dataset.pid, Number(btn.dataset.ch));
+    case "person-use-fader":   return usePersonChannelFader(btn.dataset.pid, Number(btn.dataset.ch));
+    case "person-remove-ch":   return removePersonChannel(btn.dataset.pid, Number(btn.dataset.ch));
+    case "person-add-ch": {
+      const sel = document.getElementById(`add-ch-${btn.dataset.pid}`);
+      addPersonChannel(btn.dataset.pid, sel ? Number(sel.value) : null);
+      return;
+    }  }
+});
+
+document.addEventListener("input", (e) => {
+  const el = e.target;
+  if (!el || el.tagName !== "INPUT" || el.type !== "range") return;
+  const action = el.dataset.action;
+  const value = Number(el.value);
+  if (action === "person-fader-input") {
+    const pid = el.dataset.pid;
+    const ch = Number(el.dataset.ch);
+    const label = document.querySelector(`[data-person-fader-label="${pid}-${ch}"]`);
+    if (label) label.textContent = formatDb(value);
+  }
+});
+
+document.addEventListener("change", (e) => {
+  const el = e.target;
+  if (!el || el.tagName !== "INPUT" || el.type !== "range") return;
+  const action = el.dataset.action;
+  if (action === "person-fader-input") {
+    return setPersonChannelFaderValue(el.dataset.pid, Number(el.dataset.ch), Number(el.value));
+  }
+});
+
+
+$("new-person-btn").addEventListener("click", openPersonCreateRow);
+$("create-person-cancel").addEventListener("click", closePersonCreateRow);
+$("create-person-save").addEventListener("click", savePerson);
+$("new-person-name").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") { e.preventDefault(); savePerson(); }
+  if (e.key === "Escape") { closePersonCreateRow(); }
+});
+$("panic-btn").addEventListener("click", () => {
+  const path = LAST_STATE.enabled ? "/panic/disable" : "/panic/enable";
+  act("POST", path, undefined, "panic");
+});
+
+applyBuildMigrations();
+$("txt-build").textContent = "build: " + resolvedBuildId();
+normalizeCollapsedGroups();
+migrateFaderPresets();
+refresh();
+setInterval(refresh, 1000);
+</script>
+</body>
+</html>

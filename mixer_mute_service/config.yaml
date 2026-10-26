@@ -1,0 +1,72 @@
+mixer:
+  ip: "192.168.188.30"
+  port: 6400
+  max_channels: 16
+  channel_names:
+    1: "Pult"
+    2: "Gebet"
+    3: "Instrument"
+    4: "Raum hinten"
+    5: "Ear Monitor"
+    6: "Headset 1"
+    7: "Headset 2"
+    8: "Geige"
+    9: "Gruen"
+    10: "Lila"
+    11: "Schwarz"
+    12: "Klavier"
+    13: "AUX"
+    14: "PC2"
+    15: "PC1"
+    16: "USB"
+    17: "ECHO 1"
+    18: "Monitor"
+  # "direct": service connects to the mixer itself, next to the app (the mixer
+  #           accepts several clients). Recommended: its subscribe/keepalive
+  #           makes the mixer send a full state dump every 10 s.
+  # "proxy":  the app connects to THIS host (listen_host:listen_port) and the
+  #           service relays to the real mixer. Only one dump per app connection.
+  mode: "direct"
+  listen_host: "0.0.0.0"
+  listen_port: 6400
+  # Buses/auxes use a different frame format (type 72/71, 18 01 mute flag, 3d
+  # fader marker) and an object-id varint. They are discovered automatically
+  # from the mixer's state dump: every new bus gets the next free channel number
+  # (persisted in buses.json next to groups.json, so numbers never move). Only
+  # list a bus here to pin its channel number/name. Echo and Monitor are pinned
+  # to 17/18 because existing groups use those numbers; with them, the others
+  # come out as 19 Hall 2, 20 EarMonitor, 21 PC Input, 22 Keller+Kinder,
+  # 23 Bus 7, 24 Bus 8. The main L/R output (id 255) is never added automatically.
+  buses:
+    - {channel: 17, name: "Echo", id: "8001"}
+    - {channel: 18, name: "Monitor", id: "8301"}
+
+safety:
+  # How a stored fader value is trusted before sending:
+  #   latest  - use the most recent observed value while the proxy link is live
+  #             (recommended; the proxy relays every iPad + physical change).
+  #   session - only trust values observed during the current link session.
+  #   age     - only trust values newer than max_fader_age_seconds.
+  freshness_mode: "latest"
+  # Optional hard age cap (used by "age" mode; null = no cap).
+  max_fader_age_seconds: null
+  max_mute_age_seconds: null
+  allow_partial_groups: false
+  # Solo: unmuting a group also mutes every other channel (buses included);
+  # muting a group leaves others alone. Channels with no safe fader are skipped.
+  exclusive_group_unmute: true
+  group_send_delay_ms: 50
+  # Must stay false. There is no sanctioned path to send without a safety check.
+  allow_unsafe_debug_send: false
+
+server:
+  host: "0.0.0.0"
+  port: 8765
+
+groups:
+  drums:
+    channels: [1, 2, 3, 4]
+  vocals:
+    channels: [5, 6]
+  all:
+    channels: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]

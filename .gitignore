@@ -1,0 +1,26 @@
+# macOS / editors
+.DS_Store
+._*
+.idea/
+.claude/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Windows build output (built by GitHub Actions, see .github/workflows/ci.yml)
+mixer_mute_service/windows_deployment/.build-venv/
+mixer_mute_service/windows_deployment/build/
+mixer_mute_service/windows_deployment/dist/
+mixer_mute_service/windows_deployment/release/
+
+# Runtime data written by the service
+mixer_mute_service/buses.json
+
+# Traffic captures (contain the live console state)
+mixer_mute_service/captures/
+
+# Hand-made bundles and unpacked copies
+*.zip
+/mixer_mute_service 2/

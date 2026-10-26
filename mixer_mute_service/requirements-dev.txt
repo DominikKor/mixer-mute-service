@@ -1,0 +1,3 @@
+-r requirements.txt
+# TestClient (tests/selftest.py) drives the app over HTTP via httpx.
+httpx>=0.27

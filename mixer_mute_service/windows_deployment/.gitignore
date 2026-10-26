@@ -1,0 +1,7 @@
+.build-venv/
+build/
+dist/
+release/
+*.zip
+__pycache__/
+
