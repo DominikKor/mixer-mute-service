@@ -62,9 +62,9 @@
     background: linear-gradient(to right, #343a45, transparent);
   }
   /* Channel strips, laid out like the console: at most 8 per row, fewer when narrow */
+  :root { --strip-gap: 10px; --strips-max: calc(8 * 128px + 7 * var(--strip-gap)); }
   .strips {
-    --strip-gap: 10px;
-    display: grid; gap: 14px var(--strip-gap); max-width: calc(8 * 128px + 7 * var(--strip-gap));
+    display: grid; gap: 14px var(--strip-gap); max-width: var(--strips-max);
     grid-template-columns: repeat(auto-fill, minmax(max(92px, calc((100% - 7 * var(--strip-gap)) / 8)), 1fr));
   }
   .card {
@@ -308,7 +308,7 @@
   .screen-picker.fullscreen .screen-full { display: flex; }
   .screen-picker.fullscreen .pos-zone { visibility: hidden; }
   .screen-caption { margin-top: 18px; font: 600 11px/1 var(--mono); color: var(--lcd-dim); text-align: center; }
-  /* Collapsible sections (iPad first: the whole header row is the tap target) */
+  /* Collapsible sections (the whole header row is the tap/click target) */
   .panel { margin-top: 18px; }
   .panel-head { display: flex; align-items: center; gap: 12px; min-height: 52px; }
   button.section-toggle {
@@ -351,6 +351,9 @@
   .compact-switch input:focus-visible + .track { outline: 2px solid var(--accent); outline-offset: 2px; }
   /* Compact channels: name and mute key only, more strips per row */
   .strips.compact { max-width: none; grid-template-columns: repeat(auto-fill, minmax(124px, 1fr)); }
+  /* The channel strips stop at 8 x 128 px on wide (desktop) screens: end the
+     section head, and with it the Kompakt switch, flush with the last strip. */
+  .panel[data-section="channels"]:has(.strips:not(.compact)) .panel-head { max-width: var(--strips-max); }
   .strips.compact .fader-strip, .strips.compact .scribble .fader-db { display: none; }
   .strips.compact .card { gap: 10px; padding-bottom: 10px; }
   .strips.compact .card-title { font-size: 16px; }

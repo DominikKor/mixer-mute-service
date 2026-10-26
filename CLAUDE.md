@@ -691,11 +691,12 @@ Diese Statusframes können lang sein und viel Null-Padding enthalten.
 
 ⸻
 
-Web-Oberfläche: iPad first
-Die Weboberfläche (mixer_mute_service/app/static/index.html) wird vor allem auf einem 13-Zoll-iPad-Pro in Safari bedient, im Querformat UND im Hochformat. Desktop-Browser sind zweitrangig.
+Web-Oberfläche: iPad UND Desktop gleichwertig
+Die Weboberfläche (mixer_mute_service/app/static/index.html) wird auf einem 13-Zoll-iPad-Pro in Safari bedient (Querformat und Hochformat) UND genauso auf Desktop-PCs im Browser (Maus, breite Bildschirme). Beide sind gleich wichtig: keine Änderung darf eine der beiden Umgebungen schlechter machen.
 Regeln für jede UI-Änderung:
-1. Beide Ausrichtungen müssen ohne horizontales Scrollen funktionieren: Querformat ca. 1376 × 1032 CSS-Pixel, Hochformat ca. 1032 × 1376 (ältere 12,9-Zoll-Modelle: 1366 × 1024).
-2. Alles, was angetippt wird, mindestens 44 × 44 Pixel groß; Abschnitts-Köpfe (Desktop, Channels, Mute Gruppen) sind über die ganze Zeile antippbar und mindestens 52 Pixel hoch.
-3. Keine Funktion nur per Hover oder Tastatur erreichbar machen; Ziehen (Fader) muss mit dem Finger gehen.
-4. Vor dem Commit im Browser in beiden iPad-Größen prüfen (Viewport 1376 × 1032 und 1032 × 1376).
+1. Ohne horizontales Scrollen in allen Zielgrößen: iPad Querformat ca. 1376 × 1032 CSS-Pixel, Hochformat ca. 1032 × 1376 (ältere 12,9-Zoll-Modelle: 1366 × 1024); Desktop 1280 × 800, 1440 × 900, 1920 × 1080 und 2560 × 1440.
+2. Auf breiten Desktop-Bildschirmen sauber ausrichten: Bedienelemente eines Abschnitts (z. B. der Kompakt-Schalter) schließen bündig mit dessen Inhalt ab und stehen nicht verloren im leeren Raum; keine großen ungenutzten Flächen ohne Grund.
+3. Alles, was angetippt wird, mindestens 44 × 44 Pixel groß (die sichtbare Form darf kleiner sein, die Tippfläche nicht); Abschnitts-Köpfe (Desktop, Channels, Mute Gruppen) sind über die ganze Zeile antippbar und mindestens 52 Pixel hoch.
+4. Keine Funktion nur per Hover oder Tastatur erreichbar machen; Ziehen (Fader) muss mit dem Finger und mit der Maus gehen.
+5. Vor dem Commit im Browser in den iPad-Größen (1376 × 1032, 1032 × 1376) und mindestens in 1920 × 1080 und 1280 × 800 prüfen.
 Die API-Dokumentation steht nicht auf der Seite, sondern in der Swagger-Oberfläche unter /docs.
