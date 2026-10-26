@@ -87,7 +87,7 @@
   .led.unsafe { background: #f1c40f; box-shadow: 0 0 5px rgba(241,196,15,.75); }
   .card .card-title-wrap { justify-content: center; gap: 2px; min-height: 18px; margin-top: 5px; }
   .card-title {
-    min-width: 0; font-size: 12px; font-weight: 600; color: #d4eef5; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    min-width: 0; font-size: 14px; font-weight: 600; color: #d4eef5; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     text-shadow: 0 0 6px rgba(120,220,255,.3);
   }
   .card .rename-btn { display: none; flex-shrink: 0; padding: 0 2px; border: none; background: none; color: #8fb3bd; }
@@ -192,8 +192,7 @@
   .toast.err::before { background: #ff4b3a; box-shadow: 0 0 6px rgba(255,75,58,.85); }
   .muted-text { color: var(--muted); }
 
-  /* Page layout: the group master section sits right next to the channel
-     strips instead of at the window edge; below ~1160px it moves above them. */
+  /* Page layout: three collapsible sections (Desktop, Channels, Mute Gruppen) */
   .page { max-width: 1480px; margin: 0 auto; padding: 0 24px 48px; }
   /* Desktop display keys: two-line keys with a readiness LED */
   .desktop-launch-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
@@ -208,52 +207,61 @@
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
   .display-key-meta { font: 600 10px/1 var(--mono); color: #7f8b98; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .console {
-    display: grid; gap: 0 24px; align-items: start;
-    grid-template-columns: minmax(0, calc(8 * 128px + 70px)) minmax(220px, 280px);
+  /* Collapsible sections (iPad first: the whole header row is the tap target) */
+  .panel { margin-top: 18px; }
+  .panel-head { display: flex; align-items: center; gap: 12px; min-height: 52px; }
+  button.section-toggle {
+    flex: 1; display: flex; align-items: center; gap: 12px; min-width: 0; min-height: 52px; padding: 6px 4px;
+    color: #9aa3b2; background: none; border: none; box-shadow: none; text-align: left; border-radius: 6px;
+    font-size: 16px; font-weight: 800; letter-spacing: .16em; text-transform: uppercase; text-shadow: 0 1px 0 #000;
+    -webkit-tap-highlight-color: transparent;
   }
-  .master {
-    position: sticky; top: calc(var(--header-h) + 16px);
-    max-height: calc(100vh - var(--header-h) - 32px); overflow-y: auto;
-    padding: 10px; border-radius: 8px; border: 1px solid #08090b;
-    background: var(--panel-bg); box-shadow: var(--panel-shadow);
+  button.section-toggle:hover:not(:disabled) { color: #d9dde3; filter: none; }
+  button.section-toggle:active:not(:disabled) { transform: none; box-shadow: none; }
+  .section-toggle::before { /* chevron */
+    content: "▸"; display: inline-block; width: 18px; font-size: 15px; color: #6c7482; transition: transform .15s;
   }
-  @media (max-width: 1159px) {
-    .console { grid-template-columns: minmax(0, 1fr); }
-    .master-label { order: 1; }
-    .master { order: 2; position: static; max-height: none; }
-    .channels-label { order: 3; }
-    #channels { order: 4; }
+  .panel.open .section-toggle::before { transform: rotate(90deg); }
+  .section-toggle::after {
+    content: ""; flex: 1; height: 1px; box-shadow: 0 1px 0 rgba(0,0,0,.6);
+    background: linear-gradient(to right, #343a45, transparent);
   }
+  .panel-tools { display: flex; align-items: center; gap: 10px; }
+  .panel:not(.open) .panel-tools, .panel:not(.open) .panel-body { display: none; }
+  .panel-body { padding-bottom: 8px; }
+  /* Compact switch for the channel section */
+  .compact-switch {
+    display: inline-flex; align-items: center; gap: 10px; min-height: 44px; padding: 0 4px; cursor: pointer;
+    font-size: 12px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; color: #9aa1ad;
+    -webkit-tap-highlight-color: transparent; user-select: none;
+  }
+  .compact-switch input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+  .compact-switch .track {
+    position: relative; width: 52px; height: 30px; border-radius: 15px; border: 1px solid #000;
+    background: #0b1418; box-shadow: inset 0 2px 5px rgba(0,0,0,.85), 0 1px 0 rgba(255,255,255,.05);
+  }
+  .compact-switch .track::after {
+    content: ""; position: absolute; top: 3px; left: 3px; width: 22px; height: 22px; border-radius: 50%;
+    background: linear-gradient(to bottom, #6d737d, #3b4049); box-shadow: 0 2px 3px rgba(0,0,0,.6), inset 0 1px 0 rgba(255,255,255,.3);
+    transition: transform .15s;
+  }
+  .compact-switch input:checked + .track { background: linear-gradient(to bottom, #2a6cc4, #3584e6); }
+  .compact-switch input:checked + .track::after { transform: translateX(22px); }
+  .compact-switch input:focus-visible + .track { outline: 2px solid var(--accent); outline-offset: 2px; }
+  /* Compact channels: name and mute key only, more strips per row */
+  .strips.compact { max-width: none; grid-template-columns: repeat(auto-fill, minmax(124px, 1fr)); }
+  .strips.compact .fader-strip, .strips.compact .scribble .fader-db { display: none; }
+  .strips.compact .card { gap: 10px; padding-bottom: 10px; }
+  .strips.compact .card-title { font-size: 16px; }
+  .strips.compact button.mute-key { width: 100%; height: 48px; }
   @media (max-width: 700px) {
     header { padding: 8px 12px; }
     .pill.opt { display: none; }
     .page { padding: 0 12px 40px; }
   }
 
-  /* Group modules in the master section */
-  #sidebar-persons { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 220px), 1fr)); }
-  .master-empty { color: var(--muted); font-size: 12px; }
-  .sb-person {
-    padding: 8px; border-radius: 6px; background: rgba(0,0,0,.2);
-    box-shadow: inset 0 1px 3px rgba(0,0,0,.55), 0 1px 0 rgba(255,255,255,.04);
-  }
-  .sb-display {
-    margin-bottom: 8px; padding: 5px 8px 6px; border-radius: 4px;
-    background: var(--lcd-bg); border: 1px solid #000; box-shadow: var(--lcd-shadow);
-  }
-  .sb-top { display: flex; justify-content: space-between; align-items: center; gap: 8px; font: 600 10px/1 var(--mono); color: var(--lcd-dim); }
-  .sb-chs { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .sb-person-name {
-    margin-top: 4px; font-size: 13px; font-weight: 700; color: var(--lcd-text); text-shadow: var(--lcd-glow);
-    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  }
-  .sb-btns { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
-  .sb-btns button { padding: 9px 2px; font-size: 11px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
-
   /* Mute group editor */
-  .section-head { display: flex; align-items: center; gap: 14px; margin: 36px 0 12px; }
-  .section-head h2 { flex: 1; margin: 0; }
+  .person-name-wrap .led { flex-shrink: 0; }
   #persons { display: grid; gap: 14px; align-items: start; grid-template-columns: repeat(auto-fill, minmax(min(100%, 540px), 1fr)); }
   .person-card {
     min-width: 0; padding: 12px; border-radius: 8px; border: 1px solid #08090b;
@@ -373,28 +381,7 @@
   .fader-db.unk { color: var(--muted); font-weight: 400; }
 
   /* API documentation block */
-  .docs { margin-top: 40px; }
-  .docs details { border-bottom: 1px solid var(--line); }
-  .docs summary { cursor: pointer; padding: 14px 2px; font-size: 14px; font-weight: 600; list-style: none; }
-  .docs summary::-webkit-details-marker { display: none; }
-  .docs summary::before { content: "▸ "; color: var(--muted); }
-  .docs details[open] summary::before { content: "▾ "; }
-  .docs-body { padding: 4px 2px 20px; color: var(--text); }
-  .docs-body p { margin: 8px 0; }
-  .docs table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 13px; }
-  .docs th, .docs td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
-  .docs th { color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .05em; font-size: 11px; }
-  .docs td.method { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; white-space: nowrap; }
-  .docs .verb { display: inline-block; min-width: 48px; font-weight: 700; }
-  .docs .verb.get { color: var(--green); }
-  .docs .verb.post { color: var(--accent); }
-  .docs .verb.put { color: var(--amber); }
-  .docs .verb.delete { color: var(--red); }
-  .docs code, .docs pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-  .docs code { background: var(--panel2); border: 1px solid var(--line); border-radius: 5px; padding: 1px 6px; font-size: 12px; }
-  .docs pre { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; overflow-x: auto; font-size: 12px; line-height: 1.5; }
-  .docs ul { margin: 8px 0; padding-left: 20px; }
-  .docs li { margin: 4px 0; }
+
 </style>
 </head>
 <body>
@@ -413,160 +400,45 @@
 </header>
 
 <div class="page">
-<section class="desktop-launch" aria-label="Desktop-Aktionen">
-  <h2>Desktop</h2>
-  <div id="desktop-profiles" class="desktop-launch-actions">
-    <span id="desktop-launch-status" class="desktop-launch-status">Profile werden geladen</span>
+<section class="panel" data-section="desktop">
+  <div class="panel-head">
+    <button class="section-toggle" aria-expanded="true" aria-controls="desktop-body">Desktop</button>
+  </div>
+  <div id="desktop-body" class="panel-body">
+    <div id="desktop-profiles" class="desktop-launch-actions">
+      <span id="desktop-launch-status" class="desktop-launch-status">Profile werden geladen</span>
+    </div>
   </div>
 </section>
-<div class="console">
-  <h2 class="channels-label">Channels</h2>
-  <h2 class="master-label">Mute Gruppen</h2>
-  <div id="channels" class="strips"></div>
-  <aside class="master">
-    <div id="sidebar-persons"><span class="master-empty">Keine Mute Gruppen</span></div>
-  </aside>
-</div>
 
-<section class="groups-editor">
-  <div class="section-head">
-    <h2>Mute Gruppen verwalten</h2>
-    <button id="new-person-btn" class="primary">+ Neue Mute Gruppe</button>
+<section class="panel" data-section="channels">
+  <div class="panel-head">
+    <button class="section-toggle" aria-expanded="true" aria-controls="channels-body">Channels</button>
+    <div class="panel-tools">
+      <label class="compact-switch"><input id="compact-toggle" type="checkbox" /><span class="track"></span>Kompakt</label>
+    </div>
   </div>
-  <div id="person-create-row" class="person-create-row">
-    <input id="new-person-name" class="rename-input" type="text" placeholder="Name der Mute Gruppe" autocomplete="off" maxlength="64" />
-    <button id="create-person-save" class="primary">Save</button>
-    <button id="create-person-cancel">Cancel</button>
+  <div id="channels-body" class="panel-body">
+    <div id="channels" class="strips"></div>
   </div>
-  <div id="persons"></div>
 </section>
 
-  <section class="docs">
-    <h2>API Reference</h2>
-
-    <details>
-      <summary>Addressing channels</summary>
-      <div class="docs-body">
-        <p><strong>Channels</strong> are addressed by their <em>1-based number</em>
-        in the URL path — channel 2 is <code>/channels/2</code>. Valid range is
-        <code>1</code>...<code>max_channels</code> (set in <code>config.yaml</code>).
-        An out-of-range number returns <code>400 invalid channel</code>.</p>
-        <p>Every action only sends to the mixer if the channel is
-        <strong>safe</strong> — i.e. the service has observed a valid fader value
-        and the mixer link is live. Otherwise it is blocked with a reason (the
-        fader is never moved to a guessed position).</p>
-      </div>
-    </details>
-
-    <details>
-      <summary>Status endpoints</summary>
-      <div class="docs-body">
-        <table>
-          <tr><th>Endpoint</th><th>Description</th></tr>
-          <tr><td class="method"><span class="verb get">GET</span> /health</td>
-              <td>Service + connection status: <code>enabled</code>, <code>mixer_connected</code>, <code>last_update_age_seconds</code>.</td></tr>
-          <tr><td class="method"><span class="verb get">GET</span> /state</td>
-              <td>All channels with <code>fader_hex</code>, ages, <code>muted</code>, and <code>safe</code>.</td></tr>
-          <tr><td class="method"><span class="verb get">GET</span> /channels/{n}</td>
-              <td>State for a single channel.</td></tr>
-        </table>
-      </div>
-    </details>
-
-    <details>
-      <summary>Channel control</summary>
-      <div class="docs-body">
-        <table>
-          <tr><th>Endpoint</th><th>Description</th></tr>
-          <tr><td class="method"><span class="verb post">POST</span> /channels/{n}/mute</td>
-              <td>Mute channel <code>n</code>. Reuses the last observed fader value (never guesses).</td></tr>
-          <tr><td class="method"><span class="verb post">POST</span> /channels/{n}/unmute</td>
-              <td>Unmute channel <code>n</code>. Reuses the last observed fader value.</td></tr>
-          <tr><td class="method"><span class="verb post">POST</span> /channels/{n}/fader</td>
-              <td>Move the fader. Body: <code>{"value": 750}</code> — position <code>0</code> (−∞) to <code>1000</code> (top), about <code>750</code> = 0&nbsp;dB. Keeps the current mute state; blocked if that state is unknown.</td></tr>
-          <tr><td class="method"><span class="verb post">POST</span> /channels/{n}/recall-fader</td>
-              <td>Same, with a stored fader value as hex. Body: <code>{"fader_hex": "00803b44"}</code>. Used by the <em>Use</em> / <em>Use All</em> buttons.</td></tr>
-        </table>
-        <pre>curl -X POST http://localhost:8765/channels/2/mute
-curl -X POST http://localhost:8765/channels/2/unmute
-curl -X POST http://localhost:8765/channels/2/fader \
-  -H 'Content-Type: application/json' \
-  -d '{"value":750}'</pre>
-      </div>
-    </details>
-
-    <details>
-      <summary>Group control (backend API)</summary>
-      <div class="docs-body">
-        <p>Groups are managed via API and persisted in <code>groups.json</code>.
-        The API remains fully functional for Stream Deck or other HTTP clients.</p>
-        <table>
-          <tr><th>Endpoint</th><th>Description</th></tr>
-          <tr><td class="method"><span class="verb get">GET</span> /groups</td>
-              <td>List all groups and their channels.</td></tr>
-          <tr><td class="method"><span class="verb post">POST</span> /groups</td>
-              <td>Create a group. Body: <code>{"name": "...", "channels": [..]}</code></td></tr>
-          <tr><td class="method"><span class="verb get">GET</span> /groups/{name}</td>
-              <td>A single group's channels.</td></tr>
-            <tr><td class="method"><span class="verb post">POST</span> /groups/{name}/update</td>
-              <td>Replace a group's channels. Body: <code>{"channels": [..]}</code></td></tr>
-            <tr><td class="method"><span class="verb post">POST</span> /groups/{name}/delete</td>
-              <td>Delete a group.</td></tr>
-            <tr><td class="method"><span class="verb put">PUT</span> /groups/{name}</td>
-              <td>Legacy alias for group update.</td></tr>
-            <tr><td class="method"><span class="verb delete">DELETE</span> /groups/{name}</td>
-              <td>Legacy alias for group deletion.</td></tr>
-          <tr><td class="method"><span class="verb post">POST</span> /groups/{name}/mute</td>
-              <td>Mute every channel in the group (all-or-nothing).</td></tr>
-          <tr><td class="method"><span class="verb post">POST</span> /groups/{name}/unmute</td>
-              <td>Unmute every channel in the group.</td></tr>
-          <tr><td class="method"><span class="verb post">POST</span> /groups/{name}/toggle</td>
-              <td>Unmute if all channels are muted, otherwise mute.</td></tr>
-        </table>
-        <pre>curl -X POST http://localhost:8765/groups/drums/toggle
-curl -X POST http://localhost:8765/groups \
-  -H 'Content-Type: application/json' \
-  -d '{"name":"horns","channels":[5,6,7]}'
-curl -X POST http://localhost:8765/groups/horns/update \\
-  -H 'Content-Type: application/json' \\
-  -d '{"channels":[5,6]}'
-curl -X POST http://localhost:8765/groups/horns/delete</pre>
-      </div>
-    </details>
-
-    <details>
-      <summary>Panic (disable / enable sending)</summary>
-      <div class="docs-body">
-        <table>
-          <tr><th>Endpoint</th><th>Description</th></tr>
-          <tr><td class="method"><span class="verb post">POST</span> /panic/disable</td>
-              <td>Block all sends immediately. State tracking keeps running.</td></tr>
-          <tr><td class="method"><span class="verb post">POST</span> /panic/enable</td>
-              <td>Re-enable sending.</td></tr>
-        </table>
-      </div>
-    </details>
-
-    <details>
-      <summary>Responses &amp; status codes</summary>
-      <div class="docs-body">
-        <p>Successful sends return <code>200</code>:</p>
-        <pre>{"ok": true, "channel": 2, "target_muted": true,
- "fader_hex": "1f14b643", "sent_hex": "5a5a..."}</pre>
-        <p>Blocked requests carry a clear reason:</p>
-        <ul>
-          <li><code>400</code> — invalid channel number or fader_hex</li>
-          <li><code>404</code> — unknown group</li>
-          <li><code>409</code> — unsafe: no mixer link, stale/unknown fader,
-            service disabled (panic), or group with an unsafe channel</li>
-        </ul>
-        <pre>{"ok": false, "channel": 2, "reason": "no fader value known"}
-
-{"ok": false, "group": "drums", "reason": "unsafe group operation",
- "details": [{"channel": 4, "reason": "no fader value known"}]}</pre>
-      </div>
-    </details>
-  </section>
+<section class="panel" data-section="groups">
+  <div class="panel-head">
+    <button class="section-toggle" aria-expanded="true" aria-controls="groups-body">Mute Gruppen</button>
+    <div class="panel-tools">
+      <button id="new-person-btn" class="primary">+ Neue Mute Gruppe</button>
+    </div>
+  </div>
+  <div id="groups-body" class="panel-body">
+    <div id="person-create-row" class="person-create-row">
+      <input id="new-person-name" class="rename-input" type="text" placeholder="Name der Mute Gruppe" autocomplete="off" maxlength="64" />
+      <button id="create-person-save" class="primary">Save</button>
+      <button id="create-person-cancel">Cancel</button>
+    </div>
+    <div id="persons"></div>
+  </div>
+</section>
 </div>
 
 <dialog id="update-dialog" class="update-dialog" aria-labelledby="update-title">
@@ -906,50 +778,16 @@ function startRenamePerson(personId, currentName) {
       }
     }
     renderPersons();
-    renderSidebar();
   };
   input.addEventListener("keydown", e => {
     if (e.key === "Enter") { e.preventDefault(); input.blur(); }
-    if (e.key === "Escape") { renderPersons(); renderSidebar(); }
+    if (e.key === "Escape") { renderPersons(); }
   });
   input.addEventListener("blur", finish);
   wrap.innerHTML = "";
   wrap.appendChild(input);
   input.focus();
   input.select();
-}
-
-// ---- Sidebar ------------------------------------------------------------
-
-function renderSidebar() {
-  const wrap = document.getElementById("sidebar-persons");
-  if (!wrap) return;
-  const list = loadPersons();
-  if (!list.length) {
-    wrap.innerHTML = `<span class="master-empty">Keine Mute Gruppen</span>`;
-    return;
-  }
-  const chans = LAST_STATE.channels || {};
-  wrap.innerHTML = list.map(p => {
-    const chs = Object.keys(p.channels || {}).map(Number).sort((a, b) => a - b);
-    // The LED only lights when every channel of the group is observed muted.
-    const allMuted = chs.length > 0 && chs.every(ch => chans[ch] && chans[ch].muted === true);
-    return `
-    <div class="sb-person">
-      <div class="sb-display">
-        <div class="sb-top">
-          <span class="sb-chs">${chs.length ? "CH " + chs.join(" · ") : "keine Kanäle"}</span>
-          <span class="led${allMuted ? " mute" : ""}" title="${allMuted ? "alle Kanäle gemutet" : "nicht alle Kanäle gemutet"}"></span>
-        </div>
-        <div class="sb-person-name" title="${escapeAttr(p.name)}">${escapeHtml(p.name)}</div>
-      </div>
-      <div class="sb-btns">
-        <button data-action="person-mute" data-pid="${escapeAttr(p.id)}" class="key-mute">Mute</button>
-        <button data-action="person-solo" data-pid="${escapeAttr(p.id)}" class="key-solo">Solo</button>
-        <button data-action="person-use-all" data-pid="${escapeAttr(p.id)}" ${Object.values(p.channels || {}).some(e => e.fader_hex) ? "" : "disabled"}>Use All</button>
-      </div>
-    </div>`;
-  }).join("");
 }
 
 function loadPersons() {
@@ -1048,14 +886,12 @@ function savePerson() {
   savePersons(list);
   closePersonCreateRow();
   renderPersons();
-  renderSidebar();
 }
 
 function deletePerson(id) {
   const list = loadPersons().filter(p => p.id !== id);
   savePersons(list);
   renderPersons();
-  renderSidebar();
 }
 
 function duplicatePerson(id) {
@@ -1068,7 +904,6 @@ function duplicatePerson(id) {
   list.push({ id: genId(), name, channels: JSON.parse(JSON.stringify(src.channels || {})) });
   savePersons(list);
   renderPersons();
-  renderSidebar();
   toast(`Mute Gruppe dupliziert als "${name}"`, true);
 }
 
@@ -1199,7 +1034,6 @@ async function setPersonChannelFaderValue(personId, ch, value) {
   p.channels[String(ch)] = { fader_hex, set_at: Date.now() };
   savePersons(list);
   renderPersons();
-  renderSidebar();
 
   const r = await api("POST", `/channels/${ch}/fader`, { value });
   if (r.ok && r.data.ok !== false) {
@@ -1254,6 +1088,8 @@ function renderPersons() {
   for (const person of list) {
     const collapsed = isGroupCollapsed(person.id);
     const assignedChs = Object.keys(person.channels || {}).map(Number).sort((a, b) => a - b);
+    // The LED only lights when every channel of the group is observed muted.
+    const allMuted = assignedChs.length > 0 && assignedChs.every(ch => chans[ch] && chans[ch].muted === true);
     const availableChs = allChNums.filter(ch => !assignedChs.includes(ch));
 
     const rows = assignedChs.map(ch => {
@@ -1313,6 +1149,7 @@ function renderPersons() {
       <div class="person-head">
         <div class="person-name-wrap">
           <button class="collapse-btn" data-action="person-toggle-collapse" data-pid="${escapeAttr(person.id)}" title="${collapsed ? "Ausklappen" : "Einklappen"}">${collapsed ? "▸" : "▾"}</button>
+          <span class="led${allMuted ? " mute" : ""}" title="${allMuted ? "alle Kanäle gemutet" : "nicht alle Kanäle gemutet"}"></span>
           <span class="person-name" data-rename-person="${escapeAttr(person.id)}">${escapeHtml(person.name)}</span>
           <button class="rename-btn" data-action="person-rename" data-pid="${escapeAttr(person.id)}" data-name="${escapeAttr(person.name)}" title="Rename">&#9998;</button>
         </div>
@@ -1505,11 +1342,49 @@ async function refresh() {
     pb.className = h.enabled ? "danger" : "primary";
     renderChannels(state.data);
     renderPersons();
-    renderSidebar();
   } catch (e) {
     $("txt-conn").textContent = "service unreachable";
     $("dot-conn").className = "dot bad";
   }
+}
+
+// ---- Collapsible sections and compact channels ---------------------------
+// Open/closed state and the compact switch are remembered per device.
+
+function loadUiPrefs() {
+  try { return JSON.parse(localStorage.getItem("mixer_ui_prefs") || "{}"); } catch { return {}; }
+}
+function saveUiPrefs(prefs) {
+  try { localStorage.setItem("mixer_ui_prefs", JSON.stringify(prefs)); } catch (_) {}
+}
+
+function setSectionOpen(panel, open) {
+  panel.classList.toggle("open", open);
+  panel.querySelector(".section-toggle").setAttribute("aria-expanded", String(open));
+}
+
+function initSections() {
+  const prefs = loadUiPrefs();
+  const closed = prefs.closed || {};
+  document.querySelectorAll(".panel[data-section]").forEach(panel => {
+    setSectionOpen(panel, !closed[panel.dataset.section]);
+    panel.querySelector(".section-toggle").addEventListener("click", () => {
+      const open = !panel.classList.contains("open");
+      setSectionOpen(panel, open);
+      const p = loadUiPrefs();
+      p.closed = { ...(p.closed || {}), [panel.dataset.section]: !open };
+      saveUiPrefs(p);
+    });
+  });
+  const compact = $("compact-toggle");
+  compact.checked = !!prefs.compact;
+  $("channels").classList.toggle("compact", compact.checked);
+  compact.addEventListener("change", () => {
+    $("channels").classList.toggle("compact", compact.checked);
+    const p = loadUiPrefs();
+    p.compact = compact.checked;
+    saveUiPrefs(p);
+  });
 }
 
 // ---- update from GitHub ---------------------------------------------------
@@ -1753,6 +1628,7 @@ $("desktop-profiles").addEventListener("click", (event) => {
   act("POST", `/desktop/${encodeURIComponent(button.dataset.displayProfile)}/open`, undefined, button.dataset.label);
 });
 
+initSections();
 applyBuildMigrations();
 $("txt-build").textContent = "build: " + resolvedBuildId();
 normalizeCollapsedGroups();

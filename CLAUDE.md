@@ -688,3 +688,14 @@ Status vom Mixer:
 5a5a5a5a5a5a0000006d000001000908XX20012dFFFFFFFF...
 5a5a5a5a5a5a0000006d000001000708XX2dFFFFFFFF...
 Diese Statusframes können lang sein und viel Null-Padding enthalten.
+
+⸻
+
+Web-Oberfläche: iPad first
+Die Weboberfläche (mixer_mute_service/app/static/index.html) wird vor allem auf einem 13-Zoll-iPad-Pro in Safari bedient, im Querformat UND im Hochformat. Desktop-Browser sind zweitrangig.
+Regeln für jede UI-Änderung:
+1. Beide Ausrichtungen müssen ohne horizontales Scrollen funktionieren: Querformat ca. 1376 × 1032 CSS-Pixel, Hochformat ca. 1032 × 1376 (ältere 12,9-Zoll-Modelle: 1366 × 1024).
+2. Alles, was angetippt wird, mindestens 44 × 44 Pixel groß; Abschnitts-Köpfe (Desktop, Channels, Mute Gruppen) sind über die ganze Zeile antippbar und mindestens 52 Pixel hoch.
+3. Keine Funktion nur per Hover oder Tastatur erreichbar machen; Ziehen (Fader) muss mit dem Finger gehen.
+4. Vor dem Commit im Browser in beiden iPad-Größen prüfen (Viewport 1376 × 1032 und 1032 × 1376).
+Die API-Dokumentation steht nicht auf der Seite, sondern in der Swagger-Oberfläche unter /docs.
