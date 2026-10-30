@@ -321,6 +321,10 @@ with TestClient(app) as client:
     ui = client.get("/")
     check("/ serves html with desktop profile controls",
           ui.status_code == 200 and "Mixer Mute Service" in ui.text and "desktop-profiles" in ui.text)
+    check("UI is revalidated on every load (no stale page after updates)",
+          ui.headers.get("cache-control") == "no-cache")
+    check("group cards are only redrawn when they change (taps are not lost)",
+          "function setPersonsHtml" in ui.text and "wrap.appendChild(div)" not in ui.text)
 
 print(f"\n{PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)

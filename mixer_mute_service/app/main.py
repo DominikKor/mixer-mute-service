@@ -112,6 +112,16 @@ app.include_router(channel_colors_router)
 app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="ui")
 
 
+@app.middleware("http")
+async def _revalidate_ui(request, call_next):
+    """Browsers (iPad Safari in particular) may otherwise keep showing an old
+    UI after an update; make them check the page on every load."""
+    response = await call_next(request)
+    if request.url.path == "/" or request.url.path.endswith(".html"):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
 def main() -> None:
     import uvicorn
 

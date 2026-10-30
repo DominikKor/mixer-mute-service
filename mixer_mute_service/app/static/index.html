@@ -1058,6 +1058,7 @@ function startRenamePerson(personId, currentName) {
   if (!nameEl) return;
   const wrap = nameEl.closest(".person-name-wrap");
   if (!wrap) return;
+  PERSONS_HTML = null;  // the DOM is edited by hand below: always redraw after
   const input = document.createElement("input");
   input.className = "rename-input";
   input.value = currentName;
@@ -1312,12 +1313,21 @@ async function usePersonChannelFader(personId, ch) {
     toast(`Channel ${ch}: no saved fader value`, false); return;
   }
   const fader_hex = p.channels[String(ch)].fader_hex;
+  const saved = faderHexToValue(fader_hex);
+  const c = LAST_STATE.channels && LAST_STATE.channels[ch];
+  const label = getChannelDisplayName(ch, c && c.name);
+  // The small fader next to "Use" already moves the channel when it saves, so
+  // a "Use" right after it changes nothing -- say so instead of a bare "ok".
+  const already = c && saved !== null && c.fader_value !== null && Math.abs(c.fader_value - saved) < 0.05;
   const r = await api("POST", `/channels/${ch}/recall-fader`, { fader_hex });
   if (r.ok && r.data.ok !== false) {
-    toast(`Channel ${ch}: fader ${fader_hex} set`, true);
+    toast(already
+      ? `${label}: steht bereits auf dem gespeicherten Wert ${formatDb(saved)}`
+      : `${label}: auf gespeicherten Wert ${formatDb(saved)} gesetzt`, true);
   } else {
-    toast(`Channel ${ch}: ${r.data.reason || "HTTP " + r.status}`, false);
+    toast(`${label}: ${r.data.reason || "HTTP " + r.status}`, false);
   }
+  await refresh();
 }
 
 async function setPersonChannelFaderValue(personId, ch, value) {
@@ -1375,11 +1385,11 @@ function renderPersons() {
 
   const wrap = $("persons");
   const list = loadPersons();
-  wrap.innerHTML = "";
   if (!list.length) {
-    wrap.innerHTML = `<div class="muted-text">Noch keine Mute Gruppen. Oben erstellen.</div>`;
+    setPersonsHtml(wrap, `<div class="muted-text">Noch keine Mute Gruppen. Oben erstellen.</div>`);
     return;
   }
+  let html = "";
   const chans = LAST_STATE.channels || {};
   const allChNums = Object.keys(chans).map(Number).sort((a, b) => a - b);
 
@@ -1441,9 +1451,7 @@ function renderPersons() {
         </div>`
       : "";
 
-    const div = document.createElement("div");
-    div.className = "person-card";
-    div.innerHTML = `
+    html += `<div class="person-card">
       <div class="person-head">
         <div class="person-name-wrap">
           <button class="collapse-btn" data-action="person-toggle-collapse" data-pid="${escapeAttr(person.id)}" title="${collapsed ? "Ausklappen" : "Einklappen"}">${collapsed ? "▸" : "▾"}</button>
@@ -1465,9 +1473,20 @@ function renderPersons() {
       ${assignedChs.length ? `<div class="person-channels">${rows}</div>`
         : `<div class="muted-text" style="font-size:12px;margin-bottom:8px;">Keine Kanäle zugewiesen.</div>`}
       ${addSelect}
-      </div>`;
-    wrap.appendChild(div);
+      </div>
+    </div>`;
   }
+  setPersonsHtml(wrap, html);
+}
+
+// renderPersons runs with every 1 s refresh. Replacing the cards each time
+// swapped every button under the user's finger, so a tap that spanned a
+// refresh was lost. The DOM is now only replaced when the markup changed.
+let PERSONS_HTML = null;
+function setPersonsHtml(wrap, html) {
+  if (html === PERSONS_HTML) return;
+  PERSONS_HTML = html;
+  wrap.innerHTML = html;
 }
 
 
