@@ -14,6 +14,7 @@ import asyncio
 import logging
 from typing import List, Optional, Tuple
 
+from .channel_preferences import ChannelPreferences
 from .config import Config
 from .groups import GroupStore
 from .mixer_client import MixerClient
@@ -31,13 +32,28 @@ log = logging.getLogger("mixer.controller")
 
 class Controller:
     def __init__(
-        self, cfg: Config, store: StateStore, client: MixerClient, groups: GroupStore
+        self, cfg: Config, store: StateStore, client: MixerClient, groups: GroupStore,
+        channel_preferences: Optional[ChannelPreferences] = None,
     ) -> None:
         self._cfg = cfg
         self._store = store
         self._client = client
         self._groups = groups
+        self._channel_preferences = channel_preferences
         self.enabled: bool = True  # panic toggles this
+
+    async def always_on_channels(self) -> set:
+        if self._channel_preferences is None:
+            return set()
+        return await self._channel_preferences.list_always_on()
+
+    async def set_channel_always_on(self, channel: int, enabled: bool) -> dict:
+        if channel not in self._cfg.valid_channels():
+            return {"ok": False, "channel": channel, "reason": "invalid channel"}
+        if self._channel_preferences is None:
+            return {"ok": False, "channel": channel, "reason": "channel preferences unavailable"}
+        await self._channel_preferences.set_always_on(channel, enabled)
+        return {"ok": True, "channel": channel, "always_on": enabled}
 
     # -- global gate -------------------------------------------------------
 
@@ -251,7 +267,16 @@ class Controller:
             log.warning("BLOCKED group=%s action=%s reason=%r", group, _act(target_muted), reason)
             return {"ok": False, "group": group, "reason": reason}
 
-        unsafe, _ = await self._evaluate_group(channels, require_mute_state=False)
+        always_on = await self.always_on_channels()
+        protected = sorted(set(channels) & always_on) if target_muted else []
+        action_channels = [ch for ch in channels if ch not in protected]
+        if not action_channels:
+            return {
+                "ok": True, "group": group, "target_muted": target_muted,
+                "results": [], "skipped": [], "protected": protected,
+            }
+
+        unsafe, _ = await self._evaluate_group(action_channels, require_mute_state=False)
         if unsafe and not self._cfg.safety.allow_partial_groups:
             log.warning("BLOCKED group=%s action=%s reason=unsafe details=%s",
                         group, _act(target_muted), unsafe)
@@ -266,7 +291,7 @@ class Controller:
         results = []
         delay = self._cfg.safety.group_send_delay_ms / 1000.0
         sent_any = False
-        for ch in channels:
+        for ch in action_channels:
             if ch in unsafe_channels:
                 # only reachable when allow_partial_groups is explicitly enabled
                 continue
@@ -279,16 +304,19 @@ class Controller:
         # buses), but muting a group leaves the others alone. Channels we can't
         # safely mute (no fresh fader) are skipped, not forced.
         others = []
+        protected_others = []
         if not target_muted and self._cfg.safety.exclusive_group_unmute:
             members = set(channels)
-            for ch in sorted(self._cfg.valid_channels() - members):
+            other_channels = self._cfg.valid_channels() - members
+            protected_others = sorted(other_channels & always_on)
+            for ch in sorted(other_channels - always_on):
                 cs = await self._store.get_channel(ch)
                 if cs is not None and cs.muted is True:
                     continue  # already muted, nothing to do
                 await asyncio.sleep(delay)
                 others.append(await self.channel_set(ch, True))
 
-        all_ok = bool(results) and all(r.get("ok") for r in results)
+        all_ok = all(r.get("ok") for r in results)
         out = {
             "ok": all_ok,
             "group": group,
@@ -296,6 +324,10 @@ class Controller:
             "results": results,
             "skipped": sorted(unsafe_channels) if unsafe_channels else [],
         }
+        if protected:
+            out["protected"] = protected
+        if protected_others:
+            out["protected_others"] = protected_others
         if others:
             out["muted_others"] = others
             blocked = [r for r in others if not r.get("ok")]
@@ -314,7 +346,16 @@ class Controller:
 
         # Toggle semantics: a group counts as "active" only when ALL channels are
         # muted -> then unmute; otherwise mute. Requires all mute states fresh.
-        unsafe, states = await self._evaluate_group(channels, require_mute_state=True)
+        always_on = await self.always_on_channels()
+        toggle_channels = [ch for ch in channels if ch not in always_on]
+        if not toggle_channels:
+            return {
+                "ok": True, "group": group, "results": [], "skipped": [],
+                "protected": sorted(channels),
+            }
+
+        # Always-on channels are excluded from deciding the group's toggle state.
+        unsafe, states = await self._evaluate_group(toggle_channels, require_mute_state=True)
         if unsafe:
             log.warning("BLOCKED group=%s action=toggle reason=unsafe details=%s", group, unsafe)
             return {
@@ -324,7 +365,7 @@ class Controller:
                 "details": unsafe,
             }
 
-        all_muted = all(states[ch].muted for ch in channels)  # type: ignore[union-attr]
+        all_muted = all(states[ch].muted for ch in toggle_channels)  # type: ignore[union-attr]
         target = not all_muted
         return await self.group_set(group, target)
 

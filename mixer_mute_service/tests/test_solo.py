@@ -6,6 +6,7 @@ import sys
 import time
 
 from app.config import Config
+from app.channel_preferences import ChannelPreferences
 from app.controller import Controller
 from app.groups import GroupStore
 from app.protocol import FrameEvent
@@ -84,6 +85,37 @@ async def main():
     check("solo: safe other muted", m[3] is True)
     check("solo: unsafe other skipped (stays unknown)", m[4] is None)
     check("solo: skipped other reported", 4 in res.get("others_skipped", []))
+
+    print("== always-on channels ==")
+    preferences = ChannelPreferences(__import__("pathlib").Path("/tmp/_always_on_channels.json"))
+    await preferences.set_always_on(1, True)
+    await preferences.set_always_on(3, True)
+    store3 = StateStore()
+    ctrl3 = Controller(cfg, store3, FakeLink(), gs, preferences)
+    for ch in (1, 2, 3, 4):
+        await set_state(store3, ch, False)
+    result = await ctrl3.group_set("g", True)
+    muted = await muted_map(store3, (1, 2, 3, 4))
+    check("group mute skips always-on member", muted[1] is False and muted[2] is True)
+    check("group mute reports protected member", result.get("protected") == [1])
+
+    await set_state(store3, 1, False)
+    await set_state(store3, 2, False)
+    toggle_result = await ctrl3.group_toggle("g")
+    muted = await muted_map(store3, (1, 2))
+    check("group toggle skips always-on member", muted[1] is False and muted[2] is True)
+    check("group toggle reports protected member", toggle_result.get("protected") == [1])
+
+    await set_state(store3, 2, False)
+    await set_state(store3, 4, False)
+    solo_result = await ctrl3.group_set("g", False)
+    muted = await muted_map(store3, (1, 2, 3, 4))
+    check("solo does not mute always-on other", muted[3] is False and muted[4] is True)
+    check("solo reports protected other", solo_result.get("protected_others") == [3])
+
+    direct = await ctrl3.channel_set(1, True)
+    muted = await muted_map(store3, (1,))
+    check("direct channel mute remains available", direct["ok"] and muted[1] is True)
 
     print(f"\n{PASS} passed, {FAIL} failed")
     sys.exit(1 if FAIL else 0)

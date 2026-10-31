@@ -19,7 +19,7 @@ from pydantic import ValidationError
 from .config import DesktopProfileConfig, default_config_path
 from .desktop_profiles import ProfileEditError, add_profile, update_profile
 from .groups import GroupError
-from .models import FaderRequest, GroupCreate, GroupUpdate, RecallFaderRequest
+from .models import AlwaysOnRequest, FaderRequest, GroupCreate, GroupUpdate, RecallFaderRequest
 from .protocol import fader_hex_to_value
 from .safety import is_channel_safe
 
@@ -192,6 +192,7 @@ async def state(request: Request):
     cfg, store, client, controller = _ctx(request)
     now = time.monotonic()
     snap = await store.snapshot()
+    always_on = await controller.always_on_channels()
 
     channels = {}
     for ch in cfg.all_channels():
@@ -210,6 +211,7 @@ async def state(request: Request):
             "muted": None if cs is None else cs.muted,
             "mute_age_seconds": _round(mute_age),
             "safe": safe,
+            "always_on": ch in always_on,
         }
 
     return {
@@ -240,6 +242,7 @@ async def get_channel(channel: int, request: Request):
             client.connected and controller.enabled
             and is_channel_safe(channel, cs, cfg, client.session_epoch)
         ),
+        "always_on": channel in await controller.always_on_channels(),
     }
 
 
@@ -253,6 +256,12 @@ async def channel_mute(channel: int, request: Request):
 async def channel_unmute(channel: int, request: Request):
     _, _, _, controller = _ctx(request)
     return _respond(await controller.channel_set(channel, False))
+
+
+@router.post("/channels/{channel}/always-on")
+async def channel_always_on(channel: int, body: AlwaysOnRequest, request: Request):
+    _, _, _, controller = _ctx(request)
+    return _respond(await controller.set_channel_always_on(channel, body.enabled))
 
 
 @router.post("/channels/{channel}/toggle")

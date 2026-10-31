@@ -21,6 +21,7 @@ from fastapi.staticfiles import StaticFiles
 from .agent_download import router as agent_download_router
 from .buses import BusRegistry
 from .channel_colors import router as channel_colors_router
+from .channel_preferences import ChannelPreferences
 from .config import default_config_path, load_config
 from .controller import Controller
 from .groups import GroupStore
@@ -80,13 +81,15 @@ async def lifespan(app: FastAPI):
         client = MixerClient(cfg, store, buses.bus_map)
     seed = {name: g.channels for name, g in cfg.groups.items()}
     groups = GroupStore(data_dir / "groups.json", cfg.valid_channels(), seed)
+    channel_preferences = ChannelPreferences(data_dir / "channel_preferences.json")
     buses.on_new_bus(groups.allow_channel)
-    controller = Controller(cfg, store, client, groups)
+    controller = Controller(cfg, store, client, groups, channel_preferences)
 
     app.state.cfg = cfg
     app.state.store = store
     app.state.client = client
     app.state.groups = groups
+    app.state.channel_preferences = channel_preferences
     app.state.controller = controller
     app.state.build_id = _build_id()
 

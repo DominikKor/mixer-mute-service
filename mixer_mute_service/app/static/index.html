@@ -179,6 +179,12 @@
   button.mute-key.on:hover:not(:disabled) { color: #fff; border-color: #4a0c06; }
   button.mute-key.unk { background: #1a1d22; border: 1px dashed #4a505b; color: #6c7482; box-shadow: none; letter-spacing: .06em; }
   button.mute-key.busy { cursor: progress; filter: brightness(.85); }
+    .always-on-control {
+      display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 44px;
+      color: #aab4c0; font-size: 11px; font-weight: 700; cursor: pointer; user-select: none;
+    }
+    .always-on-control input { width: 18px; height: 18px; margin: 0; accent-color: #76c893; }
+    .always-on-control input:disabled { cursor: progress; }
   /* Update key in the header and its progress dialog */
   button.update-key { padding: 8px 14px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
   button.update-key.running { color: #8fd3e6; text-shadow: 0 0 6px rgba(120,220,255,.5); }
@@ -1331,7 +1337,7 @@ async function mutePersonChannels(personId) {
   if (!chs.length) { toast("Keine Kanäle zugewiesen", false); return; }
   // Channels already observed muted need no command.
   await runGroupAction(`${p.name} Mute`, (state) => chs
-    .filter(ch => !(state.channels[ch] && state.channels[ch].muted === true))
+    .filter(ch => !(state.channels[ch] && (state.channels[ch].muted === true || state.channels[ch].always_on)))
     .map(ch => ({ ch, path: `/channels/${ch}/mute` })));
 }
 
@@ -1347,7 +1353,7 @@ async function soloPersonChannels(personId) {
     const inGroup = new Set(groupChs);
     const others = Object.keys(chans).map(Number).sort((a, b) => a - b).filter(ch => !inGroup.has(ch));
     return [
-      ...others.filter(ch => chans[ch].muted !== true).map(ch => ({ ch, path: `/channels/${ch}/mute` })),
+      ...others.filter(ch => chans[ch].muted !== true && !chans[ch].always_on).map(ch => ({ ch, path: `/channels/${ch}/mute` })),
       ...groupChs.filter(ch => !(chans[ch] && chans[ch].muted === false)).map(ch => ({ ch, path: `/channels/${ch}/unmute` })),
     ];
   });
@@ -1788,7 +1794,11 @@ function buildChannelCard(ch) {
       <div class="card-title-wrap"></div>
     </div>
     <div class="fader-strip">${faderStripHtml(ch)}</div>
-    <button class="mute-key unk" data-action="channel-toggle" data-channel="${ch}" disabled>MUTE</button>`;
+    <button class="mute-key unk" data-action="channel-toggle" data-channel="${ch}" disabled>MUTE</button>
+    <label class="always-on-control" title="Bei Gruppen-Mute und Solo nicht stummschalten">
+      <input type="checkbox" data-always-on-channel="${ch}">
+      <span>Immer an</span>
+    </label>`;
   // The level readout sits in the scribble strip under the name.
   const db = card.querySelector(".fader-db");
   card.querySelector(".scribble").appendChild(db);
@@ -1825,6 +1835,9 @@ function updateChannelCard(ch, c) {
   key.setAttribute("aria-pressed", known ? String(c.muted) : "mixed");
   key.title = !known ? "Mute-Status unbekannt – gesperrt"
     : c.muted ? "Gemutet – klicken zum Unmuten" : "Live – klicken zum Muten";
+  const alwaysOn = card.querySelector("[data-always-on-channel]");
+  if (document.activeElement !== alwaysOn) alwaysOn.checked = Boolean(c.always_on);
+  alwaysOn.disabled = ALWAYS_ON_BUSY.has(String(ch));
   applyStripColor(ch);
   syncFader(ch, c);
 }
@@ -2094,6 +2107,35 @@ async function toggleChannel(ch) {
     renderChannels(LAST_STATE);
   }
 }
+
+const ALWAYS_ON_BUSY = new Set();
+async function setChannelAlwaysOn(ch, enabled) {
+  const key = String(ch);
+  const channel = LAST_STATE.channels && LAST_STATE.channels[key];
+  if (!channel || ALWAYS_ON_BUSY.has(key)) return;
+  const previous = Boolean(channel.always_on);
+  channel.always_on = enabled;
+  ALWAYS_ON_BUSY.add(key);
+  renderChannels(LAST_STATE);
+  try {
+    const result = await api("POST", `/channels/${ch}/always-on`, { enabled });
+    if (!result.ok || result.data.ok === false) {
+      channel.always_on = previous;
+      toast(`ch${ch}: ${result.data.reason || "HTTP " + result.status}`, false);
+    } else {
+      toast(`ch${ch}: ${enabled ? "Immer an" : "Gruppen-Schutz aus"}`, true);
+    }
+  } finally {
+    ALWAYS_ON_BUSY.delete(key);
+    await refresh();
+  }
+}
+
+document.addEventListener("change", (e) => {
+  const input = e.target.closest("[data-always-on-channel]");
+  if (!input) return;
+  setChannelAlwaysOn(Number(input.dataset.alwaysOnChannel), input.checked);
+});
 
 document.addEventListener("click", (e) => {
   const btn = e.target.closest("[data-action]");

@@ -62,6 +62,10 @@ class RecallFaderRequest(BaseModel):
     fader_hex: str
 
 
+class AlwaysOnRequest(BaseModel):
+    enabled: bool
+
+
 class GroupUpdate(BaseModel):
     channels: List[int]
 
