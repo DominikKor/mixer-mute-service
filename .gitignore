@@ -17,6 +17,7 @@ mixer_mute_service/windows_deployment/release/
 
 # Runtime data written by the service
 mixer_mute_service/buses.json
+mixer_mute_service/channel_colors.json
 
 # Traffic captures (contain the live console state)
 mixer_mute_service/captures/

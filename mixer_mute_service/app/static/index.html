@@ -27,7 +27,8 @@
   }
   header {
     display: flex; align-items: center; gap: 10px 20px; flex-wrap: wrap; min-height: var(--header-h);
-    padding: 10px 24px; position: sticky; top: 0; z-index: 10;
+    /* Bar spans the window; its content lines up with the page column. */
+    padding: 10px max(var(--page-pad), calc((100% - var(--strips-max)) / 2)); position: sticky; top: 0; z-index: 10;
     background: linear-gradient(to bottom, #2a2e35, #1c1f24);
     border-bottom: 1px solid #000; box-shadow: inset 0 1px 0 rgba(255,255,255,.07), 0 4px 14px rgba(0,0,0,.45);
   }
@@ -62,7 +63,13 @@
     background: linear-gradient(to right, #343a45, transparent);
   }
   /* Channel strips, laid out like the console: at most 8 per row, fewer when narrow */
-  :root { --strip-gap: 10px; --strips-max: calc(8 * 128px + 7 * var(--strip-gap)); }
+  :root {
+    --strip-gap: 10px; --strips-max: calc(8 * 128px + 7 * var(--strip-gap));
+    /* The page is as wide as one bank of 8 strips, centred: every section and
+       the header share the strips' left and right edges, and wide screens get
+       even margins instead of an empty band right of the channels. */
+    --page-pad: 24px; --page-max: calc(var(--strips-max) + 2 * var(--page-pad));
+  }
   .strips {
     display: grid; gap: 14px var(--strip-gap); max-width: var(--strips-max);
     grid-template-columns: repeat(auto-fill, minmax(max(92px, calc((100% - 7 * var(--strip-gap)) / 8)), 1fr));
@@ -73,7 +80,26 @@
     background: linear-gradient(to bottom, #2b2f36, #1f2228 30%, #1a1d22);
     box-shadow: inset 1px 0 0 rgba(255,255,255,.05), inset -1px 0 0 rgba(0,0,0,.45),
       inset 0 1px 0 rgba(255,255,255,.08), 0 3px 8px rgba(0,0,0,.5);
+    position: relative;
   }
+  /* Optional strip colour (picked while renaming): coloured border with a soft glow */
+  .card[data-color] {
+    border-color: rgb(var(--strip-rgb));
+    box-shadow: 0 0 0 1px rgb(var(--strip-rgb)), 0 0 12px rgba(var(--strip-rgb), .45),
+      inset 0 1px 0 rgba(255,255,255,.08), 0 3px 8px rgba(0,0,0,.5);
+  }
+  .color-pop {
+    position: absolute; top: 66px; left: 50%; transform: translateX(-50%); z-index: 20;
+    display: grid; grid-template-columns: repeat(3, 26px); gap: 6px; padding: 8px; border-radius: 6px;
+    background: var(--panel-bg); border: 1px solid #000;
+    box-shadow: 0 10px 24px rgba(0,0,0,.65), inset 0 1px 0 rgba(255,255,255,.08);
+  }
+  button.swatch {
+    width: 26px; height: 26px; padding: 0; border-radius: 50%; border: 2px solid #07080a; background: var(--sw);
+    box-shadow: inset 0 1px 2px rgba(255,255,255,.35), 0 1px 2px rgba(0,0,0,.6);
+  }
+  button.swatch.none { background: repeating-linear-gradient(45deg, #3b4049 0 4px, #1a1d22 4px 8px); }
+  button.swatch[aria-checked="true"] { outline: 2px solid #f4f6f8; outline-offset: 2px; }
   /* Scribble strip: number, safety LED, name and fader level */
   .scribble {
     width: 100%; padding: 5px 6px 6px; border-radius: 4px; text-align: center;
@@ -198,7 +224,7 @@
   .muted-text { color: var(--muted); }
 
   /* Page layout: three collapsible sections (Desktop, Channels, Mute Gruppen) */
-  .page { max-width: 1480px; margin: 0 auto; padding: 0 24px 48px; }
+  .page { max-width: var(--page-max); margin: 0 auto; padding: 0 var(--page-pad) 48px; }
   /* Desktop display keys: two-line keys with a readiness LED */
   .desktop-launch-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
   .desktop-launch-status { font: 600 11px/1 var(--mono); color: var(--lcd-dim); }
@@ -219,20 +245,21 @@
   button.display-edit {
     position: absolute; top: 0; right: 0; width: 44px; height: 44px; padding: 5px 5px 0 0;
     display: flex; align-items: flex-start; justify-content: flex-end;
-    color: #8fb3bd; background: none; border: none; box-shadow: none;
+    color: #6f8a93; background: none; border: none; box-shadow: none; transition: color .12s;
   }
-  button.display-edit:hover:not(:disabled) { filter: none; }
+  /* No background of its own: the pencil only lights up on hover */
+  button.display-edit:hover:not(:disabled) { color: #e6f4f8; filter: none; }
   button.display-edit:active:not(:disabled) { transform: none; box-shadow: none; }
-  .display-edit-chip {
-    display: grid; place-items: center; width: 22px; height: 22px; border-radius: 4px; font-size: 11px; line-height: 1;
-    background: rgba(0,0,0,.3); box-shadow: inset 0 1px 2px rgba(0,0,0,.55), 0 1px 0 rgba(255,255,255,.05);
-  }
-  button.display-edit:hover .display-edit-chip { color: #fff; background: rgba(79,156,255,.35); }
+  .display-edit-chip { display: grid; place-items: center; width: 22px; height: 22px; font-size: 13px; line-height: 1; }
   /* The grey "+" tile after the last profile */
   button.display-add {
-    align-self: stretch; min-width: 72px; min-height: 48px; padding: 0 20px;
-    font-size: 26px; font-weight: 400; line-height: 1; color: #9aa1ad;
+    display: grid; place-items: center; align-self: stretch; min-width: 72px; min-height: 48px; padding: 0 20px;
+    color: #9aa1ad;
   }
+  /* Drawn plus: a text "+" sits off-centre depending on the font */
+  .plus-icon { display: block; width: 22px; height: 22px; }
+  button.add-key { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 16px 0 12px; }
+  button.add-key .plus-icon { width: 16px; height: 16px; }
 
   /* Desktop profile editor */
   dialog.profile-dialog { width: min(640px, calc(100vw - 32px)); max-height: calc(100vh - 32px); overflow: auto; }
@@ -351,9 +378,6 @@
   .compact-switch input:focus-visible + .track { outline: 2px solid var(--accent); outline-offset: 2px; }
   /* Compact channels: name and mute key only, more strips per row */
   .strips.compact { max-width: none; grid-template-columns: repeat(auto-fill, minmax(124px, 1fr)); }
-  /* The channel strips stop at 8 x 128 px on wide (desktop) screens: end the
-     section head, and with it the Kompakt switch, flush with the last strip. */
-  .panel[data-section="channels"]:has(.strips:not(.compact)) .panel-head { max-width: var(--strips-max); }
   .strips.compact .fader-strip, .strips.compact .scribble .fader-db { display: none; }
   .strips.compact .card { gap: 10px; padding-bottom: 10px; }
   .strips.compact .card-title { font-size: 16px; }
@@ -366,30 +390,43 @@
 
   /* Mute group editor */
   .person-name-wrap .led { flex-shrink: 0; }
-  #persons { display: grid; gap: 14px; align-items: start; grid-template-columns: repeat(auto-fill, minmax(min(100%, 540px), 1fr)); }
+  /* Three groups side by side on desktop and iPad landscape, two in iPad
+     portrait, one on phones */
+  #persons { display: grid; gap: 14px; align-items: start; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  @media (max-width: 1199px) { #persons { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  @media (max-width: 759px) { #persons { grid-template-columns: minmax(0, 1fr); } }
   .person-card {
     min-width: 0; padding: 12px; border-radius: 8px; border: 1px solid #08090b;
     background: var(--panel-bg); box-shadow: var(--panel-shadow);
   }
-  .person-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-  .person-name-wrap { display: flex; align-items: center; gap: 6px; min-width: 0; }
+  .person-head { display: flex; align-items: center; gap: 10px; }
+  .person-name-wrap { display: flex; align-items: center; gap: 6px; min-width: 0; flex: 1; }
   .person-name {
     min-width: 0; padding: 4px 10px; border-radius: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     background: var(--lcd-bg); border: 1px solid #000; box-shadow: var(--lcd-shadow);
     font-size: 14px; font-weight: 700; color: var(--lcd-text); text-shadow: var(--lcd-glow);
   }
-  .person-actions { margin-left: auto; display: flex; gap: 6px; flex-wrap: wrap; }
+  /* Duplicate and delete as icon keys in the head; Mute/Solo/Use All below */
+  .person-tools { display: flex; gap: 6px; flex-shrink: 0; }
+  button.icon-btn { display: grid; place-items: center; width: 44px; height: 44px; padding: 0; }
+  .person-actions { display: flex; gap: 6px; margin-top: 10px; }
+  .person-actions button { flex: 1; min-height: 44px; }
   .collapse-btn { width: 28px; height: 28px; padding: 0; font-size: 13px; flex-shrink: 0; }
-  .person-body { margin-top: 12px; overflow-x: auto; }
+  .person-body { margin-top: 12px; }
   .person-body.collapsed { display: none; }
-  .person-channels { width: 100%; border-collapse: collapse; margin-bottom: 10px; }
-  .person-channels th {
-    padding: 4px 8px; border-bottom: 1px solid #08090b; box-shadow: 0 1px 0 rgba(255,255,255,.04);
-    font-size: 10px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; text-align: left; color: #7d8594;
+  .person-channels { margin-bottom: 10px; border-top: 1px solid #08090b; box-shadow: 0 -1px 0 rgba(255,255,255,.04); }
+  /* One channel: name | saved value + time | keys, fader across below */
+  .pc-row {
+    display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 6px 10px;
+    padding: 9px 2px; border-bottom: 1px solid rgba(255,255,255,.05); font-size: 13px;
   }
-  .person-channels td { padding: 7px 8px; border-bottom: 1px solid rgba(255,255,255,.05); font-size: 13px; vertical-align: middle; white-space: nowrap; }
-  .person-channels tr:last-child td { border-bottom: none; }
-  .person-channels td button { padding: 5px 9px; font-size: 11px; }
+  .pc-row:last-child { border-bottom: none; }
+  .pc-name { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .pc-saved { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; white-space: nowrap; }
+  .pc-keys { display: flex; gap: 4px; }
+  .pc-keys button { min-width: 44px; min-height: 44px; padding: 5px 9px; font-size: 11px; }
+  .pc-row .person-fader-wrap { grid-column: 1 / -1; }
+  .pc-row .fader-slider { flex: 1; width: auto; min-width: 0; }
   .ch-tag { font: 600 10px/1 var(--mono); color: var(--muted); }
   .set-at { font: 11px/1 var(--mono); color: var(--muted); }
   .fader-saved { font: 600 12px/1 var(--mono); color: var(--lcd-text); }
@@ -413,7 +450,6 @@
   .rename-btn:hover:not(:disabled) { opacity: 1; filter: none; }
 
   /* Horizontal faders in the group editor (same cap as the channel faders) */
-  .person-fader-cell { min-width: 220px; }
   .person-fader-wrap { display: flex; align-items: center; gap: 10px; }
   .fader-slider { -webkit-appearance: none; appearance: none; width: 140px; height: 24px; margin: 0; background: transparent; cursor: pointer; }
   .fader-slider:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
@@ -512,7 +548,7 @@
   </div>
   <div id="desktop-body" class="panel-body">
     <div id="desktop-profiles" class="desktop-launch-actions">
-      <button id="new-profile-btn" class="display-add" title="Neues Profil" aria-label="Neues Profil">+</button>
+      <button id="new-profile-btn" class="display-add" title="Neues Profil" aria-label="Neues Profil"><svg class="plus-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 4v16M4 12h16"/></svg></button>
       <span id="desktop-launch-status" class="desktop-launch-status">Profile werden geladen</span>
     </div>
   </div>
@@ -534,7 +570,7 @@
   <div class="panel-head">
     <button class="section-toggle" aria-expanded="true" aria-controls="groups-body">Mute Gruppen</button>
     <div class="panel-tools">
-      <button id="new-person-btn" class="primary">+ Neue Mute Gruppe</button>
+      <button id="new-person-btn" class="add-key"><svg class="plus-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 4v16M4 12h16"/></svg>Neue Mute Gruppe</button>
     </div>
   </div>
   <div id="groups-body" class="panel-body">
@@ -909,7 +945,12 @@ function startRenameChannel(ch, currentName) {
   input.className = "rename-input";
   input.value = currentName;
   input.maxLength = 32;
+  const pop = buildColorPopover(ch);
+  let done = false;
   const finish = () => {
+    if (done) return;
+    done = true;
+    pop.remove();
     const val = input.value.trim();
     if (!input.dataset.cancel && val && val !== currentName) {
       const names = loadChannelNames();
@@ -924,11 +965,92 @@ function startRenameChannel(ch, currentName) {
     if (e.key === "Enter") { e.preventDefault(); input.blur(); }
     if (e.key === "Escape") { input.dataset.cancel = "1"; input.blur(); }
   });
-  input.addEventListener("blur", finish);
+  // Delayed, so a tap on a colour that takes the focus away still lands.
+  input.addEventListener("blur", () => setTimeout(finish, 200));
   wrap.innerHTML = "";
   wrap.appendChild(input);
+  if (CARDS[ch]) CARDS[ch].appendChild(pop);
   input.focus();
   input.select();
+}
+
+// ---- Strip colours --------------------------------------------------------
+// One optional colour per channel, stored by the service (channel_colors.json)
+// so every device shows the same. Purely cosmetic: nothing is sent to the mixer.
+
+const STRIP_COLORS = {
+  red: "255,75,58", orange: "255,159,28", yellow: "241,210,28", green: "62,224,127",
+  cyan: "53,208,230", blue: "79,156,255", purple: "166,107,255", pink: "255,107,193",
+};
+const STRIP_COLOR_NAMES = {
+  red: "Rot", orange: "Orange", yellow: "Gelb", green: "Grün",
+  cyan: "Cyan", blue: "Blau", purple: "Lila", pink: "Pink",
+};
+let CHANNEL_COLORS = {};
+
+function applyStripColor(ch) {
+  const card = CARDS[ch];
+  if (!card) return;
+  const color = CHANNEL_COLORS[String(ch)];
+  if (color && STRIP_COLORS[color]) {
+    card.dataset.color = color;
+    card.style.setProperty("--strip-rgb", STRIP_COLORS[color]);
+  } else {
+    delete card.dataset.color;
+    card.style.removeProperty("--strip-rgb");
+  }
+}
+
+async function loadChannelColors() {
+  let r;
+  try { r = await api("GET", "/channel-colors"); } catch (_) { return; }
+  if (!r.ok || !r.data || typeof r.data.colors !== "object") return;
+  CHANNEL_COLORS = r.data.colors;
+  for (const ch of Object.keys(CARDS)) applyStripColor(ch);
+}
+
+function markSwatches(pop, color) {
+  for (const b of pop.querySelectorAll(".swatch")) {
+    b.setAttribute("aria-checked", String((b.dataset.color || null) === color));
+  }
+}
+
+async function setChannelColor(ch, color, pop) {
+  const key = String(ch);
+  const prev = CHANNEL_COLORS[key] || null;
+  if (color) CHANNEL_COLORS[key] = color; else delete CHANNEL_COLORS[key];
+  applyStripColor(ch);
+  markSwatches(pop, color);
+  let r;
+  try { r = await api("POST", `/channels/${ch}/color`, { color }); } catch (_) { r = { ok: false, status: 0, data: {} }; }
+  if (!(r.ok && r.data.ok !== false)) {
+    if (prev) CHANNEL_COLORS[key] = prev; else delete CHANNEL_COLORS[key];
+    applyStripColor(ch);
+    markSwatches(pop, prev);
+    toast(`Kanal ${ch} Farbe: ${r.data.reason || "HTTP " + r.status}`, false);
+  }
+}
+
+function buildColorPopover(ch) {
+  const pop = document.createElement("div");
+  pop.className = "color-pop";
+  pop.setAttribute("role", "radiogroup");
+  pop.setAttribute("aria-label", `Farbe Kanal ${ch}`);
+  for (const color of [null, ...Object.keys(STRIP_COLORS)]) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "swatch" + (color ? "" : " none");
+    if (color) b.style.setProperty("--sw", `rgb(${STRIP_COLORS[color]})`);
+    b.dataset.color = color || "";
+    b.title = color ? STRIP_COLOR_NAMES[color] : "Keine Farbe";
+    b.setAttribute("role", "radio");
+    // Keep the focus in the name field where the browser allows it.
+    b.addEventListener("mousedown", e => e.preventDefault());
+    b.addEventListener("click", () => setChannelColor(ch, color, pop));
+    pop.appendChild(b);
+  }
+  markSwatches(pop, CHANNEL_COLORS[String(ch)] || null);
+  return pop;
 }
 
 function startRenamePerson(personId, currentName) {
@@ -936,6 +1058,7 @@ function startRenamePerson(personId, currentName) {
   if (!nameEl) return;
   const wrap = nameEl.closest(".person-name-wrap");
   if (!wrap) return;
+  PERSONS_HTML = null;  // the DOM is edited by hand below: always redraw after
   const input = document.createElement("input");
   input.className = "rename-input";
   input.value = currentName;
@@ -1237,12 +1360,21 @@ async function usePersonChannelFader(personId, ch) {
     toast(`Channel ${ch}: no saved fader value`, false); return;
   }
   const fader_hex = p.channels[String(ch)].fader_hex;
+  const saved = faderHexToValue(fader_hex);
+  const c = LAST_STATE.channels && LAST_STATE.channels[ch];
+  const label = getChannelDisplayName(ch, c && c.name);
+  // The small fader next to "Use" already moves the channel when it saves, so
+  // a "Use" right after it changes nothing -- say so instead of a bare "ok".
+  const already = c && saved !== null && c.fader_value !== null && Math.abs(c.fader_value - saved) < 0.05;
   const r = await api("POST", `/channels/${ch}/recall-fader`, { fader_hex });
   if (r.ok && r.data.ok !== false) {
-    toast(`Channel ${ch}: fader ${fader_hex} set`, true);
+    toast(already
+      ? `${label}: steht bereits auf dem gespeicherten Wert ${formatDb(saved)}`
+      : `${label}: auf gespeicherten Wert ${formatDb(saved)} gesetzt`, true);
   } else {
-    toast(`Channel ${ch}: ${r.data.reason || "HTTP " + r.status}`, false);
+    toast(`${label}: ${r.data.reason || "HTTP " + r.status}`, false);
   }
+  await refresh();
 }
 
 async function setPersonChannelFaderValue(personId, ch, value) {
@@ -1285,6 +1417,9 @@ function addPersonChannel(personId, ch) {
   renderPersons();
 }
 
+const ICON_COPY = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/></svg>`;
+const ICON_TRASH = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6"/></svg>`;
+
 function renderPersons() {
   // Skip re-render if a select/input inside persons or the person create row is focused
   const focused = document.activeElement;
@@ -1299,11 +1434,11 @@ function renderPersons() {
 
   const wrap = $("persons");
   const list = loadPersons();
-  wrap.innerHTML = "";
   if (!list.length) {
-    wrap.innerHTML = `<div class="muted-text">Noch keine Mute Gruppen. Oben erstellen.</div>`;
+    setPersonsHtml(wrap, `<div class="muted-text">Noch keine Mute Gruppen. Oben erstellen.</div>`);
     return;
   }
+  let html = "";
   const chans = LAST_STATE.channels || {};
   const allChNums = Object.keys(chans).map(Number).sort((a, b) => a - b);
 
@@ -1325,32 +1460,32 @@ function renderPersons() {
       const liveValue = chInfo && chInfo.fader_value !== undefined ? chInfo.fader_value : null;
       const baseValue = savedValue !== null ? savedValue : (liveValue !== null ? liveValue : 0);
       const setAt = entry.set_at ? new Date(entry.set_at).toLocaleTimeString() : "never";
-      return `<tr>
-        <td>${chName} <span class="ch-tag">CH ${ch}</span></td>
-        <td>${faderSaved}</td>
-        <td class="person-fader-cell">
-          <div class="person-fader-wrap">
-            <input
-              type="range"
-              min="0"
-              max="${FADER_MAX}"
-              step="1"
-              class="fader-slider"
-              data-action="person-fader-input"
-              data-pid="${escapeAttr(person.id)}"
-              data-ch="${ch}"
-              value="${baseValue.toFixed(0)}"
-            />
-            <span class="fader-label" data-person-fader-label="${escapeAttr(person.id)}-${ch}">${formatDb(baseValue)}</span>
-          </div>
-        </td>
-        <td class="set-at">${setAt}</td>
-        <td>
+      // Two lines per channel so three groups fit side by side: name, saved
+      // value and keys on top, the fader below.
+      return `<div class="pc-row">
+        <div class="pc-name">${chName} <span class="ch-tag">CH ${ch}</span></div>
+        <div class="pc-saved">${faderSaved} <span class="set-at" title="Gespeichert um">${setAt}</span></div>
+        <div class="pc-keys">
           <button data-action="person-set-fader" data-pid="${escapeAttr(person.id)}" data-ch="${ch}">Set</button>
           <button data-action="person-use-fader" data-pid="${escapeAttr(person.id)}" data-ch="${ch}" class="primary" ${entry.fader_hex ? "" : "disabled"}>Use</button>
-          <button data-action="person-remove-ch" data-pid="${escapeAttr(person.id)}" data-ch="${ch}" class="danger">&#x2715;</button>
-        </td>
-      </tr>`;
+          <button data-action="person-remove-ch" data-pid="${escapeAttr(person.id)}" data-ch="${ch}" class="danger" title="Kanal entfernen" aria-label="Kanal entfernen">&#x2715;</button>
+        </div>
+        <div class="person-fader-wrap">
+          <input
+            type="range"
+            min="0"
+            max="${FADER_MAX}"
+            step="1"
+            class="fader-slider"
+            data-action="person-fader-input"
+            data-pid="${escapeAttr(person.id)}"
+            data-ch="${ch}"
+            value="${baseValue.toFixed(0)}"
+            aria-label="Fader ${chName}"
+          />
+          <span class="fader-label" data-person-fader-label="${escapeAttr(person.id)}-${ch}">${formatDb(baseValue)}</span>
+        </div>
+      </div>`;
     }).join("");
 
     const addSelect = availableChs.length
@@ -1365,9 +1500,7 @@ function renderPersons() {
         </div>`
       : "";
 
-    const div = document.createElement("div");
-    div.className = "person-card";
-    div.innerHTML = `
+    html += `<div class="person-card">
       <div class="person-head">
         <div class="person-name-wrap">
           <button class="collapse-btn" data-action="person-toggle-collapse" data-pid="${escapeAttr(person.id)}" title="${collapsed ? "Ausklappen" : "Einklappen"}">${collapsed ? "▸" : "▾"}</button>
@@ -1375,23 +1508,34 @@ function renderPersons() {
           <span class="person-name" data-rename-person="${escapeAttr(person.id)}">${escapeHtml(person.name)}</span>
           <button class="rename-btn" data-action="person-rename" data-pid="${escapeAttr(person.id)}" data-name="${escapeAttr(person.name)}" title="Rename">&#9998;</button>
         </div>
-        <div class="person-actions">
-          <button data-action="person-mute" data-pid="${escapeAttr(person.id)}" class="key-mute">Mute</button>
-          <button data-action="person-solo" data-pid="${escapeAttr(person.id)}" class="key-solo">Solo</button>
-          <button data-action="person-use-all" data-pid="${escapeAttr(person.id)}" ${Object.values(person.channels || {}).some(e => e.fader_hex) ? "" : "disabled"}>Use All</button>
-          <button data-action="person-duplicate" data-pid="${escapeAttr(person.id)}">Duplicate</button>
-          <button data-action="person-delete" data-pid="${escapeAttr(person.id)}" class="danger">Delete</button>
+        <div class="person-tools">
+          <button class="icon-btn" data-action="person-duplicate" data-pid="${escapeAttr(person.id)}" title="Duplizieren" aria-label="${escapeAttr(person.name)} duplizieren">${ICON_COPY}</button>
+          <button class="icon-btn danger" data-action="person-delete" data-pid="${escapeAttr(person.id)}" title="Löschen" aria-label="${escapeAttr(person.name)} löschen">${ICON_TRASH}</button>
         </div>
       </div>
+      <div class="person-actions">
+        <button data-action="person-mute" data-pid="${escapeAttr(person.id)}" class="key-mute">Mute</button>
+        <button data-action="person-solo" data-pid="${escapeAttr(person.id)}" class="key-solo">Solo</button>
+        <button data-action="person-use-all" data-pid="${escapeAttr(person.id)}" ${Object.values(person.channels || {}).some(e => e.fader_hex) ? "" : "disabled"}>Use All</button>
+      </div>
       <div class="person-body ${collapsed ? "collapsed" : ""}">
-      ${assignedChs.length ? `<table class="person-channels">
-        <thead><tr><th>Channel</th><th>Saved fader</th><th>Fader</th><th>Set at</th><th></th></tr></thead>
-        <tbody>${rows}</tbody>
-      </table>` : `<div class="muted-text" style="font-size:12px;margin-bottom:8px;">Keine Kanäle zugewiesen.</div>`}
+      ${assignedChs.length ? `<div class="person-channels">${rows}</div>`
+        : `<div class="muted-text" style="font-size:12px;margin-bottom:8px;">Keine Kanäle zugewiesen.</div>`}
       ${addSelect}
-      </div>`;
-    wrap.appendChild(div);
+      </div>
+    </div>`;
   }
+  setPersonsHtml(wrap, html);
+}
+
+// renderPersons runs with every 1 s refresh. Replacing the cards each time
+// swapped every button under the user's finger, so a tap that spanned a
+// refresh was lost. The DOM is now only replaced when the markup changed.
+let PERSONS_HTML = null;
+function setPersonsHtml(wrap, html) {
+  if (html === PERSONS_HTML) return;
+  PERSONS_HTML = html;
+  wrap.innerHTML = html;
 }
 
 
@@ -1681,6 +1825,7 @@ function updateChannelCard(ch, c) {
   key.setAttribute("aria-pressed", known ? String(c.muted) : "mixed");
   key.title = !known ? "Mute-Status unbekannt – gesperrt"
     : c.muted ? "Gemutet – klicken zum Unmuten" : "Live – klicken zum Muten";
+  applyStripColor(ch);
   syncFader(ch, c);
 }
 
@@ -2058,6 +2203,8 @@ refresh();
 setInterval(refresh, 1000);
 refreshUpdateButton();
 setInterval(refreshUpdateButton, 30000);
+loadChannelColors();
+setInterval(loadChannelColors, 5000);
 </script>
 </body>
 </html>

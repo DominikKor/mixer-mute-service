@@ -20,6 +20,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .agent_download import router as agent_download_router
 from .buses import BusRegistry
+from .channel_colors import router as channel_colors_router
 from .config import default_config_path, load_config
 from .controller import Controller
 from .groups import GroupStore
@@ -107,7 +108,18 @@ app = FastAPI(title="Mixer Mute Service", version="0.1.0", lifespan=lifespan)
 app.include_router(router)
 app.include_router(updater_router)
 app.include_router(agent_download_router)
+app.include_router(channel_colors_router)
 app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="ui")
+
+
+@app.middleware("http")
+async def _revalidate_ui(request, call_next):
+    """Browsers (iPad Safari in particular) may otherwise keep showing an old
+    UI after an update; make them check the page on every load."""
+    response = await call_next(request)
+    if request.url.path == "/" or request.url.path.endswith(".html"):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
 
 
 def main() -> None:
