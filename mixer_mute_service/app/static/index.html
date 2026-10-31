@@ -700,8 +700,8 @@
     <div class="program-table-wrap">
       <table class="program-table">
         <colgroup>
-          <col style="width:7%"><col style="width:8%"><col style="width:15%"><col style="width:11%">
-          <col style="width:14%"><col style="width:11%"><col style="width:12%"><col style="width:12%"><col style="width:10%">
+          <col style="width:6%"><col style="width:7%"><col style="width:14%"><col style="width:10%">
+          <col style="width:13%"><col style="width:10%"><col style="width:10%"><col style="width:14%"><col style="width:16%">
         </colgroup>
         <thead><tr>
           <th>Uhrzeit</th><th>Verzögerung</th><th>Titel</th><th>Person</th><th>Mutegruppe</th>
@@ -3068,6 +3068,15 @@ function formatProgramDelay(seconds) {
   return `${value > 0 ? "+" : value < 0 ? "−" : "±"}${body}`;
 }
 
+function nextProgramTime() {
+  const previousTime = PROGRAM_ITEMS.length ? PROGRAM_ITEMS[PROGRAM_ITEMS.length - 1].time : "";
+  const nextTime = new Date();
+  const parsedTime = /^(\d{2}):(\d{2})$/.exec(previousTime);
+  if (parsedTime) nextTime.setHours(Number(parsedTime[1]), Number(parsedTime[2]), 0, 0);
+  nextTime.setMinutes(nextTime.getMinutes() + 5);
+  return `${String(nextTime.getHours()).padStart(2, "0")}:${String(nextTime.getMinutes()).padStart(2, "0")}`;
+}
+
 function programCell(row, label, content, className = "") {
   const cell = document.createElement("td");
   cell.dataset.label = label;
@@ -3165,6 +3174,16 @@ function buildProgramRow(item, draft = false) {
   primary.title = draft ? "Programmpunkt speichern" : "Programmpunkt starten";
   primary.setAttribute("aria-label", draft ? "Programmpunkt speichern" : "Programmpunkt starten");
   actions.appendChild(primary);
+  if (!draft) {
+    const clone = document.createElement("button");
+    clone.type = "button";
+    clone.dataset.programAction = "clone";
+    clone.dataset.programId = item.id;
+    clone.innerHTML = ICON_COPY;
+    clone.title = "Programmpunkt klonen";
+    clone.setAttribute("aria-label", `${item.title} klonen`);
+    actions.appendChild(clone);
+  }
   const secondary = document.createElement("button");
   secondary.type = "button";
   secondary.className = "danger";
@@ -3183,13 +3202,7 @@ function renderProgramItems() {
   tbody.replaceChildren();
   for (const item of PROGRAM_ITEMS) tbody.appendChild(buildProgramRow(item));
   if (PROGRAM_DRAFT) {
-    const previousTime = PROGRAM_ITEMS.length ? PROGRAM_ITEMS[PROGRAM_ITEMS.length - 1].time : "";
-    const nextTime = new Date();
-    const parsedTime = /^(\d{2}):(\d{2})$/.exec(previousTime);
-    if (parsedTime) nextTime.setHours(Number(parsedTime[1]), Number(parsedTime[2]), 0, 0);
-    nextTime.setMinutes(nextTime.getMinutes() + 5);
-    const time = `${String(nextTime.getHours()).padStart(2, "0")}:${String(nextTime.getMinutes()).padStart(2, "0")}`;
-    tbody.appendChild(buildProgramRow({ time, group: Object.keys(PROGRAM_GROUPS)[0] || "" }, true));
+    tbody.appendChild(buildProgramRow({ time: nextProgramTime(), group: Object.keys(PROGRAM_GROUPS)[0] || "" }, true));
   }
   $("program-empty").hidden = PROGRAM_ITEMS.length > 0 || PROGRAM_DRAFT;
 }
@@ -3238,6 +3251,34 @@ async function createProgramItem(row) {
   PROGRAM_DRAFT = false;
   await loadProgramItems();
   toast("Programmpunkt angelegt", true);
+}
+
+async function cloneProgramItem(itemId, button) {
+  const item = PROGRAM_ITEMS.find(entry => entry.id === itemId);
+  if (!item || PROGRAM_BUSY.has(itemId)) return;
+  PROGRAM_BUSY.add(itemId);
+  button.disabled = true;
+  const payload = {
+    time: nextProgramTime(),
+    title: item.title,
+    person: item.person,
+    group: item.group,
+    playback: item.playback,
+    translation: item.translation,
+    lyrics: item.lyrics,
+    playback_description: item.playback_description,
+    translation_description: item.translation_description,
+    lyrics_description: item.lyrics_description,
+  };
+  const result = await api("POST", "/program/items", payload);
+  PROGRAM_BUSY.delete(itemId);
+  if (!result.ok || result.data.ok === false) {
+    toast(result.data.reason || `HTTP ${result.status}`, false);
+    button.disabled = false;
+    return;
+  }
+  await loadProgramItems();
+  toast("Programmpunkt geklont", true);
 }
 
 async function updateProgramItem(row) {
@@ -3297,6 +3338,7 @@ $("program-items").addEventListener("click", event => {
   if (!button) return;
   if (button.dataset.programAction === "create") return createProgramItem(button.closest("tr"));
   if (button.dataset.programAction === "cancel") { PROGRAM_DRAFT = false; renderProgramItems(); return; }
+    if (button.dataset.programAction === "clone") return cloneProgramItem(button.dataset.programId, button);
   if (button.dataset.programAction === "delete") return deleteProgramItem(button.dataset.programId);
   if (button.dataset.programAction === "play") return playProgramItem(button.dataset.programId, button);
 });
