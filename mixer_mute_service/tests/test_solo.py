@@ -117,6 +117,29 @@ async def main():
     muted = await muted_map(store3, (1,))
     check("direct channel mute remains available", direct["ok"] and muted[1] is True)
 
+    store4 = StateStore()
+    link4 = FakeLink()
+    ctrl4 = Controller(cfg, store4, link4, gs, preferences)
+    for ch in (1, 2, 3, 4):
+        await set_state(store4, ch, False)
+    restored = await ctrl4.restore_mute_snapshot(
+        "saved", {"1": False, "2": True, "3": False, "4": True}
+    )
+    muted = await muted_map(store4, (1, 2, 3, 4))
+    check("snapshot restores mixed mute states", restored["ok"]
+          and muted == {1: False, 2: True, 3: False, 4: True})
+    check("snapshot restore skips unchanged channels", restored.get("restored") == 2)
+
+    store5 = StateStore()
+    link5 = FakeLink()
+    ctrl5 = Controller(cfg, store5, link5, gs, preferences)
+    await set_state(store5, 2, False)
+    blocked_restore = await ctrl5.restore_mute_snapshot("unsafe", {"2": True, "4": True})
+    muted = await muted_map(store5, (2,))
+    check("unsafe snapshot preflight sends nothing", not blocked_restore["ok"]
+          and blocked_restore["reason"] == "unsafe snapshot restore"
+          and len(link5.sent) == 0 and muted[2] is False)
+
     print(f"\n{PASS} passed, {FAIL} failed")
     sys.exit(1 if FAIL else 0)
 

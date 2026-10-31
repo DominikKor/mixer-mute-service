@@ -6,6 +6,7 @@ from __future__ import annotations
 import os
 from ipaddress import IPv4Address
 from pathlib import Path
+from urllib.parse import urlsplit
 from typing import Dict, List, Literal, Optional
 
 import yaml
@@ -124,11 +125,27 @@ class DesktopDisplayConfig(BaseModel):
     profiles: Dict[str, DesktopProfileConfig] = Field(default_factory=dict)
 
 
+class CompanionControlConfig(BaseModel):
+    base_url: str = "http://127.0.0.1:8000"
+    timeout_seconds: float = Field(default=3.0, gt=0, le=15)
+
+    @field_validator("base_url")
+    @classmethod
+    def _valid_base_url(cls, value: str) -> str:
+        parsed = urlsplit(value)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            raise ValueError("Companion base_url must be an HTTP(S) URL")
+        if parsed.username or parsed.password or parsed.query or parsed.fragment:
+            raise ValueError("Companion base_url cannot contain credentials, query, or fragment")
+        return value.rstrip("/")
+
+
 class Config(BaseModel):
     mixer: MixerConfig = Field(default_factory=MixerConfig)
     safety: SafetyConfig = Field(default_factory=SafetyConfig)
     server: ServerConfig = Field(default_factory=ServerConfig)
     desktop_display: DesktopDisplayConfig = Field(default_factory=DesktopDisplayConfig)
+    companion: CompanionControlConfig = Field(default_factory=CompanionControlConfig)
     groups: Dict[str, GroupConfig] = Field(default_factory=dict)
 
     def valid_channels(self) -> set:

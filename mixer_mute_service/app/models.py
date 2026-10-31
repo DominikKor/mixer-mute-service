@@ -5,6 +5,7 @@ enforced as response_model -- they describe the shapes for API consumers."""
 from __future__ import annotations
 
 from typing import Dict, List, Optional
+from typing import Dict, List, Literal, Optional
 
 from pydantic import BaseModel
 
@@ -64,6 +65,33 @@ class RecallFaderRequest(BaseModel):
 
 class AlwaysOnRequest(BaseModel):
     enabled: bool
+
+
+class CompanionCategoryCreate(BaseModel):
+    name: str
+
+
+class CompanionCategoryVisibility(BaseModel):
+    visible: bool
+
+
+class CompanionButtonCreate(BaseModel):
+    label: str
+    category_id: str
+    kind: Literal["companion", "channel", "group"]
+    target_button_id: Optional[str] = None
+    channel: Optional[int] = None
+    group: Optional[str] = None
+    operation: Optional[Literal["mute", "unmute", "toggle"]] = None
+
+
+class CompanionButtonUpdate(BaseModel):
+    label: str
+    category_id: str
+
+
+class MuteSnapshotCreate(BaseModel):
+    name: str
 
 
 class GroupUpdate(BaseModel):

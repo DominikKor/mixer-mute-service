@@ -250,7 +250,7 @@ with TestClient(app) as client:
     check("unknown desktop profile -> 404",
           client.post("/desktop/not-configured/open").status_code == 404)
     import os
-    from unittest.mock import patch
+    from unittest.mock import AsyncMock, patch
     old_token = os.environ.get("DESKTOP_AGENT_TOKEN")
     os.environ["DESKTOP_AGENT_TOKEN"] = "selftest-token"
     app.state.cfg.desktop_display.enabled = True
@@ -277,6 +277,105 @@ with TestClient(app) as client:
     check("clear channel always-on", clear_always_on.status_code == 200 and clear_always_on.json()["always_on"] is False)
     invalid_always_on = client.post("/channels/99/always-on", json={"enabled": True})
     check("always-on rejects invalid channel", invalid_always_on.status_code == 400)
+    companion_buttons = client.get("/companion/buttons")
+    check("Companion buttons listed", companion_buttons.status_code == 200 and len(companion_buttons.json()["buttons"]) == 13)
+    with patch("app.routes._forward_companion_press") as forward_companion:
+        companion_press = client.post("/companion/buttons/beamer-freeze/press")
+        check("Companion button proxied", companion_press.status_code == 200 and companion_press.json()["ok"] is True)
+        check("Companion page coordinates forwarded",
+              forward_companion.call_args.args[:4] == ("http://127.0.0.1:8000", 1, 0, 0))
+    safe_mixer_press = client.post("/companion/buttons/pultmikro-mute/press")
+    check("Mixer Companion button uses safe channel API",
+          safe_mixer_press.status_code == 409 and safe_mixer_press.json()["reason"] == "no mixer connection")
+    unknown_companion_button = client.post("/companion/buttons/not-configured/press")
+    check("Unknown Companion button rejected", unknown_companion_button.status_code == 404)
+    check("snapshot capture requires mixer connection",
+          client.post("/mute-snapshots", json={"name": "unavailable"}).status_code == 409)
+    app.state.client.connected = True
+
+    async def observed_channel(channel):
+        if channel == 8:
+            return None
+        now = time.monotonic()
+        return ChannelState(
+            fader_hex="1f14b643", fader_updated_at=now,
+            muted=channel % 2 == 0, muted_updated_at=now,
+        )
+
+    with patch.object(app.state.store, "get_channel", AsyncMock(side_effect=observed_channel)):
+        incomplete = client.post("/mute-snapshots", json={"name": "incomplete"})
+        check("snapshot capture rejects unknown channel state",
+              incomplete.status_code == 409 and incomplete.json()["details"][0]["channel"] == 8)
+    async def all_observed_channels(channel):
+        now = time.monotonic()
+        return ChannelState(
+            fader_hex="1f14b643", fader_updated_at=now,
+            muted=channel % 2 == 0, muted_updated_at=now,
+        )
+
+    with patch.object(app.state.store, "get_channel", AsyncMock(side_effect=all_observed_channels)):
+        captured = client.post("/mute-snapshots", json={"name": "Evening"})
+    check("snapshot captures all channel mute states", captured.status_code == 200)
+    snapshot = captured.json()["snapshot"]
+    check("snapshot stores mute states only", len(snapshot["channels"]) == 8
+          and snapshot["channels"]["2"] is True and snapshot["channels"]["1"] is False)
+    listed_snapshots = client.get("/mute-snapshots").json()
+    check("snapshot is listed", len(listed_snapshots) == 1 and listed_snapshots[0]["name"] == "Evening")
+    with patch.object(app.state.controller, "restore_mute_snapshot", AsyncMock(
+        return_value={"ok": True, "snapshot": "Evening", "restored": 3, "results": []}
+    )) as restore_snapshot:
+        restore_response = client.post(f"/mute-snapshots/{snapshot['id']}/restore")
+        check("snapshot restore route", restore_response.status_code == 200
+              and restore_response.json()["restored"] == 3)
+        check("snapshot restore route passes saved state",
+              restore_snapshot.call_args.args == ("Evening", snapshot["channels"]))
+    deleted_snapshot = client.post(f"/mute-snapshots/{snapshot['id']}/delete")
+    check("snapshot can be deleted", deleted_snapshot.status_code == 200)
+    check("deleted snapshot returns 404",
+          client.post(f"/mute-snapshots/{snapshot['id']}/restore").status_code == 404)
+    app.state.client.connected = False
+    check("Companion categories loaded",
+          len(companion_buttons.json()["categories"]) == 3
+          and len(companion_buttons.json()["companion_targets"]) == 11)
+    new_category = client.post("/companion/categories", json={"name": "Streaming"})
+    check("Companion category created", new_category.status_code == 200)
+    category_id = new_category.json()["category"]["id"]
+    hide_category = client.post(
+        f"/companion/categories/{category_id}/visibility", json={"visible": False}
+    )
+    check("Companion category hidden", hide_category.status_code == 200
+          and hide_category.json()["category"]["visible"] is False)
+    alias = client.post("/companion/buttons", json={
+        "label": "Cam 1 Start", "category_id": category_id,
+        "kind": "companion", "target_button_id": "cam1-live",
+    })
+    check("safe Companion alias created", alias.status_code == 200)
+    alias_id = alias.json()["button"]["id"]
+    with patch("app.routes._forward_companion_press") as forward_alias:
+        alias_press = client.post(f"/companion/buttons/{alias_id}/press")
+        check("alias uses allowlisted target", alias_press.status_code == 200
+              and forward_alias.call_args.args[1:4] == (1, 1, 1))
+    custom_channel = client.post("/companion/buttons", json={
+        "label": "Kanal 2 umschalten", "category_id": category_id,
+        "kind": "channel", "channel": 2, "operation": "toggle",
+    })
+    check("safe channel button created", custom_channel.status_code == 200)
+    custom_press = client.post(
+        f"/companion/buttons/{custom_channel.json()['button']['id']}/press"
+    )
+    check("custom channel button remains safety-blocked", custom_press.status_code == 409)
+    moved = client.post(f"/companion/buttons/{alias_id}/update", json={
+        "label": "Cam 1 Live", "category_id": "obs",
+    })
+    check("button reassigned to category", moved.status_code == 200
+          and moved.json()["button"]["category_id"] == "obs")
+    deleted = client.post(f"/companion/buttons/{alias_id}/delete")
+    check("custom button deleted", deleted.status_code == 200 and deleted.json()["deleted"] is True)
+    unsafe_target = client.post("/companion/buttons", json={
+        "label": "Unsafe", "category_id": category_id,
+        "kind": "companion", "target_button_id": "pultmikro-mute",
+    })
+    check("raw mixer button cannot be aliased", unsafe_target.status_code == 400)
     m = client.post("/channels/2/mute")
     check("mute blocked w/ 409 no connection", m.status_code == 409)
     check("mute reason = no mixer connection", m.json()["reason"] == "no mixer connection")

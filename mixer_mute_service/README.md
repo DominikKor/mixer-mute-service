@@ -1,3 +1,6 @@
+-  delete**. Each group shows its member channels and whether they are all safe.
+  Save and later restore the observed mute/live state of every channel as a
+  named snapshot; fader positions are not captured.
 # Mixer Mute Service
 
 A local HTTP service that provides **safe mute groups** for a digital mixing
@@ -45,14 +48,41 @@ The service serves a single-page control panel at `/`:
   while the channel's mute state is unknown. Blocked actions surface the reason
   as a toast (e.g. "fader value stale").
 - **Mute groups** — per-group **Mute / Unmute / Toggle**, plus **create / edit /
+- **Companion** — an optional collapsible panel for the buttons imported from
+  the Companion export. Categories can be collapsed, buttons can be reassigned,
+  created and deleted. New buttons may call an existing Companion action or a
+  state-checked channel/group operation.
+- **Mute groups** — per-group **Mute / Unmute / Toggle**, plus **create / edit /
   delete**. Each group shows its member channels and whether they are all safe.
+  Save the observed mute state of all channels as a named snapshot and restore
+  it later without saving or changing fader positions.
 
-The page polls `/state`, `/health` and `/groups` once per second.
+The page polls `/state`, `/health` and `/groups` once per second and loads saved
+mute snapshots when the page opens or a snapshot changes.
 
 ## Endpoints
 
+### Companion setup
+
+Enable Companion's HTTP API in Companion settings. The panel defaults to
+`http://127.0.0.1:8000`; set `companion.base_url` in `config.yaml` if Companion
+runs on another host. The exported OBS/Beamer button actions are pressed by
+their allowlisted page/row/column. The two mixer buttons are deliberately
+mapped to safe channel endpoints instead of replaying the export's raw HEX.
+Categories and button changes are stored in `companion_buttons.json` next to
+`config.yaml`. New controls can target an existing non-mixer Companion button,
+a mixer channel, or a mute group; arbitrary shell commands and raw HEX are not
+accepted.
+
 | Method | Path | Purpose |
 | ------ | ---- | ------- |
+| GET  | `/companion/buttons` | list imported controls |
+| POST | `/companion/buttons/{button_id}/press` | press one allowlisted control |
+| POST | `/companion/categories` | create a category `{name}` |
+| POST | `/companion/categories/{category_id}/visibility` | set `{visible}` |
+| POST | `/companion/buttons` | create a safe custom button |
+| POST | `/companion/buttons/{button_id}/update` | rename or reassign a button |
+| POST | `/companion/buttons/{button_id}/delete` | delete a button |
 | GET  | `/health` | service + connection status |
 | GET  | `/state` | per-channel fader/mute/safe view |
 | GET  | `/channels/{channel}` | single channel state |
@@ -69,6 +99,14 @@ The page polls `/state`, `/health` and `/groups` once per second.
 | GET  | `/groups/{group}` | one group's channels |
 | POST | `/groups/{group}/update` | replace a group's channels `{channels}` |
 | POST | `/groups/{group}/delete` | delete a group |
+| GET  | `/mute-snapshots` | list saved all-channel mute states |
+| POST | `/mute-snapshots` | capture current state `{name}` |
+| POST | `/mute-snapshots/{snapshot_id}/restore` | restore saved mute states safely |
+| POST | `/mute-snapshots/{snapshot_id}/delete` | delete a saved state |
+| GET  | `/mute-snapshots` | list saved all-channel mute states |
+| POST | `/mute-snapshots` | capture current state `{name}` |
+| POST | `/mute-snapshots/{snapshot_id}/restore` | restore saved mute states safely |
+| POST | `/mute-snapshots/{snapshot_id}/delete` | delete a saved state |
 | PUT  | `/groups/{group}` | legacy alias for group update |
 | DELETE | `/groups/{group}` | legacy alias for group deletion |
 | GET  | `/update/status` | installed release, update progress and log tail |
@@ -79,6 +117,14 @@ The page polls `/state`, `/health` and `/groups` once per second.
 Groups created/edited in the UI are persisted to `groups.json` next to
 `config.yaml`; the `groups:` block in `config.yaml` is only the initial seed, so
 your hand-written config (comments, mixer/safety settings) is never overwritten.
+Mute snapshots are persisted separately in `mute_snapshots.json`. Capture is
+blocked if the mixer is disconnected or any channel mute/fader state is unknown
+or unsafe. Restore checks all changed channels before sending anything and
+never writes saved fader positions.
+Mute snapshots are persisted separately in `mute_snapshots.json`. Capture is
+blocked if the mixer is disconnected or any channel mute/fader state is unknown
+or unsafe. Restore checks all changed channels before sending anything and
+never writes saved fader positions.
 All group changes can be issued with POST requests. For example:
 
 ```bash

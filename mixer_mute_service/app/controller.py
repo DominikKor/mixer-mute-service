@@ -369,6 +369,68 @@ class Controller:
         target = not all_muted
         return await self.group_set(group, target)
 
+    async def restore_mute_snapshot(self, name: str, muted_states: dict) -> dict:
+        reason = self._global_block_reason()
+        if reason:
+            return {"ok": False, "snapshot": name, "reason": reason}
+
+        try:
+            states = {int(channel): muted for channel, muted in muted_states.items()}
+        except (AttributeError, TypeError, ValueError):
+            return {"ok": False, "snapshot": name, "reason": "invalid snapshot state"}
+        if not states or any(
+            channel not in self._cfg.valid_channels() or not isinstance(muted, bool)
+            for channel, muted in states.items()
+        ):
+            return {"ok": False, "snapshot": name, "reason": "invalid snapshot state"}
+
+        always_on = await self.always_on_channels()
+        conflicts = sorted(channel for channel, muted in states.items() if muted and channel in always_on)
+        if conflicts:
+            return {
+                "ok": False,
+                "snapshot": name,
+                "reason": "snapshot conflicts with always-on channels",
+                "details": [{"channel": channel, "reason": "channel is marked always-on"} for channel in conflicts],
+            }
+
+        changes = []
+        unsafe = []
+        for channel, target_muted in sorted(states.items()):
+            current = await self._store.get_channel(channel)
+            if current is not None and current.muted is target_muted:
+                continue
+            safety = check_channel_send(
+                channel, current, self._cfg, session_epoch=self._client.session_epoch
+            )
+            if not safety.ok:
+                unsafe.append(safety.as_detail(channel))
+            else:
+                changes.append((channel, target_muted))
+        if unsafe:
+            return {
+                "ok": False,
+                "snapshot": name,
+                "reason": "unsafe snapshot restore",
+                "details": unsafe,
+            }
+
+        results = []
+        delay = self._cfg.safety.group_send_delay_ms / 1000.0
+        for index, (channel, target_muted) in enumerate(changes):
+            if index:
+                await asyncio.sleep(delay)
+            result = await self.channel_set(channel, target_muted)
+            results.append(result)
+            if not result.get("ok"):
+                return {
+                    "ok": False,
+                    "snapshot": name,
+                    "reason": "snapshot restore interrupted",
+                    "results": results,
+                }
+        return {"ok": True, "snapshot": name, "restored": len(results), "results": results}
+
 
 def _act(muted: bool) -> str:
     return "mute" if muted else "unmute"

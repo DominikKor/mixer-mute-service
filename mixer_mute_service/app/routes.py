@@ -17,11 +17,24 @@ from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
 from .config import DesktopProfileConfig, default_config_path
+from .companion_buttons import COMPANION_BUTTONS, COMPANION_BUTTONS_BY_ID
 from .desktop_profiles import ProfileEditError, add_profile, update_profile
 from .groups import GroupError
-from .models import AlwaysOnRequest, FaderRequest, GroupCreate, GroupUpdate, RecallFaderRequest
+from .mute_snapshots import MuteSnapshotError
+from .models import (
+    AlwaysOnRequest,
+    CompanionButtonCreate,
+    CompanionButtonUpdate,
+    CompanionCategoryCreate,
+    CompanionCategoryVisibility,
+    FaderRequest,
+    GroupCreate,
+    GroupUpdate,
+    MuteSnapshotCreate,
+    RecallFaderRequest,
+)
 from .protocol import fader_hex_to_value
-from .safety import is_channel_safe
+from .safety import check_channel_send, is_channel_safe
 
 router = APIRouter()
 _logger = logging.getLogger("mixer.desktop_display")
@@ -61,6 +74,152 @@ def _forward_display_request(url: str, token: str, profile: dict) -> dict:
     )
     with urllib.request.urlopen(req, timeout=3) as response:
         return json.loads(response.read().decode("utf-8"))
+
+
+def _forward_companion_press(base_url: str, page: int, row: int, column: int, timeout: float) -> None:
+    url = f"{base_url}/api/location/{page}/{row}/{column}/press"
+    req = urllib.request.Request(url, data=b"", method="POST")
+    with urllib.request.urlopen(req, timeout=timeout):
+        return
+
+
+@router.get("/companion/buttons")
+async def companion_buttons(request: Request):
+    data = await request.app.state.companion_button_store.snapshot()
+    present = {button["id"] for button in data["buttons"]}
+    data["companion_targets"] = [
+        button for button in COMPANION_BUTTONS
+        if button["kind"] == "companion" and button["id"] in present
+    ]
+    return data
+
+
+@router.post("/companion/categories")
+async def companion_category_create(body: CompanionCategoryCreate, request: Request):
+    try:
+        category = await request.app.state.companion_button_store.create_category(body.name)
+    except ValueError as exc:
+        return JSONResponse({"ok": False, "reason": str(exc)}, 400)
+    return {"ok": True, "category": category}
+
+
+@router.post("/companion/categories/{category_id}/visibility")
+async def companion_category_visibility(
+    category_id: str, body: CompanionCategoryVisibility, request: Request
+):
+    try:
+        category = await request.app.state.companion_button_store.set_category_visible(
+            category_id, body.visible
+        )
+    except KeyError:
+        return JSONResponse({"ok": False, "reason": "unknown category"}, 404)
+    return {"ok": True, "category": category}
+
+
+@router.post("/companion/buttons")
+async def companion_button_create(body: CompanionButtonCreate, request: Request):
+    cfg = request.app.state.cfg
+    if body.kind == "companion":
+        target = COMPANION_BUTTONS_BY_ID.get(body.target_button_id or "")
+        if target is None or target["kind"] != "companion":
+            return JSONResponse({"ok": False, "reason": "invalid Companion button target"}, 400)
+        action = {"kind": "companion", "target_button_id": target["id"]}
+    elif body.kind == "channel":
+        if body.channel not in cfg.valid_channels():
+            return JSONResponse({"ok": False, "reason": "invalid channel"}, 400)
+        if body.operation is None:
+            return JSONResponse({"ok": False, "reason": "operation is required"}, 400)
+        action = {"kind": "channel", "channel": body.channel, "operation": body.operation}
+    else:
+        if not body.group or await request.app.state.groups.get(body.group) is None:
+            return JSONResponse({"ok": False, "reason": "unknown group"}, 404)
+        if body.operation is None:
+            return JSONResponse({"ok": False, "reason": "operation is required"}, 400)
+        action = {"kind": "group", "group": body.group, "operation": body.operation}
+
+    try:
+        button = await request.app.state.companion_button_store.create_button(
+            body.label, body.category_id, action
+        )
+    except ValueError as exc:
+        return JSONResponse({"ok": False, "reason": str(exc)}, 400)
+    except KeyError:
+        return JSONResponse({"ok": False, "reason": "unknown category"}, 404)
+    return {"ok": True, "button": button}
+
+
+@router.post("/companion/buttons/{button_id}/update")
+async def companion_button_update(
+    button_id: str, body: CompanionButtonUpdate, request: Request
+):
+    try:
+        button = await request.app.state.companion_button_store.update_button(
+            button_id, body.label, body.category_id
+        )
+    except ValueError as exc:
+        return JSONResponse({"ok": False, "reason": str(exc)}, 400)
+    except KeyError:
+        return JSONResponse({"ok": False, "reason": "unknown button or category"}, 404)
+    return {"ok": True, "button": button}
+
+
+@router.post("/companion/buttons/{button_id}/delete")
+async def companion_button_delete(button_id: str, request: Request):
+    try:
+        await request.app.state.companion_button_store.delete_button(button_id)
+    except KeyError:
+        return JSONResponse({"ok": False, "reason": "unknown button"}, 404)
+    return {"ok": True, "button_id": button_id, "deleted": True}
+
+
+@router.post("/companion/buttons/{button_id}/press")
+async def companion_button_press(button_id: str, request: Request):
+    button = await request.app.state.companion_button_store.get_button(button_id)
+    if button is None:
+        return JSONResponse({"ok": False, "reason": "unknown Companion button"}, 404)
+
+    _, _, _, controller = _ctx(request)
+    if button["kind"] == "channel":
+        if button["operation"] == "toggle":
+            result = await controller.channel_toggle(button["channel"])
+        else:
+            result = await controller.channel_set(
+                button["channel"], button["operation"] == "mute"
+            )
+        return _respond({**result, "button": button_id})
+    if button["kind"] == "group":
+        if button["operation"] == "toggle":
+            result = await controller.group_toggle(button["group"])
+        else:
+            result = await controller.group_set(
+                button["group"], button["operation"] == "mute"
+            )
+        return _respond({**result, "button": button_id})
+    if button["kind"] != "companion":
+        return JSONResponse({"ok": False, "reason": "invalid button action"}, 400)
+
+    target_id = button.get("target_button_id", button["id"])
+    target = COMPANION_BUTTONS_BY_ID.get(target_id)
+    if target is None or target["kind"] != "companion":
+        return JSONResponse({"ok": False, "reason": "invalid Companion button target"}, 400)
+
+    cfg = request.app.state.cfg.companion
+    try:
+        await asyncio.to_thread(
+            _forward_companion_press,
+            cfg.base_url,
+            target["page"],
+            target["row"],
+            target["column"],
+            cfg.timeout_seconds,
+        )
+    except urllib.error.HTTPError as exc:
+        reason = "Companion HTTP API is disabled" if exc.code == 403 else f"Companion returned HTTP {exc.code}"
+        return JSONResponse({"ok": False, "button": button_id, "reason": reason}, 503 if exc.code == 403 else 502)
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        log.warning("Companion press failed button=%s reason=%r", button_id, exc)
+        return JSONResponse({"ok": False, "button": button_id, "reason": "Companion is unreachable"}, 503)
+    return {"ok": True, "button": button_id}
 
 
 @router.get("/health")
@@ -298,6 +457,61 @@ async def group_unmute(group: str, request: Request):
 async def group_toggle(group: str, request: Request):
     _, _, _, controller = _ctx(request)
     return _respond(await controller.group_toggle(group))
+
+
+@router.get("/mute-snapshots")
+async def list_mute_snapshots(request: Request):
+    return await request.app.state.mute_snapshots.list()
+
+
+@router.post("/mute-snapshots")
+async def create_mute_snapshot(body: MuteSnapshotCreate, request: Request):
+    cfg, store, client, controller = _ctx(request)
+    if not client.connected:
+        return JSONResponse({"ok": False, "reason": "no mixer connection"}, 409)
+
+    states = {}
+    unsafe = []
+    for channel in cfg.all_channels():
+        channel_state = await store.get_channel(channel)
+        safety = check_channel_send(
+            channel, channel_state, cfg,
+            session_epoch=client.session_epoch,
+            require_mute_state=True,
+        )
+        if not safety.ok:
+            unsafe.append(safety.as_detail(channel))
+        else:
+            states[str(channel)] = channel_state.muted
+
+    if unsafe:
+        return JSONResponse({
+            "ok": False,
+            "reason": "cannot capture incomplete channel state",
+            "details": unsafe,
+        }, 409)
+    try:
+        snapshot = await request.app.state.mute_snapshots.create(body.name, states)
+    except MuteSnapshotError as exc:
+        return JSONResponse({"ok": False, "reason": str(exc)}, 400)
+    return {"ok": True, "snapshot": snapshot}
+
+
+@router.post("/mute-snapshots/{snapshot_id}/restore")
+async def restore_mute_snapshot(snapshot_id: str, request: Request):
+    snapshot = await request.app.state.mute_snapshots.get(snapshot_id)
+    if snapshot is None:
+        return JSONResponse({"ok": False, "reason": "unknown snapshot"}, 404)
+    _, _, _, controller = _ctx(request)
+    return _respond(await controller.restore_mute_snapshot(snapshot["name"], snapshot["channels"]))
+
+
+@router.post("/mute-snapshots/{snapshot_id}/delete")
+async def delete_mute_snapshot(snapshot_id: str, request: Request):
+    deleted = await request.app.state.mute_snapshots.delete(snapshot_id)
+    if not deleted:
+        return JSONResponse({"ok": False, "reason": "unknown snapshot"}, 404)
+    return {"ok": True, "snapshot_id": snapshot_id, "deleted": True}
 
 
 # -- group management (CRUD) ----------------------------------------------
