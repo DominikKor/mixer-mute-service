@@ -54,6 +54,10 @@ class GroupCreate(BaseModel):
     channels: List[int]
 
 
+class GroupCaptureRequest(BaseModel):
+    name: str
+
+
 class FaderRequest(BaseModel):
     # fader position 0..1000 (0 = -inf, 750 ~ 0 dB, 1000 = top)
     value: float

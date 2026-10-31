@@ -291,6 +291,16 @@ with TestClient(app) as client:
     check("Unknown Companion button rejected", unknown_companion_button.status_code == 404)
     check("snapshot capture requires mixer connection",
           client.post("/mute-snapshots", json={"name": "unavailable"}).status_code == 409)
+    check("group capture requires mixer connection",
+          client.post("/groups/from-current-status", json={"name": "unavailable"}).status_code == 409)
+    with patch.object(app.state.controller, "create_group_from_current_status", AsyncMock(
+        return_value={"ok": True, "group": "Captured", "channels": [1], "fader_hex": {"1": "1f14b643"}}
+    )) as capture_group:
+        captured_group = client.post("/groups/from-current-status", json={"name": "Captured"})
+        check("normal group capture route", captured_group.status_code == 200
+              and captured_group.json()["channels"] == [1])
+        check("normal group capture passes name",
+              capture_group.call_args.args == ("Captured",))
     app.state.client.connected = True
 
     async def observed_channel(channel):

@@ -16,7 +16,7 @@ from typing import List, Optional, Tuple
 
 from .channel_preferences import ChannelPreferences
 from .config import Config
-from .groups import GroupStore
+from .groups import GroupError, GroupStore
 from .mixer_client import MixerClient
 from .protocol import (
     build_bus_command,
@@ -24,7 +24,7 @@ from .protocol import (
     fader_hex_to_value,
     fader_value_to_hex,
 )
-from .safety import check_channel_send
+from .safety import check_channel_mute_state, check_channel_send
 from .state import StateStore
 
 log = logging.getLogger("mixer.controller")
@@ -368,6 +368,49 @@ class Controller:
         all_muted = all(states[ch].muted for ch in toggle_channels)  # type: ignore[union-attr]
         target = not all_muted
         return await self.group_set(group, target)
+
+    async def create_group_from_current_status(self, name: str) -> dict:
+        if not self._client.connected:
+            return {"ok": False, "reason": "no mixer connection"}
+
+        channels = []
+        fader_hex = {}
+        unsafe = []
+        for channel in self._cfg.all_channels():
+            state = await self._store.get_channel(channel)
+            mute_safety = check_channel_mute_state(
+                channel, state, self._cfg,
+                session_epoch=self._client.session_epoch,
+            )
+            if not mute_safety.ok:
+                unsafe.append(mute_safety.as_detail(channel))
+                continue
+            if state.muted:
+                continue
+
+            fader_safety = check_channel_send(
+                channel, state, self._cfg, session_epoch=self._client.session_epoch
+            )
+            if not fader_safety.ok:
+                unsafe.append(fader_safety.as_detail(channel))
+                continue
+            channels.append(channel)
+            fader_hex[str(channel)] = state.fader_hex
+
+        if unsafe:
+            return {
+                "ok": False,
+                "reason": "cannot capture current channel state",
+                "details": unsafe,
+            }
+        if not channels:
+            return {"ok": False, "reason": "no unmuted channels"}
+
+        try:
+            await self._groups.create(name, channels)
+        except GroupError as exc:
+            return {"ok": False, "reason": str(exc)}
+        return {"ok": True, "group": name.strip(), "channels": channels, "fader_hex": fader_hex}
 
     async def restore_mute_snapshot(self, name: str, muted_states: dict) -> dict:
         reason = self._global_block_reason()

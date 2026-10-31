@@ -1,6 +1,3 @@
--  delete**. Each group shows its member channels and whether they are all safe.
-  Save and later restore the observed mute/live state of every channel as a
-  named snapshot; fader positions are not captured.
 # Mixer Mute Service
 
 A local HTTP service that provides **safe mute groups** for a digital mixing
@@ -47,18 +44,16 @@ The service serves a single-page control panel at `/`:
   dragging, the position is sent at most every 100 ms. The fader is locked
   while the channel's mute state is unknown. Blocked actions surface the reason
   as a toast (e.g. "fader value stale").
-- **Mute groups** — per-group **Mute / Unmute / Toggle**, plus **create / edit /
 - **Companion** — an optional collapsible panel for the buttons imported from
   the Companion export. Categories can be collapsed, buttons can be reassigned,
   created and deleted. New buttons may call an existing Companion action or a
   state-checked channel/group operation.
 - **Mute groups** — per-group **Mute / Unmute / Toggle**, plus **create / edit /
   delete**. Each group shows its member channels and whether they are all safe.
-  Save the observed mute state of all channels as a named snapshot and restore
-  it later without saving or changing fader positions.
+  **Mutegruppe aus Status** creates a regular group from channels currently
+  unmuted, with their observed fader values saved for **Use All**.
 
-The page polls `/state`, `/health` and `/groups` once per second and loads saved
-mute snapshots when the page opens or a snapshot changes.
+The page polls `/state`, `/health` and `/groups` once per second.
 
 ## Endpoints
 
@@ -94,19 +89,12 @@ accepted.
 | POST | `/groups/{group}/mute` | mute group (all-or-nothing) |
 | POST | `/groups/{group}/unmute` | unmute group (all-or-nothing) |
 | POST | `/groups/{group}/toggle` | toggle group |
+| POST | `/groups/from-current-status` | create a group from currently unmuted channels and their observed faders `{name}` |
 | GET  | `/groups` | list all groups and their channels |
 | POST | `/groups` | create group `{name, channels}` |
 | GET  | `/groups/{group}` | one group's channels |
 | POST | `/groups/{group}/update` | replace a group's channels `{channels}` |
 | POST | `/groups/{group}/delete` | delete a group |
-| GET  | `/mute-snapshots` | list saved all-channel mute states |
-| POST | `/mute-snapshots` | capture current state `{name}` |
-| POST | `/mute-snapshots/{snapshot_id}/restore` | restore saved mute states safely |
-| POST | `/mute-snapshots/{snapshot_id}/delete` | delete a saved state |
-| GET  | `/mute-snapshots` | list saved all-channel mute states |
-| POST | `/mute-snapshots` | capture current state `{name}` |
-| POST | `/mute-snapshots/{snapshot_id}/restore` | restore saved mute states safely |
-| POST | `/mute-snapshots/{snapshot_id}/delete` | delete a saved state |
 | PUT  | `/groups/{group}` | legacy alias for group update |
 | DELETE | `/groups/{group}` | legacy alias for group deletion |
 | GET  | `/update/status` | installed release, update progress and log tail |
@@ -117,14 +105,10 @@ accepted.
 Groups created/edited in the UI are persisted to `groups.json` next to
 `config.yaml`; the `groups:` block in `config.yaml` is only the initial seed, so
 your hand-written config (comments, mixer/safety settings) is never overwritten.
-Mute snapshots are persisted separately in `mute_snapshots.json`. Capture is
-blocked if the mixer is disconnected or any channel mute/fader state is unknown
-or unsafe. Restore checks all changed channels before sending anything and
-never writes saved fader positions.
-Mute snapshots are persisted separately in `mute_snapshots.json`. Capture is
-blocked if the mixer is disconnected or any channel mute/fader state is unknown
-or unsafe. Restore checks all changed channels before sending anything and
-never writes saved fader positions.
+Group capture requires a connected mixer and known mute states for every
+channel. It stores only unmuted channels, blocks if any included channel lacks
+a safe observed fader value, and saves those values as the group's **Use All**
+presets. Muted channels are omitted.
 All group changes can be issued with POST requests. For example:
 
 ```bash

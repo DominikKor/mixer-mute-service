@@ -23,6 +23,7 @@ from .groups import GroupError
 from .mute_snapshots import MuteSnapshotError
 from .models import (
     AlwaysOnRequest,
+    GroupCaptureRequest,
     CompanionButtonCreate,
     CompanionButtonUpdate,
     CompanionCategoryCreate,
@@ -457,6 +458,12 @@ async def group_unmute(group: str, request: Request):
 async def group_toggle(group: str, request: Request):
     _, _, _, controller = _ctx(request)
     return _respond(await controller.group_toggle(group))
+
+
+@router.post("/groups/from-current-status")
+async def create_group_from_current_status(body: GroupCaptureRequest, request: Request):
+    _, _, _, controller = _ctx(request)
+    return _respond(await controller.create_group_from_current_status(body.name))
 
 
 @router.get("/mute-snapshots")

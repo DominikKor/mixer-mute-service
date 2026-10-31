@@ -140,6 +140,26 @@ async def main():
           and blocked_restore["reason"] == "unsafe snapshot restore"
           and len(link5.sent) == 0 and muted[2] is False)
 
+    store6 = StateStore()
+    ctrl6 = Controller(cfg, store6, FakeLink(), gs, preferences)
+    for ch, is_muted in ((1, False), (2, True), (3, False), (4, True)):
+        await set_state(store6, ch, is_muted)
+        capture_name = f"captured-{time.monotonic_ns()}"
+        captured_group = await ctrl6.create_group_from_current_status(capture_name)
+    check("capture creates a regular group from unmuted channels",
+          captured_group["ok"] and captured_group["channels"] == [1, 3]
+                    and await gs.get(capture_name) == [1, 3])
+    check("capture preserves observed fader presets",
+          captured_group["fader_hex"] == {"1": "1f14b643", "3": "1f14b643"})
+
+    store7 = StateStore()
+    ctrl7 = Controller(cfg, store7, FakeLink(), gs, preferences)
+    await set_state(store7, 1, False)
+    incomplete_group = await ctrl7.create_group_from_current_status("incomplete")
+    check("capture rejects unknown muted channel status",
+          not incomplete_group["ok"] and incomplete_group["reason"] == "cannot capture current channel state"
+          and await gs.get("incomplete") is None)
+
     print(f"\n{PASS} passed, {FAIL} failed")
     sys.exit(1 if FAIL else 0)
 

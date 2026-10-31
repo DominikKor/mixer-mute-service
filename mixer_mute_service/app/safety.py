@@ -75,15 +75,43 @@ def check_channel_send(
         return SafetyResult(False, "fader value stale", age_seconds=fader_age)
 
     if require_mute_state:
-        if cs.muted is None or cs.muted_updated_at is None:
-            return SafetyResult(False, "mute state unknown")
-        if mode == "session" and session_epoch is not None and cs.muted_updated_at < session_epoch:
-            return SafetyResult(False, "mute state predates current session")
-        mute_cap = cfg.safety.max_mute_age_seconds
-        if mute_cap and (now - cs.muted_updated_at) > mute_cap:
-            return SafetyResult(False, "mute state stale", age_seconds=now - cs.muted_updated_at)
+        mute_safety = check_channel_mute_state(
+            channel, cs, cfg, session_epoch=session_epoch
+        )
+        if not mute_safety.ok:
+            return mute_safety
 
     return SafetyResult(True, age_seconds=fader_age)
+
+
+def check_channel_mute_state(
+    channel: int,
+    cs: Optional[ChannelState],
+    cfg: Config,
+    *,
+    session_epoch: Optional[float] = None,
+) -> SafetyResult:
+    """Check that an observed mute state is valid and current."""
+    now = time.monotonic()
+    mode = cfg.safety.freshness_mode
+    if channel not in cfg.valid_channels():
+        return SafetyResult(False, "invalid channel")
+    if cs is None or cs.muted is None or cs.muted_updated_at is None:
+        return SafetyResult(False, "mute state unknown")
+
+    mute_age = now - cs.muted_updated_at
+    if mode == "session":
+        if session_epoch is None:
+            return SafetyResult(False, "no live mixer session", age_seconds=mute_age)
+        if cs.muted_updated_at < session_epoch:
+            return SafetyResult(False, "mute state predates current session", age_seconds=mute_age)
+
+    mute_cap = cfg.safety.max_mute_age_seconds
+    if mode == "age" and not mute_cap:
+        mute_cap = 1.0
+    if mute_cap and mute_age > mute_cap:
+        return SafetyResult(False, "mute state stale", age_seconds=mute_age)
+    return SafetyResult(True, age_seconds=mute_age)
 
 
 def is_channel_safe(

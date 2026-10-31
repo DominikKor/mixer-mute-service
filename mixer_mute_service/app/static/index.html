@@ -399,15 +399,6 @@
   /* Three groups side by side on desktop and iPad landscape, two in iPad
      portrait, one on phones */
   #persons { display: grid; gap: 14px; align-items: start; grid-template-columns: repeat(3, minmax(0, 1fr)); }
-    #mute-snapshots { display: grid; gap: 10px; grid-template-columns: repeat(3, minmax(0, 1fr)); margin-bottom: 14px; }
-    @media (max-width: 1199px) { #mute-snapshots { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-    @media (max-width: 759px) { #mute-snapshots { grid-template-columns: minmax(0, 1fr); } }
-    .snapshot-card { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; min-width: 0; padding: 10px; border: 1px solid #08090b; border-radius: 6px; background: var(--panel-bg); }
-    .snapshot-name { min-width: 0; overflow-wrap: anywhere; color: var(--lcd-text); font-weight: 700; }
-    .snapshot-summary { color: var(--muted); font: 11px/1.35 var(--mono); }
-      .snapshot-heading { margin: 14px 0 8px; font-size: 12px; font-weight: 800; color: #7d8594; text-transform: uppercase; }
-    .snapshot-actions { display: flex; gap: 6px; }
-    .snapshot-actions button { min-height: 44px; }
   @media (max-width: 1199px) { #persons { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
   @media (max-width: 759px) { #persons { grid-template-columns: minmax(0, 1fr); } }
   .person-card {
@@ -617,7 +608,7 @@
   <div class="panel-head">
     <button class="section-toggle" aria-expanded="true" aria-controls="groups-body">Mute Gruppen</button>
     <div class="panel-tools">
-      <button id="new-snapshot-btn" class="add-key">Status speichern</button>
+      <button id="new-snapshot-btn" class="add-key">Mutegruppe aus Status</button>
       <button id="new-person-btn" class="add-key"><svg class="plus-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 4v16M4 12h16"/></svg>Neue Mute Gruppe</button>
     </div>
   </div>
@@ -628,12 +619,10 @@
       <button id="create-person-cancel">Cancel</button>
     </div>
     <div id="snapshot-create-row" class="person-create-row">
-      <input id="snapshot-name" class="rename-input" type="text" placeholder="Name für den aktuellen Mute-Status" autocomplete="off" maxlength="64" />
-      <button id="snapshot-save-btn" class="primary">Status abfragen & speichern</button>
+      <input id="snapshot-name" class="rename-input" type="text" placeholder="Name der Mute Gruppe" autocomplete="off" maxlength="64" />
+      <button id="snapshot-save-btn" class="primary">Ungemutete Channels übernehmen</button>
       <button id="snapshot-cancel-btn">Abbrechen</button>
     </div>
-    <h3 class="snapshot-heading">Gespeicherte Kanalzustände</h3>
-    <div id="mute-snapshots"></div>
     <div id="persons"></div>
   </div>
 </section>
@@ -1958,6 +1947,7 @@ function renderChannels(state) {
 
 function escapeHtml(s) { return s.replace(/[&<>"']/g, m => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m])); }
 function escapeAttr(s) { return escapeHtml(s); }
+/*
 
 // ---- refresh loop -------------------------------------------------------
 let MUTE_SNAPSHOTS = [];
@@ -1969,272 +1959,202 @@ function renderMuteSnapshots() {
     wrap.textContent = "Noch keine gespeicherten Kanalzustände.";
     wrap.className = "muted-text";
     return;
-  }
-  wrap.className = "";
-  for (const snapshot of MUTE_SNAPSHOTS) {
-    const channelStates = Object.values(snapshot.channels || {});
-    const mutedCount = channelStates.filter(Boolean).length;
-    const card = document.createElement("div");
-    card.className = "snapshot-card";
-    const info = document.createElement("div");
-    const name = document.createElement("div");
-    name.className = "snapshot-name";
-    name.textContent = snapshot.name;
-    const summary = document.createElement("div");
-    summary.className = "snapshot-summary";
-    summary.textContent = `${channelStates.length} Channels · ${mutedCount} Mute · ${channelStates.length - mutedCount} Live`;
-    info.append(name, summary);
-    const actions = document.createElement("div");
-    actions.className = "snapshot-actions";
-    const restore = document.createElement("button");
-    restore.type = "button";
-    restore.className = "primary";
-    restore.dataset.action = "snapshot-restore";
-    restore.dataset.sid = snapshot.id;
-    restore.textContent = "Wiederherstellen";
-    const remove = document.createElement("button");
-    remove.type = "button";
-    remove.className = "danger";
-    remove.dataset.action = "snapshot-delete";
-    remove.dataset.sid = snapshot.id;
-    remove.setAttribute("aria-label", `${snapshot.name} löschen`);
-    remove.title = "Snapshot löschen";
-    remove.textContent = "×";
-    actions.append(restore, remove);
-    card.append(info, actions);
-    wrap.appendChild(card);
-  }
-}
+  const COMPANION_BUTTON_BUSY = false;
+  const COMPANION_CATEGORY_BUSY = new Set();
+  let COMPANION_DATA = { categories: [], buttons: [], companion_targets: [] };
+  let COMPANION_GROUPS = {};
 
-async function loadMuteSnapshots() {
-  try {
-    const result = await api("GET", "/mute-snapshots");
-    if (!result.ok) throw new Error("snapshot list unavailable");
-    MUTE_SNAPSHOTS = result.data;
-    renderMuteSnapshots();
-  } catch (_) {
-    $("mute-snapshots").textContent = "Gespeicherte Zustände konnten nicht geladen werden";
-  }
-}
+  function renderCompanionButtons() {
+    const wrap = $("companion-categories");
+    wrap.replaceChildren();
+    for (const category of COMPANION_DATA.categories) {
+      const section = document.createElement("section");
+      section.className = "companion-category";
+      section.dataset.categoryId = category.id;
+      section.dataset.visible = String(category.visible);
 
-function openSnapshotCreateRow() {
-  const row = $("snapshot-create-row");
-  row.classList.add("visible");
-  $("snapshot-name").value = "";
-  $("snapshot-name").focus();
-}
+      const header = document.createElement("div");
+      header.className = "companion-category-head";
+      const toggle = document.createElement("button");
+      toggle.type = "button";
+      toggle.className = "companion-category-toggle";
+      toggle.dataset.companionCategoryToggle = category.id;
+      toggle.setAttribute("aria-expanded", String(category.visible));
+      toggle.textContent = category.name;
+      header.appendChild(toggle);
 
-function closeSnapshotCreateRow() {
-  $("snapshot-create-row").classList.remove("visible");
-  $("snapshot-name").value = "";
-}
-
-async function saveCurrentMuteSnapshot() {
-  const name = $("snapshot-name").value.trim();
-  if (!name) {
-    toast("Bitte einen Namen eingeben", false);
-    return;
-  }
-  const saveButton = $("snapshot-save-btn");
-  saveButton.disabled = true;
-  try {
-    const result = await api("POST", "/mute-snapshots", { name });
-    if (!result.ok || result.data.ok === false) {
-      const details = Array.isArray(result.data.details)
-        ? `: ${result.data.details.map(item => `ch${item.channel} ${item.reason}`).join(", ")}`
-        : "";
-      toast(`Status nicht gespeichert: ${result.data.reason || "HTTP " + result.status}${details}`, false);
-      return;
-    }
-    closeSnapshotCreateRow();
-    await loadMuteSnapshots();
-    toast(`Mute-Status „${name}“ gespeichert`, true);
-  } catch (_) {
-    toast("Status konnte nicht gespeichert werden", false);
-  } finally {
-    saveButton.disabled = false;
-  }
-}
-
-async function restoreMuteSnapshot(snapshotId) {
-  const snapshot = MUTE_SNAPSHOTS.find(item => item.id === snapshotId);
-  if (!snapshot || !confirm(`Mute-Status „${snapshot.name}“ für alle Channels wiederherstellen?`)) return;
-  const result = await api("POST", `/mute-snapshots/${encodeURIComponent(snapshotId)}/restore`);
-  if (!result.ok || result.data.ok === false) {
-    const details = Array.isArray(result.data.details)
-      ? `: ${result.data.details.map(item => `ch${item.channel} ${item.reason}`).join(", ")}`
-      : "";
-    toast(`${snapshot.name}: ${result.data.reason || "HTTP " + result.status}${details}`, false);
-    return;
-  }
-  toast(`${snapshot.name}: ${result.data.restored} Channel angepasst`, true);
-  await refresh();
-}
-
-async function deleteMuteSnapshot(snapshotId) {
-  const snapshot = MUTE_SNAPSHOTS.find(item => item.id === snapshotId);
-  if (!snapshot || !confirm(`Gespeicherten Status „${snapshot.name}“ löschen?`)) return;
-  const result = await api("POST", `/mute-snapshots/${encodeURIComponent(snapshotId)}/delete`);
-  if (!result.ok || result.data.ok === false) {
-    toast(result.data.reason || `HTTP ${result.status}`, false);
-    return;
-  }
-  await loadMuteSnapshots();
-  toast(`Status „${snapshot.name}“ gelöscht`, true);
-}
-
-// ---- refresh loop -------------------------------------------------------
-let COMPANION_BUTTON_BUSY = false;
-const COMPANION_CATEGORY_BUSY = new Set();
-let COMPANION_DATA = { categories: [], buttons: [], companion_targets: [] };
-let COMPANION_GROUPS = {};
-
-function renderCompanionButtons() {
-  const wrap = $("companion-categories");
-  wrap.replaceChildren();
-  for (const category of COMPANION_DATA.categories) {
-    const section = document.createElement("section");
-    section.className = "companion-category";
-    section.dataset.categoryId = category.id;
-    section.dataset.visible = String(category.visible);
-
-    const header = document.createElement("div");
-    header.className = "companion-category-head";
-    const toggle = document.createElement("button");
-    toggle.type = "button";
-    toggle.className = "companion-category-toggle";
-    toggle.dataset.companionCategoryToggle = category.id;
-    toggle.setAttribute("aria-expanded", String(category.visible));
-    toggle.textContent = category.name;
-    header.appendChild(toggle);
-
-    const grid = document.createElement("div");
-    grid.className = "companion-grid";
-    grid.hidden = !category.visible;
-    const buttons = COMPANION_DATA.buttons.filter(button => button.category_id === category.id);
-    if (!buttons.length) {
-      const empty = document.createElement("div");
-      empty.className = "companion-empty";
-      empty.textContent = "Keine Buttons";
-      grid.appendChild(empty);
-    }
-
-    for (const info of buttons) {
-      const item = document.createElement("div");
-      item.className = "companion-button-item";
-      const press = document.createElement("button");
-      press.type = "button";
-      press.className = `companion-key ${info.kind === "companion" ? "remote" : info.kind}`;
-      press.dataset.companionPress = info.id;
-      press.textContent = info.label;
-      press.title = info.kind === "companion"
-        ? "In Bitfocus Companion ausführen"
-        : "Über den sicheren Mixer-Service ausführen";
-
-      const tools = document.createElement("div");
-      tools.className = "companion-button-tools";
-      const categorySelect = document.createElement("select");
-      categorySelect.className = "companion-category-select";
-      categorySelect.dataset.companionCategorySelect = info.id;
-      categorySelect.setAttribute("aria-label", `${info.label}: Kategorie`);
-      for (const option of COMPANION_DATA.categories) {
-        const element = document.createElement("option");
-        element.value = option.id;
-        element.textContent = option.name;
-        element.selected = option.id === category.id;
-        categorySelect.appendChild(element);
+      const grid = document.createElement("div");
+      grid.className = "companion-grid";
+      grid.hidden = !category.visible;
+      const buttons = COMPANION_DATA.buttons.filter(button => button.category_id === category.id);
+      if (!buttons.length) {
+        const empty = document.createElement("div");
+        empty.className = "companion-empty";
+        empty.textContent = "Keine Buttons";
+        grid.appendChild(empty);
       }
-      const remove = document.createElement("button");
-      remove.type = "button";
-      remove.className = "companion-delete danger";
-      remove.dataset.companionDelete = info.id;
-      remove.setAttribute("aria-label", `${info.label} löschen`);
-      remove.title = "Button löschen";
-      remove.textContent = "×";
-      tools.append(categorySelect, remove);
-      item.append(press, tools);
-      grid.appendChild(item);
-    }
 
-    section.append(header, grid);
-    wrap.appendChild(section);
-  }
-}
+      for (const info of buttons) {
+        const item = document.createElement("div");
+        item.className = "companion-button-item";
+        const press = document.createElement("button");
+        press.type = "button";
+        press.className = `companion-key ${info.kind === "companion" ? "remote" : info.kind}`;
+        press.dataset.companionPress = info.id;
+        press.textContent = info.label;
+        press.title = info.kind === "companion"
+          ? "In Bitfocus Companion ausführen"
+          : "Über den sicheren Mixer-Service ausführen";
 
-function replaceSelectOptions(select, options, placeholder) {
-  select.replaceChildren();
-  const first = document.createElement("option");
-  first.value = "";
-  first.textContent = placeholder;
-  select.appendChild(first);
-  for (const option of options) {
-    const element = document.createElement("option");
-    element.value = option.value;
-    element.textContent = option.label;
-    select.appendChild(element);
-  }
-  select.disabled = options.length === 0;
-}
+        const tools = document.createElement("div");
+        tools.className = "companion-button-tools";
+        const categorySelect = document.createElement("select");
+        categorySelect.className = "companion-category-select";
+        const COMPANION_BUTTON_BUSY = false;
+        const COMPANION_CATEGORY_BUSY = new Set();
+        let COMPANION_DATA = { categories: [], buttons: [], companion_targets: [] };
+        let COMPANION_GROUPS = {};
 
-function updateCompanionButtonForm() {
-  const kind = $("companion-button-kind").value;
-  const target = $("companion-button-target");
-  let options = [];
-  if (kind === "companion") {
-    options = COMPANION_DATA.companion_targets.map(button => ({ value: button.id, label: button.label }));
-  } else if (kind === "channel") {
-    options = Object.entries(LAST_STATE.channels || {}).map(([channel, info]) => ({
-      value: channel,
-      label: `${info.name || `Channel ${channel}`} (ch ${channel})`,
-    }));
-  } else {
-    options = Object.keys(COMPANION_GROUPS).map(group => ({ value: group, label: group }));
-  }
-  replaceSelectOptions(target, options, "Ziel wählen …");
-  $("companion-button-operation-field").hidden = kind === "companion";
-}
+        function renderCompanionButtons() {
+          const wrap = $("companion-categories");
+          wrap.replaceChildren();
+          for (const category of COMPANION_DATA.categories) {
+            const section = document.createElement("section");
+            section.className = "companion-category";
+            section.dataset.categoryId = category.id;
+            section.dataset.visible = String(category.visible);
 
-async function loadCompanionButtons() {
-  try {
-    const [buttons, groups] = await Promise.all([api("GET", "/companion/buttons"), api("GET", "/groups")]);
-    if (!buttons.ok) throw new Error("buttons unavailable");
-    COMPANION_DATA = buttons.data;
-    COMPANION_GROUPS = groups.ok ? groups.data : {};
-    renderCompanionButtons();
-  } catch (_) {
-    $("companion-categories").textContent = "Companion-Buttons konnten nicht geladen werden";
-  }
-}
+            const header = document.createElement("div");
+            header.className = "companion-category-head";
+            const toggle = document.createElement("button");
+            toggle.type = "button";
+            toggle.className = "companion-category-toggle";
+            toggle.dataset.companionCategoryToggle = category.id;
+            toggle.setAttribute("aria-expanded", String(category.visible));
+            toggle.textContent = category.name;
+            header.appendChild(toggle);
 
-async function saveCompanionCategory(event) {
-  event.preventDefault();
-  const name = $("companion-category-name").value.trim();
-  const result = await api("POST", "/companion/categories", { name });
-  if (!result.ok || result.data.ok === false) {
-    toast(result.data.reason || `HTTP ${result.status}`, false);
-    return;
-  }
-  $("companion-category-dialog").close();
-  $("companion-category-name").value = "";
-  await loadCompanionButtons();
-  toast(`Kategorie ${name} erstellt`, true);
-}
+            const grid = document.createElement("div");
+            grid.className = "companion-grid";
+            grid.hidden = !category.visible;
+            const buttons = COMPANION_DATA.buttons.filter(button => button.category_id === category.id);
+            if (!buttons.length) {
+              const empty = document.createElement("div");
+              empty.className = "companion-empty";
+              empty.textContent = "Keine Buttons";
+              grid.appendChild(empty);
+            }
 
-async function saveCompanionButton(event) {
-  event.preventDefault();
-  const kind = $("companion-button-kind").value;
-  const body = {
-    label: $("companion-button-name").value.trim(),
-    category_id: $("companion-button-category").value,
-    kind,
-  };
-  if (kind === "companion") body.target_button_id = $("companion-button-target").value;
-  else if (kind === "channel") {
-    body.channel = Number($("companion-button-target").value);
-    body.operation = $("companion-button-operation").value;
-  } else {
-    body.group = $("companion-button-target").value;
-    body.operation = $("companion-button-operation").value;
+            for (const info of buttons) {
+              const item = document.createElement("div");
+              item.className = "companion-button-item";
+              const press = document.createElement("button");
+              press.type = "button";
+              press.className = `companion-key ${info.kind === "companion" ? "remote" : info.kind}`;
+              press.dataset.companionPress = info.id;
+              press.textContent = info.label;
+              press.title = info.kind === "companion"
+                ? "In Bitfocus Companion ausführen"
+                : "Über den sicheren Mixer-Service ausführen";
+
+              const tools = document.createElement("div");
+              tools.className = "companion-button-tools";
+              const categorySelect = document.createElement("select");
+              categorySelect.className = "companion-category-select";
+              categorySelect.dataset.companionCategorySelect = info.id;
+              categorySelect.setAttribute("aria-label", `${info.label}: Kategorie`);
+              for (const option of COMPANION_DATA.categories) {
+                const element = document.createElement("option");
+                element.value = option.id;
+                element.textContent = option.name;
+                element.selected = option.id === category.id;
+                categorySelect.appendChild(element);
+              }
+              const remove = document.createElement("button");
+              remove.type = "button";
+              remove.className = "companion-delete danger";
+              remove.dataset.companionDelete = info.id;
+              remove.setAttribute("aria-label", `${info.label} löschen`);
+              remove.title = "Button löschen";
+              remove.textContent = "×";
+              tools.append(categorySelect, remove);
+              item.append(press, tools);
+              grid.appendChild(item);
+            }
+
+            section.append(header, grid);
+            wrap.appendChild(section);
+          }
+        }
+
+        function openSnapshotCreateRow() {
+          $("snapshot-create-row").classList.add("visible");
+          $("snapshot-name").value = "";
+          $("snapshot-name").focus();
+        }
+
+        function closeSnapshotCreateRow() {
+          $("snapshot-create-row").classList.remove("visible");
+          $("snapshot-name").value = "";
+        }
+
+        async function saveCurrentMuteSnapshot() {
+          const name = $("snapshot-name").value.trim();
+          if (!name) {
+            toast("Bitte einen Namen eingeben", false);
+            return;
+          }
+          const persons = loadPersons();
+          if (persons.some(person => person.name.trim().toLocaleLowerCase() === name.toLocaleLowerCase())) {
+            toast("Eine Mute Gruppe mit diesem Namen existiert bereits", false);
+            return;
+          }
+
+          const saveButton = $("snapshot-save-btn");
+          saveButton.disabled = true;
+          try {
+            const result = await api("POST", "/groups/from-current-status", { name });
+            if (!result.ok || result.data.ok === false) {
+              const details = Array.isArray(result.data.details)
+                ? `: ${result.data.details.map(item => `ch${item.channel} ${item.reason}`).join(", ")}`
+                : "";
+              toast(`Mute Gruppe nicht erstellt: ${result.data.reason || "HTTP " + result.status}${details}`, false);
+              return;
+            }
+
+            const channels = {};
+            for (const channel of result.data.channels) {
+              channels[String(channel)] = {
+                fader_hex: result.data.fader_hex[String(channel)],
+                set_at: Date.now(),
+              };
+            }
+            persons.push({ id: genId(), name: result.data.group, channels });
+            savePersons(persons);
+            closeSnapshotCreateRow();
+            renderPersons();
+            toast(`Mute Gruppe „${name}“ mit ${result.data.channels.length} ungemuteten Channels erstellt`, true);
+          } catch (_) {
+            toast("Mute Gruppe konnte nicht erstellt werden", false);
+          } finally {
+            saveButton.disabled = false;
+          }
+        }
+
+        function replaceSelectOptions(select, options, placeholder) {
+          select.replaceChildren();
+          const first = document.createElement("option");
+          first.value = "";
+          first.textContent = placeholder;
+          select.appendChild(first);
+          for (const option of options) {
+            const element = document.createElement("option");
+            element.value = option.value;
+            element.textContent = option.label;
+            select.appendChild(element);
+          }
+          select.disabled = options.length === 0;
+        }
   }
   const result = await api("POST", "/companion/buttons", body);
   if (!result.ok || result.data.ok === false) {
@@ -2331,8 +2251,263 @@ $("companion-categories").addEventListener("change", async (event) => {
   if (!result.ok || result.data.ok === false) toast(result.data.reason || `HTTP ${result.status}`, false);
   await loadCompanionButtons();
 });
+}
 
 // ---- refresh loop -------------------------------------------------------
+*/
+let COMPANION_BUTTON_BUSY = false;
+const COMPANION_CATEGORY_BUSY = new Set();
+let COMPANION_DATA = { categories: [], buttons: [], companion_targets: [] };
+let COMPANION_GROUPS = {};
+
+function renderCompanionButtons() {
+  const wrap = $("companion-categories");
+  wrap.replaceChildren();
+  for (const category of COMPANION_DATA.categories) {
+    const section = document.createElement("section");
+    section.className = "companion-category";
+    section.dataset.categoryId = category.id;
+    const header = document.createElement("div");
+    header.className = "companion-category-head";
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = "companion-category-toggle";
+    toggle.dataset.companionCategoryToggle = category.id;
+    toggle.setAttribute("aria-expanded", String(category.visible));
+    toggle.textContent = category.name;
+    header.appendChild(toggle);
+
+    const grid = document.createElement("div");
+    grid.className = "companion-grid";
+    grid.hidden = !category.visible;
+    for (const info of COMPANION_DATA.buttons.filter(item => item.category_id === category.id)) {
+      const item = document.createElement("div");
+      item.className = "companion-button-item";
+      const press = document.createElement("button");
+      press.type = "button";
+      press.className = `companion-key ${info.kind === "companion" ? "remote" : info.kind}`;
+      press.dataset.companionPress = info.id;
+      press.textContent = info.label;
+      const tools = document.createElement("div");
+      tools.className = "companion-button-tools";
+      const categorySelect = document.createElement("select");
+      categorySelect.className = "companion-category-select";
+      categorySelect.dataset.companionCategorySelect = info.id;
+      categorySelect.setAttribute("aria-label", `${info.label}: Kategorie`);
+      for (const option of COMPANION_DATA.categories) {
+        const element = document.createElement("option");
+        element.value = option.id;
+        element.textContent = option.name;
+        element.selected = option.id === category.id;
+        categorySelect.appendChild(element);
+      }
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "companion-delete danger";
+      remove.dataset.companionDelete = info.id;
+      remove.setAttribute("aria-label", `${info.label} löschen`);
+      remove.title = "Button löschen";
+      remove.textContent = "×";
+      tools.append(categorySelect, remove);
+      item.append(press, tools);
+      grid.appendChild(item);
+    }
+    section.append(header, grid);
+    wrap.appendChild(section);
+  }
+}
+
+function replaceSelectOptions(select, options, placeholder) {
+  select.replaceChildren();
+  const first = document.createElement("option");
+  first.value = "";
+  first.textContent = placeholder;
+  select.appendChild(first);
+  for (const option of options) {
+    const element = document.createElement("option");
+    element.value = option.value;
+    element.textContent = option.label;
+    select.appendChild(element);
+  }
+  select.disabled = options.length === 0;
+}
+
+function updateCompanionButtonForm() {
+  const kind = $("companion-button-kind").value;
+  let options = [];
+  if (kind === "companion") {
+    options = COMPANION_DATA.companion_targets.map(button => ({ value: button.id, label: button.label }));
+  } else if (kind === "channel") {
+    options = Object.entries(LAST_STATE.channels || {}).map(([channel, info]) => ({
+      value: channel, label: `${info.name || `Channel ${channel}`} (ch ${channel})`,
+    }));
+  } else {
+    options = Object.keys(COMPANION_GROUPS).map(group => ({ value: group, label: group }));
+  }
+  replaceSelectOptions($("companion-button-target"), options, "Ziel wählen …");
+  $("companion-button-operation-field").hidden = kind === "companion";
+}
+
+async function loadCompanionButtons() {
+  try {
+    const [buttons, groups] = await Promise.all([api("GET", "/companion/buttons"), api("GET", "/groups")]);
+    if (!buttons.ok) throw new Error("buttons unavailable");
+    COMPANION_DATA = buttons.data;
+    COMPANION_GROUPS = groups.ok ? groups.data : {};
+    renderCompanionButtons();
+  } catch (_) {
+    $("companion-categories").textContent = "Companion-Buttons konnten nicht geladen werden";
+  }
+}
+
+async function saveCompanionCategory(event) {
+  event.preventDefault();
+  const name = $("companion-category-name").value.trim();
+  const result = await api("POST", "/companion/categories", { name });
+  if (!result.ok || result.data.ok === false) { toast(result.data.reason || `HTTP ${result.status}`, false); return; }
+  $("companion-category-dialog").close();
+  await loadCompanionButtons();
+  toast(`Kategorie ${name} erstellt`, true);
+}
+
+async function saveCompanionButton(event) {
+  event.preventDefault();
+  const kind = $("companion-button-kind").value;
+  const body = { label: $("companion-button-name").value.trim(), category_id: $("companion-button-category").value, kind };
+  if (kind === "companion") body.target_button_id = $("companion-button-target").value;
+  else if (kind === "channel") {
+    body.channel = Number($("companion-button-target").value);
+    body.operation = $("companion-button-operation").value;
+  } else {
+    body.group = $("companion-button-target").value;
+    body.operation = $("companion-button-operation").value;
+  }
+  const result = await api("POST", "/companion/buttons", body);
+  if (!result.ok || result.data.ok === false) { toast(result.data.reason || `HTTP ${result.status}`, false); return; }
+  $("companion-button-dialog").close();
+  await loadCompanionButtons();
+  toast("Button erstellt", true);
+}
+
+function openSnapshotCreateRow() {
+  $("snapshot-create-row").classList.add("visible");
+  $("snapshot-name").value = "";
+  $("snapshot-name").focus();
+}
+
+function closeSnapshotCreateRow() {
+  $("snapshot-create-row").classList.remove("visible");
+  $("snapshot-name").value = "";
+}
+
+async function saveCurrentMuteSnapshot() {
+  const name = $("snapshot-name").value.trim();
+  if (!name) { toast("Bitte einen Namen eingeben", false); return; }
+  const persons = loadPersons();
+  if (persons.some(person => person.name.trim().toLocaleLowerCase() === name.toLocaleLowerCase())) {
+    toast("Eine Mute Gruppe mit diesem Namen existiert bereits", false);
+    return;
+  }
+
+  const saveButton = $("snapshot-save-btn");
+  saveButton.disabled = true;
+  try {
+    const result = await api("POST", "/groups/from-current-status", { name });
+    if (!result.ok || result.data.ok === false) {
+      const details = Array.isArray(result.data.details)
+        ? `: ${result.data.details.map(item => `ch${item.channel} ${item.reason}`).join(", ")}`
+        : "";
+      toast(`Mute Gruppe nicht erstellt: ${result.data.reason || "HTTP " + result.status}${details}`, false);
+      return;
+    }
+    const channels = {};
+    for (const channel of result.data.channels) {
+      channels[String(channel)] = { fader_hex: result.data.fader_hex[String(channel)], set_at: Date.now() };
+    }
+    persons.push({ id: genId(), name: result.data.group, channels });
+    savePersons(persons);
+    closeSnapshotCreateRow();
+    renderPersons();
+    toast(`Mute Gruppe „${name}“ mit ${result.data.channels.length} ungemuteten Channels erstellt`, true);
+  } catch (_) {
+    toast("Mute Gruppe konnte nicht erstellt werden", false);
+  } finally {
+    saveButton.disabled = false;
+  }
+}
+
+$("new-companion-category").addEventListener("click", () => {
+  $("companion-category-name").value = "";
+  $("companion-category-dialog").showModal();
+  $("companion-category-name").focus();
+});
+$("new-companion-button").addEventListener("click", () => {
+  replaceSelectOptions($("companion-button-category"), COMPANION_DATA.categories.map(category => ({ value: category.id, label: category.name })), "Kategorie wählen …");
+  $("companion-button-kind").value = "companion";
+  $("companion-button-name").value = "";
+  updateCompanionButtonForm();
+  $("companion-button-dialog").showModal();
+  $("companion-button-name").focus();
+});
+$("companion-category-form").addEventListener("submit", saveCompanionCategory);
+$("companion-button-form").addEventListener("submit", saveCompanionButton);
+$("companion-button-kind").addEventListener("change", updateCompanionButtonForm);
+$("companion-category-cancel").addEventListener("click", () => $("companion-category-dialog").close());
+$("companion-button-cancel").addEventListener("click", () => $("companion-button-dialog").close());
+
+$("companion-categories").addEventListener("click", async (event) => {
+  const toggle = event.target.closest("[data-companion-category-toggle]");
+  if (toggle) {
+    const category = COMPANION_DATA.categories.find(item => item.id === toggle.dataset.companionCategoryToggle);
+    if (!category || COMPANION_CATEGORY_BUSY.has(category.id)) return;
+    COMPANION_CATEGORY_BUSY.add(category.id);
+    toggle.disabled = true;
+    try {
+      const result = await api("POST", `/companion/categories/${encodeURIComponent(category.id)}/visibility`, { visible: !category.visible });
+      if (!result.ok || result.data.ok === false) toast(result.data.reason || `HTTP ${result.status}`, false);
+      else await loadCompanionButtons();
+    } finally {
+      COMPANION_CATEGORY_BUSY.delete(category.id);
+      if (toggle.isConnected) toggle.disabled = false;
+    }
+    return;
+  }
+  const remove = event.target.closest("[data-companion-delete]");
+  if (remove) {
+    const info = COMPANION_DATA.buttons.find(button => button.id === remove.dataset.companionDelete);
+    if (!info || !confirm(`Button „${info.label}“ löschen?`)) return;
+    const result = await api("POST", `/companion/buttons/${encodeURIComponent(info.id)}/delete`);
+    if (!result.ok || result.data.ok === false) toast(result.data.reason || `HTTP ${result.status}`, false);
+    else { await loadCompanionButtons(); toast(`Button ${info.label} gelöscht`, true); }
+    return;
+  }
+  const button = event.target.closest("[data-companion-press]");
+  if (!button || COMPANION_BUTTON_BUSY) return;
+  COMPANION_BUTTON_BUSY = true;
+  button.disabled = true;
+  try {
+    const result = await api("POST", `/companion/buttons/${encodeURIComponent(button.dataset.companionPress)}/press`);
+    if (!result.ok || result.data.ok === false) toast(`${button.textContent}: ${result.data.reason || "HTTP " + result.status}`, false);
+    else {
+      toast(`${button.textContent}: ausgeführt`, true);
+      if (button.classList.contains("channel") || button.classList.contains("group")) await refresh();
+    }
+  } catch (_) {
+    toast(`${button.textContent}: Dienst nicht erreichbar`, false);
+  } finally {
+    COMPANION_BUTTON_BUSY = false;
+    button.disabled = false;
+  }
+});
+$("companion-categories").addEventListener("change", async (event) => {
+  const select = event.target.closest("[data-companion-category-select]");
+  if (!select) return;
+  const button = COMPANION_DATA.buttons.find(item => item.id === select.dataset.companionCategorySelect);
+  if (!button) return;
+  const result = await api("POST", `/companion/buttons/${encodeURIComponent(button.id)}/update`, { label: button.label, category_id: select.value });
+  if (!result.ok || result.data.ok === false) toast(result.data.reason || `HTTP ${result.status}`, false);
+  await loadCompanionButtons();
+});
 
 let refreshSeq = 0;
 async function refresh() {
@@ -2633,8 +2808,6 @@ document.addEventListener("click", (e) => {
       addPersonChannel(btn.dataset.pid, sel ? Number(sel.value) : null);
       return;
     }
-    case "snapshot-restore": return restoreMuteSnapshot(btn.dataset.sid);
-    case "snapshot-delete": return deleteMuteSnapshot(btn.dataset.sid);
   }
 });
 
@@ -2719,7 +2892,6 @@ $("profile-form").addEventListener("keydown", (event) => {
 });
 
 loadCompanionButtons();
-loadMuteSnapshots();
 initSections();
 applyBuildMigrations();
 $("txt-build").textContent = "build: " + resolvedBuildId();
