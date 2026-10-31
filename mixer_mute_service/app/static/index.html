@@ -428,6 +428,13 @@
   }
   .pc-row:last-child { border-bottom: none; }
   .pc-name { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .pc-description { grid-column: 1 / -1; min-width: 0; }
+    .pc-description input {
+      width: 100%; min-width: 0; min-height: 44px; padding: 8px 10px; border-radius: 4px;
+      color: var(--lcd-text); background: #0b1418; border: 1px solid #000;
+      font: inherit; font-size: 12px; line-height: 1.3;
+    }
+    .pc-description input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
   .pc-saved { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; white-space: nowrap; }
   .pc-keys { display: flex; gap: 4px; }
   .pc-keys button { min-width: 44px; min-height: 44px; padding: 5px 9px; font-size: 11px; }
@@ -1351,7 +1358,8 @@ function setPersonChannelFader(personId, ch) {
   const p = list.find(p => p.id === personId);
   if (!p) return;
   if (!p.channels) p.channels = {};
-  p.channels[ch] = { fader_hex: c.fader_hex, set_at: Date.now() };
+  const key = String(ch);
+  p.channels[key] = { ...(p.channels[key] || {}), fader_hex: c.fader_hex, set_at: Date.now() };
   savePersons(list);
   renderPersons();
   toast(`Channel ${ch}: fader ${c.fader_hex} saved`, true);
@@ -1477,7 +1485,8 @@ async function setPersonChannelFaderValue(personId, ch, value) {
   const p = list.find(x => x.id === personId);
   if (!p) return;
   if (!p.channels) p.channels = {};
-  p.channels[String(ch)] = { fader_hex, set_at: Date.now() };
+  const key = String(ch);
+  p.channels[key] = { ...(p.channels[key] || {}), fader_hex, set_at: Date.now() };
   savePersons(list);
   renderPersons();
 
@@ -1554,6 +1563,7 @@ function renderPersons() {
       const liveValue = chInfo && chInfo.fader_value !== undefined ? chInfo.fader_value : null;
       const baseValue = savedValue !== null ? savedValue : (liveValue !== null ? liveValue : 0);
       const setAt = entry.set_at ? new Date(entry.set_at).toLocaleTimeString() : "never";
+      const description = escapeAttr(entry.description || "");
       // Two lines per channel so three groups fit side by side: name, saved
       // value and keys on top, the fader below.
       return `<div class="pc-row">
@@ -1564,6 +1574,9 @@ function renderPersons() {
           <button data-action="person-use-fader" data-pid="${escapeAttr(person.id)}" data-ch="${ch}" class="primary" ${entry.fader_hex ? "" : "disabled"}>Use</button>
           <button data-action="person-remove-ch" data-pid="${escapeAttr(person.id)}" data-ch="${ch}" class="danger" title="Kanal entfernen" aria-label="Kanal entfernen">&#x2715;</button>
         </div>
+        <label class="pc-description">
+          <input type="text" maxlength="120" data-action="person-channel-description" data-pid="${escapeAttr(person.id)}" data-ch="${ch}" value="${description}" placeholder="Beschreibung für diesen Channel" aria-label="Beschreibung ${chName}" />
+        </label>
         <div class="person-fader-wrap">
           <input
             type="range"
@@ -2778,6 +2791,18 @@ async function setChannelAlwaysOn(ch, enabled) {
   }
 }
 
+document.addEventListener("change", (event) => {
+  const input = event.target.closest("[data-action=person-channel-description]");
+  if (!input) return;
+  const list = loadPersons();
+  const person = list.find(item => item.id === input.dataset.pid);
+  const channel = person && person.channels && person.channels[String(input.dataset.ch)];
+  if (!channel) return;
+  channel.description = input.value.trim();
+  savePersons(list);
+  renderPersons();
+});
+
 document.addEventListener("change", (e) => {
   const input = e.target.closest("[data-always-on-channel]");
   if (!input) return;
@@ -2811,25 +2836,29 @@ document.addEventListener("click", (e) => {
   }
 });
 
-document.addEventListener("input", (e) => {
-  const el = e.target;
-  if (!el || el.tagName !== "INPUT" || el.type !== "range") return;
-  const action = el.dataset.action;
-  const value = Number(el.value);
-  if (action === "person-fader-input") {
-    const pid = el.dataset.pid;
-    const ch = Number(el.dataset.ch);
-    const label = document.querySelector(`[data-person-fader-label="${pid}-${ch}"]`);
-    if (label) label.textContent = formatDb(value);
-  }
+document.addEventListener("change", (event) => {
+  const input = event.target.closest("[data-action=person-channel-description]");
+  if (!input) return;
+  const list = loadPersons();
+  const person = list.find(item => item.id === input.dataset.pid);
+  const channel = person && person.channels && person.channels[String(input.dataset.ch)];
+  if (!channel) return;
+  channel.description = input.value.trim();
+  savePersons(list);
+  renderPersons();
 });
 
 document.addEventListener("change", (e) => {
-  const el = e.target;
-  if (!el || el.tagName !== "INPUT" || el.type !== "range") return;
-  const action = el.dataset.action;
-  if (action === "person-fader-input") {
-    return setPersonChannelFaderValue(el.dataset.pid, Number(el.dataset.ch), Number(el.value));
+  const input = e.target.closest("[data-always-on-channel]");
+  if (!input) return;
+  setChannelAlwaysOn(Number(input.dataset.alwaysOnChannel), input.checked);
+});
+
+document.addEventListener("change", (event) => {
+  const input = event.target;
+  if (!input || input.tagName !== "INPUT" || input.type !== "range") return;
+  if (input.dataset.action === "person-fader-input") {
+    setPersonChannelFaderValue(input.dataset.pid, Number(input.dataset.ch), Number(input.value));
   }
 });
 
