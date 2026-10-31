@@ -8,6 +8,7 @@ from typing import Dict, List, Optional
 from typing import Dict, List, Literal, Optional
 
 from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class HealthResponse(BaseModel):
@@ -106,6 +107,9 @@ class ProgramItemRequest(BaseModel):
     playback: Optional[str] = None
     translation: Optional[str] = None
     lyrics: Optional[str] = None
+    playback_description: str = Field(default="", max_length=160)
+    translation_description: str = Field(default="", max_length=160)
+    lyrics_description: str = Field(default="", max_length=160)
 
 
 class GroupUpdate(BaseModel):

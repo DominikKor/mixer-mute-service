@@ -387,23 +387,36 @@ with TestClient(app) as client:
     })
     check("raw mixer button cannot be aliased", unsafe_target.status_code == 400)
     m = client.post("/channels/2/mute")
+    invalid_desktop_program = client.post("/program/items", json={
+        "time": "09:25", "title": "Invalid", "group": "drums", "playback": "desktop:missing",
+    })
+    check("unknown desktop profile cannot be linked", invalid_desktop_program.status_code == 400)
     program_item = client.post("/program/items", json={
         "time": "09:30", "title": "Eingangslied", "person": "Anna",
-        "group": "drums", "playback": "cam1-live", "lyrics": "cam2-live-bottom",
+        "group": "drums", "playback": "desktop:sample", "translation": "cam1-live",
+        "lyrics": "cam2-live-bottom", "playback_description": "Einspieler anzeigen",
+        "translation_description": "Live-Übersetzung", "lyrics_description": "Liedtext einblenden",
     })
     check("program item created", program_item.status_code == 200)
     program_id = program_item.json()["item"]["id"]
     listed_program = client.get("/program/items").json()
     check("program item listed", len(listed_program) == 1 and listed_program[0]["title"] == "Eingangslied")
+    check("program action descriptions persisted",
+          listed_program[0]["playback_description"] == "Einspieler anzeigen"
+          and listed_program[0]["translation_description"] == "Live-Übersetzung"
+          and listed_program[0]["lyrics_description"] == "Liedtext einblenden")
     updated_program = client.put(f"/program/items/{program_id}", json={
         "time": "09:35", "title": "Eingangslied", "person": "Anna M.",
-        "group": "drums", "playback": "cam1-live", "lyrics": "cam2-live-bottom",
+        "group": "drums", "playback": "desktop:sample", "translation": "cam1-live",
+        "lyrics": "cam2-live-bottom", "playback_description": "Video starten",
     })
     check("program item updated", updated_program.status_code == 200
           and updated_program.json()["item"]["person"] == "Anna M.")
     with patch.object(app.state.controller, "group_set", AsyncMock(
         return_value={"ok": True, "group": "drums"}
-    )) as activate_group, patch("app.routes.companion_button_press", new=AsyncMock(
+    )) as activate_group, patch("app.routes.open_desktop_profile", new=AsyncMock(
+        return_value={"ok": True}
+    )) as play_desktop, patch("app.routes.companion_button_press", new=AsyncMock(
         return_value={"ok": True}
     )) as play_linked:
         successful_program_play = client.post(f"/program/items/{program_id}/play")
@@ -411,6 +424,7 @@ with TestClient(app) as client:
               successful_program_play.status_code == 200 and successful_program_play.json()["ok"] is True)
         check("program play activates group before linked actions",
               activate_group.await_count == 1
+              and play_desktop.await_args.args[0] == "sample"
               and [call.args[0] for call in play_linked.await_args_list]
               == ["cam1-live", "cam2-live-bottom"])
     with patch("app.routes._forward_companion_press") as program_forward:

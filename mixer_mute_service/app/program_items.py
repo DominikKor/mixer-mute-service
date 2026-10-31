@@ -13,6 +13,7 @@ from typing import Dict, List, Optional
 
 _TIME_RE = re.compile(r"^(?:[01]\d|2[0-3]):[0-5]\d$")
 _ACTION_FIELDS = ("playback", "translation", "lyrics")
+_DESCRIPTION_FIELDS = ("playback_description", "translation_description", "lyrics_description")
 
 
 class ProgramItemError(ValueError):
@@ -61,6 +62,11 @@ class ProgramItemStore:
             if value is not None and (not isinstance(value, str) or len(value) > 80):
                 raise ProgramItemError(f"{field} must be a button ID or empty")
             result[field] = value or None
+        for field in _DESCRIPTION_FIELDS:
+            value = data.get(field, "")
+            if not isinstance(value, str) or len(value) > 160:
+                raise ProgramItemError(f"{field} must be at most 160 characters")
+            result[field] = value.strip()
         return result
 
     async def list(self) -> List[dict]:

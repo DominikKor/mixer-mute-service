@@ -442,6 +442,8 @@
       font: inherit; font-size: 12px; line-height: 1.3;
     }
     .pc-description input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+          .program-action-link { display: grid; gap: 4px; min-width: 0; }
+          .program-action-link input { min-width: 0; }
         .program-table-wrap { width: 100%; min-width: 0; }
         .program-table { width: 100%; table-layout: fixed; border-collapse: collapse; }
         .program-table th, .program-table td { min-width: 0; padding: 4px 3px; border-bottom: 1px solid rgba(255,255,255,.07); text-align: left; vertical-align: middle; }
@@ -1621,6 +1623,8 @@ function addPersonChannel(personId, ch) {
 }
 
 const ICON_COPY = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/></svg>`;
+const ICON_CHECK = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg>`;
+const ICON_X = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg>`;
 const ICON_TRASH = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6"/></svg>`;
 
 function renderPersons() {
@@ -3047,6 +3051,7 @@ let PROGRAM_ITEMS = [];
 let PROGRAM_GROUPS = {};
 let PROGRAM_BUTTONS = [];
 let PROGRAM_BUTTON_CATEGORIES = {};
+let PROGRAM_DESKTOP_PROFILES = [];
 let PROGRAM_DRAFT = false;
 const PROGRAM_BUSY = new Set();
 
@@ -3077,6 +3082,12 @@ function programInput(field, label, value, type, maxLength) {
   input.dataset.programField = field;
   input.setAttribute("aria-label", label);
   if (maxLength) input.maxLength = maxLength;
+  if (field === "time") {
+    input.inputMode = "text";
+    input.placeholder = "HH:MM";
+    input.autocomplete = "off";
+    input.setAttribute("pattern", "(?:[01]\\d|2[0-3]):[0-5]\\d");
+  }
   input.value = value || "";
   return input;
 }
@@ -3110,7 +3121,7 @@ function buildProgramRow(item, draft = false) {
   if (draft) row.className = "program-draft-row";
   else row.dataset.programId = item.id;
 
-  programCell(row, "Uhrzeit", programInput("time", "Uhrzeit", item.time, "time"));
+  programCell(row, "Uhrzeit", programInput("time", "Uhrzeit", item.time, "text", 5));
   const delay = document.createElement("span");
   delay.className = "program-delay";
   delay.textContent = draft ? "—" : formatProgramDelay(item.last_delay_seconds);
@@ -3128,8 +3139,19 @@ function buildProgramRow(item, draft = false) {
     const category = PROGRAM_BUTTON_CATEGORIES[button.category_id];
     return { value: button.id, label: category ? `${category} · ${button.label}` : button.label };
   });
+  const actionOptions = [
+    ...PROGRAM_DESKTOP_PROFILES.map(profile => ({ value: `desktop:${profile.id}`, label: `Desktop · ${profile.title}` })),
+    ...buttonOptions,
+  ];
   for (const [field, label] of [["playback", "Playback"], ["translation", "Übersetzung"], ["lyrics", "Liedtext"]]) {
-    programCell(row, label, programSelect(field, label, item[field], buttonOptions, "Keine Aktion"));
+    const link = document.createElement("div");
+    link.className = "program-action-link";
+    link.appendChild(programSelect(field, label, item[field], actionOptions, "Keine Aktion"));
+    const descriptionField = `${field}_description`;
+    const description = programInput(descriptionField, `${label} Beschreibung`, item[descriptionField], "text", 160);
+    description.placeholder = "Beschreibung";
+    link.appendChild(description);
+    programCell(row, label, link);
   }
 
   const actions = document.createElement("div");
@@ -3139,14 +3161,17 @@ function buildProgramRow(item, draft = false) {
   primary.className = draft ? "primary" : "program-play";
   primary.dataset.programAction = draft ? "create" : "play";
   if (!draft) primary.dataset.programId = item.id;
-  primary.textContent = draft ? "Speichern" : "Play";
+  primary.innerHTML = draft ? ICON_CHECK : "Play";
+  primary.title = draft ? "Programmpunkt speichern" : "Programmpunkt starten";
+  primary.setAttribute("aria-label", draft ? "Programmpunkt speichern" : "Programmpunkt starten");
   actions.appendChild(primary);
   const secondary = document.createElement("button");
   secondary.type = "button";
   secondary.className = "danger";
   secondary.dataset.programAction = draft ? "cancel" : "delete";
   if (!draft) secondary.dataset.programId = item.id;
-  secondary.textContent = draft ? "Abbrechen" : "×";
+  secondary.innerHTML = draft ? ICON_X : ICON_TRASH;
+  secondary.title = draft ? "Bearbeitung abbrechen" : "Programmpunkt löschen";
   secondary.setAttribute("aria-label", draft ? "Programmpunkt abbrechen" : `${item.title} löschen`);
   actions.appendChild(secondary);
   programCell(row, "Aktion", actions, "program-actions-cell");
@@ -3156,25 +3181,31 @@ function buildProgramRow(item, draft = false) {
 function renderProgramItems() {
   const tbody = $("program-items");
   tbody.replaceChildren();
+  for (const item of PROGRAM_ITEMS) tbody.appendChild(buildProgramRow(item));
   if (PROGRAM_DRAFT) {
-    const now = new Date();
-    const time = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+    const previousTime = PROGRAM_ITEMS.length ? PROGRAM_ITEMS[PROGRAM_ITEMS.length - 1].time : "";
+    const nextTime = new Date();
+    const parsedTime = /^(\d{2}):(\d{2})$/.exec(previousTime);
+    if (parsedTime) nextTime.setHours(Number(parsedTime[1]), Number(parsedTime[2]), 0, 0);
+    nextTime.setMinutes(nextTime.getMinutes() + 5);
+    const time = `${String(nextTime.getHours()).padStart(2, "0")}:${String(nextTime.getMinutes()).padStart(2, "0")}`;
     tbody.appendChild(buildProgramRow({ time, group: Object.keys(PROGRAM_GROUPS)[0] || "" }, true));
   }
-  for (const item of PROGRAM_ITEMS) tbody.appendChild(buildProgramRow(item));
   $("program-empty").hidden = PROGRAM_ITEMS.length > 0 || PROGRAM_DRAFT;
 }
 
 async function loadProgramItems() {
   try {
-    const [items, groups, buttons] = await Promise.all([
+    const [items, groups, buttons, desktop] = await Promise.all([
       api("GET", "/program/items"), api("GET", "/groups"), api("GET", "/companion/buttons"),
+      api("GET", "/desktop/profiles"),
     ]);
-    if (!items.ok || !groups.ok || !buttons.ok) throw new Error("program data unavailable");
+    if (!items.ok || !groups.ok || !buttons.ok || !desktop.ok) throw new Error("program data unavailable");
     PROGRAM_ITEMS = items.data;
     PROGRAM_GROUPS = groups.data;
     PROGRAM_BUTTONS = buttons.data.buttons;
     PROGRAM_BUTTON_CATEGORIES = Object.fromEntries((buttons.data.categories || []).map(category => [category.id, category.name]));
+    PROGRAM_DESKTOP_PROFILES = desktop.data.profiles || [];
     renderProgramItems();
   } catch (_) {
     $("program-empty").hidden = false;
@@ -3184,7 +3215,10 @@ async function loadProgramItems() {
 
 function readProgramRow(row) {
   const result = {};
-  for (const field of ["time", "title", "person", "group", "playback", "translation", "lyrics"]) {
+  for (const field of [
+    "time", "title", "person", "group", "playback", "translation", "lyrics",
+    "playback_description", "translation_description", "lyrics_description",
+  ]) {
     const control = row.querySelector(`[data-program-field="${field}"]`);
     result[field] = control ? control.value.trim() : "";
   }

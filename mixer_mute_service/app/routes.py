@@ -528,7 +528,13 @@ async def _validate_program_item(body: ProgramItemRequest, request: Request):
         return JSONResponse({"ok": False, "reason": "unknown group"}, 404)
     for field in ("playback", "translation", "lyrics"):
         button_id = getattr(body, field)
-        if button_id and await request.app.state.companion_button_store.get_button(button_id) is None:
+        if not button_id:
+            continue
+        if button_id.startswith("desktop:"):
+            profile_id = button_id.removeprefix("desktop:")
+            if not profile_id or profile_id not in request.app.state.cfg.desktop_display.profiles:
+                return JSONResponse({"ok": False, "reason": f"unknown {field} desktop profile"}, 400)
+        elif await request.app.state.companion_button_store.get_button(button_id) is None:
             return JSONResponse({"ok": False, "reason": f"unknown {field} button"}, 400)
     return None
 
@@ -596,7 +602,10 @@ async def play_program_item(item_id: str, request: Request):
         button_id = item.get(field)
         if not button_id:
             continue
-        response = await companion_button_press(button_id, request)
+        if button_id.startswith("desktop:"):
+            response = await open_desktop_profile(button_id.removeprefix("desktop:"), request)
+        else:
+            response = await companion_button_press(button_id, request)
         if isinstance(response, JSONResponse):
             result = json.loads(response.body.decode("utf-8"))
             status_code = response.status_code
