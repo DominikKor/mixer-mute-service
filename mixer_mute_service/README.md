@@ -45,6 +45,11 @@ The service serves a single-page control panel at `/`:
   while the channel's mute state is unknown. Blocked actions surface the reason
   as a toast (e.g. "fader value stale").
 - **Companion** — an optional collapsible panel for the buttons imported from
+  - **Program** — an editable schedule with planned time, title, person, mute
+    group and optional Companion actions for playback, translation and lyrics.
+    Play activates the group first, then triggers the linked actions in order;
+    the delay column records the actual click offset from the scheduled time.
+  - **Companion** — an optional collapsible panel for the buttons imported from
   the Companion export. Categories can be collapsed, buttons can be reassigned,
   created and deleted. New buttons may call an existing Companion action or a
   state-checked channel/group operation.
@@ -90,6 +95,11 @@ accepted.
 | POST | `/groups/{group}/unmute` | unmute group (all-or-nothing) |
 | POST | `/groups/{group}/toggle` | toggle group |
 | POST | `/groups/from-current-status` | create a group from currently unmuted channels and their observed faders `{name}` |
+| GET  | `/program/items` | list saved program points |
+| POST | `/program/items` | create a program point |
+| PUT  | `/program/items/{item_id}` | update a program point |
+| DELETE | `/program/items/{item_id}` | delete a program point |
+| POST | `/program/items/{item_id}/play` | activate group and linked actions |
 | GET  | `/groups` | list all groups and their channels |
 | POST | `/groups` | create group `{name, channels}` |
 | GET  | `/groups/{group}` | one group's channels |
