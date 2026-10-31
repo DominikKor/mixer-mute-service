@@ -32,6 +32,7 @@ from .models import (
     GroupCreate,
     GroupUpdate,
     MuteSnapshotCreate,
+    ProgramItemRequest,
     RecallFaderRequest,
 )
 from .protocol import fader_hex_to_value
@@ -464,6 +465,106 @@ async def group_toggle(group: str, request: Request):
 async def create_group_from_current_status(body: GroupCaptureRequest, request: Request):
     _, _, _, controller = _ctx(request)
     return _respond(await controller.create_group_from_current_status(body.name))
+
+
+async def _validate_program_item(body: ProgramItemRequest, request: Request):
+    if await request.app.state.groups.get(body.group) is None:
+        return JSONResponse({"ok": False, "reason": "unknown group"}, 404)
+    for field in ("playback", "translation", "lyrics"):
+        button_id = getattr(body, field)
+        if button_id and await request.app.state.companion_button_store.get_button(button_id) is None:
+            return JSONResponse({"ok": False, "reason": f"unknown {field} button"}, 400)
+    return None
+
+
+@router.get("/program/items")
+async def list_program_items(request: Request):
+    return await request.app.state.program_items.list()
+
+
+@router.post("/program/items")
+async def create_program_item(body: ProgramItemRequest, request: Request):
+    invalid = await _validate_program_item(body, request)
+    if invalid:
+        return invalid
+    try:
+        item = await request.app.state.program_items.create(body.model_dump())
+    except ProgramItemError as exc:
+        return JSONResponse({"ok": False, "reason": str(exc)}, 400)
+    return {"ok": True, "item": item}
+
+
+@router.put("/program/items/{item_id}")
+async def update_program_item(item_id: str, body: ProgramItemRequest, request: Request):
+    invalid = await _validate_program_item(body, request)
+    if invalid:
+        return invalid
+    try:
+        item = await request.app.state.program_items.update(item_id, body.model_dump())
+    except ProgramItemError as exc:
+        return JSONResponse({"ok": False, "reason": str(exc)}, 400)
+    if item is None:
+        return JSONResponse({"ok": False, "reason": "unknown program item"}, 404)
+    return {"ok": True, "item": item}
+
+
+@router.delete("/program/items/{item_id}")
+async def delete_program_item(item_id: str, request: Request):
+    deleted = await request.app.state.program_items.delete(item_id)
+    if not deleted:
+        return JSONResponse({"ok": False, "reason": "unknown program item"}, 404)
+    return {"ok": True, "item_id": item_id, "deleted": True}
+
+
+@router.post("/program/items/{item_id}/play")
+async def play_program_item(item_id: str, request: Request):
+    program_store = request.app.state.program_items
+    item = await program_store.get(item_id)
+    if item is None:
+        return JSONResponse({"ok": False, "reason": "unknown program item"}, 404)
+    played = await program_store.mark_played(item_id)
+    _, _, _, controller = _ctx(request)
+    group_result = await controller.group_set(item["group"], False)
+    if not group_result.get("ok"):
+        return _respond({
+            "ok": False,
+            "reason": group_result.get("reason", "mute group could not be activated"),
+            "details": group_result.get("details"),
+            "program_item_id": item_id,
+            "delay_seconds": played["last_delay_seconds"],
+            "group_result": group_result,
+        })
+
+    linked_actions = []
+    for field in ("playback", "translation", "lyrics"):
+        button_id = item.get(field)
+        if not button_id:
+            continue
+        response = await companion_button_press(button_id, request)
+        if isinstance(response, JSONResponse):
+            result = json.loads(response.body.decode("utf-8"))
+            status_code = response.status_code
+        else:
+            result = response
+            status_code = 200
+        linked_actions.append({"field": field, **result})
+        if status_code != 200 or result.get("ok") is False:
+            return JSONResponse({
+                "ok": False,
+                "reason": f"{field} action failed after group activation",
+                "program_item_id": item_id,
+                "delay_seconds": played["last_delay_seconds"],
+                "group_result": group_result,
+                "linked_actions": linked_actions,
+            }, status_code)
+
+    return {
+        "ok": True,
+        "program_item_id": item_id,
+        "delay_seconds": played["last_delay_seconds"],
+        "group_result": group_result,
+        "linked_actions": linked_actions,
+    }
 
 
 @router.get("/mute-snapshots")

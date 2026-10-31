@@ -29,6 +29,7 @@ from .groups import GroupStore
 from .mixer_client import MixerClient
 from .mute_snapshots import MuteSnapshotStore
 from .proxy import ProxyServer
+from .program_items import ProgramItemStore
 from .routes import router
 from .updater import router as updater_router
 from .state import StateStore
@@ -83,6 +84,7 @@ async def lifespan(app: FastAPI):
         client = MixerClient(cfg, store, buses.bus_map)
     seed = {name: g.channels for name, g in cfg.groups.items()}
     groups = GroupStore(data_dir / "groups.json", cfg.valid_channels(), seed)
+    program_items = ProgramItemStore(data_dir / "program_items.json")
     mute_snapshots = MuteSnapshotStore(data_dir / "mute_snapshots.json")
     companion_button_store = CompanionButtonStore(
         data_dir / "companion_buttons.json", COMPANION_BUTTONS
@@ -95,6 +97,7 @@ async def lifespan(app: FastAPI):
     app.state.store = store
     app.state.client = client
     app.state.groups = groups
+    app.state.program_items = program_items
     app.state.mute_snapshots = mute_snapshots
     app.state.companion_button_store = companion_button_store
     app.state.channel_preferences = channel_preferences

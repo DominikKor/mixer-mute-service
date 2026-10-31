@@ -435,6 +435,78 @@
       font: inherit; font-size: 12px; line-height: 1.3;
     }
     .pc-description input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+        .program-table-wrap { width: 100%; min-width: 0; }
+        .program-table { width: 100%; table-layout: fixed; border-collapse: collapse; }
+        .program-table th, .program-table td { min-width: 0; padding: 4px 3px; border-bottom: 1px solid rgba(255,255,255,.07); text-align: left; vertical-align: middle; }
+        .program-table th { color: #8b93a1; font-size: 10px; font-weight: 800; text-transform: uppercase; }
+        .program-table td { font-size: 11px; }
+        .program-table input, .program-table select {
+          width: 100%; min-width: 0; min-height: 44px; padding: 5px 6px; border: 1px solid #08090b;
+          border-radius: 4px; color: var(--lcd-text); background: #0b1418; font: inherit; font-size: 11px;
+        }
+        .program-delay { color: var(--lcd-text); font: 600 11px/1.2 var(--mono); white-space: nowrap; }
+        .program-actions { display: flex; gap: 4px; }
+        .program-actions button { min-width: 44px; min-height: 44px; padding: 4px; }
+        .program-play { color: #d7f0df; border-color: #163d27; }
+        .program-empty { padding: 12px 4px; color: var(--muted); }
+        .program-draft-row { background: rgba(79,156,255,.04); }
+        @media (max-width: 759px) {
+          .program-table, .program-table tbody, .program-table tr, .program-table td { display: block; width: 100%; }
+          .program-table thead { display: none; }
+          .program-table tr { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; margin-bottom: 10px; padding: 8px; border: 1px solid #08090b; border-radius: 6px; background: var(--panel-bg); }
+          .program-table td { display: grid; grid-template-rows: auto auto; gap: 3px; padding: 0; border: 0; }
+          .program-table td::before { content: attr(data-label); color: var(--muted); font-size: 10px; font-weight: 700; }
+          .program-table td.program-actions-cell { grid-column: 1 / -1; }
+          .program-actions { justify-content: flex-end; }
+        }
+      .program-table-wrap { width: 100%; min-width: 0; }
+      .program-table { width: 100%; table-layout: fixed; border-collapse: collapse; }
+      .program-table th, .program-table td { min-width: 0; padding: 4px 3px; border-bottom: 1px solid rgba(255,255,255,.07); text-align: left; vertical-align: middle; }
+      .program-table th { color: #8b93a1; font-size: 10px; font-weight: 800; text-transform: uppercase; }
+      .program-table td { font-size: 11px; }
+      .program-table input, .program-table select {
+        width: 100%; min-width: 0; min-height: 44px; padding: 5px 6px; border: 1px solid #08090b;
+        border-radius: 4px; color: var(--lcd-text); background: #0b1418; font: inherit; font-size: 11px;
+      }
+      .program-delay { color: var(--lcd-text); font: 600 11px/1.2 var(--mono); white-space: nowrap; }
+      .program-actions { display: flex; gap: 4px; }
+      .program-actions button { min-width: 44px; min-height: 44px; padding: 4px; }
+      .program-play { color: #d7f0df; border-color: #163d27; }
+      .program-empty { padding: 12px 4px; color: var(--muted); }
+      .program-draft-row { background: rgba(79,156,255,.04); }
+      @media (max-width: 759px) {
+        .program-table, .program-table tbody, .program-table tr, .program-table td { display: block; width: 100%; }
+        .program-table thead { display: none; }
+        .program-table tr { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; margin-bottom: 10px; padding: 8px; border: 1px solid #08090b; border-radius: 6px; background: var(--panel-bg); }
+        .program-table td { display: grid; grid-template-rows: auto auto; gap: 3px; padding: 0; border: 0; }
+        .program-table td::before { content: attr(data-label); color: var(--muted); font-size: 10px; font-weight: 700; }
+        .program-table td.program-actions-cell { grid-column: 1 / -1; }
+        .program-actions { justify-content: flex-end; }
+      }
+    .program-table-wrap { width: 100%; min-width: 0; }
+    .program-table { width: 100%; table-layout: fixed; border-collapse: collapse; }
+    .program-table th, .program-table td { min-width: 0; padding: 4px 3px; border-bottom: 1px solid rgba(255,255,255,.07); text-align: left; vertical-align: middle; }
+    .program-table th { color: #8b93a1; font-size: 10px; font-weight: 800; text-transform: uppercase; }
+    .program-table td { font-size: 11px; }
+    .program-table input, .program-table select {
+      width: 100%; min-width: 0; min-height: 44px; padding: 5px 6px; border: 1px solid #08090b;
+      border-radius: 4px; color: var(--lcd-text); background: #0b1418; font: inherit; font-size: 11px;
+    }
+    .program-delay { color: var(--lcd-text); font: 600 11px/1.2 var(--mono); white-space: nowrap; }
+    .program-actions { display: flex; gap: 4px; }
+    .program-actions button { min-width: 44px; min-height: 44px; padding: 4px; }
+    .program-play { color: #d7f0df; border-color: #163d27; }
+    .program-empty { padding: 12px 4px; color: var(--muted); }
+    .program-draft-row { background: rgba(79,156,255,.04); }
+    @media (max-width: 759px) {
+      .program-table, .program-table tbody, .program-table tr, .program-table td { display: block; width: 100%; }
+      .program-table thead { display: none; }
+      .program-table tr { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; margin-bottom: 10px; padding: 8px; border: 1px solid #08090b; border-radius: 6px; background: var(--panel-bg); }
+      .program-table td { display: grid; grid-template-rows: auto auto; gap: 3px; padding: 0; border: 0; }
+      .program-table td::before { content: attr(data-label); color: var(--muted); font-size: 10px; font-weight: 700; }
+      .program-table td.program-actions-cell { grid-column: 1 / -1; }
+      .program-actions { justify-content: flex-end; }
+    }
   .pc-saved { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; white-space: nowrap; }
   .pc-keys { display: flex; gap: 4px; }
   .pc-keys button { min-width: 44px; min-height: 44px; padding: 5px 9px; font-size: 11px; }
@@ -610,7 +682,28 @@
     <div id="channels" class="strips"></div>
   </div>
 </section>
-
+<section class="panel" data-section="program">
+  <div class="panel-head">
+    <button class="section-toggle" aria-expanded="true" aria-controls="program-body">Programm</button>
+    <div class="panel-tools"><button id="program-add-btn" class="add-key">+ Programmpunkt</button></div>
+  </div>
+  <div id="program-body" class="panel-body">
+    <div class="program-table-wrap">
+      <table class="program-table">
+        <colgroup>
+          <col style="width:7%"><col style="width:8%"><col style="width:15%"><col style="width:11%">
+          <col style="width:14%"><col style="width:11%"><col style="width:12%"><col style="width:12%"><col style="width:10%">
+        </colgroup>
+        <thead><tr>
+          <th>Uhrzeit</th><th>Verzögerung</th><th>Titel</th><th>Person</th><th>Mutegruppe</th>
+          <th>Playback</th><th>Übersetzung</th><th>Liedtext</th><th>Aktion</th>
+        </tr></thead>
+        <tbody id="program-items"></tbody>
+      </table>
+    </div>
+    <div id="program-empty" class="program-empty" hidden>Noch keine Programmpunkte.</div>
+  </div>
+</section>
 <section class="panel" data-section="groups">
   <div class="panel-head">
     <button class="section-toggle" aria-expanded="true" aria-controls="groups-body">Mute Gruppen</button>
@@ -2923,6 +3016,231 @@ $("profile-form").addEventListener("keydown", (event) => {
 loadCompanionButtons();
 initSections();
 applyBuildMigrations();
+let PROGRAM_ITEMS = [];
+let PROGRAM_GROUPS = {};
+let PROGRAM_BUTTONS = [];
+let PROGRAM_BUTTON_CATEGORIES = {};
+let PROGRAM_DRAFT = false;
+const PROGRAM_BUSY = new Set();
+
+function formatProgramDelay(seconds) {
+  if (seconds === null || seconds === undefined) return "—";
+  const value = Number(seconds);
+  const absolute = Math.abs(value);
+  const hours = Math.floor(absolute / 3600);
+  const minutes = Math.floor((absolute % 3600) / 60);
+  const remainder = absolute % 60;
+  const body = hours
+    ? `${hours}:${String(minutes).padStart(2, "0")}:${String(remainder).padStart(2, "0")}`
+    : `${String(minutes).padStart(2, "0")}:${String(remainder).padStart(2, "0")}`;
+  return `${value > 0 ? "+" : value < 0 ? "−" : "±"}${body}`;
+}
+
+function programCell(row, label, content, className = "") {
+  const cell = document.createElement("td");
+  cell.dataset.label = label;
+  if (className) cell.className = className;
+  cell.appendChild(content);
+  row.appendChild(cell);
+}
+
+function programInput(field, label, value, type, maxLength) {
+  const input = document.createElement("input");
+  input.type = type;
+  input.dataset.programField = field;
+  input.setAttribute("aria-label", label);
+  if (maxLength) input.maxLength = maxLength;
+  input.value = value || "";
+  return input;
+}
+
+function programSelect(field, label, value, options, placeholder) {
+  const select = document.createElement("select");
+  select.dataset.programField = field;
+  select.setAttribute("aria-label", label);
+  const empty = document.createElement("option");
+  empty.value = "";
+  empty.textContent = placeholder;
+  select.appendChild(empty);
+  for (const option of options) {
+    const node = document.createElement("option");
+    node.value = option.value;
+    node.textContent = option.label;
+    select.appendChild(node);
+  }
+  if (value && !options.some(option => option.value === value)) {
+    const missing = document.createElement("option");
+    missing.value = value;
+    missing.textContent = `Nicht verfügbar: ${value}`;
+    select.appendChild(missing);
+  }
+  select.value = value || "";
+  return select;
+}
+
+function buildProgramRow(item, draft = false) {
+  const row = document.createElement("tr");
+  if (draft) row.className = "program-draft-row";
+  else row.dataset.programId = item.id;
+
+  programCell(row, "Uhrzeit", programInput("time", "Uhrzeit", item.time, "time"));
+  const delay = document.createElement("span");
+  delay.className = "program-delay";
+  delay.textContent = draft ? "—" : formatProgramDelay(item.last_delay_seconds);
+  delay.title = item.last_played_at ? `Zuletzt geklickt: ${item.last_played_at}` : "Noch nicht gestartet";
+  programCell(row, "Verzögerung", delay);
+  programCell(row, "Titel", programInput("title", "Titel", item.title, "text", 120));
+  programCell(row, "Person", programInput("person", "Person", item.person, "text", 80));
+  programCell(row, "Mutegruppe", programSelect(
+    "group", "Mutegruppe", item.group,
+    Object.keys(PROGRAM_GROUPS).map(group => ({ value: group, label: group })),
+    "Gruppe wählen …",
+  ));
+
+  const buttonOptions = PROGRAM_BUTTONS.map(button => {
+    const category = PROGRAM_BUTTON_CATEGORIES[button.category_id];
+    return { value: button.id, label: category ? `${category} · ${button.label}` : button.label };
+  });
+  for (const [field, label] of [["playback", "Playback"], ["translation", "Übersetzung"], ["lyrics", "Liedtext"]]) {
+    programCell(row, label, programSelect(field, label, item[field], buttonOptions, "Keine Aktion"));
+  }
+
+  const actions = document.createElement("div");
+  actions.className = "program-actions";
+  const primary = document.createElement("button");
+  primary.type = "button";
+  primary.className = draft ? "primary" : "program-play";
+  primary.dataset.programAction = draft ? "create" : "play";
+  if (!draft) primary.dataset.programId = item.id;
+  primary.textContent = draft ? "Speichern" : "Play";
+  actions.appendChild(primary);
+  const secondary = document.createElement("button");
+  secondary.type = "button";
+  secondary.className = "danger";
+  secondary.dataset.programAction = draft ? "cancel" : "delete";
+  if (!draft) secondary.dataset.programId = item.id;
+  secondary.textContent = draft ? "Abbrechen" : "×";
+  secondary.setAttribute("aria-label", draft ? "Programmpunkt abbrechen" : `${item.title} löschen`);
+  actions.appendChild(secondary);
+  programCell(row, "Aktion", actions, "program-actions-cell");
+  return row;
+}
+
+function renderProgramItems() {
+  const tbody = $("program-items");
+  tbody.replaceChildren();
+  if (PROGRAM_DRAFT) {
+    const now = new Date();
+    const time = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+    tbody.appendChild(buildProgramRow({ time, group: Object.keys(PROGRAM_GROUPS)[0] || "" }, true));
+  }
+  for (const item of PROGRAM_ITEMS) tbody.appendChild(buildProgramRow(item));
+  $("program-empty").hidden = PROGRAM_ITEMS.length > 0 || PROGRAM_DRAFT;
+}
+
+async function loadProgramItems() {
+  try {
+    const [items, groups, buttons] = await Promise.all([
+      api("GET", "/program/items"), api("GET", "/groups"), api("GET", "/companion/buttons"),
+    ]);
+    if (!items.ok || !groups.ok || !buttons.ok) throw new Error("program data unavailable");
+    PROGRAM_ITEMS = items.data;
+    PROGRAM_GROUPS = groups.data;
+    PROGRAM_BUTTONS = buttons.data.buttons;
+    PROGRAM_BUTTON_CATEGORIES = Object.fromEntries((buttons.data.categories || []).map(category => [category.id, category.name]));
+    renderProgramItems();
+  } catch (_) {
+    $("program-empty").hidden = false;
+    $("program-empty").textContent = "Programmdaten konnten nicht geladen werden";
+  }
+}
+
+function readProgramRow(row) {
+  const result = {};
+  for (const field of ["time", "title", "person", "group", "playback", "translation", "lyrics"]) {
+    const control = row.querySelector(`[data-program-field="${field}"]`);
+    result[field] = control ? control.value.trim() : "";
+  }
+  for (const field of ["playback", "translation", "lyrics"]) result[field] ||= null;
+  return result;
+}
+
+async function createProgramItem(row) {
+  const button = row.querySelector('[data-program-action="create"]');
+  button.disabled = true;
+  const result = await api("POST", "/program/items", readProgramRow(row));
+  if (!result.ok || result.data.ok === false) {
+    toast(result.data.reason || `HTTP ${result.status}`, false);
+    button.disabled = false;
+    return;
+  }
+  PROGRAM_DRAFT = false;
+  await loadProgramItems();
+  toast("Programmpunkt angelegt", true);
+}
+
+async function updateProgramItem(row) {
+  const itemId = row.dataset.programId;
+  if (!itemId || PROGRAM_BUSY.has(itemId)) return;
+  PROGRAM_BUSY.add(itemId);
+  const result = await api("PUT", `/program/items/${encodeURIComponent(itemId)}`, readProgramRow(row));
+  PROGRAM_BUSY.delete(itemId);
+  if (!result.ok || result.data.ok === false) {
+    toast(result.data.reason || `HTTP ${result.status}`, false);
+    await loadProgramItems();
+    return;
+  }
+  PROGRAM_ITEMS = PROGRAM_ITEMS.map(item => item.id === itemId ? result.data.item : item);
+  renderProgramItems();
+}
+
+async function deleteProgramItem(itemId) {
+  const item = PROGRAM_ITEMS.find(entry => entry.id === itemId);
+  if (!item || !confirm(`Programmpunkt „${item.title}“ löschen?`)) return;
+  const result = await api("DELETE", `/program/items/${encodeURIComponent(itemId)}`);
+  if (!result.ok || result.data.ok === false) { toast(result.data.reason || `HTTP ${result.status}`, false); return; }
+  PROGRAM_ITEMS = PROGRAM_ITEMS.filter(entry => entry.id !== itemId);
+  renderProgramItems();
+}
+
+async function playProgramItem(itemId, button) {
+  if (PROGRAM_BUSY.has(itemId)) return;
+  PROGRAM_BUSY.add(itemId);
+  button.disabled = true;
+  try {
+    const result = await api("POST", `/program/items/${encodeURIComponent(itemId)}/play`);
+    if (!result.ok || result.data.ok === false) toast(result.data.reason || `HTTP ${result.status}`, false);
+    else toast(`Programmpunkt gestartet · Verzögerung ${formatProgramDelay(result.data.delay_seconds)}`, true);
+    await loadProgramItems();
+  } catch (_) {
+    toast("Programmpunkt konnte nicht gestartet werden", false);
+  } finally {
+    PROGRAM_BUSY.delete(itemId);
+    button.disabled = false;
+    await refresh();
+  }
+}
+
+$("program-add-btn").addEventListener("click", () => {
+  PROGRAM_DRAFT = true;
+  renderProgramItems();
+  document.querySelector('#program-items [data-program-field="title"]')?.focus();
+});
+$("program-items").addEventListener("change", event => {
+  const field = event.target.closest("[data-program-field]");
+  const row = field && field.closest("tr");
+  if (row && row.dataset.programId) updateProgramItem(row);
+});
+$("program-items").addEventListener("click", event => {
+  const button = event.target.closest("[data-program-action]");
+  if (!button) return;
+  if (button.dataset.programAction === "create") return createProgramItem(button.closest("tr"));
+  if (button.dataset.programAction === "cancel") { PROGRAM_DRAFT = false; renderProgramItems(); return; }
+  if (button.dataset.programAction === "delete") return deleteProgramItem(button.dataset.programId);
+  if (button.dataset.programAction === "play") return playProgramItem(button.dataset.programId, button);
+});
+
+loadProgramItems();
 $("txt-build").textContent = "build: " + resolvedBuildId();
 normalizeCollapsedGroups();
 migrateFaderPresets();

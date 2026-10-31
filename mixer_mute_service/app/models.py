@@ -98,6 +98,16 @@ class MuteSnapshotCreate(BaseModel):
     name: str
 
 
+class ProgramItemRequest(BaseModel):
+    time: str
+    title: str
+    person: str = ""
+    group: str
+    playback: Optional[str] = None
+    translation: Optional[str] = None
+    lyrics: Optional[str] = None
+
+
 class GroupUpdate(BaseModel):
     channels: List[int]
 
