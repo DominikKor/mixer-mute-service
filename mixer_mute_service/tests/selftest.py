@@ -278,12 +278,13 @@ with TestClient(app) as client:
     invalid_always_on = client.post("/channels/99/always-on", json={"enabled": True})
     check("always-on rejects invalid channel", invalid_always_on.status_code == 400)
     companion_buttons = client.get("/companion/buttons")
-    check("Companion buttons listed", companion_buttons.status_code == 200 and len(companion_buttons.json()["buttons"]) == 13)
-    with patch("app.routes._forward_companion_press") as forward_companion:
+    check("native and imported buttons listed", companion_buttons.status_code == 200
+          and len(companion_buttons.json()["buttons"]) > 40)
+    with patch.object(app.state.native_controls, "press", AsyncMock(return_value={"ok": True})) as native_press:
         companion_press = client.post("/companion/buttons/beamer-freeze/press")
-        check("Companion button proxied", companion_press.status_code == 200 and companion_press.json()["ok"] is True)
-        check("Companion page coordinates forwarded",
-              forward_companion.call_args.args[:4] == ("http://127.0.0.1:8000", 1, 0, 0))
+        check("native Beamer button dispatched", companion_press.status_code == 200 and companion_press.json()["ok"] is True)
+        check("Beamer allowlist action selected",
+              native_press.call_args.args[0]["script"] == "beamer-freeze")
     safe_mixer_press = client.post("/companion/buttons/pultmikro-mute/press")
     check("Mixer Companion button uses safe channel API",
           safe_mixer_press.status_code == 409 and safe_mixer_press.json()["reason"] == "no mixer connection")
@@ -344,9 +345,8 @@ with TestClient(app) as client:
     check("deleted snapshot returns 404",
           client.post(f"/mute-snapshots/{snapshot['id']}/restore").status_code == 404)
     app.state.client.connected = False
-    check("Companion categories loaded",
-          len(companion_buttons.json()["categories"]) == 3
-          and len(companion_buttons.json()["companion_targets"]) == 11)
+    category_names = {category["name"] for category in companion_buttons.json()["categories"]}
+    check("native categories loaded", {"Licht", "Kameras", "OBS", "Overall"} <= category_names)
     new_category = client.post("/companion/categories", json={"name": "Streaming"})
     check("Companion category created", new_category.status_code == 200)
     category_id = new_category.json()["category"]["id"]
@@ -361,10 +361,10 @@ with TestClient(app) as client:
     })
     check("safe Companion alias created", alias.status_code == 200)
     alias_id = alias.json()["button"]["id"]
-    with patch("app.routes._forward_companion_press") as forward_alias:
+    with patch.object(app.state.native_controls, "press", AsyncMock(return_value={"ok": True})) as native_alias:
         alias_press = client.post(f"/companion/buttons/{alias_id}/press")
-        check("alias uses allowlisted target", alias_press.status_code == 200
-              and forward_alias.call_args.args[1:4] == (1, 1, 1))
+        check("alias uses allowlisted native target", alias_press.status_code == 200
+              and native_alias.call_args.args[0]["scene"] == "Cam 1")
     custom_channel = client.post("/companion/buttons", json={
         "label": "Kanal 2 umschalten", "category_id": category_id,
         "kind": "channel", "channel": 2, "operation": "toggle",

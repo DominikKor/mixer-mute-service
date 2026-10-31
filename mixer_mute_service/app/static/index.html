@@ -249,14 +249,21 @@
   .display-tile { position: relative; display: inline-flex; max-width: 100%; }
   .display-tile button.display-key { padding-right: 42px; }
   button.display-edit {
-    position: absolute; top: 0; right: 0; width: 44px; height: 44px; padding: 5px 5px 0 0;
+    position: absolute; top: 0; right: 44px; width: 44px; height: 44px; padding: 5px 5px 0 0;
     display: flex; align-items: flex-start; justify-content: flex-end;
     color: #6f8a93; background: none; border: none; box-shadow: none; transition: color .12s;
   }
+  button.display-delete {
+    position: absolute; top: 0; right: 0; width: 44px; height: 44px; padding: 5px 5px 0 0;
+    display: flex; align-items: flex-start; justify-content: flex-end;
+    color: #cc665d; background: none; border: none; box-shadow: none;
+  }
+  button.display-delete:hover:not(:disabled) { color: #ff8576; filter: none; }
   /* No background of its own: the pencil only lights up on hover */
   button.display-edit:hover:not(:disabled) { color: #e6f4f8; filter: none; }
   button.display-edit:active:not(:disabled) { transform: none; box-shadow: none; }
   .display-edit-chip { display: grid; place-items: center; width: 22px; height: 22px; font-size: 13px; line-height: 1; }
+    .display-delete-chip { display: grid; place-items: center; width: 22px; height: 22px; font-size: 16px; line-height: 1; }
   /* The grey "+" tile after the last profile */
   button.display-add {
     display: grid; place-items: center; align-self: stretch; min-width: 72px; min-height: 48px; padding: 0 20px;
@@ -728,7 +735,7 @@
 </section>
 <section class="panel" data-section="companion">
   <div class="panel-head">
-    <button class="section-toggle" aria-expanded="true" aria-controls="companion-body">Companion</button>
+    <button class="section-toggle" aria-expanded="true" aria-controls="companion-body">Steuerung</button>
     <div class="panel-tools">
       <button id="new-companion-category" class="add-key">+ Kategorie</button>
       <button id="new-companion-button" class="add-key">+ Button</button>
@@ -761,7 +768,7 @@
       <select id="companion-button-category" class="pf-input" required></select></label>
     <label class="pf-field"><span>Aktion</span>
       <select id="companion-button-kind" class="pf-input">
-        <option value="companion">Vorhandenen Companion-Button auslösen</option>
+        <option value="companion">Vorhandenen lokalen Button verknüpfen</option>
         <option value="channel">Mixer-Kanal steuern</option>
         <option value="group">Mute-Gruppe steuern</option>
       </select></label>
@@ -1813,9 +1820,15 @@ function renderDesktopProfiles(data) {
     edit.title = `${profile.title} bearbeiten`;
     edit.setAttribute("aria-label", edit.title);
     edit.innerHTML = '<span class="display-edit-chip" aria-hidden="true">&#9998;</span>';
+    const remove = document.createElement("button");
+    remove.className = "display-delete";
+    remove.dataset.deleteProfile = profile.id;
+    remove.title = `${profile.title} löschen`;
+    remove.setAttribute("aria-label", remove.title);
+    remove.innerHTML = '<span class="display-delete-chip" aria-hidden="true">&times;</span>';
     const tile = document.createElement("span");
     tile.className = "display-tile";
-    tile.append(button, edit);
+    tile.append(button, edit, remove);
     wrap.insertBefore(tile, addTile);
   }
   status.textContent = !DESKTOP_PROFILES.length ? "Noch keine Profile – mit + anlegen"
@@ -2394,6 +2407,7 @@ function renderCompanionButtons() {
       press.className = `companion-key ${info.kind === "companion" ? "remote" : info.kind}`;
       press.dataset.companionPress = info.id;
       press.textContent = info.label;
+      press.title = info.kind === "native" ? "Direkt über den lokalen Dienst ausführen" : "Über den sicheren Dienst ausführen";
       const tools = document.createElement("div");
       tools.className = "companion-button-tools";
       const categorySelect = document.createElement("select");
@@ -2982,6 +2996,19 @@ $("desktop-profiles").addEventListener("click", (event) => {
 $("desktop-profiles").addEventListener("click", (event) => {
   const button = event.target.closest("button[data-edit-profile]");
   if (button) openProfileDialog(button.dataset.editProfile);
+});
+$("desktop-profiles").addEventListener("click", async (event) => {
+  const button = event.target.closest("button[data-delete-profile]");
+  if (!button || !confirm(`${button.dataset.deleteProfile} wirklich löschen?`)) return;
+  button.disabled = true;
+  const result = await api("DELETE", `/desktop/profiles/${encodeURIComponent(button.dataset.deleteProfile)}`);
+  if (!result.ok || result.data.ok === false) {
+    button.disabled = false;
+    toast(result.data.reason || `HTTP ${result.status}`, false);
+    return;
+  }
+  DESKTOP_PROFILES_SIGNATURE = "";
+  await refresh();
 });
 $("new-profile-btn").addEventListener("click", () => openProfileDialog(null));
 $("profile-form").addEventListener("submit", saveProfile);

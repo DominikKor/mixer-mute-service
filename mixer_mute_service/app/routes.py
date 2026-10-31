@@ -18,9 +18,10 @@ from pydantic import ValidationError
 
 from .config import DesktopProfileConfig, default_config_path
 from .companion_buttons import COMPANION_BUTTONS, COMPANION_BUTTONS_BY_ID
-from .desktop_profiles import ProfileEditError, add_profile, update_profile
+from .desktop_profiles import ProfileEditError, add_profile, delete_profile, update_profile
 from .groups import GroupError
 from .mute_snapshots import MuteSnapshotError
+from .native_controls import NativeControlError
 from .models import (
     AlwaysOnRequest,
     GroupCaptureRequest,
@@ -91,7 +92,7 @@ async def companion_buttons(request: Request):
     present = {button["id"] for button in data["buttons"]}
     data["companion_targets"] = [
         button for button in COMPANION_BUTTONS
-        if button["kind"] == "companion" and button["id"] in present
+        if button["kind"] != "channel" and button["id"] in present
     ]
     return data
 
@@ -123,8 +124,8 @@ async def companion_button_create(body: CompanionButtonCreate, request: Request)
     cfg = request.app.state.cfg
     if body.kind == "companion":
         target = COMPANION_BUTTONS_BY_ID.get(body.target_button_id or "")
-        if target is None or target["kind"] != "companion":
-            return JSONResponse({"ok": False, "reason": "invalid Companion button target"}, 400)
+        if target is None or target["kind"] not in {"companion", "native"}:
+            return JSONResponse({"ok": False, "reason": "invalid control button target"}, 400)
         action = {"kind": "companion", "target_button_id": target["id"]}
     elif body.kind == "channel":
         if body.channel not in cfg.valid_channels():
@@ -181,6 +182,37 @@ async def companion_button_press(button_id: str, request: Request):
         return JSONResponse({"ok": False, "reason": "unknown Companion button"}, 404)
 
     _, _, _, controller = _ctx(request)
+    if button["kind"] == "native":
+        action = button.get("native_action", {})
+        if action.get("type") == "group-macro":
+            result = await controller.group_set(action["group"], False)
+            if not result.get("ok"):
+                return _respond({**result, "button": button_id})
+            linked = []
+            for linked_id in action.get("buttons", []):
+                linked_result = await companion_button_press(linked_id, request)
+                if isinstance(linked_result, JSONResponse):
+                    linked_data = json.loads(linked_result.body.decode("utf-8"))
+                    linked_status = linked_result.status_code
+                else:
+                    linked_data = linked_result
+                    linked_status = 200
+                linked.append({"button": linked_id, **linked_data})
+                if linked_status != 200 or linked_data.get("ok") is False:
+                    return JSONResponse({
+                        "ok": False,
+                        "button": button_id,
+                        "reason": "linked native action failed",
+                        "group_result": result,
+                        "linked_actions": linked,
+                    }, linked_status)
+            return {"ok": True, "button": button_id, "group_result": result, "linked_actions": linked}
+        try:
+            result = await request.app.state.native_controls.press(action)
+        except NativeControlError as exc:
+            log.warning("Native action failed button=%s reason=%s", button_id, exc)
+            return JSONResponse({"ok": False, "button": button_id, "reason": str(exc)}, 503)
+        return {**result, "button": button_id}
     if button["kind"] == "channel":
         if button["operation"] == "toggle":
             result = await controller.channel_toggle(button["channel"])
@@ -202,8 +234,17 @@ async def companion_button_press(button_id: str, request: Request):
 
     target_id = button.get("target_button_id", button["id"])
     target = COMPANION_BUTTONS_BY_ID.get(target_id)
-    if target is None or target["kind"] != "companion":
-        return JSONResponse({"ok": False, "reason": "invalid Companion button target"}, 400)
+    if target is None:
+        return JSONResponse({"ok": False, "reason": "invalid control button target"}, 400)
+    if target["kind"] == "native":
+        try:
+            result = await request.app.state.native_controls.press(target["native_action"])
+        except NativeControlError as exc:
+            log.warning("Native action failed button=%s reason=%s", button_id, exc)
+            return JSONResponse({"ok": False, "button": button_id, "reason": str(exc)}, 503)
+        return {**result, "button": button_id, "target_button": target_id}
+    if target["kind"] != "companion":
+        return JSONResponse({"ok": False, "reason": "invalid control button target"}, 400)
 
     cfg = request.app.state.cfg.companion
     try:
@@ -316,6 +357,21 @@ async def update_desktop_profile(profile_id: str, request: Request, body: dict =
 @router.post("/desktop/profiles/{profile_id}/update")
 async def update_desktop_profile_post(profile_id: str, request: Request, body: dict = Body(...)):
     return await _save_profile(request, profile_id, body, create=False)
+
+
+@router.delete("/desktop/profiles/{profile_id}")
+async def delete_desktop_profile(profile_id: str, request: Request):
+    path = default_config_path()
+    async with _profile_lock:
+        try:
+            cfg = await asyncio.to_thread(delete_profile, path, profile_id)
+        except ProfileEditError as exc:
+            return JSONResponse({"ok": False, "id": profile_id, "reason": str(exc)}, exc.status)
+        except OSError as exc:
+            return JSONResponse({"ok": False, "id": profile_id, "reason": f"config.yaml not writable: {exc}"}, 500)
+        request.app.state.cfg.desktop_display.profiles = cfg.desktop_display.profiles
+    _logger.info("Desktop profile %s deleted from %s", profile_id, path)
+    return {"ok": True, "id": profile_id, "deleted": True}
 
 
 @router.post("/desktop/{profile_id}/open")

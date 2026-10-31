@@ -20,7 +20,7 @@ import tempfile
 import yaml
 
 from app.config import DesktopProfileConfig, load_config
-from app.desktop_profiles import ProfileEditError, add_profile, update_profile
+from app.desktop_profiles import ProfileEditError, add_profile, delete_profile, update_profile
 
 PASS = 0
 FAIL = 0
@@ -162,6 +162,18 @@ check("missing file: created with the profile", load_config(missing).desktop_dis
 second = cfg_file("second", "desktop_display:\n  profiles:\n    a:\n        title: A\n        kind: file\n        path: 'C:\\a.txt'\n")
 add_profile(second, "b", DesktopProfileConfig(title="B", kind="file", path=r"C:\b.txt"))
 check("indentation follows the existing profiles", "    b:\n        title: \"B\"\n" in second.read_text())
+multiple = cfg_file("delete-multiple", "desktop_display:\n  enabled: true\n  profiles:\n    first:\n      title: First\n      kind: file\n      path: 'C:\\first.txt'\n    second:\n      title: Second\n      kind: file\n      path: 'C:\\second.txt'\nserver:\n  host: '127.0.0.1'\n  port: 8765\n")
+delete_profile(multiple, "first")
+remaining = load_config(multiple)
+check("delete keeps other profile", set(remaining.desktop_display.profiles) == {"second"})
+check("delete keeps unrelated config", remaining.server.host == "127.0.0.1" and remaining.server.port == 8765)
+last = cfg_file("delete-last", "desktop_display:\n  enabled: true\n  profiles:\n    only:\n      title: Only\n      kind: file\n      path: 'C:\\only.txt'\nserver:\n  host: '127.0.0.1'\n  port: 8765\n")
+delete_profile(last, "only")
+check("delete last profile leaves valid empty map", load_config(last).desktop_display.profiles == {})
+original = multiple.read_bytes()
+refused_delete = refused(delete_profile, multiple, "unknown")
+check("unknown profile delete -> 404", refused_delete is not None and refused_delete[0] == 404)
+check("unknown profile delete leaves file unchanged", multiple.read_bytes() == original)
 
 print("== CRLF and BOM ==")
 crlf = cfg_file("crlf", raw=b"\xef\xbb\xbfdesktop_display:\r\n  profiles:\r\n    a:\r\n      title: A\r\n      kind: file\r\n      path: 'C:\\a.txt'\r\n")
@@ -232,6 +244,11 @@ with TestClient(app) as client:
     check("update unknown -> 404", client.put("/desktop/profiles/nope", json=upd).status_code == 404)
     text = http_cfg.read_text()
     check("manual comments still in the config", "# Must stay false." in text and "freshness_mode" in text)
+    delete_response = client.delete("/desktop/profiles/obs")
+    check("DELETE profile 200", delete_response.status_code == 200 and delete_response.json()["deleted"] is True)
+    check("deleted profile removed without restart",
+        all(profile["id"] != "obs" for profile in client.get("/desktop/profiles").json()["profiles"]))
+    check("DELETE unknown profile -> 404", client.delete("/desktop/profiles/nope").status_code == 404)
 
 print(f"\n{PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)

@@ -11,7 +11,7 @@ deployment_dir = project_dir / "windows_deployment"
 
 # Uvicorn selects its HTTP, event-loop and lifespan implementations through
 # dynamic imports, so explicitly collect them for the frozen build.
-hidden_imports = collect_submodules("uvicorn")
+hidden_imports = collect_submodules("uvicorn") + collect_submodules("websockets")
 
 a = Analysis(
     [str(deployment_dir / "launcher.py")],

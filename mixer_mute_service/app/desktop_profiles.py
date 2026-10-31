@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import os
 import re
+from copy import deepcopy
 from pathlib import Path, PureWindowsPath
 from typing import List, Optional, Tuple
 
@@ -369,3 +370,59 @@ def add_profile(path: Path, profile_id: str, profile: DesktopProfileConfig) -> C
 def update_profile(path: Path, profile_id: str, profile: DesktopProfileConfig) -> Config:
     """Change an existing profile in config.yaml in place."""
     return _apply(path, profile_id, profile, create=False)
+
+
+def delete_profile(path: Path, profile_id: str) -> Config:
+    """Remove one desktop profile without rewriting unrelated config text."""
+    if not PROFILE_ID_RE.match(profile_id or ""):
+        raise ProfileEditError("invalid profile id (letters, digits, - and _; max 64)")
+    raw, text = _read(path)
+    try:
+        old = _load(text)
+    except yaml.YAMLError:
+        raise ProfileEditError("config.yaml cannot be parsed; fix it by hand first", 409)
+    if profile_id not in _profiles_of(old):
+        raise ProfileEditError("unknown desktop profile", 404)
+
+    root = yaml.compose(text)
+    desktop = _mapping_get(root, "desktop_display") if _is_block_mapping(root) else None
+    profiles_entry = _mapping_get(desktop[1], "profiles") if desktop and _is_block_mapping(desktop[1]) else None
+    if not profiles_entry or not _is_block_mapping(profiles_entry[1]):
+        raise ProfileEditError("desktop_display.profiles layout not understood; edit it by hand", 409)
+
+    profiles_node = profiles_entry[1]
+    newline = "\r\n" if "\r\n" in text else "\n"
+    if len(profiles_node.value) == 1:
+        key_node = profiles_entry[0]
+        start = text.rfind("\n", 0, key_node.start_mark.index) + 1
+        end = _line_end(text, _content_end(text, profiles_node))
+        if text[end:end + 2] == "\r\n":
+            end += 2
+        elif text[end:end + 1] in ("\n", "\r"):
+            end += 1
+        replacement = " " * key_node.start_mark.column + "profiles: {}" + newline
+        new_text = text[:start] + replacement + text[end:]
+    else:
+        key_node, value_node = _mapping_get(profiles_node, profile_id)
+        start = text.rfind("\n", 0, key_node.start_mark.index) + 1
+        end = _line_end(text, _content_end(text, value_node))
+        if text[end:end + 2] == "\r\n":
+            end += 2
+        elif text[end:end + 1] in ("\n", "\r"):
+            end += 1
+        new_text = text[:start] + text[end:]
+
+    new_data = _load(new_text)
+    expected = deepcopy(old)
+    expected_profiles = _profiles_of(expected)
+    expected_profiles.pop(profile_id)
+    expected.setdefault("desktop_display", {})["profiles"] = expected_profiles
+    if new_data != expected:
+        raise ProfileEditError("config.yaml could not be changed safely; nothing was written", 500)
+    try:
+        cfg = Config(**new_data)
+        cfg.validate_groups()
+    except (ValidationError, ValueError, TypeError):
+        raise ProfileEditError("config.yaml could not be changed safely; nothing was written", 500)
+    _write(path, raw, new_text)
+    return cfg
