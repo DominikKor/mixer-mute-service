@@ -948,6 +948,7 @@ function startRenamePerson(personId, currentName) {
       if (p) {
         p.name = val;
         savePersons(list);
+        syncPersonGroupsToBackend(list, currentName);
       }
     }
     renderPersons();
@@ -975,6 +976,7 @@ async function bootstrapPersonsFromBackend() {
   const existing = loadPersons();
   if (existing.length) {
     PERSONS_BOOTSTRAPPED = true;
+    await syncPersonGroupsToBackend(existing);
     return;
   }
 
@@ -1036,6 +1038,45 @@ function normalizeCollapsedGroups() {
 }
 function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
 
+async function syncPersonGroupsToBackend(persons, removedName = null) {
+  const current = await api("GET", "/groups");
+  if (!current.ok || !current.data || typeof current.data !== "object") {
+    toast("Mute Gruppen konnten nicht mit dem Dienst synchronisiert werden", false);
+    return;
+  }
+
+  const known = new Set(Object.keys(current.data));
+  if (removedName && !persons.some(p => p.name === removedName) && known.has(removedName)) {
+    const removed = await api("POST", `/groups/${encodeURIComponent(removedName)}/delete`);
+    if (!removed.ok) {
+      toast(`${removedName}: Gruppen-Synchronisierung fehlgeschlagen`, false);
+      return;
+    }
+    known.delete(removedName);
+  }
+
+  for (const person of persons) {
+    const name = person.name.trim();
+    const channels = personChannelList(person);
+    const encodedName = encodeURIComponent(name);
+    let result;
+    if (!channels.length) {
+      if (!known.has(name)) continue;
+      result = await api("POST", `/groups/${encodedName}/delete`);
+      known.delete(name);
+    } else if (known.has(name)) {
+      result = await api("POST", `/groups/${encodedName}/update`, { channels });
+    } else {
+      result = await api("POST", "/groups", { name, channels });
+      if (result.ok) known.add(name);
+    }
+    if (result && (!result.ok || result.data.ok === false)) {
+      toast(`${name}: Gruppen-Synchronisierung fehlgeschlagen (${result.data.reason || "HTTP " + result.status})`, false);
+      return;
+    }
+  }
+}
+
 function openPersonCreateRow() {
   const row = $("person-create-row");
   const input = $("new-person-name");
@@ -1055,15 +1096,20 @@ function savePerson() {
   const name = $("new-person-name").value.trim();
   if (!name) { toast("Name required", false); return; }
   const list = loadPersons();
-  list.push({ id: genId(), name, channels: {} });
+  const person = { id: genId(), name, channels: {} };
+  list.push(person);
   savePersons(list);
+  syncPersonGroupsToBackend(list);
   closePersonCreateRow();
   renderPersons();
 }
 
 function deletePerson(id) {
-  const list = loadPersons().filter(p => p.id !== id);
+  const previous = loadPersons();
+  const removed = previous.find(p => p.id === id);
+  const list = previous.filter(p => p.id !== id);
   savePersons(list);
+  if (removed) syncPersonGroupsToBackend(list, removed.name);
   renderPersons();
 }
 
@@ -1076,6 +1122,7 @@ function duplicatePerson(id) {
   for (let n = 2; names.includes(name); n++) name = `${src.name} copy ${n}`;
   list.push({ id: genId(), name, channels: JSON.parse(JSON.stringify(src.channels || {})) });
   savePersons(list);
+  syncPersonGroupsToBackend(list);
   renderPersons();
   toast(`Mute Gruppe dupliziert als "${name}"`, true);
 }
@@ -1222,6 +1269,7 @@ function removePersonChannel(personId, ch) {
   const p = list.find(p => p.id === personId);
   if (p && p.channels) delete p.channels[String(ch)];
   savePersons(list);
+  syncPersonGroupsToBackend(list);
   renderPersons();
 }
 
@@ -1233,6 +1281,7 @@ function addPersonChannel(personId, ch) {
   if (!p.channels) p.channels = {};
   if (!p.channels[String(ch)]) p.channels[String(ch)] = { fader_hex: null, set_at: null };
   savePersons(list);
+  syncPersonGroupsToBackend(list);
   renderPersons();
 }
 
