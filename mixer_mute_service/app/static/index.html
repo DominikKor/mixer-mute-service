@@ -179,12 +179,31 @@
   button.mute-key.on:hover:not(:disabled) { color: #fff; border-color: #4a0c06; }
   button.mute-key.unk { background: #1a1d22; border: 1px dashed #4a505b; color: #6c7482; box-shadow: none; letter-spacing: .06em; }
   button.mute-key.busy { cursor: progress; filter: brightness(.85); }
-    .always-on-control {
-      display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 44px;
-      color: #aab4c0; font-size: 11px; font-weight: 700; cursor: pointer; user-select: none;
-    }
-    .always-on-control input { width: 18px; height: 18px; margin: 0; accent-color: #76c893; }
-    .always-on-control input:disabled { cursor: progress; }
+  /* "Immer an": small toggle (same build as the Kompakt switch, scaled down),
+     green while the channel is protected from group mute and solo. The label
+     keeps a 44 px tap height. Shown with the faders only, not in compact view. */
+  .always-on-control {
+    position: relative; display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+    min-height: 44px; padding: 0 2px; cursor: pointer; user-select: none; -webkit-tap-highlight-color: transparent;
+    font-size: 10px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: #8d96a3;
+  }
+  .always-on-control input { position: absolute; opacity: 0; width: 1px; height: 1px; margin: 0; }
+  .always-on-control .track {
+    position: relative; flex-shrink: 0; width: 34px; height: 20px; border-radius: 10px; border: 1px solid #000;
+    background: #0b1418; box-shadow: inset 0 2px 4px rgba(0,0,0,.85), 0 1px 0 rgba(255,255,255,.05);
+  }
+  .always-on-control .track::after {
+    content: ""; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%;
+    background: linear-gradient(to bottom, #6d737d, #3b4049); box-shadow: 0 1px 2px rgba(0,0,0,.6), inset 0 1px 0 rgba(255,255,255,.3);
+    transition: transform .15s;
+  }
+  .always-on-control input:checked + .track { background: linear-gradient(to bottom, #1f8a4c, #2ecc71); }
+  .always-on-control input:checked + .track::after { transform: translateX(14px); }
+  .always-on-control input:checked ~ .label { color: #9be7b4; }
+  .always-on-control input:focus-visible + .track { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .always-on-control input:disabled + .track { opacity: .6; }
+  .always-on-control:has(input:disabled) { cursor: progress; }
+  .strips.compact .always-on-control { display: none; }
   /* Update key in the header and its progress dialog */
   button.update-key { padding: 8px 14px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
   button.update-key.running { color: #8fd3e6; text-shadow: 0 0 6px rgba(120,220,255,.5); }
@@ -2008,7 +2027,7 @@ function buildChannelCard(ch) {
     <button class="mute-key unk" data-action="channel-toggle" data-channel="${ch}" disabled>MUTE</button>
     <label class="always-on-control" title="Bei Gruppen-Mute und Solo nicht stummschalten">
       <input type="checkbox" data-always-on-channel="${ch}">
-      <span>Immer an</span>
+      <span class="track"></span><span class="label">Immer an</span>
     </label>`;
   // The level readout sits in the scribble strip under the name.
   const db = card.querySelector(".fader-db");
@@ -2945,24 +2964,6 @@ document.addEventListener("click", (e) => {
       return;
     }
   }
-});
-
-document.addEventListener("change", (event) => {
-  const input = event.target.closest("[data-action=person-channel-description]");
-  if (!input) return;
-  const list = loadPersons();
-  const person = list.find(item => item.id === input.dataset.pid);
-  const channel = person && person.channels && person.channels[String(input.dataset.ch)];
-  if (!channel) return;
-  channel.description = input.value.trim();
-  savePersons(list);
-  renderPersons();
-});
-
-document.addEventListener("change", (e) => {
-  const input = e.target.closest("[data-always-on-channel]");
-  if (!input) return;
-  setChannelAlwaysOn(Number(input.dataset.alwaysOnChannel), input.checked);
 });
 
 document.addEventListener("change", (event) => {
