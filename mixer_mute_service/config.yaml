@@ -42,11 +42,13 @@ mixer:
     - {channel: 18, name: "Monitor", id: "8301"}
 
 safety:
-  # How a stored fader value is trusted before sending:
-  #   latest  - use the most recent observed value while the proxy link is live
-  #             (recommended; the proxy relays every iPad + physical change).
-  #   session - only trust values observed during the current link session.
-  #   age     - only trust values newer than max_fader_age_seconds.
+  # How a stored fader value is trusted before sending. In every mode it must
+  # have been observed on the current mixer link (values from before a
+  # reconnect are never used):
+  #   latest  - the most recent such value, any age (recommended; in direct
+  #             mode the state dump refreshes everything every 10 s).
+  #   session - same as latest (kept for older configs).
+  #   age     - additionally newer than max_fader_age_seconds (1 s if unset).
   freshness_mode: "latest"
   # Optional hard age cap (used by "age" mode; null = no cap).
   max_fader_age_seconds: null
@@ -56,8 +58,6 @@ safety:
   # muting a group leaves others alone. Channels with no safe fader are skipped.
   exclusive_group_unmute: true
   group_send_delay_ms: 50
-  # Must stay false. There is no sanctioned path to send without a safety check.
-  allow_unsafe_debug_send: false
 
 server:
   host: "0.0.0.0"

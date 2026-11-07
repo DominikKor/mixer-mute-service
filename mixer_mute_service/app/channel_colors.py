@@ -11,14 +11,13 @@ POST /channels/{channel}/color    {"color": "green"} or {"color": null} to clear
 from __future__ import annotations
 
 import asyncio
-import json
-import os
 from pathlib import Path
 
 from fastapi import APIRouter, Body, Request
 from fastapi.responses import JSONResponse
 
 from .config import default_config_path
+from .jsonstore import read_json, write_json_atomic
 
 router = APIRouter()
 
@@ -33,20 +32,12 @@ def _path() -> Path:
 
 
 def _load() -> dict:
-    try:
-        raw = json.loads(_path().read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
-    if not isinstance(raw, dict):
-        return {}
+    raw = read_json(_path(), dict, default={})
     return {str(k): v for k, v in raw.items() if v in PALETTE and str(k).isdigit()}
 
 
 def _save(colors: dict) -> None:
-    path = _path()
-    tmp = path.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(colors, indent=2, sort_keys=True), encoding="utf-8")
-    os.replace(tmp, path)
+    write_json_atomic(_path(), colors, sort_keys=True)
 
 
 @router.get("/channel-colors")

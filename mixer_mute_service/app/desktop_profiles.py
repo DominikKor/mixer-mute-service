@@ -22,7 +22,7 @@ import os
 import re
 from copy import deepcopy
 from pathlib import Path, PureWindowsPath
-from typing import List, Optional, Tuple
+from typing import List, Tuple
 
 import yaml
 from pydantic import ValidationError

@@ -25,6 +25,33 @@ class SafetyResult:
         return d
 
 
+def _session_and_age(
+    what: str,
+    updated_at: float,
+    cap: Optional[float],
+    cfg: Config,
+    session_epoch: Optional[float],
+) -> Optional[SafetyResult]:
+    """Shared freshness rule for fader and mute values (None = fresh enough).
+
+    In every mode a value must have been observed on the *current* mixer link
+    (``session_epoch`` = when it began): after a reconnect, values from before
+    the outage are never trusted, whatever the mode. "age" mode additionally
+    requires the value to be younger than the cap (1 s if none is set); in the
+    other modes a configured cap still applies as an extra guard.
+    """
+    age = time.monotonic() - updated_at
+    if session_epoch is None:
+        return SafetyResult(False, "no live mixer session", age_seconds=age)
+    if updated_at < session_epoch:
+        return SafetyResult(False, f"{what} predates current session", age_seconds=age)
+    if cfg.safety.freshness_mode == "age" and not cap:
+        cap = 1.0
+    if cap and age > cap:
+        return SafetyResult(False, f"{what} stale", age_seconds=age)
+    return None
+
+
 def check_channel_send(
     channel: int,
     cs: Optional[ChannelState],
@@ -33,22 +60,15 @@ def check_channel_send(
     session_epoch: Optional[float] = None,
     require_mute_state: bool = False,
 ) -> SafetyResult:
-    """Per-channel safety for a mute/unmute (and, with require_mute_state, toggle).
+    """Per-channel safety for a mute/unmute (and, with require_mute_state, toggle
+    or a fader move, which re-send the observed mute flag).
 
     Global gates (service enabled, mixer connected) are checked by the caller so
     they can produce a single top-level reason instead of repeating per channel.
-
-    Freshness is governed by ``cfg.safety.freshness_mode`` (see SafetyConfig):
-    "latest" trusts the most recent observed value (the proxy relays every
-    change), "session" trusts only values seen during the current link session
-    (``session_epoch`` = when it began), and "age" requires the value to be
-    newer than ``max_fader_age_seconds``. A non-null age cap always applies as an
-    extra guard. Presence and validity of an observed value are required in all
-    modes -- a default/dummy fader value is never substituted.
+    Presence and validity of an observed value are required in all modes -- a
+    default/dummy fader value is never substituted. Freshness: see
+    _session_and_age.
     """
-    now = time.monotonic()
-    mode = cfg.safety.freshness_mode
-
     if channel not in cfg.valid_channels():
         return SafetyResult(False, "invalid channel")
 
@@ -60,19 +80,12 @@ def check_channel_send(
         # never substitute a default.
         return SafetyResult(False, "invalid fader value")
 
-    fader_age = now - cs.fader_updated_at
-
-    if mode == "session":
-        if session_epoch is None:
-            return SafetyResult(False, "no live mixer session", age_seconds=fader_age)
-        if cs.fader_updated_at < session_epoch:
-            return SafetyResult(False, "fader value predates current session", age_seconds=fader_age)
-
-    cap = cfg.safety.max_fader_age_seconds
-    if mode == "age" and not cap:
-        cap = 1.0  # "age" mode without an explicit cap defaults to 1s
-    if cap and fader_age > cap:
-        return SafetyResult(False, "fader value stale", age_seconds=fader_age)
+    blocked = _session_and_age(
+        "fader value", cs.fader_updated_at, cfg.safety.max_fader_age_seconds,
+        cfg, session_epoch,
+    )
+    if blocked is not None:
+        return blocked
 
     if require_mute_state:
         mute_safety = check_channel_mute_state(
@@ -81,7 +94,7 @@ def check_channel_send(
         if not mute_safety.ok:
             return mute_safety
 
-    return SafetyResult(True, age_seconds=fader_age)
+    return SafetyResult(True, age_seconds=time.monotonic() - cs.fader_updated_at)
 
 
 def check_channel_mute_state(
@@ -92,26 +105,17 @@ def check_channel_mute_state(
     session_epoch: Optional[float] = None,
 ) -> SafetyResult:
     """Check that an observed mute state is valid and current."""
-    now = time.monotonic()
-    mode = cfg.safety.freshness_mode
     if channel not in cfg.valid_channels():
         return SafetyResult(False, "invalid channel")
     if cs is None or cs.muted is None or cs.muted_updated_at is None:
         return SafetyResult(False, "mute state unknown")
-
-    mute_age = now - cs.muted_updated_at
-    if mode == "session":
-        if session_epoch is None:
-            return SafetyResult(False, "no live mixer session", age_seconds=mute_age)
-        if cs.muted_updated_at < session_epoch:
-            return SafetyResult(False, "mute state predates current session", age_seconds=mute_age)
-
-    mute_cap = cfg.safety.max_mute_age_seconds
-    if mode == "age" and not mute_cap:
-        mute_cap = 1.0
-    if mute_cap and mute_age > mute_cap:
-        return SafetyResult(False, "mute state stale", age_seconds=mute_age)
-    return SafetyResult(True, age_seconds=mute_age)
+    blocked = _session_and_age(
+        "mute state", cs.muted_updated_at, cfg.safety.max_mute_age_seconds,
+        cfg, session_epoch,
+    )
+    if blocked is not None:
+        return blocked
+    return SafetyResult(True, age_seconds=time.monotonic() - cs.muted_updated_at)
 
 
 def is_channel_safe(

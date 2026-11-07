@@ -88,6 +88,9 @@ function Save-Token([string]$Token) {
     $Protected = [System.Security.Cryptography.ProtectedData]::Protect(
         $Bytes, $null, [System.Security.Cryptography.DataProtectionScope]::LocalMachine)
     New-Item -ItemType Directory -Force -Path $DataDirectory | Out-Null
+    # Write a fresh file: overwriting an existing one would keep whatever
+    # extra permissions someone gave it, and icacls below only replaces ours.
+    if (Test-Path $TokenFile) { Remove-Item -Force $TokenFile }
     [System.IO.File]::WriteAllBytes($TokenFile, $Protected)
     # Only Administrators (S-1-5-32-544) and SYSTEM (S-1-5-18) may read it.
     & icacls.exe $TokenFile /inheritance:r /grant:r "*S-1-5-32-544:F" "*S-1-5-18:F" | Out-Null
@@ -218,9 +221,15 @@ function Invoke-Update {
     }
     catch {
         $Code = Get-HttpStatus $_
-        if ($Code -in 401, 403, 404) {
+        if ($Code -eq 401) {
+            # Wrong or expired: only then is the stored token useless.
             if (Test-Path $TokenFile) { Remove-Item -Force $TokenFile }
-            throw "GitHub refused the token (HTTP $Code): wrong, expired or without read access to $Repo. It was forgotten; double-click 'Mixer Service aktualisieren' to enter a new one."
+            throw "GitHub refused the token (HTTP 401): wrong or expired. It was forgotten; double-click 'Mixer Service aktualisieren' to enter a new one."
+        }
+        if ($Code -in 403, 404) {
+            # 403 is also GitHub's rate limit and 404 also means "no release
+            # yet", so the token is kept.
+            throw "GitHub answered HTTP $Code: the token has no read access to $Repo, the rate limit was hit, or there is no release yet. If the token is the problem, run 'Mixer Service aktualisieren' with -ResetToken to enter a new one."
         }
         throw "GitHub is not reachable ($($_.Exception.Message)). Check the internet connection and try again."
     }

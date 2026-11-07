@@ -1,57 +1,19 @@
-"""Pydantic response models for documentation/OpenAPI. The actual route handlers
-return plain dicts (the safety layer composes them), so these models are not
-enforced as response_model -- they describe the shapes for API consumers."""
+"""Pydantic request bodies. Route handlers return plain dicts (the safety layer
+composes them); the response shapes are documented in the README and /docs."""
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional
-from typing import Dict, List, Literal, Optional
+from typing import List, Literal, Optional
 
-from pydantic import BaseModel
 from pydantic import BaseModel, Field
-
-
-class HealthResponse(BaseModel):
-    ok: bool
-    enabled: bool
-    mixer_connected: bool
-    last_update_age_seconds: Optional[float] = None
-
-
-class ChannelView(BaseModel):
-    fader_hex: Optional[str] = None
-    # fader position 0..1000 (0 = -inf), decoded from fader_hex
-    fader_value: Optional[float] = None
-    fader_age_seconds: Optional[float] = None
-    muted: Optional[bool] = None
-    mute_age_seconds: Optional[float] = None
-    safe: bool
-
-
-class StateResponse(BaseModel):
-    enabled: bool
-    mixer_connected: bool
-    channels: Dict[str, ChannelView]
-
-
-class SendResult(BaseModel):
-    ok: bool
-    channel: Optional[int] = None
-    target_muted: Optional[bool] = None
-    fader_hex: Optional[str] = None
-    sent_hex: Optional[str] = None
-    reason: Optional[str] = None
-    age_seconds: Optional[float] = None
-
-
-class GroupDetail(BaseModel):
-    channel: int
-    reason: str
-    age_seconds: Optional[float] = None
 
 
 class GroupCreate(BaseModel):
     name: str
+    channels: List[int]
+
+
+class GroupUpdate(BaseModel):
     channels: List[int]
 
 
@@ -83,6 +45,7 @@ class CompanionCategoryVisibility(BaseModel):
 class CompanionButtonCreate(BaseModel):
     label: str
     category_id: str
+    # "companion" = a user key pointing at a native catalog action
     kind: Literal["companion", "channel", "group"]
     target_button_id: Optional[str] = None
     channel: Optional[int] = None
@@ -93,10 +56,6 @@ class CompanionButtonCreate(BaseModel):
 class CompanionButtonUpdate(BaseModel):
     label: str
     category_id: str
-
-
-class MuteSnapshotCreate(BaseModel):
-    name: str
 
 
 class ProgramItemRequest(BaseModel):
@@ -110,16 +69,3 @@ class ProgramItemRequest(BaseModel):
     playback_description: str = Field(default="", max_length=160)
     translation_description: str = Field(default="", max_length=160)
     lyrics_description: str = Field(default="", max_length=160)
-
-
-class GroupUpdate(BaseModel):
-    channels: List[int]
-
-
-class GroupResult(BaseModel):
-    ok: bool
-    group: str
-    target_muted: Optional[bool] = None
-    results: Optional[List[SendResult]] = None
-    reason: Optional[str] = None
-    details: Optional[List[GroupDetail]] = None

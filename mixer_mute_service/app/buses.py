@@ -17,12 +17,12 @@ configured explicitly.
 
 from __future__ import annotations
 
-import json
 import logging
 from pathlib import Path
 from typing import Callable, List, Tuple
 
 from .config import BusConfig, Config
+from .jsonstore import read_json, write_json_atomic
 from .protocol import BusMap, varint_hex
 
 log = logging.getLogger("mixer.buses")
@@ -47,20 +47,24 @@ class BusRegistry:
     # -- persistence -------------------------------------------------------
 
     def _load(self) -> List[BusConfig]:
-        if not self._path.exists():
-            return []
-        try:
-            data = json.loads(self._path.read_text() or "[]")
-            return [BusConfig(**b) for b in data]
-        except Exception as exc:  # noqa: BLE001
-            log.warning("ignoring unreadable %s: %s", self._path, exc)
-            return []
+        # An unreadable file is kept as buses.json.corrupt (see jsonstore).
+        buses = []
+        for entry in read_json(self._path, list, default=[]):
+            try:
+                buses.append(BusConfig(**entry))
+            except (TypeError, ValueError) as exc:
+                log.warning("ignoring invalid bus entry %r in %s: %s", entry, self._path, exc)
+        return buses
 
     def _persist(self) -> None:
         explicit = {b.channel for b in self._explicit}
         auto = [b.model_dump() for b in self._cfg.mixer.buses if b.channel not in explicit]
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._path.write_text(json.dumps(auto, indent=2))
+        try:
+            write_json_atomic(self._path, auto)
+        except OSError as exc:
+            # Runs inside the stream parser: a failed write must not take the
+            # mixer link down. The bus works now; its number is just not saved.
+            log.error("could not save discovered buses to %s: %s", self._path, exc)
 
     def _merge_persisted(self) -> None:
         """Add previously discovered buses that do not clash with config."""
@@ -89,7 +93,10 @@ class BusRegistry:
             added.append(bus)
             log.info("discovered bus id=%s name=%r -> channel %s", object_id, bus.name, channel)
         if added:
-            self._persist()
             for bus in added:
                 for callback in self._listeners:
-                    callback(bus.channel)
+                    try:
+                        callback(bus.channel)
+                    except Exception:  # noqa: BLE001
+                        log.exception("bus listener failed for channel %s", bus.channel)
+            self._persist()

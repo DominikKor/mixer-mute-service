@@ -1,10 +1,11 @@
+import asyncio
 import json
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
-from app.native_controls import NativeControlService
+from app.native_controls import NativeControlError, NativeControlService
 
 
 class NativeControlTests(unittest.IsolatedAsyncioTestCase):
@@ -24,13 +25,59 @@ class NativeControlTests(unittest.IsolatedAsyncioTestCase):
         rpc.assert_called_once_with("192.168.188.25", "Switch.Set", {"id": 0, "on": True})
 
     async def test_artnet_zone_toggle_is_mocked_and_uses_start_level(self):
-        with patch.object(self.controls, "_send_dmx", new_callable=AsyncMock) as send_dmx:
+        with patch.object(self.controls, "_fade_to", new_callable=AsyncMock) as fade:
             result = await self.controls.press({"type": "artnet-zone-toggle", "zone": "left"})
 
         self.assertEqual(result["level"], 255)
-        frame = send_dmx.await_args.args[0]
+        frame = fade.await_args.args[0]
         self.assertEqual(frame[0:3], [255, 255, 50])
-        send_dmx.assert_awaited_once()
+        fade.assert_awaited_once()
+
+    async def test_concurrent_toggles_build_on_each_other(self):
+        # Two quick presses: the second must see the first one's result and
+        # switch the zone off again, not compute "on" from the old frame.
+        async def slow_fade(target):
+            await asyncio.sleep(0.01)
+
+        with patch.object(self.controls, "_fade_to", side_effect=slow_fade):
+            first, second = await asyncio.gather(
+                self.controls.press({"type": "artnet-zone-toggle", "zone": "left"}),
+                self.controls.press({"type": "artnet-zone-toggle", "zone": "left"}),
+            )
+
+        self.assertEqual(sorted([first["level"], second["level"]]), [0, 255])
+        self.assertEqual(self.controls._dmx[0], 0)
+
+    async def test_adjust_uses_dimming_step_setting(self):
+        with patch.object(self.controls, "_fade_to", new_callable=AsyncMock):
+            await self.controls.press({"type": "artnet-setting-adjust", "setting": "steps", "delta": -30})
+            await self.controls.press({"type": "artnet-zone-adjust", "zone": "right", "delta": 50})
+            await self.controls.press({"type": "artnet-all-adjust", "delta": 50})
+
+        self.assertEqual(self.controls._levels["steps"], 20)
+        self.assertEqual(self.controls._dmx[12], 40)  # right zone white: two steps
+        self.assertEqual(self.controls._dmx[0], 20)   # left zone white: one step
+
+    async def test_zones_on_switches_off_zones_on_and_keeps_lit_ones(self):
+        self.controls._dmx[12] = 90  # right zone already lit
+        with patch.object(self.controls, "_fade_to", new_callable=AsyncMock):
+            for _ in range(2):  # pressing a macro twice must not switch off
+                await self.controls.press({"type": "artnet-zones-on", "zones": ["left", "right"]})
+
+        self.assertEqual(self.controls._dmx[0], 255)
+        self.assertEqual(self.controls._dmx[12], 90)
+
+    async def test_socket_error_becomes_native_control_error(self):
+        with patch("app.native_controls._send_artnet_frame", side_effect=OSError("network down")):
+            with self.assertRaises(NativeControlError):
+                await self.controls.press({"type": "artnet-zone-toggle", "zone": "left"})
+        self.assertEqual(self.controls._dmx[0], 0)
+
+    async def test_corrupt_state_file_is_kept(self):
+        self.state_path.write_text("{not json", encoding="utf-8")
+        controls = NativeControlService(self.state_path)
+        self.assertEqual(controls._levels["start"], 255)
+        self.assertTrue(self.state_path.with_name(self.state_path.name + ".corrupt").exists())
 
     async def test_artnet_settings_are_bounded_and_persisted(self):
         await self.controls.press({"type": "artnet-start-adjust", "delta": 50})

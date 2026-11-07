@@ -3,7 +3,9 @@ leaves others alone. Uses the real controller + state store with a stub link."""
 
 import asyncio
 import sys
+import tempfile
 import time
+from pathlib import Path
 
 from app.config import Config
 from app.channel_preferences import ChannelPreferences
@@ -52,7 +54,7 @@ async def main():
         groups={"g": {"channels": [1, 2]}},
     )
     store = StateStore()
-    gs = GroupStore(__import__("pathlib").Path("/tmp/_solo_groups.json"), cfg.valid_channels(), {"g": [1, 2]})
+    gs = GroupStore(Path(tempfile.mkdtemp()) / "groups.json", cfg.valid_channels(), {"g": [1, 2]})
     ctrl = Controller(cfg, store, FakeLink(), gs)
 
     # all four channels live (unmuted) and safe
@@ -87,7 +89,7 @@ async def main():
     check("solo: skipped other reported", 4 in res.get("others_skipped", []))
 
     print("== always-on channels ==")
-    preferences = ChannelPreferences(__import__("pathlib").Path("/tmp/_always_on_channels.json"))
+    preferences = ChannelPreferences(Path(tempfile.mkdtemp()) / "channel_preferences.json")
     await preferences.set_always_on(1, True)
     await preferences.set_always_on(3, True)
     store3 = StateStore()
@@ -117,35 +119,12 @@ async def main():
     muted = await muted_map(store3, (1,))
     check("direct channel mute remains available", direct["ok"] and muted[1] is True)
 
-    store4 = StateStore()
-    link4 = FakeLink()
-    ctrl4 = Controller(cfg, store4, link4, gs, preferences)
-    for ch in (1, 2, 3, 4):
-        await set_state(store4, ch, False)
-    restored = await ctrl4.restore_mute_snapshot(
-        "saved", {"1": False, "2": True, "3": False, "4": True}
-    )
-    muted = await muted_map(store4, (1, 2, 3, 4))
-    check("snapshot restores mixed mute states", restored["ok"]
-          and muted == {1: False, 2: True, 3: False, 4: True})
-    check("snapshot restore skips unchanged channels", restored.get("restored") == 2)
-
-    store5 = StateStore()
-    link5 = FakeLink()
-    ctrl5 = Controller(cfg, store5, link5, gs, preferences)
-    await set_state(store5, 2, False)
-    blocked_restore = await ctrl5.restore_mute_snapshot("unsafe", {"2": True, "4": True})
-    muted = await muted_map(store5, (2,))
-    check("unsafe snapshot preflight sends nothing", not blocked_restore["ok"]
-          and blocked_restore["reason"] == "unsafe snapshot restore"
-          and len(link5.sent) == 0 and muted[2] is False)
-
     store6 = StateStore()
     ctrl6 = Controller(cfg, store6, FakeLink(), gs, preferences)
     for ch, is_muted in ((1, False), (2, True), (3, False), (4, True)):
         await set_state(store6, ch, is_muted)
-        capture_name = f"captured-{time.monotonic_ns()}"
-        captured_group = await ctrl6.create_group_from_current_status(capture_name)
+    capture_name = f"captured-{time.monotonic_ns()}"
+    captured_group = await ctrl6.create_group_from_current_status(capture_name)
     check("capture creates a regular group from unmuted channels",
           captured_group["ok"] and captured_group["channels"] == [1, 3]
                     and await gs.get(capture_name) == [1, 3])

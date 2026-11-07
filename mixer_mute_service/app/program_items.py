@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import asyncio
-import json
+import logging
 import re
 import uuid
 from copy import deepcopy
 from datetime import datetime, time as clock_time
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import List, Optional
+
+from .jsonstore import read_json, write_json_atomic
+
+log = logging.getLogger("mixer.program")
 
 _TIME_RE = re.compile(r"^(?:[01]\d|2[0-3]):[0-5]\d$")
 _ACTION_FIELDS = ("playback", "translation", "lyrics")
@@ -28,20 +32,28 @@ class ProgramItemStore:
         self._load()
 
     def _load(self) -> None:
-        try:
-            data = json.loads(self._path.read_text(encoding="utf-8"))
-            if not isinstance(data, list):
-                raise ValueError("program file must contain a list")
-            self._items = data
-        except FileNotFoundError:
-            self._persist()
-        except (OSError, ValueError, TypeError):
-            self._items = []
-            self._persist()
+        items = []
+        for entry in read_json(self._path, list, default=[]):
+            # Skip rows a hand edit or an old version left unusable instead of
+            # failing later in list() or play.
+            if not isinstance(entry, dict) or not isinstance(entry.get("id"), str):
+                log.warning("Skipping invalid program row in %s: %r", self._path, entry)
+                continue
+            try:
+                fields = self._validated_fields(entry)
+            except ProgramItemError as exc:
+                log.warning("Skipping invalid program row %s: %s", entry.get("id"), exc)
+                continue
+            items.append({
+                "id": entry["id"],
+                **fields,
+                "last_delay_seconds": entry.get("last_delay_seconds"),
+                "last_played_at": entry.get("last_played_at"),
+            })
+        self._items = items
 
     def _persist(self) -> None:
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._path.write_text(json.dumps(self._items, indent=2, ensure_ascii=False), encoding="utf-8")
+        write_json_atomic(self._path, self._items, ensure_ascii=False)
 
     def _validated_fields(self, data: dict) -> dict:
         scheduled_time = str(data.get("time", "")).strip()

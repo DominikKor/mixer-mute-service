@@ -8,10 +8,14 @@ config.yaml (with its comments and mixer/safety settings) is never clobbered.
 from __future__ import annotations
 
 import asyncio
-import json
+import logging
 import re
 from pathlib import Path
 from typing import Dict, List, Optional
+
+from .jsonstore import CorruptJSONError, read_json, write_json_atomic
+
+log = logging.getLogger("mixer.groups")
 
 _NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 _-]{0,63}$")
 
@@ -35,24 +39,36 @@ class GroupStore:
     # -- persistence -------------------------------------------------------
 
     def _load(self, seed: Dict[str, List[int]]) -> None:
-        seeded = {k: list(v) for k, v in seed.items()}
-        if self._path.exists():
-            try:
-                data = json.loads(self._path.read_text() or "{}")
-                if isinstance(data, dict) and data:
-                    self._groups = {k: list(v) for k, v in data.items()}
-                    return
-            except Exception:
-                pass
-            self._groups = seeded
+        """Groups from groups.json; the config.yaml seed only when the file
+        does not exist yet. An empty file content ``{}`` is a valid state (the
+        user deleted every group) and is kept."""
+        try:
+            data = read_json(self._path, dict)
+        except FileNotFoundError:
+            self._groups = {k: list(v) for k, v in seed.items()}
             self._persist()
             return
-        self._groups = seeded
-        self._persist()
+        except CorruptJSONError:
+            # read_json kept the file as groups.json.corrupt. Use the seed in
+            # memory only; nothing is written until the user edits a group, so
+            # the broken file stays in place for recovery.
+            log.error("%s is unreadable; using the config.yaml groups until a group "
+                      "is edited (a copy is kept as %s.corrupt)", self._path, self._path.name)
+            self._groups = {k: list(v) for k, v in seed.items()}
+            return
+        groups: Dict[str, List[int]] = {}
+        for name, channels in data.items():
+            try:
+                valid_name = self._validate_name(name)
+                if not isinstance(channels, list):
+                    raise GroupError("channels must be a list")
+                groups[valid_name] = self._validate_channels(channels, allow_unknown=True)
+            except GroupError as exc:
+                log.warning("ignoring invalid group %r in %s: %s", name, self._path, exc)
+        self._groups = groups
 
     def _persist(self) -> None:
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._path.write_text(json.dumps(self._groups, indent=2, sort_keys=True))
+        write_json_atomic(self._path, self._groups, sort_keys=True)
 
     # -- validation --------------------------------------------------------
 
@@ -62,14 +78,17 @@ class GroupStore:
             raise GroupError(f"invalid group name: {name!r}")
         return name
 
-    def _validate_channels(self, channels: List[int]) -> List[int]:
+    def _validate_channels(self, channels: List[int], allow_unknown: bool = False) -> List[int]:
+        """Validate a channel list. ``allow_unknown`` (loading from disk) keeps
+        channel numbers that are not addressable yet -- a bus is only known
+        once the first dump discovered it; sends to it stay blocked until then."""
         if not channels:
             raise GroupError("group must contain at least one channel")
         seen: List[int] = []
         for ch in channels:
             if not isinstance(ch, int) or isinstance(ch, bool):
                 raise GroupError(f"channel must be an integer: {ch!r}")
-            if ch not in self._valid:
+            if ch < 1 or (ch not in self._valid and not allow_unknown):
                 raise GroupError(f"unknown channel {ch}")
             if ch not in seen:
                 seen.append(ch)

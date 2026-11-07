@@ -243,7 +243,7 @@ with TestClient(app) as client:
     check("missing id -> 400", client.post("/desktop/profiles", json=OBS.model_dump()).status_code == 400)
     check("update unknown -> 404", client.put("/desktop/profiles/nope", json=upd).status_code == 404)
     text = http_cfg.read_text()
-    check("manual comments still in the config", "# Must stay false." in text and "freshness_mode" in text)
+    check("manual comments still in the config", "# How a stored fader value is trusted" in text and "freshness_mode" in text)
     delete_response = client.delete("/desktop/profiles/obs")
     check("DELETE profile 200", delete_response.status_code == 200 and delete_response.json()["deleted"] is True)
     check("deleted profile removed without restart",

@@ -26,16 +26,47 @@ class CompanionButtonCatalogTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "buttons.json"
             path.write_text(json.dumps(stored), encoding="utf-8")
-            store = CompanionButtonStore(path, COMPANION_BUTTONS)
+            CompanionButtonStore(path, COMPANION_BUTTONS)
             migrated = json.loads(path.read_text(encoding="utf-8"))
 
         migrated_ids = {button["id"] for button in migrated["buttons"]}
         migrated_prayer = next(button for button in migrated["buttons"] if button["id"] == prayer["id"])
-        self.assertEqual(migrated["native_catalog_version"], 3)
+        self.assertEqual(migrated["native_catalog_version"], 4)
         self.assertEqual(migrated_prayer["native_action"]["preset"], 8)
         self.assertIn("native-obs-cam1-toggle", migrated_ids)
         self.assertNotIn("native-cam1-preset-1", migrated_ids)
         self.assertEqual(len(migrated_ids), len(migrated["buttons"]))
+
+    def test_v4_migration_keeps_deleted_v3_buttons_deleted(self):
+        macro = deepcopy(next(
+            button for button in COMPANION_BUTTONS if button["id"] == "native-overall-predigt"
+        ))
+        macro["native_action"] = {"type": "group-macro", "group": "Predigt",
+                                  "buttons": ["native-artnet-zone-left-toggle"]}
+        stored = {"categories": deepcopy(DEFAULT_CATEGORIES), "buttons": [macro],
+                  "native_catalog_version": 3}
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "buttons.json"
+            path.write_text(json.dumps(stored), encoding="utf-8")
+            CompanionButtonStore(path, COMPANION_BUTTONS)
+            migrated = json.loads(path.read_text(encoding="utf-8"))
+
+        self.assertEqual(migrated["native_catalog_version"], 4)
+        self.assertEqual([b["id"] for b in migrated["buttons"]], ["native-overall-predigt"])
+        action = migrated["buttons"][0]["native_action"]
+        self.assertEqual(action["light_zones_on"], ["left", "center-left", "center-right", "right"])
+        self.assertNotIn("native-artnet-zone-left-toggle", action["buttons"])
+
+    def test_macros_link_only_existing_native_actions(self):
+        by_id = {button["id"]: button for button in COMPANION_BUTTONS}
+        for button in COMPANION_BUTTONS:
+            action = button.get("native_action", {})
+            if action.get("type") != "group-macro":
+                continue
+            for linked_id in action["buttons"]:
+                self.assertEqual(by_id[linked_id]["kind"], "native", linked_id)
+                self.assertNotIn("toggle", by_id[linked_id]["native_action"]["type"], linked_id)
 
 
 if __name__ == "__main__":

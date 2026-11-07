@@ -2,8 +2,12 @@
 
 Every public method here is the *only* sanctioned way to cause bytes to reach
 the mixer. There is deliberately no path that sends without first passing the
-safety layer (the unsafe debug flag is honoured but defaults off and is logged
-loudly).
+safety layer, and no unsafe debug switch.
+
+Single-channel commands run under one command lock: reading the state, the
+safety check, building, sending and recording the result are one step, so two
+concurrent requests (a Stream Deck mute and a UI fader drag) can never both act
+on the same old state and leave the mixer and the store disagreeing.
 
 All results are plain JSON-compatible dicts matching the briefing's examples.
 """
@@ -12,34 +16,36 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Union
 
 from .channel_preferences import ChannelPreferences
 from .config import Config
 from .groups import GroupError, GroupStore
 from .mixer_client import MixerClient
+from .proxy import ProxyServer
 from .protocol import (
     build_bus_command,
     build_mute_command,
     fader_hex_to_value,
     fader_value_to_hex,
 )
-from .safety import check_channel_mute_state, check_channel_send
-from .state import StateStore
+from .safety import SafetyResult, check_channel_mute_state, check_channel_send
+from .state import ChannelState, StateStore
 
 log = logging.getLogger("mixer.controller")
 
 
 class Controller:
     def __init__(
-        self, cfg: Config, store: StateStore, client: MixerClient, groups: GroupStore,
-        channel_preferences: Optional[ChannelPreferences] = None,
+        self, cfg: Config, store: StateStore, client: Union[MixerClient, ProxyServer],
+        groups: GroupStore, channel_preferences: Optional[ChannelPreferences] = None,
     ) -> None:
         self._cfg = cfg
         self._store = store
         self._client = client
         self._groups = groups
         self._channel_preferences = channel_preferences
+        self._command_lock = asyncio.Lock()
         self.enabled: bool = True  # panic toggles this
 
     async def always_on_channels(self) -> set:
@@ -62,6 +68,9 @@ class Controller:
             return "service disabled (panic)"
         if not self._client.connected:
             return "no mixer connection"
+        link_stale = getattr(self._client, "link_stale", None)
+        if link_stale is not None and link_stale():
+            return "no data from mixer (link stale)"
         return None
 
     # -- single channel ----------------------------------------------------
@@ -69,50 +78,73 @@ class Controller:
     def _bus(self, channel: int):
         return next((b for b in self._cfg.mixer.buses if b.channel == channel), None)
 
-    async def channel_set(self, channel: int, target_muted: bool) -> dict:
-        if channel not in self._cfg.valid_channels():
-            return {"ok": False, "channel": channel, "reason": "invalid channel"}
+    @staticmethod
+    def _blocked(channel: int, action: str, reason: str,
+                 safety: Optional[SafetyResult] = None) -> dict:
+        age = safety.age_seconds if safety is not None else None
+        log.warning(
+            "BLOCKED channel=%s action=%s reason=%r%s",
+            channel, action, reason, "" if age is None else f" age={age:.2f}s",
+        )
+        result = {"ok": False, "channel": channel, "reason": reason}
+        if age is not None:
+            result["age_seconds"] = round(age, 3)
+        return result
 
+    async def _checked_state(
+        self, channel: int, action: str, *, require_mute_state: bool
+    ) -> Tuple[Optional[ChannelState], Optional[dict]]:
+        """(state, None) if the channel may be sent to, else (None, blocked result)."""
         reason = self._global_block_reason()
         if reason:
-            log.warning("BLOCKED channel=%s action=%s reason=%r", channel, _act(target_muted), reason)
-            return {"ok": False, "channel": channel, "reason": reason}
-
+            return None, self._blocked(channel, action, reason)
         cs = await self._store.get_channel(channel)
         safety = check_channel_send(
-            channel, cs, self._cfg, session_epoch=self._client.session_epoch
+            channel, cs, self._cfg,
+            session_epoch=self._client.session_epoch,
+            require_mute_state=require_mute_state,
         )
         if not safety.ok:
-            log.warning(
-                "BLOCKED channel=%s action=%s reason=%r age=%s",
-                channel, _act(target_muted), safety.reason,
-                None if safety.age_seconds is None else f"{safety.age_seconds:.2f}s",
-            )
-            result = {"ok": False, "channel": channel, "reason": safety.reason}
-            if safety.age_seconds is not None:
-                result["age_seconds"] = round(safety.age_seconds, 3)
-            return result
+            return None, self._blocked(channel, action, safety.reason, safety)
+        return cs, None
 
-        assert cs is not None and cs.fader_hex is not None
-        fader_hex = cs.fader_hex
+    async def _send(
+        self, channel: int, muted: bool, fader_hex: str, action: str
+    ) -> Tuple[Optional[str], Optional[dict]]:
+        """Build and send one command -> (sent_hex, None) or (None, error result)."""
         try:
             bus = self._bus(channel)
             if bus is not None:
-                payload = build_bus_command(bus.id, target_muted, fader_hex)
+                payload = build_bus_command(bus.id, muted, fader_hex)
             else:
                 payload = build_mute_command(
-                    channel, target_muted, fader_hex, self._cfg.mixer.max_channels
+                    channel, muted, fader_hex, self._cfg.mixer.max_channels
                 )
         except ValueError as exc:
-            log.warning("BLOCKED channel=%s action=%s reason=%r", channel, _act(target_muted), str(exc))
-            return {"ok": False, "channel": channel, "reason": str(exc)}
-
-        sent_hex = payload.hex()
+            return None, self._blocked(channel, action, str(exc))
         try:
             await self._client.send(payload)
         except Exception as exc:  # noqa: BLE001
-            log.error("FAILED channel=%s action=%s error=%r", channel, _act(target_muted), str(exc))
-            return {"ok": False, "channel": channel, "reason": f"send failed: {exc}"}
+            log.error("FAILED channel=%s action=%s error=%r", channel, action, str(exc))
+            return None, {"ok": False, "channel": channel, "reason": f"send failed: {exc}"}
+        return payload.hex(), None
+
+    async def channel_set(self, channel: int, target_muted: bool) -> dict:
+        if channel not in self._cfg.valid_channels():
+            return {"ok": False, "channel": channel, "reason": "invalid channel"}
+        async with self._command_lock:
+            return await self._channel_set_locked(channel, target_muted)
+
+    async def _channel_set_locked(self, channel: int, target_muted: bool) -> dict:
+        action = _act(target_muted)
+        cs, blocked = await self._checked_state(channel, action, require_mute_state=False)
+        if blocked:
+            return blocked
+        assert cs is not None and cs.fader_hex is not None
+        fader_hex = cs.fader_hex
+        sent_hex, error = await self._send(channel, target_muted, fader_hex, action)
+        if error:
+            return error
 
         # The mixer does not echo our injected command back, so record the new
         # mute state ourselves -- otherwise toggle would never see it change.
@@ -120,7 +152,7 @@ class Controller:
 
         log.info(
             "SENT channel=%s action=%s fader=%s payload=%s",
-            channel, _act(target_muted), fader_hex, sent_hex,
+            channel, action, fader_hex, sent_hex,
         )
         return {
             "ok": True,
@@ -147,45 +179,16 @@ class Controller:
             log.warning("BLOCKED channel=%s action=fader reason='invalid fader value' value=%r", channel, value)
             return {"ok": False, "channel": channel, "reason": "invalid fader value"}
 
-        reason = self._global_block_reason()
-        if reason:
-            log.warning("BLOCKED channel=%s action=fader reason=%r", channel, reason)
-            return {"ok": False, "channel": channel, "reason": reason}
-
-        cs = await self._store.get_channel(channel)
-        safety = check_channel_send(
-            channel, cs, self._cfg,
-            session_epoch=self._client.session_epoch, require_mute_state=True,
-        )
-        if not safety.ok:
-            log.warning("BLOCKED channel=%s action=fader reason=%r", channel, safety.reason)
-            result = {"ok": False, "channel": channel, "reason": safety.reason}
-            if safety.age_seconds is not None:
-                result["age_seconds"] = round(safety.age_seconds, 3)
-            return result
-
-        assert cs is not None and cs.muted is not None
-        muted = cs.muted
-        try:
-            bus = self._bus(channel)
-            if bus is not None:
-                payload = build_bus_command(bus.id, muted, fader_hex)
-            else:
-                payload = build_mute_command(
-                    channel, muted, fader_hex, self._cfg.mixer.max_channels
-                )
-        except ValueError as exc:
-            log.warning("BLOCKED channel=%s action=fader reason=%r", channel, str(exc))
-            return {"ok": False, "channel": channel, "reason": str(exc)}
-
-        sent_hex = payload.hex()
-        try:
-            await self._client.send(payload)
-        except Exception as exc:  # noqa: BLE001
-            log.error("FAILED channel=%s action=fader error=%r", channel, str(exc))
-            return {"ok": False, "channel": channel, "reason": f"send failed: {exc}"}
-
-        await self._store.set_fader(channel, fader_hex)
+        async with self._command_lock:
+            cs, blocked = await self._checked_state(channel, "fader", require_mute_state=True)
+            if blocked:
+                return blocked
+            assert cs is not None and cs.muted is not None
+            muted = cs.muted
+            sent_hex, error = await self._send(channel, muted, fader_hex, "fader")
+            if error:
+                return error
+            await self._store.set_fader(channel, fader_hex)
 
         log.info(
             "SENT channel=%s action=fader value=%.2f muted=%s fader=%s payload=%s",
@@ -214,25 +217,14 @@ class Controller:
     async def channel_toggle(self, channel: int) -> dict:
         if channel not in self._cfg.valid_channels():
             return {"ok": False, "channel": channel, "reason": "invalid channel"}
-
-        reason = self._global_block_reason()
-        if reason:
-            return {"ok": False, "channel": channel, "reason": reason}
-
-        cs = await self._store.get_channel(channel)
-        safety = check_channel_send(
-            channel, cs, self._cfg,
-            session_epoch=self._client.session_epoch, require_mute_state=True,
-        )
-        if not safety.ok:
-            result = {"ok": False, "channel": channel, "reason": safety.reason}
-            if safety.age_seconds is not None:
-                result["age_seconds"] = round(safety.age_seconds, 3)
-            log.warning("BLOCKED channel=%s action=toggle reason=%r", channel, safety.reason)
-            return result
-
-        assert cs is not None and cs.muted is not None
-        return await self.channel_set(channel, not cs.muted)
+        async with self._command_lock:
+            # Decide and send under the same lock, so the decision cannot be
+            # based on a state another request is just changing.
+            cs, blocked = await self._checked_state(channel, "toggle", require_mute_state=True)
+            if blocked:
+                return blocked
+            assert cs is not None and cs.muted is not None
+            return await self._channel_set_locked(channel, not cs.muted)
 
     # -- groups ------------------------------------------------------------
 
@@ -302,10 +294,13 @@ class Controller:
 
         # Solo-on-unmute: unmuting a group also mutes every OTHER channel (incl.
         # buses), but muting a group leaves the others alone. Channels we can't
-        # safely mute (no fresh fader) are skipped, not forced.
+        # safely mute (no fresh fader) are skipped, not forced. Only after the
+        # group itself came up completely: muting everything else around a
+        # group that stayed (partly) muted could silence the whole room.
+        all_ok = all(r.get("ok") for r in results)
         others = []
         protected_others = []
-        if not target_muted and self._cfg.safety.exclusive_group_unmute:
+        if not target_muted and self._cfg.safety.exclusive_group_unmute and all_ok:
             members = set(channels)
             other_channels = self._cfg.valid_channels() - members
             protected_others = sorted(other_channels & always_on)
@@ -316,7 +311,6 @@ class Controller:
                 await asyncio.sleep(delay)
                 others.append(await self.channel_set(ch, True))
 
-        all_ok = all(r.get("ok") for r in results)
         out = {
             "ok": all_ok,
             "group": group,
@@ -411,68 +405,6 @@ class Controller:
         except GroupError as exc:
             return {"ok": False, "reason": str(exc)}
         return {"ok": True, "group": name.strip(), "channels": channels, "fader_hex": fader_hex}
-
-    async def restore_mute_snapshot(self, name: str, muted_states: dict) -> dict:
-        reason = self._global_block_reason()
-        if reason:
-            return {"ok": False, "snapshot": name, "reason": reason}
-
-        try:
-            states = {int(channel): muted for channel, muted in muted_states.items()}
-        except (AttributeError, TypeError, ValueError):
-            return {"ok": False, "snapshot": name, "reason": "invalid snapshot state"}
-        if not states or any(
-            channel not in self._cfg.valid_channels() or not isinstance(muted, bool)
-            for channel, muted in states.items()
-        ):
-            return {"ok": False, "snapshot": name, "reason": "invalid snapshot state"}
-
-        always_on = await self.always_on_channels()
-        conflicts = sorted(channel for channel, muted in states.items() if muted and channel in always_on)
-        if conflicts:
-            return {
-                "ok": False,
-                "snapshot": name,
-                "reason": "snapshot conflicts with always-on channels",
-                "details": [{"channel": channel, "reason": "channel is marked always-on"} for channel in conflicts],
-            }
-
-        changes = []
-        unsafe = []
-        for channel, target_muted in sorted(states.items()):
-            current = await self._store.get_channel(channel)
-            if current is not None and current.muted is target_muted:
-                continue
-            safety = check_channel_send(
-                channel, current, self._cfg, session_epoch=self._client.session_epoch
-            )
-            if not safety.ok:
-                unsafe.append(safety.as_detail(channel))
-            else:
-                changes.append((channel, target_muted))
-        if unsafe:
-            return {
-                "ok": False,
-                "snapshot": name,
-                "reason": "unsafe snapshot restore",
-                "details": unsafe,
-            }
-
-        results = []
-        delay = self._cfg.safety.group_send_delay_ms / 1000.0
-        for index, (channel, target_muted) in enumerate(changes):
-            if index:
-                await asyncio.sleep(delay)
-            result = await self.channel_set(channel, target_muted)
-            results.append(result)
-            if not result.get("ok"):
-                return {
-                    "ok": False,
-                    "snapshot": name,
-                    "reason": "snapshot restore interrupted",
-                    "results": results,
-                }
-        return {"ok": True, "snapshot": name, "restored": len(results), "results": results}
 
 
 def _act(muted: bool) -> str:

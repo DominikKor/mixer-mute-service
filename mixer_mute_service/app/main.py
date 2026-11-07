@@ -10,10 +10,10 @@ or:
 from __future__ import annotations
 
 import logging
-from contextlib import asynccontextmanager
-
-from pathlib import Path
 import os
+import sys
+from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
@@ -27,15 +27,12 @@ from .config import default_config_path, load_config
 from .controller import Controller
 from .groups import GroupStore
 from .mixer_client import MixerClient
-from .mute_snapshots import MuteSnapshotStore
 from .native_controls import NativeControlService
 from .proxy import ProxyServer
 from .program_items import ProgramItemStore
 from .routes import router
 from .updater import router as updater_router
 from .state import StateStore
-
-import sys
 
 if getattr(sys, "frozen", False):
     # Running as a PyInstaller bundle: prefer app/static/ next to the .exe
@@ -87,7 +84,6 @@ async def lifespan(app: FastAPI):
     groups = GroupStore(data_dir / "groups.json", cfg.valid_channels(), seed)
     program_items = ProgramItemStore(data_dir / "program_items.json")
     native_controls = NativeControlService(data_dir / "native_control_state.json")
-    mute_snapshots = MuteSnapshotStore(data_dir / "mute_snapshots.json")
     companion_button_store = CompanionButtonStore(
         data_dir / "companion_buttons.json", COMPANION_BUTTONS
     )
@@ -101,7 +97,6 @@ async def lifespan(app: FastAPI):
     app.state.groups = groups
     app.state.program_items = program_items
     app.state.native_controls = native_controls
-    app.state.mute_snapshots = mute_snapshots
     app.state.companion_button_store = companion_button_store
     app.state.channel_preferences = channel_preferences
     app.state.controller = controller
@@ -109,10 +104,13 @@ async def lifespan(app: FastAPI):
 
     client.start()
     logging.getLogger("mixer.main").info(
-        "service up: build=%s mode=%s mixer=%s:%s max_channels=%s max_fader_age=%ss groups=%s",
+        "service up: build=%s mode=%s mixer=%s:%s max_channels=%s freshness=%s "
+        "max_fader_age=%s max_mute_age=%s buses=%s groups=%s",
         app.state.build_id,
         cfg.mixer.mode, cfg.mixer.ip, cfg.mixer.port, cfg.mixer.max_channels,
-        cfg.safety.max_fader_age_seconds, list(cfg.groups),
+        cfg.safety.freshness_mode, cfg.safety.max_fader_age_seconds,
+        cfg.safety.max_mute_age_seconds,
+        [b.channel for b in cfg.mixer.buses], sorted(await groups.list()),
     )
     try:
         yield

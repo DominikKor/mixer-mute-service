@@ -13,11 +13,14 @@ adjusted (NTP, DST), which would otherwise make a stale value look fresh.
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from dataclasses import dataclass, replace
-from typing import Dict, Optional
+from typing import Dict, Iterable, Optional
 
 from .protocol import FrameEvent
+
+log = logging.getLogger("mixer.state")
 
 # After we send a command to a channel, dump values for that channel are ignored
 # this long. The mixer answers a keepalive handshake with a full dump ~0.1 s
@@ -64,6 +67,17 @@ class StateStore:
             self._channels[event.channel] = cs
             self.last_update_at = now
             return True
+
+    async def apply_events(self, events: Iterable[FrameEvent], label: str = "") -> None:
+        """Apply parsed events from a link (shared by direct client and proxy)."""
+        for event in events:
+            if not await self.apply_event(event):
+                log.info("ignored dump value for channel=%s (we just commanded it)", event.channel)
+                continue
+            log.debug(
+                "%sobserved channel=%s muted=%s fader=%s",
+                f"[{label}] " if label else "", event.channel, event.muted, event.fader_hex,
+            )
 
     async def set_muted(self, channel: int, muted: bool) -> None:
         """Optimistically record a mute state we just commanded.

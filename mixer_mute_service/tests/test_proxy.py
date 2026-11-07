@@ -6,6 +6,8 @@ command injected via ProxyServer.send() reaches the upstream mixer.
 
 import asyncio
 import sys
+import tempfile
+from pathlib import Path
 
 from app.config import Config
 from app.proxy import ProxyServer
@@ -110,7 +112,7 @@ async def main():
     from app.controller import Controller
     cfg2 = _C(mixer={"ip": "127.0.0.1", "port": MIXER_PORT, "max_channels": 8})
     from app.groups import GroupStore
-    gs = GroupStore(__import__("pathlib").Path("/tmp/_wf_groups_test.json"), 8, {})
+    gs = GroupStore(Path(tempfile.mkdtemp()) / "groups.json", 8, {})
     ctrl = Controller(cfg2, store, proxy, gs)
     r1 = await ctrl.channel_toggle(2)
     r2 = await ctrl.channel_toggle(2)

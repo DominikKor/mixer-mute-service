@@ -33,46 +33,51 @@ Then open **http://localhost:8765/** for the web UI.
 
 ## Web UI
 
-The service serves a single-page control panel at `/`:
+The service serves a single-page control panel at `/`, built for a 13-inch
+iPad in Safari (both orientations) and desktop browsers alike. Every section
+head (Desktop, Channels, Mute Gruppen, Programm, Steuerung) folds its section
+in and out; the choice is remembered per device.
 
-- **Status bar** — mixer connection, send-enabled state, last-update age, and a
-  **Panic** button to disable/re-enable all sends.
-- **Channels** — one card per channel showing the observed fader value, its age,
-  mute state, and a `safe`/`unsafe` badge, with mute buttons and a **vertical
-  fader** with a dB scale. Only the fader cap can be dragged (Shift = fine,
+- **Status bar**: mixer connection, send-enabled state, last-update age, the
+  **Panic** button (disable/re-enable all sends) and **UPDATE** (Windows
+  release only).
+- **Desktop**: one tile per profile from `desktop_display.profiles` (see
+  below), plus tiles to add or edit profiles.
+- **Channels**: one strip per channel with the observed fader value, mute
+  state and a `safe`/`unsafe` badge, mute key and a **vertical fader** with a
+  dB scale. Only the fader cap can be dragged (finger or mouse; Shift = fine,
   arrow keys also work); clicking the track never jumps the fader. While
-  dragging, the position is sent at most every 100 ms. The fader is locked
-  while the channel's mute state is unknown. Blocked actions surface the reason
-  as a toast (e.g. "fader value stale").
-- **Companion** — an optional collapsible panel for the buttons imported from
-  - **Program** — an editable schedule with planned time, title, person, mute
-    group and optional Companion actions for playback, translation and lyrics.
-    Play activates the group first, then triggers the linked actions in order;
-    the delay column records the actual click offset from the scheduled time.
-  - **Companion** — an optional collapsible panel for the buttons imported from
-  the Companion export. Categories can be collapsed, buttons can be reassigned,
-  created and deleted. New buttons may call an existing Companion action or a
-  state-checked channel/group operation.
-- **Mute groups** — per-group **Mute / Unmute / Toggle**, plus **create / edit /
-  delete**. Each group shows its member channels and whether they are all safe.
-  **Mutegruppe aus Status** creates a regular group from channels currently
-  unmuted, with their observed fader values saved for **Use All**.
+  dragging, the position is sent at most every 100 ms. The fader is locked while
+  the channel's state is unknown. **Kompakt** hides the faders. Strips can get a
+  colour, and **Immer an** protects a channel from group mutes and solo.
+  Blocked actions show the reason as a toast (e.g. "fader value stale").
+- **Mute Gruppen**: per-group mute / unmute, **create / edit / delete**, and
+  per-channel fader presets (**Use** / **Use All**). **Mutegruppe aus Status**
+  creates a group from the channels currently unmuted, with their observed
+  fader values as presets.
+- **Programm**: an editable schedule with planned time, title, person, mute
+  group and optional actions for playback, translation and lyrics. Play
+  activates the group first, then triggers the linked actions in order; the
+  delay column records the actual click offset from the scheduled time.
+- **Steuerung**: the keys imported from the former Companion setup (lights,
+  cameras, OBS, beamer, "Overall" scene macros), grouped in categories. With
+  **Bearbeiten** switched on, keys can be renamed, moved, created and deleted.
 
-The page polls `/state`, `/health` and `/groups` once per second.
+The page polls `/state`, `/health` and `/groups` about once per second.
 
 ## Endpoints
 
-### Companion setup
+### Steuerung keys (`/companion/...`)
 
-Enable Companion's HTTP API in Companion settings. The panel defaults to
-`http://127.0.0.1:8000`; set `companion.base_url` in `config.yaml` if Companion
-runs on another host. The exported OBS/Beamer button actions are pressed by
-their allowlisted page/row/column. The two mixer buttons are deliberately
-mapped to safe channel endpoints instead of replaying the export's raw HEX.
-Categories and button changes are stored in `companion_buttons.json` next to
-`config.yaml`. New controls can target an existing non-mixer Companion button,
-a mixer channel, or a mute group; arbitrary shell commands and raw HEX are not
-accepted.
+The keys started as a Companion export and now run directly from the service
+(Shelly lights, Art-Net stage light, VISCA cameras, OBS WebSocket, beamer
+scripts on the service PC); Companion itself is no longer needed. The two
+mixer keys of the export are mapped to the safe channel endpoints instead of
+replaying its raw HEX. Categories and key changes are stored in
+`companion_buttons.json` next to `config.yaml`. New keys can call one of the
+built-in actions, a mixer channel or a mute group; arbitrary shell commands and
+raw HEX are not accepted. "Overall" macros activate a mute group, then run their
+linked light/camera/OBS keys in order.
 
 | Method | Path | Purpose |
 | ------ | ---- | ------- |
@@ -91,6 +96,9 @@ accepted.
 | POST | `/channels/{channel}/toggle` | toggle (needs fresh mute state) |
 | POST | `/channels/{channel}/fader` | move fader `{value}` 0..1000, keeps mute state |
 | POST | `/channels/{channel}/recall-fader` | same with a stored `{fader_hex}` |
+| POST | `/channels/{channel}/always-on` | `{enabled}`: protect from group mutes and solo |
+| GET  | `/channel-colors` | strip colours and palette |
+| POST | `/channels/{channel}/color` | `{color}` from the palette, or `null` |
 | POST | `/groups/{group}/mute` | mute group (all-or-nothing) |
 | POST | `/groups/{group}/unmute` | unmute group (all-or-nothing) |
 | POST | `/groups/{group}/toggle` | toggle group |
@@ -107,6 +115,12 @@ accepted.
 | POST | `/groups/{group}/delete` | delete a group |
 | PUT  | `/groups/{group}` | legacy alias for group update |
 | DELETE | `/groups/{group}` | legacy alias for group deletion |
+| GET  | `/desktop/profiles` | list desktop profiles |
+| POST | `/desktop/profiles` | add a profile (with `id`) |
+| PUT  | `/desktop/profiles/{id}` | change a profile (also `POST .../update`) |
+| DELETE | `/desktop/profiles/{id}` | delete a profile |
+| POST | `/desktop/{id}/open` | show/open the profile on its target PC |
+| GET  | `/desktop/agent/update.cmd` | one-click agent update for the target PCs |
 | GET  | `/update/status` | installed release, update progress and log tail |
 | POST | `/update/start` | start the GitHub update (Windows release only) |
 | POST | `/panic/disable` | block all sends (tracking continues) |
@@ -130,6 +144,12 @@ curl -X POST http://localhost:8765/groups/drums/delete
 
 Blocked operations return HTTP **409** (unsafe/stale/disabled/no connection),
 **404** (unknown group), or **400** (invalid channel), each with a JSON `reason`.
+
+**No login:** the API has no authentication. Anyone who can reach port 8765
+can mute, move faders, edit groups, start the update and add desktop profiles,
+and a `program` profile starts any `.exe` on its target PC. Run the service
+only in a trusted network (the mixer network) and never forward the port to
+the internet.
 
 ### Group semantics
 
@@ -236,20 +256,35 @@ unter `C:\\ProgramData\\MixerMuteService\\config.yaml` muss
 
 ## Configuration (`config.yaml`)
 
-- `mixer.ip` / `mixer.port` / `mixer.max_channels`
-- `mixer.mode` — `direct` (recommended; state dump every 10 s) or `proxy`
-- `mixer.buses` — optional: pin a bus to a channel number/name (others are
-  discovered from the mixer)
-- `safety.max_fader_age_seconds` — tighten to `0.5` for live use
-- `safety.allow_partial_groups` — keep `false`
-- `safety.group_send_delay_ms` — delay between per-channel sends in a group
-- `groups` — named channel lists
+- `mixer.ip` / `mixer.port` / `mixer.max_channels` (input channels, default 16)
+- `mixer.mode`: `direct` (default and recommended; state dump every 10 s) or
+  `proxy`. Any other value stops the service from starting.
+- `mixer.buses`: optional, pins a bus to a channel number/name (the others are
+  discovered from the mixer). Bus channels must be above `max_channels` and
+  unique.
+- `safety.freshness_mode`: `latest` (default), `session` or `age`, see
+  [Freshness model](#freshness-model)
+- `safety.max_fader_age_seconds`: optional age cap. Leave it `null` in direct
+  mode: the dump only arrives every 10 s, so a short cap blocks almost every
+  send between dumps.
+- `safety.allow_partial_groups`: keep `false`
+- `safety.group_send_delay_ms`: delay between per-channel sends in a group
+- `groups`: named channel lists (only the seed for `groups.json`)
 
 ## Connection modes
 
-The mixer does **not** push state to a passive extra TCP connection (verified:
-0 bytes), and it only talks to its primary client (the iPad). So the service
-runs as a **transparent proxy** by default:
+**Direct** (default): the service opens its own TCP connection to the mixer,
+next to the iPad app (the mixer accepts several clients). Its subscribe
+handshake, repeated as a keepalive every 10 s, makes the mixer answer with a
+full state dump, so every channel's fader and mute state is known about 0.1 s
+after connecting and refreshed every 10 s. If nothing arrives for 2.5
+keepalive periods the link counts as dead: sends are refused ("no data from
+mixer (link stale)") and the service reconnects.
+
+**Proxy**: the iPad app connects to this host (`listen_host:listen_port`) and
+the service relays everything to the real mixer, parsing every frame both ways
+and injecting its own commands on the same link (only between complete app
+frames; otherwise "mixer link busy (app frame in progress)").
 
 ```
 iPad app --TCP--> [ this service :6400 ] --TCP--> Mixer (192.168.188.30:6400)
@@ -257,12 +292,10 @@ iPad app --TCP--> [ this service :6400 ] --TCP--> Mixer (192.168.188.30:6400)
 Stream Deck --HTTP-->----'  injects safe mute commands on the same link
 ```
 
-**Setup:** point the mixer's iPad app at this host's IP (e.g. `192.168.188.73`),
-port `6400`, instead of the mixer. The service relays everything to the real
-mixer, so the app works exactly as before — but now every fader/mute change
-(from the app *and* from the physical surface) flows through the service and is
-tracked. Set `mixer.mode: direct` only if you have a mixer that pushes state to
-extra clients.
+Caveat: the mixer does not echo a client's own commands, so the iPad never
+learns about commands the service injected on its connection. Its display
+stays stale, and its next touch on that channel can resend the old mute state.
+Prefer direct mode.
 
 ### What the service observes
 
@@ -276,7 +309,7 @@ extra clients.
   top-level fields 1/2 (fader section in field 7), buses from top-level field 3
   (fader section in field 6, byte-identical to their `71` status frames —
   verified live for Echo and Monitor). A section must name the same channel/id
-  as the object holding it; buses are only read if listed in `mixer.buses`.
+  as the object holding it; buses are discovered automatically (see below).
   In proxy mode the app sends the handshake only once, so there is one dump per
   app connection and no periodic refresh.
 - Changes on the console are not always visible as live frames (a dump showed
@@ -316,16 +349,19 @@ through `/state` to the UI.
 
 ## Freshness model
 
-`safety.freshness_mode` controls when a stored fader value may be sent:
+A stored value may only be sent if it was **observed on the current mixer
+link**: after a reconnect, nothing from before counts until the mixer reports
+it again (in direct mode: the dump right after connecting).
+`safety.freshness_mode` adds:
 
-- `latest` (default) — use the most recent observed value while the proxy link
-  is live. Relies on the proxy relaying every change (true for all app changes
-  and all unmuted physical moves).
-- `session` — only trust values observed during the current link session.
-- `age` — only trust values newer than `max_fader_age_seconds` (defaults 1s).
+- `latest` (default): any age on the current link.
+- `session`: the same as `latest` (kept for older configs).
+- `age`: additionally newer than `max_fader_age_seconds` (1 s if unset).
 
 In all modes a value must have been **observed** (never a default/dummy), the
-fader hex must be valid, and the proxy link must be live.
+fader hex must be valid (finite, 0..1000), the link must be live and the
+service not in panic. Commands are serialised, so two requests for the same
+channel can never both act on the same old state.
 
 ## Architecture
 
@@ -339,14 +375,19 @@ Stream Deck --HTTP--> Local Service --TCP command--> Mixer
   parser (`StreamBuffer`, `parse_hex_stream()`), which also reads the input
   channels from the mixer's start dump.
 - `app/state.py` — async-safe per-channel state store (monotonic timestamps).
-- `app/mixer_client.py` — persistent TCP connection, buffered stream parser,
-  reconnect with backoff (1/2/5/10s), sender.
+- `app/mixer_client.py` — direct link (default): persistent TCP connection,
+  subscribe/keepalive, liveness check, reconnect with backoff (1/2/5/10s), sender.
+- `app/proxy.py` — transparent TCP proxy (`mode: proxy`): relays iPad<->mixer
+  traffic, parses every frame into state, injects safe commands between frames.
 - `app/safety.py` — per-channel and per-group safety checks.
-- `app/controller.py` — the only sanctioned send path (state → safety → build → send → log).
-- `app/groups.py` — writable mute-group store, persisted to `groups.json`.
-- `app/proxy.py` — transparent TCP proxy (default mode): relays iPad<->mixer
-  traffic, parses every frame into state, injects safe commands.
-- `app/mixer_client.py` — direct-connection link (alternative `mode: direct`).
+- `app/controller.py` — the only sanctioned send path (state → safety → build →
+  send → log), serialised by one command lock.
+- `app/groups.py` / `app/buses.py` — mute groups (`groups.json`) and discovered
+  buses (`buses.json`).
+- `app/jsonstore.py` — atomic writes for all JSON files; an unreadable file is
+  kept as `<name>.corrupt` instead of being overwritten.
+- `app/native_controls.py` / `app/companion_buttons.py` — Steuerung keys (lights,
+  cameras, OBS, beamer) and their catalog.
 - `app/routes.py` / `app/main.py` — FastAPI endpoints, group CRUD, static UI, background link.
 - `app/static/index.html` — self-contained web control panel (no build step).
 - `tools/probe.py`, `tools/analyze.py` — read-only capture/decode helpers used to

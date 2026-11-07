@@ -1,13 +1,13 @@
 """Offline self-test: protocol round-trips, parser, safety, and a live HTTP
 smoke test (no real mixer -> sends must be blocked)."""
 
-import asyncio
 import sys
 import time
 
 from app.protocol import build_mute_command, parse_hex_stream, is_valid_fader_hex
 from app.config import Config
 from app.state import ChannelState
+from app.native_controls import NativeControlError
 from app.safety import check_channel_send
 
 PASS = 0
@@ -165,9 +165,12 @@ seen = ChannelState(fader_hex="1f14b643", fader_updated_at=now - 3, muted=False,
 old = ChannelState(fader_hex="1f14b643", fader_updated_at=session - 5, muted=False, muted_updated_at=session - 5)
 empty = ChannelState()
 
-# default mode "latest": any present valid value is usable (any age, no session)
+# default mode "latest": any age, but only values seen on the current link
 cfg = Config()
-check("latest: old value usable (no session)", check_channel_send(2, old, cfg).ok)
+check("latest: value seen this session usable", check_channel_send(2, seen, cfg, **EP).ok)
+check("latest: value from before the reconnect blocked",
+      check_channel_send(2, old, cfg, **EP).reason == "fader value predates current session")
+check("latest: no live session blocked", check_channel_send(2, seen, cfg).reason == "no live mixer session")
 check("latest: unknown fader blocked", check_channel_send(2, empty, cfg).reason == "no fader value known")
 check("latest: invalid channel blocked", check_channel_send(99, seen, cfg).reason == "invalid channel")
 check("latest: malformed fader blocked",
@@ -206,13 +209,13 @@ check("session: no live session blocked", check_channel_send(2, seen, cfg_s).rea
 # "age" mode (default cap 1s)
 cfg_a = Config(safety={"freshness_mode": "age"})
 check("age: fresh value safe",
-      check_channel_send(2, ChannelState(fader_hex="1f14b643", fader_updated_at=now - 0.1), cfg_a).ok)
-check("age: stale value blocked", check_channel_send(2, old, cfg_a).reason == "fader value stale")
+      check_channel_send(2, ChannelState(fader_hex="1f14b643", fader_updated_at=now - 0.1), cfg_a, **EP).ok)
+check("age: stale value blocked", check_channel_send(2, seen, cfg_a, **EP).reason == "fader value stale")
 
 # toggle needs a known mute state in any mode
 check("toggle needs mute state",
       check_channel_send(2, ChannelState(fader_hex="1f14b643", fader_updated_at=now), cfg,
-                         require_mute_state=True).reason == "mute state unknown")
+                         require_mute_state=True, **EP).reason == "mute state unknown")
 
 print("== HTTP smoke test (isolated config, no mixer connected) ==")
 # Use a throwaway config dir so the test is independent of the deployed
@@ -220,7 +223,8 @@ print("== HTTP smoke test (isolated config, no mixer connected) ==")
 import os, tempfile, pathlib
 _tmp = tempfile.mkdtemp(prefix="mixer_selftest_")
 pathlib.Path(_tmp, "config.yaml").write_text(
-    "mixer:\n  max_channels: 8\n"
+    # direct mode to a closed local port: never reaches the real mixer
+    "mixer:\n  max_channels: 8\n  mode: direct\n  ip: 127.0.0.1\n  port: 9\n"
     "groups:\n"
     "  drums:\n    channels: [1, 2, 3, 4]\n"
     "  vocals:\n    channels: [5, 6]\n"
@@ -285,13 +289,32 @@ with TestClient(app) as client:
         check("native Beamer button dispatched", companion_press.status_code == 200 and companion_press.json()["ok"] is True)
         check("Beamer allowlist action selected",
               native_press.call_args.args[0]["script"] == "beamer-freeze")
+    with patch.object(app.state.controller, "group_set", AsyncMock(return_value={"ok": True})) as macro_group, \
+            patch.object(app.state.native_controls, "press", AsyncMock(return_value={"ok": True})) as macro_native:
+        macro = client.post("/companion/buttons/native-overall-predigt/press")
+        macro_types = [call.args[0]["type"] for call in macro_native.await_args_list]
+        check("Overall macro activates its group", macro.status_code == 200
+              and macro_group.await_args.args == ("Predigt", False))
+        check("Overall macro switches the stage light on, then cameras and OBS",
+              macro_types == ["artnet-zones-on", "visca-preset", "obs-live", "visca-preset", "obs-live"])
+        alias_macro = client.post("/companion/buttons", json={
+            "label": "Predigt", "category_id": "overall",
+            "kind": "companion", "target_button_id": "native-overall-predigt",
+        })
+        alias_macro_id = alias_macro.json()["button"]["id"]
+        alias_macro_press = client.post(f"/companion/buttons/{alias_macro_id}/press")
+        check("user key pointing at a macro runs the macro",
+              alias_macro_press.status_code == 200 and macro_group.await_count == 2)
+        client.post(f"/companion/buttons/{alias_macro_id}/delete")
+    with patch.object(app.state.native_controls, "press", AsyncMock(side_effect=NativeControlError("OBS WebSocket unavailable"))):
+        failed_native = client.post("/companion/buttons/native-obs-start/press")
+        check("failed native action -> 503 with reason", failed_native.status_code == 503
+              and failed_native.json()["reason"] == "OBS WebSocket unavailable")
     safe_mixer_press = client.post("/companion/buttons/pultmikro-mute/press")
     check("Mixer Companion button uses safe channel API",
           safe_mixer_press.status_code == 409 and safe_mixer_press.json()["reason"] == "no mixer connection")
     unknown_companion_button = client.post("/companion/buttons/not-configured/press")
     check("Unknown Companion button rejected", unknown_companion_button.status_code == 404)
-    check("snapshot capture requires mixer connection",
-          client.post("/mute-snapshots", json={"name": "unavailable"}).status_code == 409)
     check("group capture requires mixer connection",
           client.post("/groups/from-current-status", json={"name": "unavailable"}).status_code == 409)
     with patch.object(app.state.controller, "create_group_from_current_status", AsyncMock(
@@ -302,49 +325,6 @@ with TestClient(app) as client:
               and captured_group.json()["channels"] == [1])
         check("normal group capture passes name",
               capture_group.call_args.args == ("Captured",))
-    app.state.client.connected = True
-
-    async def observed_channel(channel):
-        if channel == 8:
-            return None
-        now = time.monotonic()
-        return ChannelState(
-            fader_hex="1f14b643", fader_updated_at=now,
-            muted=channel % 2 == 0, muted_updated_at=now,
-        )
-
-    with patch.object(app.state.store, "get_channel", AsyncMock(side_effect=observed_channel)):
-        incomplete = client.post("/mute-snapshots", json={"name": "incomplete"})
-        check("snapshot capture rejects unknown channel state",
-              incomplete.status_code == 409 and incomplete.json()["details"][0]["channel"] == 8)
-    async def all_observed_channels(channel):
-        now = time.monotonic()
-        return ChannelState(
-            fader_hex="1f14b643", fader_updated_at=now,
-            muted=channel % 2 == 0, muted_updated_at=now,
-        )
-
-    with patch.object(app.state.store, "get_channel", AsyncMock(side_effect=all_observed_channels)):
-        captured = client.post("/mute-snapshots", json={"name": "Evening"})
-    check("snapshot captures all channel mute states", captured.status_code == 200)
-    snapshot = captured.json()["snapshot"]
-    check("snapshot stores mute states only", len(snapshot["channels"]) == 8
-          and snapshot["channels"]["2"] is True and snapshot["channels"]["1"] is False)
-    listed_snapshots = client.get("/mute-snapshots").json()
-    check("snapshot is listed", len(listed_snapshots) == 1 and listed_snapshots[0]["name"] == "Evening")
-    with patch.object(app.state.controller, "restore_mute_snapshot", AsyncMock(
-        return_value={"ok": True, "snapshot": "Evening", "restored": 3, "results": []}
-    )) as restore_snapshot:
-        restore_response = client.post(f"/mute-snapshots/{snapshot['id']}/restore")
-        check("snapshot restore route", restore_response.status_code == 200
-              and restore_response.json()["restored"] == 3)
-        check("snapshot restore route passes saved state",
-              restore_snapshot.call_args.args == ("Evening", snapshot["channels"]))
-    deleted_snapshot = client.post(f"/mute-snapshots/{snapshot['id']}/delete")
-    check("snapshot can be deleted", deleted_snapshot.status_code == 200)
-    check("deleted snapshot returns 404",
-          client.post(f"/mute-snapshots/{snapshot['id']}/restore").status_code == 404)
-    app.state.client.connected = False
     category_names = {category["name"] for category in companion_buttons.json()["categories"]}
     check("native categories loaded", {"Licht", "Kameras", "OBS", "Overall"} <= category_names)
     new_category = client.post("/companion/categories", json={"name": "Streaming"})
@@ -427,11 +407,19 @@ with TestClient(app) as client:
               and play_desktop.await_args.args[0] == "sample"
               and [call.args[0] for call in play_linked.await_args_list]
               == ["cam1-live", "cam2-live-bottom"])
-    with patch("app.routes._forward_companion_press") as program_forward:
+    with patch.object(app.state.native_controls, "press", AsyncMock(return_value={"ok": True})) as program_native, \
+            patch("app.routes.open_desktop_profile", new=AsyncMock(return_value={"ok": True})) as program_desktop:
         blocked_program_play = client.post(f"/program/items/{program_id}/play")
         check("program play blocked while mixer offline", blocked_program_play.status_code == 409)
         check("program play does not trigger linked buttons when group is blocked",
-              program_forward.call_count == 0)
+              program_native.await_count == 0 and program_desktop.await_count == 0)
+    # A key deleted after the row was saved: refuse before muting anything.
+    with patch.object(app.state.companion_button_store, "get_button", AsyncMock(return_value=None)), \
+            patch.object(app.state.controller, "group_set", AsyncMock(return_value={"ok": True})) as dangling_group:
+        dangling_play = client.post(f"/program/items/{program_id}/play")
+        check("program play refuses a deleted linked key",
+              dangling_play.status_code == 409 and dangling_play.json()["reason"] == "unknown translation button")
+        check("program play with a deleted key mutes nothing", dangling_group.await_count == 0)
     played_program = client.get("/program/items").json()[0]
     check("program play stores timing delay", played_program["last_delay_seconds"] is not None
           and played_program["last_played_at"] is not None)

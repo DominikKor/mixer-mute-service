@@ -16,10 +16,13 @@ fields are all understood update state; anything else is ignored.
 
 from __future__ import annotations
 
+import logging
 import math
 import struct
 from dataclasses import dataclass
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Dict, Iterable, Iterator, List, Optional, Tuple
+
+log = logging.getLogger("mixer.protocol")
 
 # Header that the mixer accepts as an incoming control command (App -> Mixer).
 # IMPORTANT: do not append a trailing 00. The prefix is exactly this.
@@ -41,10 +44,6 @@ BUS_COMMAND_PREFIX = "5a5a5a5a5a5a00000072000000"
 CHANNEL_ID_FIELDS = {
     1: "1500abc93d",  # observed on every channel-1 fader/mute report
 }
-
-# Header(s) for status/broadcast frames (Mixer -> iPad). The mixer does NOT
-# accept these as control commands, but they carry the fader/mute state we need.
-STATUS_PREFIX_6D = "5a5a5a5a5a5a0000006d00000100"
 
 # Subscribe/keepalive frame the iPad sends right after connecting. Carries no
 # channel/mute/fader payload. Verified: sending this on our own connection makes
@@ -111,7 +110,7 @@ def _fader_field(marker: str, fader_hex: str) -> str:
     return "" if value == 0.0 else f"{marker}{fader_hex.lower()}"
 
 
-def build_mute_command(channel: int, muted: bool, fader_hex: str, max_channels: int = 8) -> bytes:
+def build_mute_command(channel: int, muted: bool, fader_hex: str, max_channels: int = 16) -> bytes:
     """Build a full App -> Mixer frame.
 
     Mute:   PREFIX + 090908 XX 20012d FFFFFFFF
@@ -167,8 +166,10 @@ class FrameEvent:
     channel: int
     muted: Optional[bool]
     fader_hex: Optional[str]
-    raw_match: str
-    end_hex_index: int  # index into the hex string just past this frame
+    # Hex of the frame this came from. For a full state dump (several KB, one
+    # event per channel) only the 14-byte frame header is kept.
+    raw_match: str = ""
+    end_hex_index: int = 0  # index into the hex string just past this frame
     # True if this came from a full state dump (see StateStore.apply_event).
     from_dump: bool = False
 
@@ -281,15 +282,16 @@ def _input_section(msg: bytes) -> Optional[Tuple[int, Optional[bool], Optional[s
     if f is None:
         return None
     index = f.get(1, 0)
-    mute = f.get(4, 0)
-    if index > 63 or mute not in (0, 1):
+    if index > 63:
         return None
     channel = index + 1
+    mute = f.get(4, 0)
     fader_hex = f[5].hex() if 5 in f else _ZERO_FADER
     # The extra field must be exactly what build_mute_command re-sends for this
     # channel, otherwise a command from us would change it.
     extra = ("15" + f[2].hex()) if 2 in f else None
-    if extra != CHANNEL_ID_FIELDS.get(channel) or not is_safe_fader_hex(fader_hex):
+    if (mute not in (0, 1) or extra != CHANNEL_ID_FIELDS.get(channel)
+            or not is_safe_fader_hex(fader_hex)):
         return channel, None, None
     return channel, bool(mute), fader_hex
 
@@ -308,36 +310,58 @@ def _bus_section(msg: bytes, buses: Dict[int, int]) -> Optional[Tuple[int, Optio
     return channel, bool(mute), fader_hex
 
 
-def _dump_objects(msg: bytes, groups) -> Iterable[Tuple[int, Optional[bytes]]]:
-    """(object id, fader section) for every object in the given top-level dump
-    groups. The section is None unless the object has exactly one."""
+def _dump_group_objects(msg: bytes, groups) -> Iterator[Tuple[int, list]]:
+    """(top-level field, decoded fields) of every object in the given
+    top-level dump groups."""
     for field, wire, group in _decode_fields(msg) or ():
         if field not in groups or wire != _BYTES:
             continue
-        section_field = _DUMP_BUS_SECTION_FIELD if field == _DUMP_BUS_GROUP else _DUMP_SECTION_FIELD
         for _, cwire, obj in _decode_fields(group) or ():
-            if cwire != _BYTES:
-                continue
-            obj_fields = _decode_fields(obj) or []
-            ident = next((v for f, w, v in obj_fields if f == 1 and w == _VARINT), 0)
-            sections = [v for f, w, v in obj_fields if f == section_field and w == _BYTES]
-            yield ident, sections[0] if len(sections) == 1 else None
+            if cwire == _BYTES:
+                yield field, _decode_fields(obj) or []
 
 
-def _dump_sections(msg: bytes, buses: Optional[Dict[int, int]] = None) -> List[Tuple[int, Optional[bool], Optional[str]]]:
-    """Fader sections of all input channels and configured buses in a full
-    state dump. ``buses`` maps bus object id -> channel (see _bus_map)."""
+def _object_section(obj_fields: list, section_field: int) -> Optional[bytes]:
+    """The object's fader section, or None unless it has exactly one."""
+    sections = [v for f, w, v in obj_fields if f == section_field and w == _BYTES]
+    return sections[0] if len(sections) == 1 else None
+
+
+def _object_id(obj_fields: list) -> Optional[int]:
+    return next((v for f, w, v in obj_fields if f == 1 and w == _VARINT), None)
+
+
+def _dump_bus_sections(msg: bytes) -> Iterator[Tuple[int, list, bytes]]:
+    """(object id, decoded fields, fader section) of every bus object whose
+    single fader section names the same id as the object holding it."""
+    for _, obj_fields in _dump_group_objects(msg, (_DUMP_BUS_GROUP,)):
+        ident = _object_id(obj_fields)
+        section = _object_section(obj_fields, _DUMP_BUS_SECTION_FIELD)
+        if ident is None or section is None:
+            continue
+        if (_strict_fields(section, _BUS_FIELDS) or {}).get(1) != ident:
+            continue
+        yield ident, obj_fields, section
+
+
+def _dump_sections(
+    msg: bytes, buses: Optional[Dict[int, int]] = None, max_input: Optional[int] = None
+) -> List[Tuple[int, Optional[bool], Optional[str]]]:
+    """Fader sections of all input channels (up to ``max_input``) and
+    configured buses in a full state dump. ``buses`` maps bus object id ->
+    channel (see _bus_map)."""
     out = []
-    for index, section in _dump_objects(msg, _DUMP_INPUT_GROUPS):
+    for _, obj_fields in _dump_group_objects(msg, _DUMP_INPUT_GROUPS):
+        # Channel 1's index is 0, which protobuf omits.
+        index = _object_id(obj_fields) or 0
+        section = _object_section(obj_fields, _DUMP_SECTION_FIELD)
         parsed = _input_section(section) if section is not None else None
         # The section must name the same channel as the object holding it.
         if parsed is not None and parsed[0] == index + 1:
-            out.append(parsed)
-    for bus_id, section in _dump_objects(msg, (_DUMP_BUS_GROUP,)):
-        if section is None or bus_id not in (buses or {}):
-            continue
-        # The section must name the same bus as the object holding it.
-        if (_strict_fields(section, _BUS_FIELDS) or {}).get(1) != bus_id:
+            if max_input is None or parsed[0] <= max_input:
+                out.append(parsed)
+    for bus_id, _, section in _dump_bus_sections(msg):
+        if bus_id not in (buses or {}):
             continue
         parsed = _bus_section(section, buses)
         if parsed is not None:
@@ -349,21 +373,9 @@ def dump_bus_objects(msg: bytes) -> List[Tuple[int, str]]:
     """(object id, console name) of every bus in a full state dump that has a
     well-formed fader section naming the same id. Used to discover buses."""
     out = []
-    for field, wire, group in _decode_fields(msg) or ():
-        if field != _DUMP_BUS_GROUP or wire != _BYTES:
-            continue
-        for _, cwire, obj in _decode_fields(group) or ():
-            if cwire != _BYTES:
-                continue
-            obj_fields = _decode_fields(obj) or []
-            ident = next((v for f, w, v in obj_fields if f == 1 and w == _VARINT), None)
-            name = next((v for f, w, v in obj_fields if f == 2 and w == _BYTES), b"")
-            sections = [v for f, w, v in obj_fields if f == _DUMP_BUS_SECTION_FIELD and w == _BYTES]
-            if ident is None or len(sections) != 1:
-                continue
-            if (_strict_fields(sections[0], _BUS_FIELDS) or {}).get(1) != ident:
-                continue
-            out.append((ident, name.decode("utf-8", errors="replace").strip()))
+    for ident, obj_fields, _ in _dump_bus_sections(msg):
+        name = next((v for f, w, v in obj_fields if f == 2 and w == _BYTES), b"")
+        out.append((ident, name.decode("utf-8", errors="replace").strip()))
     return out
 
 
@@ -409,11 +421,17 @@ def _as_bus_map(buses) -> BusMap:
     return buses if isinstance(buses, BusMap) else BusMap(buses)
 
 
-def _scan(buf: bytes, buses: BusMap, max_msg: int) -> Tuple[List[FrameEvent], int]:
+def _scan(
+    buf: bytes, buses: BusMap, max_msg: int, max_input: Optional[int] = None
+) -> Tuple[List[FrameEvent], int]:
     """Parse every complete frame in buf.
 
     Returns (events, consumed): consumed is how many leading bytes are fully
     handled and can be dropped (garbage, parsed frames, padding).
+
+    ``max_input`` (the number of input channels) drops input events above it:
+    bus channel numbers start right after the inputs, so an input index beyond
+    the configured inputs must never be taken for (and overwrite) a bus.
     """
     events: List[FrameEvent] = []
     pos = consumed = 0
@@ -442,20 +460,26 @@ def _scan(buf: bytes, buses: BusMap, max_msg: int) -> Tuple[List[FrameEvent], in
         msg = buf[mpos:end]
         if ftype in _INPUT_TYPES:
             parsed = [_input_section(msg)]
+            if max_input is not None and parsed[0] is not None and parsed[0][0] > max_input:
+                parsed = []
         elif ftype in _BUS_TYPES:
             parsed = [_bus_section(msg, buses.ids)]
         elif ftype == _DUMP_TYPE:
             if buses.on_dump is not None:
-                buses.on_dump(dump_bus_objects(msg))
-            parsed = _dump_sections(msg, buses.ids)
+                try:
+                    buses.on_dump(dump_bus_objects(msg))
+                except Exception:  # noqa: BLE001 - never let a callback kill the link
+                    log.exception("bus discovery failed; dump parsed with known buses")
+            parsed = _dump_sections(msg, buses.ids, max_input)
         else:
             parsed = []
-        raw = buf[start:end].hex()
+        is_dump = ftype == _DUMP_TYPE
+        raw = buf[start:start + _HEADER_LEN].hex() if is_dump else buf[start:end].hex()
         for p in parsed:
             if p is not None:
                 channel, muted, fader_hex = p
                 events.append(FrameEvent(channel, muted, fader_hex, raw, end * 2,
-                                         from_dump=ftype == _DUMP_TYPE))
+                                         from_dump=is_dump))
         # Trailing zero padding is skipped by the next magic search.
         pos = consumed = end
     return events, consumed
@@ -472,14 +496,27 @@ class StreamBuffer:
     so bus frames are also parsed.
     """
 
-    def __init__(self, buses=(), max_bytes: int = 1 << 20) -> None:
+    def __init__(
+        self, buses=(), max_bytes: int = 1 << 20, max_input: Optional[int] = None
+    ) -> None:
         self._buf = bytearray()
         self._buses = _as_bus_map(buses)
         self._max = max_bytes
+        self._max_input = max_input
+
+    @property
+    def at_frame_boundary(self) -> bool:
+        """True when no partial frame is pending: everything fed so far ends on
+        a frame boundary (leftover bytes, if any, contain no frame start).
+
+        The proxy uses this to never inject a command into the middle of a
+        frame it is relaying.
+        """
+        return _MAGIC[:1] not in self._buf
 
     def feed(self, data: bytes) -> List["FrameEvent"]:
         self._buf.extend(data)
-        events, consumed = _scan(bytes(self._buf), self._buses, self._max)
+        events, consumed = _scan(bytes(self._buf), self._buses, self._max, self._max_input)
         del self._buf[:consumed]
         if len(self._buf) > self._max:
             # a frame claims more than we buffer: drop it, resync on next magic
@@ -487,11 +524,11 @@ class StreamBuffer:
         return events
 
 
-def parse_hex_stream(hex_data: str, buses=()) -> List[FrameEvent]:
+def parse_hex_stream(hex_data: str, buses=(), max_input: Optional[int] = None) -> List[FrameEvent]:
     """Find every known mute/fader frame in a hex string.
 
     Returns events in ascending position order. ``buses`` is an iterable of
     (channel, id) for bus (type 71/72) frames.
     """
-    events, _ = _scan(bytes.fromhex(hex_data.lower()), _as_bus_map(buses), 1 << 24)
+    events, _ = _scan(bytes.fromhex(hex_data.lower()), _as_bus_map(buses), 1 << 24, max_input)
     return events

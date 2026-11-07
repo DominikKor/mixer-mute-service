@@ -12,9 +12,11 @@ import socket
 import struct
 import uuid
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 from urllib.error import URLError
 from urllib.request import Request, urlopen
+
+from .jsonstore import read_json, write_json_atomic
 
 log = logging.getLogger("mixer.native_controls")
 
@@ -41,6 +43,13 @@ OBS_PORT = 4455
 BEAMER_SCRIPTS = {
     "beamer-freeze": Path(r"G:\Meine Ablage\Skripte\beamer_freeze.bat"),
     "beamer-hide": Path(r"G:\Meine Ablage\Skripte\beamer_hide.bat"),
+}
+
+
+# Allowed range of each stored light setting.
+_LEVEL_BOUNDS = {
+    "warm": (0, 255), "cold": (0, 255), "start": (0, 255),
+    "steps": (5, 255), "fade_ms": (0, 60000),
 }
 
 
@@ -141,49 +150,75 @@ class NativeControlService:
         self._load_state()
 
     def _load_state(self) -> None:
-        try:
-            data = json.loads(self._state_path.read_text(encoding="utf-8"))
-            if isinstance(data, dict):
-                values = data.get("dmx")
-                if isinstance(values, list) and len(values) == 512 and all(isinstance(v, int) and 0 <= v <= 255 for v in values):
-                    self._dmx = values
-                levels = data.get("levels")
-                if isinstance(levels, dict):
-                    for key in self._levels:
-                        if isinstance(levels.get(key), int):
-                            self._levels[key] = max(0, min(60000 if key == "fade_ms" else 255, levels[key]))
-        except (OSError, ValueError, TypeError):
-            pass
+        data = read_json(self._state_path, dict, default={})
+        values = data.get("dmx")
+        if isinstance(values, list) and len(values) == 512 and all(
+            isinstance(v, int) and 0 <= v <= 255 for v in values
+        ):
+            self._dmx = values
+        levels = data.get("levels")
+        if isinstance(levels, dict):
+            for key, (low, high) in _LEVEL_BOUNDS.items():
+                if isinstance(levels.get(key), int):
+                    self._levels[key] = max(low, min(high, levels[key]))
 
     def _persist_state(self) -> None:
-        self._state_path.parent.mkdir(parents=True, exist_ok=True)
-        self._state_path.write_text(
-            json.dumps({"dmx": self._dmx, "levels": self._levels}, indent=2), encoding="utf-8"
-        )
+        # The light already changed when this runs; a full disk must not turn
+        # a successful press into an error.
+        try:
+            write_json_atomic(self._state_path, {"dmx": self._dmx, "levels": self._levels})
+        except OSError as exc:
+            log.warning("Could not save light state to %s: %s", self._state_path, exc)
 
-    async def _send_dmx(self, target: list[int]) -> None:
+    async def _update_dmx(self, compute: Callable[[list[int]], list[int]]) -> list[int]:
+        """Fade from the current DMX frame to ``compute(current)``.
+
+        The target is computed under the lock, so two quick presses build on
+        each other instead of both starting from the same old frame.
+        """
         async with self._lock:
-            start = self._dmx.copy()
-            frames = max(1, min(1500, self._levels["fade_ms"] // 40))
-            for index in range(1, frames + 1):
-                frame = [round(a + (b - a) * index / frames) for a, b in zip(start, target)]
-                await asyncio.to_thread(_send_artnet_frame, ARTNET_HOST, ARTNET_UNIVERSE, frame)
-                if index < frames:
-                    await asyncio.sleep(0.04)
+            target = compute(self._dmx.copy())
+            await self._fade_to(target)
             self._dmx = target
             self._persist_state()
+            return target
 
-    async def _zone_values(self, zone_name: str, new_level: int) -> list[int]:
+    async def _fade_to(self, target: list[int]) -> None:
+        """Send the fade frames. The caller holds ``self._lock``."""
+        start = self._dmx.copy()
+        frames = max(1, min(1500, self._levels["fade_ms"] // 40))
+        for index in range(1, frames + 1):
+            frame = [round(a + (b - a) * index / frames) for a, b in zip(start, target)]
+            await asyncio.to_thread(_send_artnet_frame, ARTNET_HOST, ARTNET_UNIVERSE, frame)
+            if index < frames:
+                await asyncio.sleep(0.04)
+
+    def _set_zone(self, frame: list[int], zone_name: str, white: int) -> None:
         zone = ARTNET_ZONES.get(zone_name)
         if zone is None:
             raise NativeControlError("unknown Art-Net zone")
-        target = self._dmx.copy()
-        target[zone["white"] - 1] = max(0, min(255, new_level))
-        target[zone["warm"] - 1] = self._levels["warm"]
-        target[zone["cold"] - 1] = self._levels["cold"]
-        return target
+        frame[zone["white"] - 1] = max(0, min(255, white))
+        frame[zone["warm"] - 1] = self._levels["warm"]
+        frame[zone["cold"] - 1] = self._levels["cold"]
+
+    async def _adjust_setting(self, key: str, delta: int) -> int:
+        low, high = _LEVEL_BOUNDS[key]
+        async with self._lock:
+            self._levels[key] = max(low, min(high, self._levels[key] + delta))
+            self._persist_state()
+            return self._levels[key]
 
     async def press(self, action: dict) -> dict:
+        try:
+            return await self._press(action)
+        except NativeControlError:
+            raise
+        except (OSError, ValueError, TypeError) as exc:
+            # Network/socket/process errors and malformed actions all become a
+            # clear 503 instead of a 500 with a stack trace.
+            raise NativeControlError(f"{action.get('type', 'native action')} failed: {exc}") from exc
+
+    async def _press(self, action: dict) -> dict:
         action_type = action.get("type")
         if action_type in {"shelly-toggle", "shelly-set"}:
             host = SHELLY_HOSTS.get(action.get("target"))
@@ -206,56 +241,76 @@ class NativeControlService:
             return {"ok": True, "count": len(targets)}
 
         if action_type == "artnet-zone-toggle":
-            zone = ARTNET_ZONES.get(action.get("zone"))
+            zone_name = action.get("zone")
+            zone = ARTNET_ZONES.get(zone_name)
             if zone is None:
                 raise NativeControlError("unknown Art-Net zone")
-            new_level = self._levels["start"] if self._dmx[zone["white"] - 1] == 0 else 0
-            target = await self._zone_values(action["zone"], new_level)
-            await self._send_dmx(target)
-            return {"ok": True, "level": new_level}
+
+            def toggle(frame: list[int]) -> list[int]:
+                is_off = frame[zone["white"] - 1] == 0
+                self._set_zone(frame, zone_name, self._levels["start"] if is_off else 0)
+                return frame
+
+            target = await self._update_dmx(toggle)
+            return {"ok": True, "level": target[zone["white"] - 1]}
+
+        if action_type == "artnet-zones-on":
+            zones = action.get("zones")
+            if not isinstance(zones, list) or not zones or any(z not in ARTNET_ZONES for z in zones):
+                raise NativeControlError("unknown Art-Net zone")
+
+            def switch_on(frame: list[int]) -> list[int]:
+                for zone_name in zones:
+                    white = frame[ARTNET_ZONES[zone_name]["white"] - 1]
+                    self._set_zone(frame, zone_name, white or self._levels["start"])
+                return frame
+
+            await self._update_dmx(switch_on)
+            return {"ok": True}
 
         if action_type in {"artnet-zone-adjust", "artnet-all-adjust"}:
-            delta = int(action.get("delta", 0))
             zones = list(ARTNET_ZONES) if action_type == "artnet-all-adjust" else [action.get("zone")]
-            target = self._dmx.copy()
-            for zone_name in zones:
-                zone = ARTNET_ZONES.get(zone_name)
-                if zone is None:
-                    raise NativeControlError("unknown Art-Net zone")
-                white_index = zone["white"] - 1
-                target[white_index] = max(0, min(255, target[white_index] + delta))
-                target[zone["warm"] - 1] = self._levels["warm"]
-                target[zone["cold"] - 1] = self._levels["cold"]
-            await self._send_dmx(target)
+            if any(zone_name not in ARTNET_ZONES for zone_name in zones):
+                raise NativeControlError("unknown Art-Net zone")
+            # The button only gives the direction; "Dimm-Schrittweite" sets
+            # how far one press dims.
+            direction = 1 if int(action.get("delta", 0)) > 0 else -1
+
+            def adjust(frame: list[int]) -> list[int]:
+                step = direction * self._levels["steps"]
+                for zone_name in zones:
+                    white = frame[ARTNET_ZONES[zone_name]["white"] - 1]
+                    self._set_zone(frame, zone_name, white + step)
+                return frame
+
+            await self._update_dmx(adjust)
             return {"ok": True}
 
         if action_type == "artnet-global-adjust":
             color = action.get("color")
             if color not in {"warm", "cold"}:
                 raise NativeControlError("unknown Art-Net color control")
-            self._levels[color] = max(0, min(255, self._levels[color] + int(action.get("delta", 0))))
-            target = self._dmx.copy()
-            for zone in ARTNET_ZONES.values():
-                target[zone[color] - 1] = self._levels[color]
-            await self._send_dmx(target)
+            delta = int(action.get("delta", 0))
+
+            def recolor(frame: list[int]) -> list[int]:
+                self._levels[color] = max(0, min(255, self._levels[color] + delta))
+                for zone in ARTNET_ZONES.values():
+                    frame[zone[color] - 1] = self._levels[color]
+                return frame
+
+            await self._update_dmx(recolor)
             return {"ok": True, "level": self._levels[color]}
 
         if action_type == "artnet-start-adjust":
-            async with self._lock:
-                self._levels["start"] = max(0, min(255, self._levels["start"] + int(action.get("delta", 0))))
-                self._persist_state()
-            return {"ok": True, "level": self._levels["start"]}
+            level = await self._adjust_setting("start", int(action.get("delta", 0)))
+            return {"ok": True, "level": level}
 
         if action_type == "artnet-setting-adjust":
             setting = action.get("setting")
             if setting not in {"steps", "fade_ms"}:
                 raise NativeControlError("unknown Art-Net setting")
-            bounds = {"steps": (5, 255), "fade_ms": (0, 60000)}
-            low, high = bounds[setting]
-            async with self._lock:
-                self._levels[setting] = max(low, min(high, self._levels[setting] + int(action.get("delta", 0))))
-                self._persist_state()
-            return {"ok": True, "value": self._levels[setting]}
+            value = await self._adjust_setting(setting, int(action.get("delta", 0)))
+            return {"ok": True, "value": value}
 
         if action_type == "visca-preset":
             target = VISCA_CAMERAS.get(action.get("camera"))

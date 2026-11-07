@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import asyncio
-import json
+import logging
 import uuid
 from copy import deepcopy
 from pathlib import Path
-from typing import Dict, List
+from typing import List
+
+from .jsonstore import backup_corrupt, read_json, write_json_atomic
+
+log = logging.getLogger("mixer.companion_buttons")
 
 COMPANION_BUTTONS = [
     {"id": "beamer-freeze", "label": "Beamer freeze", "kind": "native", "category_id": "beamer", "native_action": {"type": "beamer-script", "script": "beamer-freeze"}},
@@ -105,28 +109,37 @@ _OVERALL_GROUPS = [
     ("mission-video", "Mission Video", "Missionsvideo"),
     ("instrumental", "Instrumental", "Instrumental"),
 ]
+# Every macro switches the four stage zones on (to the start brightness; a zone
+# that is already on keeps its level), then runs these catalog actions in order.
+# They used to toggle the zones, so a second macro switched the light off.
+_STAGE_ZONES = ["left", "center-left", "center-right", "right"]
 _OVERALL_LINKS = {
-    "gemeinsam-singen": ["native-artnet-zone-left-toggle", "native-artnet-zone-center-right-toggle", "native-artnet-zone-right-toggle", "native-artnet-zone-center-left-toggle", "native-cam1-preset-5", "native-obs-cam1-live", "native-cam2-preset-5", "native-obs-cam2-live"],
-    "musik-klavier": ["native-artnet-zone-left-toggle", "native-artnet-zone-center-right-toggle", "native-artnet-zone-right-toggle", "native-artnet-zone-center-left-toggle", "native-cam1-preset-3", "native-obs-cam1-live", "native-cam2-preset-3", "native-obs-cam2-live"],
-    "pult-klavier": ["native-artnet-zone-left-toggle", "native-artnet-zone-center-right-toggle", "native-artnet-zone-right-toggle", "native-artnet-zone-center-left-toggle", "native-cam1-preset-2", "native-obs-cam1-live", "native-cam2-preset-2", "native-obs-cam2-live"],
-    "pult-playback": ["native-artnet-zone-left-toggle", "native-artnet-zone-center-right-toggle", "native-artnet-zone-right-toggle", "native-artnet-zone-center-left-toggle", "native-cam1-preset-2", "native-obs-cam1-live", "native-cam2-preset-2", "native-obs-cam2-live"],
-    "handmik-klavier": ["native-artnet-zone-left-toggle", "native-artnet-zone-center-right-toggle", "native-artnet-zone-right-toggle", "native-artnet-zone-center-left-toggle", "native-cam1-preset-5", "native-obs-cam1-live", "native-cam2-preset-2", "native-obs-cam2-live"],
-    "handmik-playback": ["native-artnet-zone-left-toggle", "native-artnet-zone-center-right-toggle", "native-artnet-zone-right-toggle", "native-artnet-zone-center-left-toggle", "native-cam1-preset-5", "native-obs-cam1-live", "native-cam2-preset-2", "native-obs-cam2-live"],
-    "predigt": ["native-artnet-zone-left-toggle", "native-artnet-zone-center-right-toggle", "native-artnet-zone-right-toggle", "native-artnet-zone-center-left-toggle", "native-cam1-preset-1", "native-obs-cam1-live", "native-cam2-preset-1", "native-obs-cam2-live"],
-    "hintergrundmusik": ["native-artnet-zone-left-toggle", "native-artnet-zone-center-right-toggle", "native-artnet-zone-right-toggle", "native-artnet-zone-center-left-toggle", "native-cam1-preset-5", "native-obs-cam1-live", "native-cam2-preset-5", "native-obs-cam2-live"],
-    "gebet": ["native-artnet-zone-left-toggle", "native-artnet-zone-center-right-toggle", "native-artnet-zone-right-toggle", "native-artnet-zone-center-left-toggle", "native-cam1-preset-prayer", "native-obs-cam1-live", "native-cam2-preset-prayer", "native-obs-cam2-live"],
-    "qr": ["native-artnet-zone-left-toggle", "native-artnet-zone-center-right-toggle", "native-artnet-zone-right-toggle", "native-artnet-zone-center-left-toggle", "native-cam1-preset-5", "native-obs-cam1-live", "native-cam2-preset-5", "native-obs-cam2-live"],
-    "mission-video": ["native-artnet-zone-left-toggle", "native-artnet-zone-center-right-toggle", "native-artnet-zone-right-toggle", "native-artnet-zone-center-left-toggle", "native-obs-pc2-live"],
-    "instrumental": ["native-artnet-zone-left-toggle", "native-artnet-zone-center-right-toggle", "native-artnet-zone-right-toggle", "native-artnet-zone-center-left-toggle", "native-cam1-preset-3", "native-obs-cam1-live", "native-cam2-preset-5", "native-obs-cam2-live"],
+    "gemeinsam-singen": ["native-cam1-preset-5", "native-obs-cam1-live", "native-cam2-preset-5", "native-obs-cam2-live"],
+    "musik-klavier": ["native-cam1-preset-3", "native-obs-cam1-live", "native-cam2-preset-3", "native-obs-cam2-live"],
+    "pult-klavier": ["native-cam1-preset-2", "native-obs-cam1-live", "native-cam2-preset-2", "native-obs-cam2-live"],
+    "pult-playback": ["native-cam1-preset-2", "native-obs-cam1-live", "native-cam2-preset-2", "native-obs-cam2-live"],
+    "handmik-klavier": ["native-cam1-preset-5", "native-obs-cam1-live", "native-cam2-preset-2", "native-obs-cam2-live"],
+    "handmik-playback": ["native-cam1-preset-5", "native-obs-cam1-live", "native-cam2-preset-2", "native-obs-cam2-live"],
+    "predigt": ["native-cam1-preset-1", "native-obs-cam1-live", "native-cam2-preset-1", "native-obs-cam2-live"],
+    "hintergrundmusik": ["native-cam1-preset-5", "native-obs-cam1-live", "native-cam2-preset-5", "native-obs-cam2-live"],
+    "gebet": ["native-cam1-preset-prayer", "native-obs-cam1-live", "native-cam2-preset-prayer", "native-obs-cam2-live"],
+    "qr": ["native-cam1-preset-5", "native-obs-cam1-live", "native-cam2-preset-5", "native-obs-cam2-live"],
+    "mission-video": ["native-obs-pc2-live"],
+    "instrumental": ["native-cam1-preset-3", "native-obs-cam1-live", "native-cam2-preset-5", "native-obs-cam2-live"],
 }
 NATIVE_BUTTONS.extend({
     "id": f"native-overall-{button_id}", "label": label, "kind": "native", "category_id": "overall",
-    "native_action": {"type": "group-macro", "group": group, "buttons": _OVERALL_LINKS.get(button_id, [])},
+    "native_action": {
+        "type": "group-macro", "group": group,
+        "light_zones_on": _STAGE_ZONES, "buttons": _OVERALL_LINKS.get(button_id, []),
+    },
 } for button_id, label, group in _OVERALL_GROUPS)
 
 COMPANION_BUTTONS = COMPANION_BUTTONS + NATIVE_BUTTONS
 COMPANION_BUTTONS_BY_ID = {button["id"]: button for button in COMPANION_BUTTONS}
-_NATIVE_CATALOG_VERSION = 3
+# Bump when catalog actions change; stored native keys then get the new action.
+# v3 added the keys below, v4 made the Overall macros switch the light on.
+_NATIVE_CATALOG_VERSION = 4
 _NATIVE_CATALOG_V3_IDS = {
     "native-artnet-start-up", "native-artnet-start-down",
     "native-artnet-steps-up", "native-artnet-steps-down",
@@ -154,12 +167,13 @@ class CompanionButtonStore:
         self._load()
 
     def _load(self) -> None:
-        if not self._path.exists():
+        data = read_json(self._path, dict, default=None)
+        if data is None:
+            # Missing or unreadable (then kept as .corrupt): start from the catalog.
             self._persist()
             return
         migrated = False
         try:
-            data = json.loads(self._path.read_text(encoding="utf-8"))
             categories = data["categories"]
             buttons = data["buttons"]
             if not isinstance(categories, list) or not isinstance(buttons, list):
@@ -183,9 +197,12 @@ class CompanionButtonStore:
                 categories_ids = {item["id"] for item in categories}
                 categories.extend(item for item in deepcopy(DEFAULT_CATEGORIES) if item["id"] not in categories_ids)
                 button_map = {item["id"]: item for item in buttons}
+                # Keys added in v3 are added once; one the user deleted later
+                # must not come back with a newer catalog version.
+                add_v3 = self._catalog_version < 3
                 for seed_button in self._buttons:
                     current = button_map.get(seed_button["id"])
-                    if current is None and seed_button["id"] in _NATIVE_CATALOG_V3_IDS:
+                    if current is None and add_v3 and seed_button["id"] in _NATIVE_CATALOG_V3_IDS:
                         current = deepcopy(seed_button)
                         buttons.append(current)
                         button_map[seed_button["id"]] = current
@@ -201,21 +218,19 @@ class CompanionButtonStore:
             self._buttons = buttons
             if migrated:
                 self._persist()
-        except (OSError, ValueError, TypeError, KeyError):
+        except (ValueError, TypeError, KeyError) as exc:
+            backup = backup_corrupt(self._path)
+            log.error("Invalid %s (%s); kept it as %s and restored the catalog", self._path, exc, backup)
             self._categories = deepcopy(DEFAULT_CATEGORIES)
             self._buttons = deepcopy(COMPANION_BUTTONS)
             self._persist()
 
     def _persist(self) -> None:
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._path.write_text(
-            json.dumps({
-                "categories": self._categories,
-                "buttons": self._buttons,
-                "native_catalog_version": self._catalog_version,
-            }, indent=2),
-            encoding="utf-8",
-        )
+        write_json_atomic(self._path, {
+            "categories": self._categories,
+            "buttons": self._buttons,
+            "native_catalog_version": self._catalog_version,
+        })
 
     async def snapshot(self) -> dict:
         async with self._lock:

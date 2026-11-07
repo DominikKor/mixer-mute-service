@@ -7,6 +7,12 @@ reuses the same connection to inject commands. Reconnects with backoff. This is
 "direct" mode; the iPad connects to the mixer normally and the service tracks
 state independently. If no frames arrive, state stays unknown and every send is
 blocked by the safety layer -- the desired fail-safe behaviour.
+
+Link liveness: the mixer answers every keepalive handshake with a full dump, so
+with a keepalive configured a silent link is a dead one (pulled cable, switch
+outage, hung mixer). After LINK_TIMEOUT_FACTOR keepalive intervals without any
+data the link counts as stale (sends are refused) and the read times out,
+which forces a reconnect.
 """
 
 from __future__ import annotations
@@ -24,6 +30,10 @@ log = logging.getLogger("mixer.client")
 
 # Reconnect backoff schedule (seconds), capped at the last value.
 _BACKOFF = [1, 2, 5, 10]
+# No data for this many keepalive intervals = the link is dead.
+LINK_TIMEOUT_FACTOR = 2.5
+# A write the mixer does not take within this time means the link is broken.
+SEND_TIMEOUT_SECONDS = 2.0
 
 
 class MixerClient:
@@ -34,14 +44,31 @@ class MixerClient:
         self._writer: Optional[asyncio.StreamWriter] = None
         if bus_map is None:
             bus_map = BusMap([(b.channel, b.id) for b in cfg.mixer.buses])
-        self._buffer = StreamBuffer(buses=bus_map)
+        self._bus_map = bus_map
+        self._buffer = self._new_buffer()
         self._send_lock = asyncio.Lock()
         self._stop = asyncio.Event()
         self._task: Optional[asyncio.Task] = None
 
         self.connected: bool = False
-        self.last_rx_at: Optional[float] = None  # monotonic time of last bytes read
+        # Monotonic time of the last bytes read (set to the connect time on
+        # connect, so a link that never answers also goes stale).
+        self.last_rx_at: Optional[float] = None
         self.session_epoch: Optional[float] = None  # set on connect, cleared on drop
+
+    def _new_buffer(self) -> StreamBuffer:
+        return StreamBuffer(buses=self._bus_map, max_input=self._cfg.mixer.max_channels)
+
+    def _link_timeout(self) -> Optional[float]:
+        interval = self._cfg.mixer.keepalive_seconds
+        return interval * LINK_TIMEOUT_FACTOR if interval and interval > 0 else None
+
+    def link_stale(self) -> bool:
+        """True while connected but silent for longer than the link timeout."""
+        timeout = self._link_timeout()
+        if timeout is None or not self.connected or self.last_rx_at is None:
+            return False
+        return time.monotonic() - self.last_rx_at > timeout
 
     # -- lifecycle ---------------------------------------------------------
 
@@ -68,8 +95,11 @@ class MixerClient:
                 self._reader, self._writer = await asyncio.open_connection(
                     self._cfg.mixer.ip, self._cfg.mixer.port
                 )
+                # Leftover bytes of the previous connection would otherwise
+                # swallow the start of this one -- the state dump.
+                self._buffer = self._new_buffer()
                 self.connected = True
-                self.session_epoch = time.monotonic()
+                self.session_epoch = self.last_rx_at = time.monotonic()
                 attempt = 0
                 log.info("connected to mixer")
                 # Subscribe so the mixer streams its state dump + live updates.
@@ -101,13 +131,18 @@ class MixerClient:
 
     async def _read_loop(self) -> None:
         assert self._reader is not None
+        timeout = self._link_timeout()
         while not self._stop.is_set():
-            data = await self._reader.read(4096)
+            try:
+                data = await asyncio.wait_for(self._reader.read(4096), timeout=timeout)
+            except asyncio.TimeoutError:
+                log.warning("no data from mixer for %.1fs; reconnecting", timeout)
+                return
             if data == b"":
                 log.info("mixer closed connection (EOF)")
                 return
             self.last_rx_at = time.monotonic()
-            await self._ingest(data)
+            await self._store.apply_events(self._buffer.feed(data))
 
     async def _keepalive(self) -> None:
         """Periodically resend the subscribe handshake so the mixer keeps us
@@ -124,19 +159,12 @@ class MixerClient:
         except asyncio.CancelledError:
             pass
         except Exception as exc:  # noqa: BLE001
-            log.debug("keepalive stopped: %s", exc)
-
-    async def _ingest(self, data: bytes) -> None:
-        for event in self._buffer.feed(data):
-            if not await self._store.apply_event(event):
-                log.info("ignored dump value for channel=%s (we just commanded it)", event.channel)
-                continue
-            log.debug(
-                "observed channel=%s muted=%s fader=%s",
-                event.channel,
-                event.muted,
-                event.fader_hex,
-            )
+            # A keepalive that cannot be written means the link is broken:
+            # tear it down so the read loop ends and we reconnect.
+            log.warning("keepalive failed (%s); dropping the connection", exc)
+            writer = self._writer
+            if writer is not None:
+                writer.close()
 
     async def _close_writer(self) -> None:
         if self._writer is not None:
@@ -156,15 +184,14 @@ class MixerClient:
 
         Raises if not connected or the write fails; never silently succeeds.
         """
-        if not self.connected or self._writer is None:
-            raise ConnectionError("mixer not connected")
         async with self._send_lock:
-            self._writer.write(payload)
-            await self._writer.drain()
-
-    # -- health ------------------------------------------------------------
-
-    def rx_age(self) -> Optional[float]:
-        if self.last_rx_at is None:
-            return None
-        return time.monotonic() - self.last_rx_at
+            # Checked inside the lock: the link may have dropped while waiting.
+            writer = self._writer
+            if not self.connected or writer is None or writer.is_closing():
+                raise ConnectionError("mixer not connected")
+            writer.write(payload)
+            try:
+                await asyncio.wait_for(writer.drain(), timeout=SEND_TIMEOUT_SECONDS)
+            except asyncio.TimeoutError:
+                writer.close()  # ends the read loop -> reconnect
+                raise ConnectionError("mixer did not accept data; connection dropped") from None

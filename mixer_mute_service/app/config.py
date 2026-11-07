@@ -3,16 +3,21 @@ hardcoded first-milestone defaults from the briefing."""
 
 from __future__ import annotations
 
+import logging
 import os
 from ipaddress import IPv4Address
 from pathlib import Path
-from urllib.parse import urlsplit
-from typing import Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 import yaml
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+log = logging.getLogger("mixer.config")
 
 
+# Site labels for the input channels, used when config.yaml has no
+# ``channel_names`` entry. Only applied to inputs (1..max_channels); a bus shows
+# its own name instead (see Config.channel_label).
 DEFAULT_CHANNEL_NAMES: Dict[int, str] = {
     1: "Pult",
     2: "Gebet",
@@ -30,8 +35,6 @@ DEFAULT_CHANNEL_NAMES: Dict[int, str] = {
     14: "PC2",
     15: "PC1",
     16: "USB",
-    17: "ECHO 1",
-    18: "Monitor",
 }
 
 
@@ -47,30 +50,54 @@ class BusConfig(BaseModel):
 class MixerConfig(BaseModel):
     ip: str = "192.168.188.30"
     port: int = 6400
-    max_channels: int = 8
+    # Number of input channels (the DigiLive 16 has 16). Bus channel numbers
+    # must lie above this, so inputs and buses can never share a number.
+    max_channels: int = Field(default=16, ge=1, le=64)
     # Optional explicit display labels keyed by API channel number.
     channel_names: Dict[int, str] = Field(default_factory=dict)
     buses: List[BusConfig] = Field(default_factory=list)
-    # "proxy": service sits between the iPad and the mixer (point the iPad app at
-    #          this host). Guarantees state visibility -- all traffic flows through.
-    # "direct": service opens its own connection to the mixer (only useful if the
-    #           mixer pushes state to extra clients, which this one does not).
-    mode: str = "proxy"
+    # "direct" (default, recommended): the service opens its own connection next
+    #           to the app; its subscribe/keepalive makes the mixer send a full
+    #           state dump every keepalive_seconds plus live status frames.
+    # "proxy":  the app connects to this host (listen_host:listen_port) and the
+    #           service relays to the mixer. Caveat: the mixer does not echo
+    #           injected commands, so the app never learns about them and its
+    #           next touch may re-send its stale mute flag.
+    mode: Literal["direct", "proxy"] = "direct"
     # Address the iPad app should connect to in proxy mode.
     listen_host: str = "0.0.0.0"
     listen_port: int = 6400
     # direct mode: resend the subscribe handshake every N seconds as a keepalive
-    # so the mixer keeps streaming (0 disables periodic resend).
+    # so the mixer keeps streaming (0 disables periodic resend). The mixer
+    # answers each one with a dump, so with a keepalive the link counts as dead
+    # (and is reconnected) after LINK_TIMEOUT_FACTOR x this without any data.
     keepalive_seconds: float = 10.0
+
+    @model_validator(mode="after")
+    def _check_buses(self) -> "MixerConfig":
+        channels, ids = set(), set()
+        for b in self.buses:
+            if b.channel <= self.max_channels:
+                raise ValueError(
+                    f"bus {b.name!r} uses channel {b.channel}, which is an input "
+                    f"channel (1..{self.max_channels}); bus channels must be higher"
+                )
+            if b.channel in channels:
+                raise ValueError(f"bus channel {b.channel} is used twice")
+            if b.id.lower() in ids:
+                raise ValueError(f"bus id {b.id!r} is used twice")
+            channels.add(b.channel)
+            ids.add(b.id.lower())
+        return self
 
 
 class SafetyConfig(BaseModel):
     # How a stored fader value is judged trustworthy before sending:
-    #   "latest"  - use the most recent observed value as long as the proxy link
-    #               is live (default). Relies on the proxy relaying every change.
-    #   "session" - only trust values observed during the current link session.
-    #   "age"     - only trust values newer than max_fader_age_seconds.
-    freshness_mode: str = "latest"
+    #   "latest"  - the most recent value observed on the current mixer link
+    #               (default). Values from before a reconnect are never used.
+    #   "session" - same session rule; kept as an explicit name.
+    #   "age"     - additionally require values newer than max_fader_age_seconds.
+    freshness_mode: Literal["latest", "session", "age"] = "latest"
     # Optional hard age cap (used by "age" mode, or as an extra guard otherwise).
     max_fader_age_seconds: Optional[float] = None
     max_mute_age_seconds: Optional[float] = None
@@ -80,10 +107,9 @@ class SafetyConfig(BaseModel):
     # fader value are skipped, not forced.
     exclusive_group_unmute: bool = True
     # Delay between per-channel sends inside a group action.
-    group_send_delay_ms: int = 50
-    # Debug escape hatch. MUST default to False. When False there is simply no
-    # code path that sends raw bytes without a safety check.
-    allow_unsafe_debug_send: bool = False
+    group_send_delay_ms: int = Field(default=50, ge=0, le=1000)
+    # There is deliberately no unsafe debug send path. A leftover
+    # ``allow_unsafe_debug_send`` key in an old config.yaml is ignored.
 
 
 class GroupConfig(BaseModel):
@@ -125,28 +151,22 @@ class DesktopDisplayConfig(BaseModel):
     profiles: Dict[str, DesktopProfileConfig] = Field(default_factory=dict)
 
 
-class CompanionControlConfig(BaseModel):
-    base_url: str = "http://127.0.0.1:8000"
-    timeout_seconds: float = Field(default=3.0, gt=0, le=15)
-
-    @field_validator("base_url")
-    @classmethod
-    def _valid_base_url(cls, value: str) -> str:
-        parsed = urlsplit(value)
-        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
-            raise ValueError("Companion base_url must be an HTTP(S) URL")
-        if parsed.username or parsed.password or parsed.query or parsed.fragment:
-            raise ValueError("Companion base_url cannot contain credentials, query, or fragment")
-        return value.rstrip("/")
-
-
 class Config(BaseModel):
     mixer: MixerConfig = Field(default_factory=MixerConfig)
     safety: SafetyConfig = Field(default_factory=SafetyConfig)
     server: ServerConfig = Field(default_factory=ServerConfig)
     desktop_display: DesktopDisplayConfig = Field(default_factory=DesktopDisplayConfig)
-    companion: CompanionControlConfig = Field(default_factory=CompanionControlConfig)
     groups: Dict[str, GroupConfig] = Field(default_factory=dict)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _drop_retired_keys(cls, data: Any) -> Any:
+        # The Companion HTTP forwarding was removed; old config files may still
+        # carry its block. Unknown keys are ignored anyway, this only says so.
+        if isinstance(data, dict) and "companion" in data:
+            data = {k: v for k, v in data.items() if k != "companion"}
+            log.warning("config.yaml: the 'companion' section is no longer used and is ignored")
+        return data
 
     def valid_channels(self) -> set:
         """All addressable channel numbers: inputs 1..max plus configured buses."""
@@ -159,9 +179,8 @@ class Config(BaseModel):
         name = self.mixer.channel_names.get(channel)
         if isinstance(name, str) and name.strip():
             return name.strip()
-        default_name = DEFAULT_CHANNEL_NAMES.get(channel)
-        if isinstance(default_name, str) and default_name.strip():
-            return default_name.strip()
+        if channel <= self.mixer.max_channels and channel in DEFAULT_CHANNEL_NAMES:
+            return DEFAULT_CHANNEL_NAMES[channel]
         for b in self.mixer.buses:
             if b.channel == channel:
                 return b.name
@@ -187,7 +206,7 @@ def default_config_path() -> Path:
 def load_config(path: Optional[Path] = None) -> Config:
     path = path or default_config_path()
     if path and path.exists():
-        data = yaml.safe_load(path.read_text()) or {}
+        data = yaml.safe_load(path.read_text(encoding="utf-8-sig")) or {}
         cfg = Config(**data)
     else:
         cfg = Config()

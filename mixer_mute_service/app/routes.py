@@ -11,6 +11,7 @@ import os
 import time
 import urllib.error
 import urllib.request
+from typing import Any, Tuple
 
 from fastapi import APIRouter, Body, Request
 from fastapi.responses import JSONResponse
@@ -20,8 +21,8 @@ from .config import DesktopProfileConfig, default_config_path
 from .companion_buttons import COMPANION_BUTTONS, COMPANION_BUTTONS_BY_ID
 from .desktop_profiles import ProfileEditError, add_profile, delete_profile, update_profile
 from .groups import GroupError
-from .mute_snapshots import MuteSnapshotError
 from .native_controls import NativeControlError
+from .program_items import ProgramItemError
 from .models import (
     AlwaysOnRequest,
     GroupCaptureRequest,
@@ -32,15 +33,15 @@ from .models import (
     FaderRequest,
     GroupCreate,
     GroupUpdate,
-    MuteSnapshotCreate,
     ProgramItemRequest,
     RecallFaderRequest,
 )
 from .protocol import fader_hex_to_value
-from .safety import check_channel_send, is_channel_safe
+from .safety import is_channel_safe
+from .state import ChannelState
 
 router = APIRouter()
-_logger = logging.getLogger("mixer.desktop_display")
+log = logging.getLogger("mixer.routes")
 # One config.yaml edit at a time.
 _profile_lock = asyncio.Lock()
 
@@ -79,11 +80,11 @@ def _forward_display_request(url: str, token: str, profile: dict) -> dict:
         return json.loads(response.read().decode("utf-8"))
 
 
-def _forward_companion_press(base_url: str, page: int, row: int, column: int, timeout: float) -> None:
-    url = f"{base_url}/api/location/{page}/{row}/{column}/press"
-    req = urllib.request.Request(url, data=b"", method="POST")
-    with urllib.request.urlopen(req, timeout=timeout):
-        return
+def _unwrap(response: Any) -> Tuple[dict, int]:
+    """Body and status of a handler result (a dict or a JSONResponse)."""
+    if isinstance(response, JSONResponse):
+        return json.loads(response.body.decode("utf-8")), response.status_code
+    return response, 200
 
 
 @router.get("/companion/buttons")
@@ -124,7 +125,7 @@ async def companion_button_create(body: CompanionButtonCreate, request: Request)
     cfg = request.app.state.cfg
     if body.kind == "companion":
         target = COMPANION_BUTTONS_BY_ID.get(body.target_button_id or "")
-        if target is None or target["kind"] not in {"companion", "native"}:
+        if target is None or target["kind"] != "native":
             return JSONResponse({"ok": False, "reason": "invalid control button target"}, 400)
         action = {"kind": "companion", "target_button_id": target["id"]}
     elif body.kind == "channel":
@@ -175,6 +176,48 @@ async def companion_button_delete(button_id: str, request: Request):
     return {"ok": True, "button_id": button_id, "deleted": True}
 
 
+async def _press_native(button_id: str, action: dict, request: Request):
+    """Run one native catalog action (light, camera, OBS, group macro)."""
+    if action.get("type") == "group-macro":
+        _, _, _, controller = _ctx(request)
+        result = await controller.group_set(action["group"], False)
+        if not result.get("ok"):
+            return _respond({**result, "button": button_id})
+        steps = []
+        if action.get("light_zones_on"):
+            steps.append(("light-on", {"type": "artnet-zones-on", "zones": action["light_zones_on"]}))
+        for linked_id in action.get("buttons", []):
+            # Linked steps come from the built-in catalog, so renaming or
+            # deleting a key in Steuerung does not break the macro.
+            target = COMPANION_BUTTONS_BY_ID.get(linked_id)
+            if target is None or target["kind"] != "native" or target["native_action"].get("type") == "group-macro":
+                steps.append((linked_id, None))
+            else:
+                steps.append((linked_id, target["native_action"]))
+        linked = []
+        for linked_id, linked_action in steps:
+            if linked_action is None:
+                linked_data, linked_status = {"ok": False, "reason": "unknown linked action"}, 500
+            else:
+                linked_data, linked_status = _unwrap(await _press_native(linked_id, linked_action, request))
+            linked.append({"button": linked_id, **linked_data})
+            if linked_status != 200 or linked_data.get("ok") is False:
+                return JSONResponse({
+                    "ok": False,
+                    "button": button_id,
+                    "reason": "linked native action failed",
+                    "group_result": result,
+                    "linked_actions": linked,
+                }, linked_status)
+        return {"ok": True, "button": button_id, "group_result": result, "linked_actions": linked}
+    try:
+        result = await request.app.state.native_controls.press(action)
+    except NativeControlError as exc:
+        log.warning("Native action failed button=%s reason=%s", button_id, exc)
+        return JSONResponse({"ok": False, "button": button_id, "reason": str(exc)}, 503)
+    return {**result, "button": button_id}
+
+
 @router.post("/companion/buttons/{button_id}/press")
 async def companion_button_press(button_id: str, request: Request):
     button = await request.app.state.companion_button_store.get_button(button_id)
@@ -182,38 +225,10 @@ async def companion_button_press(button_id: str, request: Request):
         return JSONResponse({"ok": False, "reason": "unknown Companion button"}, 404)
 
     _, _, _, controller = _ctx(request)
-    if button["kind"] == "native":
-        action = button.get("native_action", {})
-        if action.get("type") == "group-macro":
-            result = await controller.group_set(action["group"], False)
-            if not result.get("ok"):
-                return _respond({**result, "button": button_id})
-            linked = []
-            for linked_id in action.get("buttons", []):
-                linked_result = await companion_button_press(linked_id, request)
-                if isinstance(linked_result, JSONResponse):
-                    linked_data = json.loads(linked_result.body.decode("utf-8"))
-                    linked_status = linked_result.status_code
-                else:
-                    linked_data = linked_result
-                    linked_status = 200
-                linked.append({"button": linked_id, **linked_data})
-                if linked_status != 200 or linked_data.get("ok") is False:
-                    return JSONResponse({
-                        "ok": False,
-                        "button": button_id,
-                        "reason": "linked native action failed",
-                        "group_result": result,
-                        "linked_actions": linked,
-                    }, linked_status)
-            return {"ok": True, "button": button_id, "group_result": result, "linked_actions": linked}
-        try:
-            result = await request.app.state.native_controls.press(action)
-        except NativeControlError as exc:
-            log.warning("Native action failed button=%s reason=%s", button_id, exc)
-            return JSONResponse({"ok": False, "button": button_id, "reason": str(exc)}, 503)
-        return {**result, "button": button_id}
-    if button["kind"] == "channel":
+    kind = button["kind"]
+    if kind == "native":
+        return await _press_native(button_id, button.get("native_action", {}), request)
+    if kind == "channel":
         if button["operation"] == "toggle":
             result = await controller.channel_toggle(button["channel"])
         else:
@@ -221,7 +236,7 @@ async def companion_button_press(button_id: str, request: Request):
                 button["channel"], button["operation"] == "mute"
             )
         return _respond({**result, "button": button_id})
-    if button["kind"] == "group":
+    if kind == "group":
         if button["operation"] == "toggle":
             result = await controller.group_toggle(button["group"])
         else:
@@ -229,40 +244,17 @@ async def companion_button_press(button_id: str, request: Request):
                 button["group"], button["operation"] == "mute"
             )
         return _respond({**result, "button": button_id})
-    if button["kind"] != "companion":
-        return JSONResponse({"ok": False, "reason": "invalid button action"}, 400)
-
-    target_id = button.get("target_button_id", button["id"])
-    target = COMPANION_BUTTONS_BY_ID.get(target_id)
-    if target is None:
-        return JSONResponse({"ok": False, "reason": "invalid control button target"}, 400)
-    if target["kind"] == "native":
-        try:
-            result = await request.app.state.native_controls.press(target["native_action"])
-        except NativeControlError as exc:
-            log.warning("Native action failed button=%s reason=%s", button_id, exc)
-            return JSONResponse({"ok": False, "button": button_id, "reason": str(exc)}, 503)
-        return {**result, "button": button_id, "target_button": target_id}
-    if target["kind"] != "companion":
-        return JSONResponse({"ok": False, "reason": "invalid control button target"}, 400)
-
-    cfg = request.app.state.cfg.companion
-    try:
-        await asyncio.to_thread(
-            _forward_companion_press,
-            cfg.base_url,
-            target["page"],
-            target["row"],
-            target["column"],
-            cfg.timeout_seconds,
-        )
-    except urllib.error.HTTPError as exc:
-        reason = "Companion HTTP API is disabled" if exc.code == 403 else f"Companion returned HTTP {exc.code}"
-        return JSONResponse({"ok": False, "button": button_id, "reason": reason}, 503 if exc.code == 403 else 502)
-    except (urllib.error.URLError, TimeoutError, OSError) as exc:
-        log.warning("Companion press failed button=%s reason=%r", button_id, exc)
-        return JSONResponse({"ok": False, "button": button_id, "reason": "Companion is unreachable"}, 503)
-    return {"ok": True, "button": button_id}
+    if kind == "companion":
+        # A user key that points at a native catalog action.
+        target_id = button.get("target_button_id", button["id"])
+        target = COMPANION_BUTTONS_BY_ID.get(target_id)
+        if target is None or target["kind"] != "native":
+            return JSONResponse({"ok": False, "reason": "invalid control button target"}, 400)
+        result = await _press_native(button_id, target["native_action"], request)
+        if isinstance(result, dict):
+            result["target_button"] = target_id
+        return result
+    return JSONResponse({"ok": False, "reason": "invalid button action"}, 400)
 
 
 @router.get("/health")
@@ -277,15 +269,12 @@ async def health(request: Request):
         "build_id": getattr(request.app.state, "build_id", "dev"),
         "group_count": len(groups),
         "desktop_display_enabled": cfg.desktop_display.enabled,
-        "desktop_display_ready": (
-            cfg.desktop_display.enabled
-            and bool(os.environ.get(cfg.desktop_display.token_env, ""))
-        ),
+        "desktop_display_ready": _display_ready(cfg.desktop_display),
     }
 
 
-def _display_ready(cfg) -> bool:
-    return cfg.enabled and bool(os.environ.get(cfg.token_env, ""))
+def _display_ready(display_cfg) -> bool:
+    return display_cfg.enabled and bool(os.environ.get(display_cfg.token_env, ""))
 
 
 @router.get("/desktop/profiles")
@@ -330,14 +319,14 @@ async def _save_profile(request: Request, profile_id: str, body: dict, create: b
         try:
             cfg = await asyncio.to_thread(edit, path, profile_id, profile)
         except ProfileEditError as exc:
-            _logger.warning("Desktop profile %s not saved: %s", profile_id, exc)
+            log.warning("Desktop profile %s not saved: %s", profile_id, exc)
             return JSONResponse({"ok": False, "id": profile_id, "reason": str(exc)}, exc.status)
         except OSError as exc:
-            _logger.warning("Desktop profile %s not saved: %s", profile_id, exc)
+            log.warning("Desktop profile %s not saved: %s", profile_id, exc)
             return JSONResponse({"ok": False, "id": profile_id, "reason": f"config.yaml not writable: {exc}"}, 500)
         # Buttons appear/change without a restart; other settings still need one.
         request.app.state.cfg.desktop_display.profiles = cfg.desktop_display.profiles
-    _logger.info("Desktop profile %s %s in %s", profile_id, "added" if create else "updated", path)
+    log.info("Desktop profile %s %s in %s", profile_id, "added" if create else "updated", path)
     return {"ok": True, "id": profile_id, "created": create}
 
 
@@ -370,7 +359,7 @@ async def delete_desktop_profile(profile_id: str, request: Request):
         except OSError as exc:
             return JSONResponse({"ok": False, "id": profile_id, "reason": f"config.yaml not writable: {exc}"}, 500)
         request.app.state.cfg.desktop_display.profiles = cfg.desktop_display.profiles
-    _logger.info("Desktop profile %s deleted from %s", profile_id, path)
+    log.info("Desktop profile %s deleted from %s", profile_id, path)
     return {"ok": True, "id": profile_id, "deleted": True}
 
 
@@ -393,62 +382,24 @@ async def open_desktop_profile(profile_id: str, request: Request):
             {"id": profile_id, **profile.model_dump(exclude={"target_ip"})},
         )
     except urllib.error.HTTPError as exc:
-        _logger.warning("Display agent rejected request: HTTP %s", exc.code)
+        log.warning("Display agent rejected request: HTTP %s", exc.code)
         return JSONResponse(
             {"ok": False, "reason": "display agent rejected the request"}, 502
         )
     except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
-        _logger.warning("Display agent unavailable: %s", exc)
+        log.warning("Display agent unavailable: %s", exc)
         return JSONResponse(
             {"ok": False, "reason": "display agent unavailable"}, 502
         )
 
 
-@router.get("/state")
-async def state(request: Request):
-    cfg, store, client, controller = _ctx(request)
-    now = time.monotonic()
-    snap = await store.snapshot()
-    always_on = await controller.always_on_channels()
-
-    channels = {}
-    for ch in cfg.all_channels():
-        cs = snap.get(ch)
-        fader_age = None if (cs is None or cs.fader_updated_at is None) else now - cs.fader_updated_at
-        mute_age = None if (cs is None or cs.muted_updated_at is None) else now - cs.muted_updated_at
-        safe = (
-            client.connected and controller.enabled
-            and is_channel_safe(ch, cs, cfg, client.session_epoch)
-        )
-        channels[str(ch)] = {
-            "name": cfg.channel_label(ch),
-            "fader_hex": None if cs is None else cs.fader_hex,
-            "fader_value": None if cs is None else fader_hex_to_value(cs.fader_hex),
-            "fader_age_seconds": _round(fader_age),
-            "muted": None if cs is None else cs.muted,
-            "mute_age_seconds": _round(mute_age),
-            "safe": safe,
-            "always_on": ch in always_on,
-        }
-
-    return {
-        "enabled": controller.enabled,
-        "mixer_connected": client.connected,
-        "channels": channels,
-    }
-
-
-@router.get("/channels/{channel}")
-async def get_channel(channel: int, request: Request):
-    cfg, store, client, controller = _ctx(request)
-    if channel not in cfg.valid_channels():
-        return JSONResponse({"ok": False, "channel": channel, "reason": "invalid channel"}, 400)
-    now = time.monotonic()
-    cs = await store.get_channel(channel)
+def _channel_view(
+    request: Request, channel: int, cs: "ChannelState | None", always_on: set, now: float
+) -> dict:
+    cfg, _, client, controller = _ctx(request)
     fader_age = None if (cs is None or cs.fader_updated_at is None) else now - cs.fader_updated_at
     mute_age = None if (cs is None or cs.muted_updated_at is None) else now - cs.muted_updated_at
     return {
-        "channel": channel,
         "name": cfg.channel_label(channel),
         "fader_hex": None if cs is None else cs.fader_hex,
         "fader_value": None if cs is None else fader_hex_to_value(cs.fader_hex),
@@ -459,8 +410,34 @@ async def get_channel(channel: int, request: Request):
             client.connected and controller.enabled
             and is_channel_safe(channel, cs, cfg, client.session_epoch)
         ),
-        "always_on": channel in await controller.always_on_channels(),
+        "always_on": channel in always_on,
     }
+
+
+@router.get("/state")
+async def state(request: Request):
+    cfg, store, client, controller = _ctx(request)
+    now = time.monotonic()
+    snap = await store.snapshot()
+    always_on = await controller.always_on_channels()
+    return {
+        "enabled": controller.enabled,
+        "mixer_connected": client.connected,
+        "channels": {
+            str(ch): _channel_view(request, ch, snap.get(ch), always_on, now)
+            for ch in cfg.all_channels()
+        },
+    }
+
+
+@router.get("/channels/{channel}")
+async def get_channel(channel: int, request: Request):
+    cfg, store, _, controller = _ctx(request)
+    if channel not in cfg.valid_channels():
+        return JSONResponse({"ok": False, "channel": channel, "reason": "invalid channel"}, 400)
+    cs = await store.get_channel(channel)
+    always_on = await controller.always_on_channels()
+    return {"channel": channel, **_channel_view(request, channel, cs, always_on, time.monotonic())}
 
 
 @router.post("/channels/{channel}/mute")
@@ -523,20 +500,32 @@ async def create_group_from_current_status(body: GroupCaptureRequest, request: R
     return _respond(await controller.create_group_from_current_status(body.name))
 
 
-async def _validate_program_item(body: ProgramItemRequest, request: Request):
-    if await request.app.state.groups.get(body.group) is None:
-        return JSONResponse({"ok": False, "reason": "unknown group"}, 404)
-    for field in ("playback", "translation", "lyrics"):
-        button_id = getattr(body, field)
+_PROGRAM_ACTION_FIELDS = ("playback", "translation", "lyrics")
+
+
+async def _program_reference_error(item: dict, request: Request):
+    """Reason why a program row cannot run, or None. Checked on save and
+    again before play, since a key or group may have been deleted since."""
+    if await request.app.state.groups.get(item["group"]) is None:
+        return "unknown group"
+    for field in _PROGRAM_ACTION_FIELDS:
+        button_id = item.get(field)
         if not button_id:
             continue
         if button_id.startswith("desktop:"):
             profile_id = button_id.removeprefix("desktop:")
             if not profile_id or profile_id not in request.app.state.cfg.desktop_display.profiles:
-                return JSONResponse({"ok": False, "reason": f"unknown {field} desktop profile"}, 400)
+                return f"unknown {field} desktop profile"
         elif await request.app.state.companion_button_store.get_button(button_id) is None:
-            return JSONResponse({"ok": False, "reason": f"unknown {field} button"}, 400)
+            return f"unknown {field} button"
     return None
+
+
+async def _validate_program_item(body: ProgramItemRequest, request: Request):
+    reason = await _program_reference_error(body.model_dump(), request)
+    if reason is None:
+        return None
+    return JSONResponse({"ok": False, "reason": reason}, 404 if reason == "unknown group" else 400)
 
 
 @router.get("/program/items")
@@ -584,6 +573,11 @@ async def play_program_item(item_id: str, request: Request):
     item = await program_store.get(item_id)
     if item is None:
         return JSONResponse({"ok": False, "reason": "unknown program item"}, 404)
+    # Refuse before anything happens instead of muting and then failing on a
+    # deleted key halfway through.
+    broken = await _program_reference_error(item, request)
+    if broken:
+        return JSONResponse({"ok": False, "reason": broken, "program_item_id": item_id}, 409)
     played = await program_store.mark_played(item_id)
     _, _, _, controller = _ctx(request)
     group_result = await controller.group_set(item["group"], False)
@@ -598,7 +592,7 @@ async def play_program_item(item_id: str, request: Request):
         })
 
     linked_actions = []
-    for field in ("playback", "translation", "lyrics"):
+    for field in _PROGRAM_ACTION_FIELDS:
         button_id = item.get(field)
         if not button_id:
             continue
@@ -606,12 +600,7 @@ async def play_program_item(item_id: str, request: Request):
             response = await open_desktop_profile(button_id.removeprefix("desktop:"), request)
         else:
             response = await companion_button_press(button_id, request)
-        if isinstance(response, JSONResponse):
-            result = json.loads(response.body.decode("utf-8"))
-            status_code = response.status_code
-        else:
-            result = response
-            status_code = 200
+        result, status_code = _unwrap(response)
         linked_actions.append({"field": field, **result})
         if status_code != 200 or result.get("ok") is False:
             return JSONResponse({
@@ -630,61 +619,6 @@ async def play_program_item(item_id: str, request: Request):
         "group_result": group_result,
         "linked_actions": linked_actions,
     }
-
-
-@router.get("/mute-snapshots")
-async def list_mute_snapshots(request: Request):
-    return await request.app.state.mute_snapshots.list()
-
-
-@router.post("/mute-snapshots")
-async def create_mute_snapshot(body: MuteSnapshotCreate, request: Request):
-    cfg, store, client, controller = _ctx(request)
-    if not client.connected:
-        return JSONResponse({"ok": False, "reason": "no mixer connection"}, 409)
-
-    states = {}
-    unsafe = []
-    for channel in cfg.all_channels():
-        channel_state = await store.get_channel(channel)
-        safety = check_channel_send(
-            channel, channel_state, cfg,
-            session_epoch=client.session_epoch,
-            require_mute_state=True,
-        )
-        if not safety.ok:
-            unsafe.append(safety.as_detail(channel))
-        else:
-            states[str(channel)] = channel_state.muted
-
-    if unsafe:
-        return JSONResponse({
-            "ok": False,
-            "reason": "cannot capture incomplete channel state",
-            "details": unsafe,
-        }, 409)
-    try:
-        snapshot = await request.app.state.mute_snapshots.create(body.name, states)
-    except MuteSnapshotError as exc:
-        return JSONResponse({"ok": False, "reason": str(exc)}, 400)
-    return {"ok": True, "snapshot": snapshot}
-
-
-@router.post("/mute-snapshots/{snapshot_id}/restore")
-async def restore_mute_snapshot(snapshot_id: str, request: Request):
-    snapshot = await request.app.state.mute_snapshots.get(snapshot_id)
-    if snapshot is None:
-        return JSONResponse({"ok": False, "reason": "unknown snapshot"}, 404)
-    _, _, _, controller = _ctx(request)
-    return _respond(await controller.restore_mute_snapshot(snapshot["name"], snapshot["channels"]))
-
-
-@router.post("/mute-snapshots/{snapshot_id}/delete")
-async def delete_mute_snapshot(snapshot_id: str, request: Request):
-    deleted = await request.app.state.mute_snapshots.delete(snapshot_id)
-    if not deleted:
-        return JSONResponse({"ok": False, "reason": "unknown snapshot"}, 404)
-    return {"ok": True, "snapshot_id": snapshot_id, "deleted": True}
 
 
 # -- group management (CRUD) ----------------------------------------------
