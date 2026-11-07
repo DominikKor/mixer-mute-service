@@ -467,80 +467,85 @@
       font: inherit; font-size: 12px; line-height: 1.3;
     }
     .pc-description input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
-          .program-action-link { display: grid; gap: 4px; min-width: 0; }
-          .program-action-link input { min-width: 0; }
-        .program-table-wrap { width: 100%; min-width: 0; }
-        .program-table { width: 100%; table-layout: fixed; border-collapse: collapse; }
-        .program-table th, .program-table td { min-width: 0; padding: 4px 3px; border-bottom: 1px solid rgba(255,255,255,.07); text-align: left; vertical-align: middle; }
-        .program-table th { color: #8b93a1; font-size: 10px; font-weight: 800; text-transform: uppercase; }
-        .program-table td { font-size: 11px; }
-        .program-table input, .program-table select {
-          width: 100%; min-width: 0; min-height: 44px; padding: 5px 6px; border: 1px solid #08090b;
-          border-radius: 4px; color: var(--lcd-text); background: #0b1418; font: inherit; font-size: 11px;
-        }
-        .program-delay { color: var(--lcd-text); font: 600 11px/1.2 var(--mono); white-space: nowrap; }
-        .program-actions { display: flex; gap: 4px; }
-        .program-actions button { min-width: 44px; min-height: 44px; padding: 4px; }
-        .program-play { color: #d7f0df; border-color: #163d27; }
-        .program-empty { padding: 12px 4px; color: var(--muted); }
-        .program-draft-row { background: rgba(79,156,255,.04); }
-        @media (max-width: 759px) {
-          .program-table, .program-table tbody, .program-table tr, .program-table td { display: block; width: 100%; }
-          .program-table thead { display: none; }
-          .program-table tr { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; margin-bottom: 10px; padding: 8px; border: 1px solid #08090b; border-radius: 6px; background: var(--panel-bg); }
-          .program-table td { display: grid; grid-template-rows: auto auto; gap: 3px; padding: 0; border: 0; }
-          .program-table td::before { content: attr(data-label); color: var(--muted); font-size: 10px; font-weight: 700; }
-          .program-table td.program-actions-cell { grid-column: 1 / -1; }
-          .program-actions { justify-content: flex-end; }
-        }
-      .program-table-wrap { width: 100%; min-width: 0; }
-      .program-table { width: 100%; table-layout: fixed; border-collapse: collapse; }
-      .program-table th, .program-table td { min-width: 0; padding: 4px 3px; border-bottom: 1px solid rgba(255,255,255,.07); text-align: left; vertical-align: middle; }
-      .program-table th { color: #8b93a1; font-size: 10px; font-weight: 800; text-transform: uppercase; }
-      .program-table td { font-size: 11px; }
-      .program-table input, .program-table select {
-        width: 100%; min-width: 0; min-height: 44px; padding: 5px 6px; border: 1px solid #08090b;
-        border-radius: 4px; color: var(--lcd-text); background: #0b1418; font: inherit; font-size: 11px;
-      }
-      .program-delay { color: var(--lcd-text); font: 600 11px/1.2 var(--mono); white-space: nowrap; }
-      .program-actions { display: flex; gap: 4px; }
-      .program-actions button { min-width: 44px; min-height: 44px; padding: 4px; }
-      .program-play { color: #d7f0df; border-color: #163d27; }
-      .program-empty { padding: 12px 4px; color: var(--muted); }
-      .program-draft-row { background: rgba(79,156,255,.04); }
-      @media (max-width: 759px) {
-        .program-table, .program-table tbody, .program-table tr, .program-table td { display: block; width: 100%; }
-        .program-table thead { display: none; }
-        .program-table tr { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; margin-bottom: 10px; padding: 8px; border: 1px solid #08090b; border-radius: 6px; background: var(--panel-bg); }
-        .program-table td { display: grid; grid-template-rows: auto auto; gap: 3px; padding: 0; border: 0; }
-        .program-table td::before { content: attr(data-label); color: var(--muted); font-size: 10px; font-weight: 700; }
-        .program-table td.program-actions-cell { grid-column: 1 / -1; }
-        .program-actions { justify-content: flex-end; }
-      }
-    .program-table-wrap { width: 100%; min-width: 0; }
-    .program-table { width: 100%; table-layout: fixed; border-collapse: collapse; }
-    .program-table th, .program-table td { min-width: 0; padding: 4px 3px; border-bottom: 1px solid rgba(255,255,255,.07); text-align: left; vertical-align: middle; }
-    .program-table th { color: #8b93a1; font-size: 10px; font-weight: 800; text-transform: uppercase; }
-    .program-table td { font-size: 11px; }
-    .program-table input, .program-table select {
-      width: 100%; min-width: 0; min-height: 44px; padding: 5px 6px; border: 1px solid #08090b;
-      border-radius: 4px; color: var(--lcd-text); background: #0b1418; font: inherit; font-size: 11px;
-    }
-    .program-delay { color: var(--lcd-text); font: 600 11px/1.2 var(--mono); white-space: nowrap; }
-    .program-actions { display: flex; gap: 4px; }
-    .program-actions button { min-width: 44px; min-height: 44px; padding: 4px; }
-    .program-play { color: #d7f0df; border-color: #163d27; }
-    .program-empty { padding: 12px 4px; color: var(--muted); }
-    .program-draft-row { background: rgba(79,156,255,.04); }
-    @media (max-width: 759px) {
-      .program-table, .program-table tbody, .program-table tr, .program-table td { display: block; width: 100%; }
-      .program-table thead { display: none; }
-      .program-table tr { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; margin-bottom: 10px; padding: 8px; border: 1px solid #08090b; border-radius: 6px; background: var(--panel-bg); }
-      .program-table td { display: grid; grid-template-rows: auto auto; gap: 3px; padding: 0; border: 0; }
-      .program-table td::before { content: attr(data-label); color: var(--muted); font-size: 10px; font-weight: 700; }
-      .program-table td.program-actions-cell { grid-column: 1 / -1; }
-      .program-actions { justify-content: flex-end; }
-    }
+  /* Programm: a cue list, one console panel per item in two lines --
+       time  | title    | person      | mute group | keys
+       delay | playback | translation | lyrics     | keys
+     Every field carries its own engraved label (the table head is kept for
+     screen readers only). Narrow screens fall back to two columns. */
+  .program-table-wrap { min-width: 0; }
+  .program-table, .program-table tbody { display: block; width: 100%; }
+  .program-table colgroup { display: none; }
+  .program-table thead {
+    position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap;
+  }
+  .program-table tbody { display: grid; gap: 10px; }
+  .program-table tr {
+    display: grid; align-items: start; gap: 10px 12px; padding: 10px 12px; border-radius: 8px;
+    grid-template-columns: 96px minmax(0, 2.2fr) minmax(0, 1.2fr) minmax(0, 1.2fr) auto;
+    border: 1px solid #08090b; background: var(--panel-bg); box-shadow: var(--panel-shadow);
+  }
+  .program-table td { display: flex; flex-direction: column; gap: 5px; min-width: 0; padding: 0; }
+  .program-table td::before {
+    content: attr(data-label); font-size: 10px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase;
+    color: #7d8594; text-shadow: 0 1px 0 #000;
+  }
+  .program-table td:nth-child(1) { grid-area: 1 / 1; }   /* Uhrzeit */
+  .program-table td:nth-child(2) { grid-area: 2 / 1; }   /* Verzoegerung */
+  .program-table td:nth-child(3) { grid-area: 1 / 2; }   /* Titel */
+  .program-table td:nth-child(4) { grid-area: 1 / 3; }   /* Person */
+  .program-table td:nth-child(5) { grid-area: 1 / 4; }   /* Mutegruppe */
+  .program-table td:nth-child(6) { grid-area: 2 / 2; }   /* Playback */
+  .program-table td:nth-child(7) { grid-area: 2 / 3; }   /* Uebersetzung */
+  .program-table td:nth-child(8) { grid-area: 2 / 4; }   /* Liedtext */
+  .program-table td.program-actions-cell { grid-area: 1 / 5 / 3 / 6; align-self: center; }
+  .program-table td.program-actions-cell::before { content: none; }
+  .program-table input, .program-table select {
+    width: 100%; min-width: 0; min-height: 44px; padding: 8px 10px; border-radius: 5px;
+    font: inherit; font-size: 13px; font-weight: 600; color: var(--lcd-text);
+    background: #0b1418; border: 1px solid #000; box-shadow: inset 0 2px 4px rgba(0,0,0,.8), 0 1px 0 rgba(255,255,255,.05);
+  }
+  .program-table input::placeholder { color: var(--lcd-dim); font-weight: 500; }
+  .program-table select {
+    -webkit-appearance: none; appearance: none; padding-right: 30px; cursor: pointer;
+    background: #0b1418 url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5l5 5 5-5' fill='none' stroke='%238fb3bd' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") no-repeat right 11px center;
+  }
+  .program-table input:focus, .program-table select:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .program-table input:invalid { outline: 2px solid var(--red); outline-offset: 1px; }
+  .program-table [data-program-field="time"] {  /* the cue time reads like the console display */
+    font: 700 17px/1 var(--mono); text-align: center; letter-spacing: .04em;
+    background: var(--lcd-bg); box-shadow: var(--lcd-shadow); text-shadow: var(--lcd-glow);
+  }
+  .program-action-link { display: grid; gap: 6px; min-width: 0; }
+  .program-action-link input { font-size: 12px; min-height: 40px; }
+  .program-delay {
+    display: flex; align-items: center; justify-content: center; min-height: 44px; border-radius: 5px;
+    background: var(--lcd-bg); border: 1px solid #000; box-shadow: var(--lcd-shadow);
+    font: 700 14px/1 var(--mono); color: var(--lcd-dim); white-space: nowrap;
+  }
+  .program-delay.late { color: #ffbf4d; text-shadow: 0 0 6px rgba(255,191,77,.45); }    /* started after its time */
+  .program-delay.early { color: #7ff0a8; text-shadow: 0 0 6px rgba(46,204,113,.45); }   /* started before */
+  .program-delay.ontime { color: var(--lcd-text); text-shadow: var(--lcd-glow); }
+  .program-actions { display: flex; gap: 6px; }
+  .program-actions button { display: grid; place-items: center; width: 44px; height: 44px; padding: 0; }
+  button.program-play {  /* backlit green start key */
+    width: auto; min-width: 78px; padding: 0 16px; color: #fff; border-color: #0b3a1e;
+    font-weight: 800; letter-spacing: .12em; text-transform: uppercase;
+    background: radial-gradient(ellipse at 50% 30%, #5ee38f, #22a356 55%, #146b38);
+    box-shadow: 0 0 12px rgba(46,204,113,.35), inset 0 1px 0 rgba(255,255,255,.35),
+      inset 0 -2px 0 rgba(0,0,0,.25), 0 2px 3px rgba(0,0,0,.55);
+  }
+  button.program-play:hover:not(:disabled) { color: #fff; }
+  .program-draft-row { box-shadow: 0 0 0 1px rgba(79,156,255,.6), 0 0 14px rgba(79,156,255,.18), var(--panel-shadow); }
+  .program-empty {
+    padding: 14px 16px; border-radius: 6px; border: 1px solid #000; background: var(--lcd-bg); box-shadow: var(--lcd-shadow);
+    font: 600 12px/1.4 var(--mono); color: var(--lcd-dim);
+  }
+  @media (max-width: 900px) {
+    .program-table tr { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .program-table td:nth-child(n), .program-table td.program-actions-cell { grid-area: auto; }
+    .program-table td:nth-child(3), .program-table td.program-actions-cell { grid-column: 1 / -1; }
+    .program-actions { justify-content: flex-end; }
+  }
   .pc-saved { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; white-space: nowrap; }
   .pc-keys { display: flex; gap: 4px; }
   .pc-keys button { min-width: 44px; min-height: 44px; padding: 5px 9px; font-size: 11px; }
@@ -639,38 +644,62 @@
   .fader-db { font: 600 12px/1 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--text); min-height: 12px; }
   .fader-db.unk { color: var(--muted); font-weight: 400; }
 
-  /* API documentation block */
-  .companion-categories { display: grid; gap: 14px; max-width: var(--strips-max); }
-  .companion-category { min-width: 0; }
-  .companion-category-head { display: flex; align-items: center; gap: 8px; min-height: 48px; margin-bottom: 8px; }
+  /* Steuerung: every category is a console panel with an engraved, tappable
+     title; its keys carry an LED (blue: external control, green: mixer
+     action). Re-filing and deleting keys only shows in "Bearbeiten" mode. */
+  .companion-categories { display: grid; gap: 12px; }
+  .companion-category {
+    min-width: 0; padding: 4px 12px 12px; border-radius: 8px; border: 1px solid #08090b;
+    background: var(--panel-bg); box-shadow: var(--panel-shadow);
+  }
+  .companion-category-head { display: flex; align-items: center; min-height: 44px; }
+  .companion-category:has(.companion-grid[hidden]) { padding-bottom: 4px; }
   button.companion-category-toggle {
-    flex: 1; min-width: 0; min-height: 48px; padding: 6px 10px; text-align: left;
-    color: #a9bacb; font-size: 12px; text-transform: uppercase; letter-spacing: .08em;
+    flex: 1; display: flex; align-items: center; gap: 10px; min-width: 0; min-height: 44px; padding: 4px 2px;
+    color: #9aa3b2; background: none; border: none; box-shadow: none; text-align: left; border-radius: 6px;
+    font-size: 12px; font-weight: 800; letter-spacing: .16em; text-transform: uppercase; text-shadow: 0 1px 0 #000;
+    -webkit-tap-highlight-color: transparent;
   }
-  button.companion-category-toggle::before { content: "▸"; display: inline-block; width: 18px; color: #7d8594; }
+  button.companion-category-toggle:hover:not(:disabled) { color: #d9dde3; filter: none; }
+  button.companion-category-toggle:active:not(:disabled) { transform: none; box-shadow: none; }
+  button.companion-category-toggle::before {
+    content: "\25B8"; display: inline-block; width: 14px; font-size: 13px; color: #6c7482; transition: transform .15s;
+  }
   button.companion-category-toggle[aria-expanded="true"]::before { transform: rotate(90deg); }
-  .companion-grid {
-    display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px;
+  button.companion-category-toggle::after {
+    content: ""; flex: 1; height: 1px; box-shadow: 0 1px 0 rgba(0,0,0,.6);
+    background: linear-gradient(to right, #343a45, transparent);
   }
+  .companion-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin-top: 4px; }
   .companion-grid[hidden] { display: none; }
-  .companion-button-item { display: grid; gap: 4px; min-width: 0; }
+  .companion-button-item { display: grid; gap: 6px; min-width: 0; align-content: start; }
   button.companion-key {
-    width: 100%; min-width: 0; min-height: 56px; padding: 8px; white-space: normal; overflow-wrap: anywhere;
-    text-align: center; font-size: 12px; line-height: 1.25; letter-spacing: 0;
+    position: relative; width: 100%; min-width: 0; min-height: 64px; padding: 10px 12px 10px 24px;
+    white-space: normal; overflow-wrap: anywhere; text-align: left;
+    font-size: 12px; font-weight: 800; line-height: 1.25; letter-spacing: .06em; text-transform: uppercase;
   }
-  button.companion-key.remote { color: #d7e5f5; }
-  button.companion-key.channel, button.companion-key.group { color: #e7f7ec; border-color: #163d27; }
-  button.companion-key:disabled { cursor: progress; }
-  .companion-button-tools { display: flex; align-items: center; gap: 4px; min-width: 0; }
+  button.companion-key::before {  /* kind LED */
+    content: ""; position: absolute; left: 10px; top: 50%; width: 7px; height: 7px; margin-top: -3.5px; border-radius: 50%;
+    background: #4f9cff; box-shadow: 0 0 6px rgba(79,156,255,.85);
+  }
+  button.companion-key.channel::before, button.companion-key.group::before {
+    background: #3ee07f; box-shadow: 0 0 6px rgba(46,204,113,.85);
+  }
+  button.companion-key:disabled { cursor: progress; opacity: 1; filter: brightness(.8); }
+  .companion-button-tools { display: none; align-items: center; gap: 6px; min-width: 0; }
+  .companion-categories.editing .companion-button-tools { display: flex; }
   .companion-category-select {
-    flex: 1; width: 0; min-width: 0; height: 44px; padding: 4px 6px; border-radius: 4px;
-    color: var(--text); background: #11151a; border: 1px solid #08090b; font: inherit; font-size: 11px;
+    flex: 1; width: 0; min-width: 0; height: 44px; padding: 0 28px 0 10px; border-radius: 5px; cursor: pointer;
+    -webkit-appearance: none; appearance: none; font: inherit; font-size: 12px; font-weight: 600; color: var(--lcd-text);
+    background: #0b1418 url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5l5 5 5-5' fill='none' stroke='%238fb3bd' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") no-repeat right 10px center;
+    border: 1px solid #000; box-shadow: inset 0 2px 4px rgba(0,0,0,.8), 0 1px 0 rgba(255,255,255,.05);
   }
-  button.companion-delete { width: 44px; height: 44px; padding: 0; color: #ff8576; font-size: 18px; }
+  .companion-category-select:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  button.companion-delete { display: grid; place-items: center; width: 44px; height: 44px; padding: 0; flex-shrink: 0; }
   .companion-empty { padding: 8px 0; color: var(--muted); font-size: 12px; }
   .companion-create-dialog { width: min(520px, calc(100vw - 32px)); }
   @media (max-width: 760px) {
-    .companion-grid { grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); }
+    .companion-grid { grid-template-columns: repeat(auto-fill, minmax(124px, 1fr)); }
   }
 
 </style>
@@ -719,7 +748,7 @@
 <section class="panel" data-section="program">
   <div class="panel-head">
     <button class="section-toggle" aria-expanded="true" aria-controls="program-body">Programm</button>
-    <div class="panel-tools"><button id="program-add-btn" class="add-key">+ Programmpunkt</button></div>
+    <div class="panel-tools"><button id="program-add-btn" class="add-key"><svg class="plus-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 4v16M4 12h16"/></svg>Programmpunkt</button></div>
   </div>
   <div id="program-body" class="panel-body">
     <div class="program-table-wrap">
@@ -764,8 +793,9 @@
   <div class="panel-head">
     <button class="section-toggle" aria-expanded="true" aria-controls="companion-body">Steuerung</button>
     <div class="panel-tools">
-      <button id="new-companion-category" class="add-key">+ Kategorie</button>
-      <button id="new-companion-button" class="add-key">+ Button</button>
+      <label class="compact-switch" title="Tasten verschieben und löschen"><input id="companion-edit-toggle" type="checkbox" /><span class="track"></span>Bearbeiten</label>
+      <button id="new-companion-category" class="add-key"><svg class="plus-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 4v16M4 12h16"/></svg>Kategorie</button>
+      <button id="new-companion-button" class="add-key"><svg class="plus-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 4v16M4 12h16"/></svg>Button</button>
     </div>
   </div>
   <div id="companion-body" class="panel-body">
@@ -2456,7 +2486,7 @@ function renderCompanionButtons() {
       remove.dataset.companionDelete = info.id;
       remove.setAttribute("aria-label", `${info.label} löschen`);
       remove.title = "Button löschen";
-      remove.textContent = "×";
+      remove.innerHTML = ICON_TRASH;
       tools.append(categorySelect, remove);
       item.append(press, tools);
       grid.appendChild(item);
@@ -2703,6 +2733,19 @@ function saveUiPrefs(prefs) {
 function setSectionOpen(panel, open) {
   panel.classList.toggle("open", open);
   panel.querySelector(".section-toggle").setAttribute("aria-expanded", String(open));
+}
+
+function initCompanionEditing() {
+  const toggle = $("companion-edit-toggle");
+  const apply = () => $("companion-categories").classList.toggle("editing", toggle.checked);
+  toggle.checked = !!loadUiPrefs().companionEditing;
+  apply();
+  toggle.addEventListener("change", () => {
+    apply();
+    const p = loadUiPrefs();
+    p.companionEditing = toggle.checked;
+    saveUiPrefs(p);
+  });
 }
 
 function initSections() {
@@ -3053,6 +3096,7 @@ $("profile-form").addEventListener("keydown", (event) => {
 
 loadCompanionButtons();
 initSections();
+initCompanionEditing();
 applyBuildMigrations();
 let PROGRAM_ITEMS = [];
 let PROGRAM_GROUPS = {};
@@ -3141,6 +3185,10 @@ function buildProgramRow(item, draft = false) {
   const delay = document.createElement("span");
   delay.className = "program-delay";
   delay.textContent = draft ? "—" : formatProgramDelay(item.last_delay_seconds);
+  const delaySeconds = draft ? null : item.last_delay_seconds;
+  if (delaySeconds !== null && delaySeconds !== undefined) {
+    delay.classList.add(delaySeconds > 0 ? "late" : delaySeconds < 0 ? "early" : "ontime");
+  }
   delay.title = item.last_played_at ? `Zuletzt geklickt: ${item.last_played_at}` : "Noch nicht gestartet";
   programCell(row, "Verzögerung", delay);
   programCell(row, "Titel", programInput("title", "Titel", item.title, "text", 120));
