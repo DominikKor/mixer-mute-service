@@ -99,6 +99,12 @@
     box-shadow: inset 0 1px 2px rgba(255,255,255,.35), 0 1px 2px rgba(0,0,0,.6);
   }
   button.swatch.none { background: repeating-linear-gradient(45deg, #3b4049 0 4px, #1a1d22 4px 8px); }
+  /* "Schwarz" (black microphones): a black dot with a grey ring in the picker;
+     on the strip a grey border without glow, since black would not show. */
+  button.swatch[data-color="black"] { background: #0d0f12; border-color: rgb(112,119,130); }
+  .card[data-color="black"] {
+    box-shadow: 0 0 0 1px rgb(var(--strip-rgb)), inset 0 1px 0 rgba(255,255,255,.08), 0 3px 8px rgba(0,0,0,.5);
+  }
   button.swatch[aria-checked="true"] { outline: 2px solid #f4f6f8; outline-offset: 2px; }
   /* Scribble strip: number, safety LED, name and fader level */
   .scribble {
@@ -1202,11 +1208,11 @@ function startRenameChannel(ch, currentName) {
 
 const STRIP_COLORS = {
   red: "255,75,58", orange: "255,159,28", yellow: "241,210,28", green: "62,224,127",
-  cyan: "53,208,230", blue: "79,156,255", purple: "166,107,255", pink: "255,107,193",
+  black: "112,119,130", blue: "79,156,255", purple: "166,107,255", pink: "255,107,193",
 };
 const STRIP_COLOR_NAMES = {
   red: "Rot", orange: "Orange", yellow: "Gelb", green: "Grün",
-  cyan: "Cyan", blue: "Blau", purple: "Lila", pink: "Pink",
+  black: "Schwarz", blue: "Blau", purple: "Lila", pink: "Pink",
 };
 let CHANNEL_COLORS = {};
 

@@ -35,6 +35,7 @@ def main():
         r = client.get("/channel-colors").json()
         check("no colours yet", r["colors"] == {})
         check("palette offered", "green" in r["palette"] and len(r["palette"]) == 8)
+        check("black replaces light blue", "black" in r["palette"] and "cyan" not in r["palette"])
 
         print("== set / list / clear ==")
         r = client.post("/channels/2/color", json={"color": "green"})

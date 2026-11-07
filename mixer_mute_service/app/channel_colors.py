@@ -22,7 +22,9 @@ from .config import default_config_path
 
 router = APIRouter()
 
-PALETTE = ("red", "orange", "yellow", "green", "cyan", "blue", "purple", "pink")
+# "black" (for black microphones) shows as a grey border, since a black one
+# would vanish on the dark strips. It replaced the former light blue "cyan".
+PALETTE = ("red", "orange", "yellow", "green", "black", "blue", "purple", "pink")
 _lock = asyncio.Lock()
 
 
