@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="de">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -18,6 +18,12 @@
     --panel-shadow: inset 1px 0 0 rgba(255,255,255,.05), inset -1px 0 0 rgba(0,0,0,.45),
       inset 0 1px 0 rgba(255,255,255,.08), 0 3px 8px rgba(0,0,0,.5);
     --header-h: 60px;
+    /* Channel strips, laid out like the console: at most 8 per row, fewer when
+       narrow. The page is as wide as one bank of 8 strips, centred: every
+       section and the header share the strips' left and right edges, and wide
+       screens get even margins instead of an empty band right of the channels. */
+    --strip-gap: 10px; --strips-max: calc(8 * 128px + 7 * var(--strip-gap));
+    --page-pad: 24px; --page-max: calc(var(--strips-max) + 2 * var(--page-pad));
   }
   * { box-sizing: border-box; }
   body {
@@ -52,24 +58,6 @@
     background: repeating-linear-gradient(-45deg, #d9ad10 0 6px, #16181c 6px 12px);
     box-shadow: inset 0 0 0 1px rgba(0,0,0,.6), 0 2px 4px rgba(0,0,0,.6);
   }
-  /* Engraved section labels */
-  h2 {
-    display: flex; align-items: center; gap: 12px; margin: 26px 0 12px;
-    font-size: 11px; font-weight: 800; letter-spacing: .18em; text-transform: uppercase;
-    color: #7d8594; text-shadow: 0 1px 0 #000;
-  }
-  h2::after {
-    content: ""; flex: 1; height: 1px; box-shadow: 0 1px 0 rgba(0,0,0,.6);
-    background: linear-gradient(to right, #343a45, transparent);
-  }
-  /* Channel strips, laid out like the console: at most 8 per row, fewer when narrow */
-  :root {
-    --strip-gap: 10px; --strips-max: calc(8 * 128px + 7 * var(--strip-gap));
-    /* The page is as wide as one bank of 8 strips, centred: every section and
-       the header share the strips' left and right edges, and wide screens get
-       even margins instead of an empty band right of the channels. */
-    --page-pad: 24px; --page-max: calc(var(--strips-max) + 2 * var(--page-pad));
-  }
   .strips {
     display: grid; gap: 14px var(--strip-gap); max-width: var(--strips-max);
     grid-template-columns: repeat(auto-fill, minmax(max(92px, calc((100% - 7 * var(--strip-gap)) / 8)), 1fr));
@@ -77,9 +65,7 @@
   .card {
     display: flex; flex-direction: column; align-items: center; gap: 12px; min-width: 0;
     padding: 8px 7px 12px; border-radius: 7px; border: 1px solid #08090b;
-    background: linear-gradient(to bottom, #2b2f36, #1f2228 30%, #1a1d22);
-    box-shadow: inset 1px 0 0 rgba(255,255,255,.05), inset -1px 0 0 rgba(0,0,0,.45),
-      inset 0 1px 0 rgba(255,255,255,.08), 0 3px 8px rgba(0,0,0,.5);
+    background: var(--panel-bg); box-shadow: var(--panel-shadow);
     position: relative;
   }
   /* Optional strip colour (picked while renaming): coloured border with a soft glow */
@@ -90,45 +76,58 @@
   }
   .color-pop {
     position: absolute; top: 66px; left: 50%; transform: translateX(-50%); z-index: 20;
-    display: grid; grid-template-columns: repeat(3, 26px); gap: 6px; padding: 8px; border-radius: 6px;
+    display: grid; grid-template-columns: repeat(3, 44px); gap: 0; padding: 4px; border-radius: 6px;
     background: var(--panel-bg); border: 1px solid #000;
     box-shadow: 0 10px 24px rgba(0,0,0,.65), inset 0 1px 0 rgba(255,255,255,.08);
   }
+  /* A swatch is a 44 x 44 px tap area; the visible dot is drawn by ::before */
   button.swatch {
-    width: 26px; height: 26px; padding: 0; border-radius: 50%; border: 2px solid #07080a; background: var(--sw);
+    display: grid; place-items: center; width: 44px; height: 44px; padding: 0;
+    background: none; border: none; box-shadow: none;
+  }
+  button.swatch:active:not(:disabled) { transform: none; box-shadow: none; }
+  button.swatch::before {
+    content: ""; width: 26px; height: 26px; border-radius: 50%; border: 2px solid #07080a; background: var(--sw);
     box-shadow: inset 0 1px 2px rgba(255,255,255,.35), 0 1px 2px rgba(0,0,0,.6);
   }
-  button.swatch.none { background: repeating-linear-gradient(45deg, #3b4049 0 4px, #1a1d22 4px 8px); }
+  button.swatch.none::before { background: repeating-linear-gradient(45deg, #3b4049 0 4px, #1a1d22 4px 8px); }
   /* "Schwarz" (black microphones): a black dot with a grey ring in the picker;
      on the strip a grey border without glow, since black would not show. */
-  button.swatch[data-color="black"] { background: #0d0f12; border-color: rgb(112,119,130); }
+  button.swatch[data-color="black"]::before { background: #0d0f12; border-color: rgb(112,119,130); }
   .card[data-color="black"] {
     box-shadow: 0 0 0 1px rgb(var(--strip-rgb)), inset 0 1px 0 rgba(255,255,255,.08), 0 3px 8px rgba(0,0,0,.5);
   }
-  button.swatch[aria-checked="true"] { outline: 2px solid #f4f6f8; outline-offset: 2px; }
+  button.swatch[aria-checked="true"]::before { outline: 2px solid #f4f6f8; outline-offset: 2px; }
   /* Scribble strip: number, safety LED, name and fader level */
   .scribble {
     width: 100%; padding: 5px 6px 6px; border-radius: 4px; text-align: center;
-    background: linear-gradient(to bottom, #0a1316, #0e1a1f);
-    border: 1px solid #000; box-shadow: inset 0 2px 6px rgba(0,0,0,.9), 0 1px 0 rgba(255,255,255,.06);
+    background: var(--lcd-bg); border: 1px solid #000; box-shadow: var(--lcd-shadow);
   }
-  .scribble-top { display: flex; justify-content: space-between; align-items: center; font: 600 10px/1 ui-monospace, SFMono-Regular, Menlo, monospace; color: #5f8590; }
+  .scribble-top { display: flex; justify-content: space-between; align-items: center; font: 600 10px/1 var(--mono); color: var(--lcd-dim); }
   .led { width: 7px; height: 7px; border-radius: 50%; background: #3a3f47; box-shadow: inset 0 1px 1px rgba(0,0,0,.6); }
   .led.safe { background: #3ee07f; box-shadow: 0 0 5px rgba(46,204,113,.85); }
   .led.mute { background: #ff4b3a; box-shadow: 0 0 6px rgba(255,75,58,.85); }
   .led.unsafe { background: #f1c40f; box-shadow: 0 0 5px rgba(241,196,15,.75); }
-  .card .card-title-wrap { justify-content: center; gap: 2px; min-height: 18px; margin-top: 5px; }
-  .card-title {
-    min-width: 0; font-size: 14px; font-weight: 600; color: #d4eef5; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-    text-shadow: 0 0 6px rgba(120,220,255,.3);
+  .card .card-title-wrap { justify-content: center; min-height: 26px; margin-top: 2px; }
+  /* The whole name is the rename key: 44 px tall (it reaches into the padding
+     around it, so the strip does not grow), the pencil shows on hover and
+     always on touch screens. */
+  button.card-title-btn {
+    display: flex; align-items: center; justify-content: center; gap: 3px; width: 100%; min-width: 0;
+    min-height: 44px; margin: -9px 0; padding: 0 2px; background: none; border: none; box-shadow: none; text-shadow: none;
   }
-  .card .rename-btn { display: none; flex-shrink: 0; padding: 0 2px; border: none; background: none; color: #8fb3bd; }
-  .scribble:hover .rename-btn { display: inline-block; }
-  @media (hover: none) { .card .rename-btn { display: inline-block; } }
+  button.card-title-btn:hover:not(:disabled) { filter: none; }
+  button.card-title-btn:active:not(:disabled) { transform: none; box-shadow: none; }
+  .card-title {
+    min-width: 0; font-size: 14px; font-weight: 600; color: var(--lcd-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    text-shadow: var(--lcd-glow);
+  }
+  .card-title-btn .rename-icon { display: none; flex-shrink: 0; font-size: 11px; color: #8fb3bd; }
+  .card-title-btn:hover .rename-icon, .card-title-btn:focus-visible .rename-icon { display: inline; }
+  @media (hover: none) { .card-title-btn .rename-icon { display: inline; } }
   .card .rename-input { width: 100%; font-size: 12px; padding: 1px 4px; }
   .scribble .fader-db { margin-top: 4px; font-size: 11px; color: #8fd3e6; }
   .scribble .fader-db.unk { color: #4d6a72; }
-  .btns { display: flex; gap: 6px; flex-wrap: wrap; }
   /* Raised console keys: neutral by default, backlit blue for primary actions,
      red and yellow caps for group mute and solo */
   button {
@@ -150,7 +149,6 @@
       inset 0 -2px 0 rgba(0,0,0,.25), 0 2px 3px rgba(0,0,0,.55);
   }
   button.danger { color: #ff8576; }
-  button.warn { color: var(--amber); }
   button.key-mute { color: #fff; border-color: #3d0a05; background: linear-gradient(to bottom, #d9483a, #b02a1e 55%, #8f1f15); }
   /* Delete confirmation: the delete key grows into this popup at its own place */
   .delete-confirm {
@@ -169,14 +167,14 @@
   }
   button.key-solo:hover:not(:disabled) { color: #000; }
   button:disabled { opacity: .4; cursor: not-allowed; }
-  #panic-btn { min-width: 132px; padding: 8px 14px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
+  #panic-btn { min-width: 132px; min-height: 44px; padding: 8px 14px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
   #panic-btn.danger {
     color: #fff; border-color: #3d0a05;
     background: radial-gradient(ellipse at 50% 30%, #ff6a58, #d6301f 55%, #9a170d);
   }
   /* Channel mute key: lit red while muted, dark while live, greyed when unknown */
   button.mute-key { /* same width as the fader above it */
-    width: 70px; height: 36px; padding: 0; flex-shrink: 0;
+    width: 70px; height: 44px; padding: 0; flex-shrink: 0;
     font-size: 11px; font-weight: 800; letter-spacing: .12em; color: #9aa1ad;
     border-radius: 5px; border: 1px solid #07080a;
     background: linear-gradient(to bottom, #3d424b, #2b2f36 55%, #23262c);
@@ -221,11 +219,13 @@
   .always-on-control input:disabled + .track { opacity: .6; }
   .always-on-control:has(input:disabled) { cursor: progress; }
   .strips.compact .always-on-control { display: none; }
+  /* The service did not answer: keep the last strips, dimmed and locked */
+  .strips.stale { opacity: .55; }
   /* Update key in the header and its progress dialog */
-  button.update-key { padding: 8px 14px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
+  button.update-key { min-height: 44px; padding: 8px 14px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
   button.update-key.running { color: #8fd3e6; text-shadow: 0 0 6px rgba(120,220,255,.5); }
   /* Plain download link for the display agent update, left of UPDATE */
-  a.download-link { font-size: 12px; color: #9aa1ad; text-decoration: underline; text-underline-offset: 2px; white-space: nowrap; }
+  a.download-link { display: inline-flex; align-items: center; min-height: 44px; font-size: 12px; color: #9aa1ad; text-decoration: underline; text-underline-offset: 2px; white-space: nowrap; }
   a.download-link:hover { color: #d9dde3; }
   a.download-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
   a.download-link[hidden] { display: none; }
@@ -247,7 +247,8 @@
     max-height: 220px; overflow: auto; margin: 0; padding: 8px 10px; border-radius: 5px; border: 1px solid #000;
     background: #07090b; color: #8fb3bd; font: 11px/1.4 var(--mono); white-space: pre-wrap;
   }
-  .update-actions { display: flex; justify-content: flex-end; gap: 8px; }
+  .update-actions { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+  .update-actions button { min-height: 44px; min-width: 110px; }
   /* Toasts read like a message on the console display */
   .toast-wrap {
     position: fixed; right: 16px; bottom: 16px; z-index: 50;
@@ -272,7 +273,7 @@
   .desktop-launch-status { font: 600 11px/1 var(--mono); color: var(--lcd-dim); }
   button.display-key {
     display: inline-grid; grid-template-columns: auto 1fr; align-items: center; gap: 4px 10px;
-    min-width: 200px; max-width: 100%; padding: 8px 14px 9px 12px; text-align: left;
+    min-width: 200px; max-width: 100%; min-height: 48px; padding: 8px 14px 9px 12px; text-align: left;
   }
   .display-key .led { grid-row: span 2; }
   .display-key-title {
@@ -299,7 +300,7 @@
   button.display-edit:hover:not(:disabled) { color: #e6f4f8; filter: none; }
   button.display-edit:active:not(:disabled) { transform: none; box-shadow: none; }
   .display-edit-chip { display: grid; place-items: center; width: 22px; height: 22px; font-size: 13px; line-height: 1; }
-    .display-delete-chip { display: grid; place-items: center; width: 22px; height: 22px; font-size: 16px; line-height: 1; }
+  .display-delete-chip { display: grid; place-items: center; width: 22px; height: 22px; font-size: 16px; line-height: 1; }
   /* The grey "+" tile after the last profile */
   button.display-add {
     display: grid; place-items: center; align-self: stretch; min-width: 72px; min-height: 48px; padding: 0 20px;
@@ -348,7 +349,6 @@
   .pf-display-row { display: flex; gap: 18px 24px; flex-wrap: wrap; align-items: flex-start; }
   .monitor-picker { display: flex; gap: 6px; flex-wrap: wrap; }
   button.monitor-key { width: 52px; height: 44px; padding: 0; font: 800 15px/1 var(--mono); }
-  .profile-dialog .update-actions button { min-height: 44px; min-width: 110px; }
   .profile-dialog .pf-input { min-height: 44px; }
   button.monitor-key[aria-checked="true"] {
     color: #fff; border-color: #0a2550; background: linear-gradient(to bottom, #62adff, #3584e6 55%, #2a6cc4);
@@ -460,7 +460,17 @@
   button.icon-btn { display: grid; place-items: center; width: 44px; height: 44px; padding: 0; }
   .person-actions { display: flex; gap: 6px; margin-top: 10px; }
   .person-actions button { flex: 1; min-height: 44px; }
-  .collapse-btn { width: 28px; height: 28px; padding: 0; font-size: 13px; flex-shrink: 0; }
+  button.collapse-btn {
+    display: grid; place-items: center; width: 44px; height: 44px; margin: 0 -8px; padding: 0; flex-shrink: 0;
+    background: none; border: none; box-shadow: none;
+  }
+  button.collapse-btn:active:not(:disabled) { transform: none; box-shadow: none; }
+  .collapse-chip {
+    display: grid; place-items: center; width: 28px; height: 28px; border-radius: 6px; font-size: 13px;
+    border: 1px solid #07080a; background: linear-gradient(to bottom, #3b4049, #2b2f36 55%, #24272d);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.13), inset 0 -2px 0 rgba(0,0,0,.3), 0 2px 3px rgba(0,0,0,.55);
+  }
+  button.collapse-btn:active:not(:disabled) .collapse-chip { transform: translateY(1px); }
   .person-body { margin-top: 12px; }
   .person-body.collapsed { display: none; }
   .person-channels { margin-bottom: 10px; border-top: 1px solid #08090b; box-shadow: 0 -1px 0 rgba(255,255,255,.04); }
@@ -471,13 +481,13 @@
   }
   .pc-row:last-child { border-bottom: none; }
   .pc-name { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .pc-description { grid-column: 1 / -1; min-width: 0; }
-    .pc-description input {
-      width: 100%; min-width: 0; min-height: 44px; padding: 8px 10px; border-radius: 4px;
-      color: var(--lcd-text); background: #0b1418; border: 1px solid #000;
-      font: inherit; font-size: 12px; line-height: 1.3;
-    }
-    .pc-description input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .pc-description { grid-column: 1 / -1; min-width: 0; }
+  .pc-description input {
+    width: 100%; min-width: 0; min-height: 44px; padding: 8px 10px; border-radius: 4px;
+    color: var(--lcd-text); background: #0b1418; border: 1px solid #000;
+    font: inherit; font-size: 12px; line-height: 1.3;
+  }
+  .pc-description input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
   /* Programm: a cue list, one console panel per item in two lines --
        time  | title    | person      | mute group | keys
        delay | playback | translation | lyrics     | keys
@@ -527,7 +537,7 @@
     background: var(--lcd-bg); box-shadow: var(--lcd-shadow); text-shadow: var(--lcd-glow);
   }
   .program-action-link { display: grid; gap: 6px; min-width: 0; }
-  .program-action-link input { font-size: 12px; min-height: 40px; }
+  .program-action-link input { font-size: 12px; }
   .program-delay {
     display: flex; align-items: center; justify-content: center; min-height: 44px; border-radius: 5px;
     background: var(--lcd-bg); border: 1px solid #000; box-shadow: var(--lcd-shadow);
@@ -567,6 +577,7 @@
   .fader-saved { font: 600 12px/1 var(--mono); color: var(--lcd-text); }
   .fader-saved.none { color: var(--muted); }
   .add-ch-row { display: flex; gap: 8px; align-items: center; margin-top: 6px; flex-wrap: wrap; }
+  .add-ch-row select, .add-ch-row button, .person-create-row input, .person-create-row button { min-height: 44px; }
   .person-create-row { display: none; margin: 0 0 14px; align-items: center; gap: 8px; flex-wrap: wrap; }
   .person-create-row.visible { display: flex; }
   .person-create-row input { width: 260px; max-width: 100%; }
@@ -579,14 +590,19 @@
   .rename-input { width: 180px; }
   .rename-input:focus, .add-ch-row select:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
   .add-ch-row select { cursor: pointer; }
-  /* Channel rename */
   .card-title-wrap { display: flex; align-items: center; gap: 6px; }
-  .rename-btn { padding: 2px 5px; font-size: 11px; opacity: .55; color: #8fb3bd; background: none; border: none; box-shadow: none; }
-  .rename-btn:hover:not(:disabled) { opacity: 1; filter: none; }
+  /* Group rename: a pencil with a 44 x 44 px tap area */
+  button.rename-btn {
+    display: grid; place-items: center; flex-shrink: 0; width: 44px; height: 44px; margin: 0 -6px; padding: 0;
+    font-size: 12px; opacity: .55; color: #8fb3bd; background: none; border: none; box-shadow: none;
+  }
+  button.rename-btn:hover:not(:disabled) { opacity: 1; filter: none; }
+  button.rename-btn:active:not(:disabled) { transform: none; box-shadow: none; }
 
   /* Horizontal faders in the group editor (same cap as the channel faders) */
   .person-fader-wrap { display: flex; align-items: center; gap: 10px; }
-  .fader-slider { -webkit-appearance: none; appearance: none; width: 140px; height: 24px; margin: 0; background: transparent; cursor: pointer; }
+  .fader-slider { -webkit-appearance: none; appearance: none; width: 140px; height: 44px; margin: 0; background: transparent; cursor: pointer; }
+  .fader-slider:disabled { cursor: not-allowed; opacity: .45; }
   .fader-slider:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
   .fader-slider::-webkit-slider-runnable-track {
     height: 6px; border-radius: 3px; background: linear-gradient(to bottom, #050608, #121419 60%, #050608);
@@ -625,7 +641,7 @@
   .fader-tick.unity::before, .fader-tick.unity::after { background: #8b93a1; width: 11px; }
   .fader-tick span {
     position: absolute; left: 0; width: 19px; transform: translateY(-50%); text-align: right;
-    font: 600 9px/1 ui-monospace, SFMono-Regular, Menlo, monospace; color: #6c7482;
+    font: 600 9px/1 var(--mono); color: #6c7482;
   }
   .fader-tick.unity span { color: var(--text); }
   .fader-slot {
@@ -643,6 +659,9 @@
     box-shadow: 0 4px 8px rgba(0,0,0,.65), 0 1px 2px rgba(0,0,0,.8),
       inset 0 1px 0 rgba(255,255,255,.35), inset 0 -1px 0 rgba(0,0,0,.6);
   }
+  .fader-cap::before { /* 44 x 44 px tap area around the 40 x 28 px cap */
+    content: ""; position: absolute; left: -2px; right: -2px; top: -8px; bottom: -8px;
+  }
   .fader-cap::after { /* the indicator line across the cap */
     content: ""; position: absolute; left: 3px; right: 3px; top: 50%; height: 2px; margin-top: -1px;
     background: #f4f6f8; border-radius: 1px; box-shadow: 0 0 4px rgba(255,255,255,.45);
@@ -652,7 +671,7 @@
   .fader:focus-visible .fader-cap { outline: 2px solid var(--accent); outline-offset: 2px; }
   .fader.disabled .fader-cap { cursor: not-allowed; filter: grayscale(1) brightness(.6); }
   .fader.disabled .fader-cap::after { background: #8b93a1; box-shadow: none; }
-  .fader-db { font: 600 12px/1 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--text); min-height: 12px; }
+  .fader-db { font: 600 12px/1 var(--mono); color: var(--text); min-height: 12px; }
   .fader-db.unk { color: var(--muted); font-weight: 400; }
 
   /* Steuerung: every category is a console panel with an engraved, tappable
@@ -707,7 +726,6 @@
   }
   .companion-category-select:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
   button.companion-delete { display: grid; place-items: center; width: 44px; height: 44px; padding: 0; flex-shrink: 0; }
-  .companion-empty { padding: 8px 0; color: var(--muted); font-size: 12px; }
   .companion-create-dialog { width: min(520px, calc(100vw - 32px)); }
   @media (max-width: 760px) {
     .companion-grid { grid-template-columns: repeat(auto-fill, minmax(124px, 1fr)); }
@@ -937,8 +955,12 @@
 
 <script>
 const $ = (id) => document.getElementById(id);
+// LAST_STATE is what the page shows (may carry optimistic changes);
+// CONFIRMED_STATE is the last /state the service actually returned.
 let LAST_STATE = { channels: {}, enabled: true, mixer_connected: false };
-let MAX_CH = 8;
+let CONFIRMED_STATE = LAST_STATE;
+let STATE_STALE = false;      // the last /state request failed
+let SERVICE_ENABLED = null;   // sending enabled (from /health); null = unknown
 const UI_BUILD_ID = "__BUILD_ID__";
 let PERSONS_BOOTSTRAPPED = false;
 
@@ -1056,6 +1078,7 @@ function faderStripHtml(ch) {
 }
 
 function faderBlockReason(c) {
+  if (STATE_STALE) return "Dienst nicht erreichbar";
   if (!LAST_STATE.mixer_connected) return "keine Mixer-Verbindung";
   if (!LAST_STATE.enabled) return "Panic aktiv";
   if (!c || c.fader_value === null || c.fader_value === undefined) return "Faderwert unbekannt";
@@ -1099,12 +1122,7 @@ async function pumpFader(f) {
   f.pending = null;
   f.inflight = true;
   f.lastSent = Date.now();
-  let r;
-  try {
-    r = await api("POST", `/channels/${f.ch}/fader`, { value });
-  } catch (_) {
-    r = { ok: false, status: 0, data: { reason: "service unreachable" } };
-  }
+  const r = await api("POST", `/channels/${f.ch}/fader`, { value });
   f.inflight = false;
   f.holdUntil = Date.now() + FADER_HOLD_MS;
   if (!(r.ok && r.data.ok !== false)) {
@@ -1207,7 +1225,7 @@ function migrateFaderPresets() {
 
 function startRenameChannel(ch, currentName) {
   const titleEl = document.querySelector(`[data-rename-ch="${ch}"]`);
-  if (!titleEl) return;
+  if (!titleEl || !CARDS[ch]) return;
   const wrap = titleEl.closest(".card-title-wrap");
   if (!wrap) return;
   const input = document.createElement("input");
@@ -1271,8 +1289,7 @@ function applyStripColor(ch) {
 }
 
 async function loadChannelColors() {
-  let r;
-  try { r = await api("GET", "/channel-colors"); } catch (_) { return; }
+  const r = await api("GET", "/channel-colors");
   if (!r.ok || !r.data || typeof r.data.colors !== "object") return;
   CHANNEL_COLORS = r.data.colors;
   for (const ch of Object.keys(CARDS)) applyStripColor(ch);
@@ -1290,8 +1307,7 @@ async function setChannelColor(ch, color, pop) {
   if (color) CHANNEL_COLORS[key] = color; else delete CHANNEL_COLORS[key];
   applyStripColor(ch);
   markSwatches(pop, color);
-  let r;
-  try { r = await api("POST", `/channels/${ch}/color`, { color }); } catch (_) { r = { ok: false, status: 0, data: {} }; }
+  const r = await api("POST", `/channels/${ch}/color`, { color });
   if (!(r.ok && r.data.ok !== false)) {
     if (prev) CHANNEL_COLORS[key] = prev; else delete CHANNEL_COLORS[key];
     applyStripColor(ch);
@@ -1332,72 +1348,143 @@ function startRenamePerson(personId, currentName) {
   input.className = "rename-input";
   input.value = currentName;
   input.maxLength = 64;
-  const finish = () => {
+  let done = false;
+  const finish = (save) => {
+    if (done) return;
+    done = true;
     const val = input.value.trim();
-    if (val && val !== currentName) {
-      const list = loadPersons();
-      const p = list.find(x => x.id === personId);
-      if (p) {
-        p.name = val;
-        savePersons(list);
-        syncPersonGroupsToBackend(list, currentName);
-      }
-    }
-    renderPersons();
+    input.remove();  // before redrawing: a focused field would hold the redraw back
+    if (save && val && val !== currentName) renamePerson(personId, currentName, val);
+    renderPersons(true);
   };
   input.addEventListener("keydown", e => {
-    if (e.key === "Enter") { e.preventDefault(); input.blur(); }
-    if (e.key === "Escape") { renderPersons(); }
+    if (e.key === "Enter") { e.preventDefault(); finish(true); }
+    if (e.key === "Escape") { e.preventDefault(); finish(false); }
   });
-  input.addEventListener("blur", finish);
+  input.addEventListener("blur", () => finish(true));
   wrap.innerHTML = "";
   wrap.appendChild(input);
   input.focus();
   input.select();
 }
 
+// ---- Mute groups ------------------------------------------------------------
+// The service (groups.json) is the source of truth for which channels belong
+// to a group. This page keeps per-device extras next to it in localStorage:
+// saved fader values, descriptions and the open/closed state. Changes made
+// here are pushed through one serialized queue; changes made on another
+// device are pulled in every few seconds.
+
+const GROUP_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9 _-]{0,63}$/;
+const GROUP_NAME_HINT = "Name: Buchstaben, Ziffern, Leerzeichen, - und _ (max. 64), beginnt mit Buchstabe oder Ziffer";
+
+function groupNameError(name, ignoreId = null) {
+  if (!GROUP_NAME_RE.test(name)) return GROUP_NAME_HINT;
+  const taken = loadPersons().some(p => p.id !== ignoreId && p.name.trim().toLowerCase() === name.toLowerCase());
+  return taken ? `Eine Mute Gruppe „${name}“ gibt es schon` : null;
+}
+
 function loadPersons() {
   try { return JSON.parse(localStorage.getItem("mixer_persons") || "[]"); } catch { return []; }
 }
 function savePersons(list) {
-  localStorage.setItem("mixer_persons", JSON.stringify(list));
+  try { localStorage.setItem("mixer_persons", JSON.stringify(list)); } catch (_) {}
 }
+
+// Names of the groups the service had when this device last looked. A local
+// group that is missing on the service was deleted on another device only if
+// it was seen there before; otherwise it has simply not been sent yet.
+function loadSeenGroupNames() {
+  try { return new Set(JSON.parse(localStorage.getItem("mixer_groups_seen") || "[]")); } catch { return new Set(); }
+}
+function saveSeenGroupNames(names) {
+  try { localStorage.setItem("mixer_groups_seen", JSON.stringify([...names])); } catch (_) {}
+}
+
+// Make the local list match the service's groups, keeping the local extras.
+function mergeBackendGroups(backend) {
+  const seen = loadSeenGroupNames();
+  const local = loadPersons();
+  const byName = new Map(local.map(p => [p.name, p]));
+  const merged = [];
+  for (const [name, chs] of Object.entries(backend)) {
+    const prev = byName.get(name);
+    const channels = {};
+    for (const ch of chs || []) {
+      channels[String(ch)] = (prev && prev.channels && prev.channels[String(ch)]) || { fader_hex: null, set_at: null };
+    }
+    merged.push({ ...(prev || { id: genId() }), name, channels });
+  }
+  const dropped = [];
+  for (const p of local) {
+    if (name_in(backend, p.name)) continue;
+    if (personChannelList(p).length && seen.has(p.name)) dropped.push(p.name);
+    else merged.push(p);  // no channels yet, or not sent yet
+  }
+  saveSeenGroupNames(Object.keys(backend));
+  // Keep the local order; groups new to this device go to the end.
+  const order = new Map(local.map((p, i) => [p.name, i]));
+  merged.sort((a, b) => (order.has(a.name) ? order.get(a.name) : 1e9) - (order.has(b.name) ? order.get(b.name) : 1e9));
+  const changed = JSON.stringify(merged) !== JSON.stringify(local);
+  if (changed) savePersons(merged);
+  if (dropped.length) toast(`Auf einem anderen Gerät gelöscht: ${dropped.join(", ")}`, false);
+  return changed;
+}
+function name_in(obj, name) { return Object.prototype.hasOwnProperty.call(obj, name); }
+
+let GROUPS_SIGNATURE = "";
+// The service's groups changed: update the group lists of Programm and Steuerung.
+function applyBackendGroups(backend) {
+  const sig = JSON.stringify(backend);
+  if (sig === GROUPS_SIGNATURE) return;
+  GROUPS_SIGNATURE = sig;
+  PROGRAM_GROUPS = backend;
+  COMPANION_GROUPS = backend;
+  renderProgramItems();
+}
+
 async function bootstrapPersonsFromBackend() {
   if (PERSONS_BOOTSTRAPPED) return;
-
-  const existing = loadPersons();
-  if (existing.length) {
-    PERSONS_BOOTSTRAPPED = true;
-    await syncPersonGroupsToBackend(existing);
-    return;
-  }
-
   const r = await api("GET", "/groups");
   if (!r.ok || !r.data || typeof r.data !== "object") return;
-
-  const names = Object.keys(r.data);
-  if (!names.length) {
-    PERSONS_BOOTSTRAPPED = true;
-    return;
-  }
-
-  const persons = names.map((name) => {
-    const channels = {};
-    for (const ch of (r.data[name] || [])) {
-      channels[String(ch)] = { fader_hex: null, set_at: null };
-    }
-    return { id: genId(), name, channels };
-  });
-
-  savePersons(persons);
-  normalizeCollapsedGroups();
   PERSONS_BOOTSTRAPPED = true;
+  // Local groups the service never had (from the times when groups lived only
+  // in this browser, or a change that did not get through) are sent once now.
+  // A group the service had and lost was deleted on another device: it is not
+  // brought back from here.
+  let backend = r.data;
+  const seen = loadSeenGroupNames();
+  let created = false;
+  for (const p of loadPersons()) {
+    const chs = personChannelList(p);
+    if (!chs.length || name_in(backend, p.name) || seen.has(p.name) || !GROUP_NAME_RE.test(p.name)) continue;
+    const c = await api("POST", "/groups", { name: p.name, channels: chs });
+    if (c.ok && c.data.ok !== false) created = true;
+  }
+  if (created) {
+    const again = await api("GET", "/groups");
+    if (again.ok && again.data && typeof again.data === "object") backend = again.data;
+  }
+  mergeBackendGroups(backend);
+  applyBackendGroups(backend);
+  normalizeCollapsedGroups();
+  renderPersons();
 }
+
+// Pull changes made on other devices (skipped while local changes are queued).
+async function pullGroupsFromBackend() {
+  if (!PERSONS_BOOTSTRAPPED || GROUP_SYNC_PENDING) return;
+  const r = await api("GET", "/groups");
+  if (!r.ok || !r.data || typeof r.data !== "object" || GROUP_SYNC_PENDING) return;
+  if (mergeBackendGroups(r.data)) renderPersons();
+  applyBackendGroups(r.data);
+}
+
 function loadCollapsedGroups() {
   try { return JSON.parse(localStorage.getItem("mixer_person_collapsed") || "{}"); } catch { return {}; }
 }
 function saveCollapsedGroups(state) {
-  localStorage.setItem("mixer_person_collapsed", JSON.stringify(state || {}));
+  try { localStorage.setItem("mixer_person_collapsed", JSON.stringify(state || {})); } catch (_) {}
 }
 function isGroupCollapsed(personId) {
   const state = loadCollapsedGroups();
@@ -1405,11 +1492,9 @@ function isGroupCollapsed(personId) {
 }
 function toggleGroupCollapsed(personId) {
   const state = loadCollapsedGroups();
-  const key = String(personId);
-  const current = isGroupCollapsed(personId);
-  state[key] = !current;
+  state[String(personId)] = !isGroupCollapsed(personId);
   saveCollapsedGroups(state);
-  renderPersons();
+  renderPersons(true);
 }
 
 function normalizeCollapsedGroups() {
@@ -1430,43 +1515,111 @@ function normalizeCollapsedGroups() {
 }
 function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
 
-async function syncPersonGroupsToBackend(persons, removedName = null) {
+// ---- Pushing group changes to the service ------------------------------------
+// Every change only edits localStorage and then queues a sync. The syncs run
+// one after another and always send the current local list, so quick edits
+// (add, add, remove) cannot overtake each other. A failing group is reported
+// and skipped; the others are still sent.
+
+let GROUP_SYNC = Promise.resolve();
+let GROUP_SYNC_PENDING = 0;
+const GROUP_SYNC_REMOVED = new Set();   // names deleted locally
+const GROUP_SYNC_RENAMES = [];          // { from, to }
+
+function syncPersonGroupsToBackend({ removed = null, rename = null } = {}) {
+  if (removed) GROUP_SYNC_REMOVED.add(removed);
+  if (rename) GROUP_SYNC_RENAMES.push(rename);
+  GROUP_SYNC_PENDING++;
+  GROUP_SYNC = GROUP_SYNC.then(runGroupSync).catch(() => {}).finally(() => { GROUP_SYNC_PENDING--; });
+  return GROUP_SYNC;
+}
+
+async function runGroupSync() {
   const current = await api("GET", "/groups");
   if (!current.ok || !current.data || typeof current.data !== "object") {
     toast("Mute Gruppen konnten nicht mit dem Dienst synchronisiert werden", false);
     return;
   }
-
   const known = new Set(Object.keys(current.data));
-  if (removedName && !persons.some(p => p.name === removedName) && known.has(removedName)) {
-    const removed = await api("POST", `/groups/${encodeURIComponent(removedName)}/delete`);
-    if (!removed.ok) {
-      toast(`${removedName}: Gruppen-Synchronisierung fehlgeschlagen`, false);
-      return;
-    }
-    known.delete(removedName);
-  }
+  const synced = new Set();   // names whose channels now match on the service
+  const persons = loadPersons();
+  const localNames = new Set(persons.map(p => p.name.trim()));
+  const fail = (name, r) => toast(`${name}: Synchronisierung fehlgeschlagen (${(r.data && r.data.reason) || "HTTP " + r.status})`, false);
 
   for (const person of persons) {
     const name = person.name.trim();
+    if (!GROUP_NAME_RE.test(name)) { toast(`${name}: ${GROUP_NAME_HINT}`, false); continue; }
     const channels = personChannelList(person);
     const encodedName = encodeURIComponent(name);
-    let result;
+    let result = null;
     if (!channels.length) {
       if (!known.has(name)) continue;
       result = await api("POST", `/groups/${encodedName}/delete`);
-      known.delete(name);
+      if (result.ok) known.delete(name);
     } else if (known.has(name)) {
+      const same = JSON.stringify([...current.data[name]].sort((a, b) => a - b)) === JSON.stringify(channels);
+      if (same) { synced.add(name); continue; }
       result = await api("POST", `/groups/${encodedName}/update`, { channels });
     } else {
       result = await api("POST", "/groups", { name, channels });
-      if (result.ok) known.add(name);
+      if (result.ok && result.data.ok !== false) known.add(name);
     }
-    if (result && (!result.ok || result.data.ok === false)) {
-      toast(`${name}: Gruppen-Synchronisierung fehlgeschlagen (${result.data.reason || "HTTP " + result.status})`, false);
-      return;
-    }
+    if (result && (!result.ok || result.data.ok === false)) fail(name, result);
+    else if (channels.length) synced.add(name);
   }
+
+  // Renames: point program items at the new name, then remove the old group --
+  // only once the new one exists, so nothing is lost if creating it failed.
+  for (const { from, to } of GROUP_SYNC_RENAMES.splice(0)) {
+    if (!known.has(from)) continue;
+    if (!synced.has(to)) { toast(`„${from}“ bleibt auf dem Dienst, bis „${to}“ gespeichert ist`, false); continue; }
+    await repointProgramGroup(from, to);
+    GROUP_SYNC_REMOVED.add(from);
+  }
+  for (const name of [...GROUP_SYNC_REMOVED]) {
+    GROUP_SYNC_REMOVED.delete(name);
+    if (localNames.has(name) || !known.has(name)) continue;
+    const r = await api("POST", `/groups/${encodeURIComponent(name)}/delete`);
+    if (!r.ok || r.data.ok === false) fail(name, r);
+  }
+  const after = await api("GET", "/groups");
+  if (after.ok && after.data && typeof after.data === "object") applyBackendGroups(after.data);
+}
+
+async function repointProgramGroup(from, to) {
+  const items = await api("GET", "/program/items");
+  if (!items.ok || !Array.isArray(items.data)) return;
+  let moved = 0;
+  for (const item of items.data.filter(i => i.group === from)) {
+    const body = {};
+    for (const field of PROGRAM_FIELDS) body[field] = item[field] === undefined ? null : item[field];
+    body.group = to;
+    const r = await api("PUT", `/program/items/${encodeURIComponent(item.id)}`, body);
+    if (r.ok && r.data.ok !== false) moved++;
+    else toast(`Programmpunkt „${item.title}“: ${(r.data && r.data.reason) || "HTTP " + r.status}`, false);
+  }
+  if (moved) await loadProgramItems();
+}
+
+// Steuerung keys name their group and cannot be re-pointed here, so a group
+// that keys still use keeps its name.
+async function renamePerson(personId, oldName, newName) {
+  const err = groupNameError(newName, personId);
+  if (err) { toast(err, false); return; }
+  const buttons = await api("GET", "/companion/buttons");
+  if (!buttons.ok) { toast("Umbenennen nicht möglich: Dienst nicht erreichbar", false); return; }
+  const users = (buttons.data.buttons || []).filter(b => b.kind === "group" && b.group === oldName);
+  if (users.length) {
+    toast(`Umbenennen nicht möglich: Steuerungs-Taste ${users.map(b => `„${b.label}“`).join(", ")} nutzt „${oldName}“`, false);
+    return;
+  }
+  const list = loadPersons();
+  const p = list.find(x => x.id === personId);
+  if (!p) return;
+  p.name = newName;
+  savePersons(list);
+  renderPersons(true);
+  syncPersonGroupsToBackend({ rename: { from: oldName, to: newName } });
 }
 
 function openPersonCreateRow() {
@@ -1486,23 +1639,22 @@ function closePersonCreateRow() {
 
 function savePerson() {
   const name = $("new-person-name").value.trim();
-  if (!name) { toast("Name required", false); return; }
+  const err = name ? groupNameError(name) : "Bitte einen Namen eingeben";
+  if (err) { toast(err, false); $("new-person-name").focus(); return; }
   const list = loadPersons();
-  const person = { id: genId(), name, channels: {} };
-  list.push(person);
+  list.push({ id: genId(), name, channels: {} });
   savePersons(list);
-  syncPersonGroupsToBackend(list);
+  syncPersonGroupsToBackend();
   closePersonCreateRow();
-  renderPersons();
+  renderPersons(true);
 }
 
 function deletePerson(id) {
   const previous = loadPersons();
   const removed = previous.find(p => p.id === id);
-  const list = previous.filter(p => p.id !== id);
-  savePersons(list);
-  if (removed) syncPersonGroupsToBackend(list, removed.name);
-  renderPersons();
+  savePersons(previous.filter(p => p.id !== id));
+  if (removed) syncPersonGroupsToBackend({ removed: removed.name });
+  renderPersons(true);
 }
 
 function duplicatePerson(id) {
@@ -1512,16 +1664,20 @@ function duplicatePerson(id) {
   let name = `${src.name} copy`;
   const names = list.map(p => p.name);
   for (let n = 2; names.includes(name); n++) name = `${src.name} copy ${n}`;
+  if (!GROUP_NAME_RE.test(name)) { toast(GROUP_NAME_HINT, false); return; }
   list.push({ id: genId(), name, channels: JSON.parse(JSON.stringify(src.channels || {})) });
   savePersons(list);
-  syncPersonGroupsToBackend(list);
-  renderPersons();
+  syncPersonGroupsToBackend();
+  renderPersons(true);
   toast(`Mute Gruppe dupliziert als "${name}"`, true);
 }
 
+// "Set" stores the channel's current fader position -- only a fresh, safe
+// value the service has actually observed.
 function setPersonChannelFader(personId, ch) {
   const c = LAST_STATE.channels && LAST_STATE.channels[ch];
-  if (!c || !c.fader_hex) { toast(`Channel ${ch}: no fader value known`, false); return; }
+  const reason = channelUnsafeReason(LAST_STATE, ch) || (c && !isValidFaderHex(c.fader_hex) ? "Faderwert unbekannt" : null);
+  if (reason) { toast(`Kanal ${ch}: nicht gespeichert – ${reason}`, false); return; }
   const list = loadPersons();
   const p = list.find(p => p.id === personId);
   if (!p) return;
@@ -1529,8 +1685,8 @@ function setPersonChannelFader(personId, ch) {
   const key = String(ch);
   p.channels[key] = { ...(p.channels[key] || {}), fader_hex: c.fader_hex, set_at: Date.now() };
   savePersons(list);
-  renderPersons();
-  toast(`Channel ${ch}: fader ${c.fader_hex} saved`, true);
+  renderPersons(true);
+  toast(`Kanal ${ch}: ${formatDb(c.fader_value)} gespeichert`, true);
 }
 
 // ---- Group actions: all or nothing ---------------------------------------
@@ -1540,6 +1696,7 @@ function setPersonChannelFader(personId, ch) {
 // sent; channels already sent stay as they are -- no automatic recovery writes.
 
 function channelUnsafeReason(state, ch) {
+  if (state === LAST_STATE && STATE_STALE) return "Dienst nicht erreichbar";
   if (!state.mixer_connected) return "keine Mixer-Verbindung";
   if (!state.enabled) return "Panic aktiv";
   const c = state.channels && state.channels[ch];
@@ -1552,9 +1709,8 @@ function channelUnsafeReason(state, ch) {
 
 // buildSteps(state) returns the commands as [{ ch, path, body }], in send order.
 async function runGroupAction(label, buildSteps) {
-  let st;
-  try { st = await api("GET", "/state"); } catch (_) { st = { ok: false }; }
-  if (!st.ok) { toast(`${label}: Status nicht abrufbar, nichts gesendet`, false); return; }
+  const st = await api("GET", "/state");
+  if (!st.ok || !st.data || !st.data.channels) { toast(`${label}: Status nicht abrufbar, nichts gesendet`, false); return; }
   const steps = buildSteps(st.data);
   if (!steps.length) { toast(`${label}: nichts zu tun`, true); await refresh(); return; }
   const blocked = steps
@@ -1567,8 +1723,7 @@ async function runGroupAction(label, buildSteps) {
   }
   let sent = 0;
   for (const s of steps) {
-    let r;
-    try { r = await api("POST", s.path, s.body); } catch (_) { r = { ok: false, status: 0, data: { reason: "service unreachable" } }; }
+    const r = await api("POST", s.path, s.body);
     if (!(r.ok && r.data.ok !== false)) {
       toast(`${label} abgebrochen bei ch${s.ch}: ${r.data.reason || "HTTP " + r.status} (${sent} von ${steps.length} gesendet)`, false);
       await refresh();
@@ -1627,7 +1782,7 @@ async function usePersonChannelFader(personId, ch) {
   const list = loadPersons();
   const p = list.find(p => p.id === personId);
   if (!p || !p.channels || !p.channels[String(ch)] || !p.channels[String(ch)].fader_hex) {
-    toast(`Channel ${ch}: no saved fader value`, false); return;
+    toast(`Kanal ${ch}: kein gespeicherter Faderwert`, false); return;
   }
   const fader_hex = p.channels[String(ch)].fader_hex;
   const saved = faderHexToValue(fader_hex);
@@ -1656,7 +1811,7 @@ async function setPersonChannelFaderValue(personId, ch, value) {
   const key = String(ch);
   p.channels[key] = { ...(p.channels[key] || {}), fader_hex, set_at: Date.now() };
   savePersons(list);
-  renderPersons();
+  renderPersons(true);
 
   const r = await api("POST", `/channels/${ch}/fader`, { value });
   if (r.ok && r.data.ok !== false) {
@@ -1672,8 +1827,8 @@ function removePersonChannel(personId, ch) {
   const p = list.find(p => p.id === personId);
   if (p && p.channels) delete p.channels[String(ch)];
   savePersons(list);
-  syncPersonGroupsToBackend(list);
-  renderPersons();
+  syncPersonGroupsToBackend();
+  renderPersons(true);
 }
 
 function addPersonChannel(personId, ch) {
@@ -1684,8 +1839,8 @@ function addPersonChannel(personId, ch) {
   if (!p.channels) p.channels = {};
   if (!p.channels[String(ch)]) p.channels[String(ch)] = { fader_hex: null, set_at: null };
   savePersons(list);
-  syncPersonGroupsToBackend(list);
-  renderPersons();
+  syncPersonGroupsToBackend();
+  renderPersons(true);
 }
 
 const ICON_COPY = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/></svg>`;
@@ -1693,24 +1848,23 @@ const ICON_CHECK = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" 
 const ICON_X = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg>`;
 const ICON_TRASH = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6"/></svg>`;
 
-function renderPersons() {
-  // Skip re-render if a select/input inside persons or the person create row is focused
-  const focused = document.activeElement;
-  const personsEl = $("persons");
-  const createEl = $("person-create-row");
-  if (focused) {
-    const tag = focused.tagName;
-    if (tag === "INPUT" || tag === "SELECT") {
-      if ((personsEl && personsEl.contains(focused)) || (createEl && createEl.contains(focused))) return;
-    }
-  }
+// While a group's small fader is held, the cards must not be redrawn: that
+// would drop the slider out from under the finger (iPad) or the mouse.
+let PERSON_SLIDER_ACTIVE = false;
 
-  const wrap = $("persons");
+// force: the user changed something here, redraw even if a field has focus
+// (the field being edited is not part of that change).
+function renderPersons(force = false) {
+  const focused = document.activeElement;
+  if (PERSON_SLIDER_ACTIVE) return;
+  const typing = focused && (focused.tagName === "SELECT" || (focused.tagName === "INPUT" && focused.type !== "range"));
+  if (!force && typing && ($("persons").contains(focused) || $("person-create-row").contains(focused))) return;
+  setPersonsHtml($("persons"), buildPersonsHtml());
+}
+
+function buildPersonsHtml() {
   const list = loadPersons();
-  if (!list.length) {
-    setPersonsHtml(wrap, `<div class="muted-text">Noch keine Mute Gruppen. Oben erstellen.</div>`);
-    return;
-  }
+  if (!list.length) return `<div class="muted-text">Noch keine Mute Gruppen. Oben erstellen.</div>`;
   let html = "";
   const chans = LAST_STATE.channels || {};
   const allChNums = Object.keys(chans).map(Number).sort((a, b) => a - b);
@@ -1718,8 +1872,10 @@ function renderPersons() {
   for (const person of list) {
     const collapsed = isGroupCollapsed(person.id);
     const assignedChs = Object.keys(person.channels || {}).map(Number).sort((a, b) => a - b);
-    // The LED only lights when every channel of the group is observed muted.
-    const allMuted = assignedChs.length > 0 && assignedChs.every(ch => chans[ch] && chans[ch].muted === true);
+    // The LED lights when every channel of the group is observed muted.
+    // "Immer an" channels are left out, as the service does for group toggle.
+    const ledChs = assignedChs.filter(ch => !(chans[ch] && chans[ch].always_on));
+    const allMuted = ledChs.length > 0 && ledChs.every(ch => chans[ch] && chans[ch].muted === true);
     const availableChs = allChNums.filter(ch => !assignedChs.includes(ch));
 
     const rows = assignedChs.map(ch => {
@@ -1731,8 +1887,10 @@ function renderPersons() {
         ? `<code class="fader-saved" title="${escapeAttr(entry.fader_hex)}">${savedValue === null ? "ungültig" : formatDb(savedValue)}</code>`
         : `<span class="fader-saved none">—</span>`;
       const liveValue = chInfo && chInfo.fader_value !== undefined ? chInfo.fader_value : null;
-      const baseValue = savedValue !== null ? savedValue : (liveValue !== null ? liveValue : 0);
-      const setAt = entry.set_at ? new Date(entry.set_at).toLocaleTimeString() : "never";
+      // Start at the saved value, else the live one; with neither the slider is
+      // locked instead of starting at the bottom (-inf).
+      const baseValue = savedValue !== null ? savedValue : liveValue;
+      const setAt = entry.set_at ? new Date(entry.set_at).toLocaleTimeString() : "nie";
       const description = escapeAttr(entry.description || "");
       // Two lines per channel so three groups fit side by side: name, saved
       // value and keys on top, the fader below.
@@ -1757,33 +1915,34 @@ function renderPersons() {
             data-action="person-fader-input"
             data-pid="${escapeAttr(person.id)}"
             data-ch="${ch}"
-            value="${baseValue.toFixed(0)}"
+            value="${baseValue === null ? 0 : baseValue.toFixed(0)}"
+            ${baseValue === null ? 'disabled title="Faderwert unbekannt"' : ""}
             aria-label="Fader ${chName}"
           />
-          <span class="fader-label" data-person-fader-label="${escapeAttr(person.id)}-${ch}">${formatDb(baseValue)}</span>
+          <span class="fader-label">${formatDb(baseValue)}</span>
         </div>
       </div>`;
     }).join("");
 
     const addSelect = availableChs.length
       ? `<div class="add-ch-row">
-          <select id="add-ch-${escapeAttr(person.id)}">
-            <option value="">Add channel...</option>
+          <select id="add-ch-${escapeAttr(person.id)}" aria-label="Kanal hinzufügen">
+            <option value="">Kanal hinzufügen …</option>
             ${availableChs.map(ch => {
               return `<option value="${ch}">${escapeHtml(getChannelDisplayName(ch, chans[ch] && chans[ch].name))} (ch ${ch})</option>`;
             }).join("")}
           </select>
-          <button data-action="person-add-ch" data-pid="${escapeAttr(person.id)}">Add</button>
+          <button data-action="person-add-ch" data-pid="${escapeAttr(person.id)}">Hinzufügen</button>
         </div>`
       : "";
 
     html += `<div class="person-card">
       <div class="person-head">
         <div class="person-name-wrap">
-          <button class="collapse-btn" data-action="person-toggle-collapse" data-pid="${escapeAttr(person.id)}" title="${collapsed ? "Ausklappen" : "Einklappen"}">${collapsed ? "▸" : "▾"}</button>
+          <button class="collapse-btn" data-action="person-toggle-collapse" data-pid="${escapeAttr(person.id)}" title="${collapsed ? "Ausklappen" : "Einklappen"}" aria-expanded="${!collapsed}"><span class="collapse-chip" aria-hidden="true">${collapsed ? "▸" : "▾"}</span></button>
           <span class="led${allMuted ? " mute" : ""}" title="${allMuted ? "alle Kanäle gemutet" : "nicht alle Kanäle gemutet"}"></span>
           <span class="person-name" data-rename-person="${escapeAttr(person.id)}">${escapeHtml(person.name)}</span>
-          <button class="rename-btn" data-action="person-rename" data-pid="${escapeAttr(person.id)}" data-name="${escapeAttr(person.name)}" title="Rename">&#9998;</button>
+          <button class="rename-btn" data-action="person-rename" data-pid="${escapeAttr(person.id)}" data-name="${escapeAttr(person.name)}" title="Umbenennen" aria-label="${escapeAttr(person.name)} umbenennen">&#9998;</button>
         </div>
         <div class="person-tools">
           <button class="icon-btn" data-action="person-duplicate" data-pid="${escapeAttr(person.id)}" title="Duplizieren" aria-label="${escapeAttr(person.name)} duplizieren">${ICON_COPY}</button>
@@ -1802,7 +1961,7 @@ function renderPersons() {
       </div>
     </div>`;
   }
-  setPersonsHtml(wrap, html);
+  return html;
 }
 
 // renderPersons runs with every 1 s refresh. Replacing the cards each time
@@ -1903,19 +2062,30 @@ function confirmDelete(anchor, question) {
   });
 }
 
+// Never throws: a network error comes back like a failed request
+// (status 0), so every caller handles both the same way. data is always an
+// object or an array.
 async function api(method, path, body) {
   const opt = { method, headers: {} };
   if (body !== undefined) { opt.headers["Content-Type"] = "application/json"; opt.body = JSON.stringify(body); }
-  const res = await fetch(path, opt);
+  let res;
+  try {
+    res = await fetch(path, opt);
+  } catch (_) {
+    return { ok: false, status: 0, data: { reason: "service unreachable" } };
+  }
   let data = {};
   try { data = await res.json(); } catch (_) {}
+  if (data === null || typeof data !== "object") data = {};
   return { ok: res.ok, status: res.status, data };
 }
 
-// Report the outcome of a control/CRUD action, then refresh.
+// Report the outcome of a control/CRUD action, then refresh. Returns whether
+// the service accepted it.
 async function act(method, path, body, label) {
   const r = await api(method, path, body);
-  if (r.ok && r.data.ok !== false) {
+  const ok = r.ok && r.data.ok !== false;
+  if (ok) {
     toast(`${label}: ok`, true);
   } else {
     const reason = r.data.reason || `HTTP ${r.status}`;
@@ -1927,6 +2097,7 @@ async function act(method, path, body, label) {
     toast(`${label}: ${reason}${extra}${detail}`, false);
   }
   await refresh();
+  return ok;
 }
 
 // ---- rendering ----------------------------------------------------------
@@ -2172,8 +2343,10 @@ function updateChannelCard(ch, c) {
   if (!titleWrap.querySelector("input") && titleWrap.dataset.name !== displayName) {
     titleWrap.dataset.name = displayName;
     titleWrap.innerHTML = `
-      <span class="card-title" data-rename-ch="${ch}" title="${escapeAttr(displayName)}">${escapeHtml(displayName)}</span>
-      <button class="rename-btn" data-action="channel-rename" data-channel="${ch}" data-name="${escapeAttr(displayName)}" title="Rename">&#9998;</button>`;
+      <button class="card-title-btn" data-action="channel-rename" data-channel="${ch}" data-name="${escapeAttr(displayName)}"
+        title="${escapeAttr(displayName)} – umbenennen, Farbe" aria-label="${escapeAttr(displayName)} umbenennen">
+        <span class="card-title" data-rename-ch="${ch}">${escapeHtml(displayName)}</span><span class="rename-icon" aria-hidden="true">&#9998;</span>
+      </button>`;
   }
 
   const led = card.querySelector(".led");
@@ -2185,14 +2358,15 @@ function updateChannelCard(ch, c) {
   const key = card.querySelector(".mute-key");
   const busy = TOGGLE_BUSY.has(String(ch));
   key.className = "mute-key " + (!known ? "unk" : c.muted ? "on" : "off") + (busy ? " busy" : "");
-  key.disabled = !known;
+  key.disabled = !known || STATE_STALE;
   key.textContent = known ? "MUTE" : "MUTE ?";
   key.setAttribute("aria-pressed", known ? String(c.muted) : "mixed");
-  key.title = !known ? "Mute-Status unbekannt – gesperrt"
+  key.title = STATE_STALE ? "Dienst nicht erreichbar – gesperrt"
+    : !known ? "Mute-Status unbekannt – gesperrt"
     : c.muted ? "Gemutet – klicken zum Unmuten" : "Live – klicken zum Muten";
   const alwaysOn = card.querySelector("[data-always-on-channel]");
   if (document.activeElement !== alwaysOn) alwaysOn.checked = Boolean(c.always_on);
-  alwaysOn.disabled = ALWAYS_ON_BUSY.has(String(ch));
+  alwaysOn.disabled = ALWAYS_ON_BUSY.has(String(ch)) || STATE_STALE;
   applyStripColor(ch);
   syncFader(ch, c);
 }
@@ -2201,7 +2375,7 @@ function renderChannels(state) {
   const wrap = $("channels");
   const chans = state.channels || {};
   const keys = Object.keys(chans).map(Number).sort((a, b) => a - b);
-  MAX_CH = keys.length || MAX_CH;
+  wrap.classList.toggle("stale", STATE_STALE);
   if (keys.join(",") !== CARD_KEYS) {
     CARD_KEYS = keys.join(",");
     wrap.innerHTML = "";
@@ -2214,314 +2388,8 @@ function renderChannels(state) {
 
 function escapeHtml(s) { return s.replace(/[&<>"']/g, m => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m])); }
 function escapeAttr(s) { return escapeHtml(s); }
-/*
 
-// ---- refresh loop -------------------------------------------------------
-let MUTE_SNAPSHOTS = [];
-
-function renderMuteSnapshots() {
-  const wrap = $("mute-snapshots");
-  wrap.replaceChildren();
-  if (!MUTE_SNAPSHOTS.length) {
-    wrap.textContent = "Noch keine gespeicherten Kanalzustände.";
-    wrap.className = "muted-text";
-    return;
-  const COMPANION_BUTTON_BUSY = false;
-  const COMPANION_CATEGORY_BUSY = new Set();
-  let COMPANION_DATA = { categories: [], buttons: [], companion_targets: [] };
-  let COMPANION_GROUPS = {};
-
-  function renderCompanionButtons() {
-    const wrap = $("companion-categories");
-    wrap.replaceChildren();
-    for (const category of COMPANION_DATA.categories) {
-      const section = document.createElement("section");
-      section.className = "companion-category";
-      section.dataset.categoryId = category.id;
-      section.dataset.visible = String(category.visible);
-
-      const header = document.createElement("div");
-      header.className = "companion-category-head";
-      const toggle = document.createElement("button");
-      toggle.type = "button";
-      toggle.className = "companion-category-toggle";
-      toggle.dataset.companionCategoryToggle = category.id;
-      toggle.setAttribute("aria-expanded", String(category.visible));
-      toggle.textContent = category.name;
-      header.appendChild(toggle);
-
-      const grid = document.createElement("div");
-      grid.className = "companion-grid";
-      grid.hidden = !category.visible;
-      const buttons = COMPANION_DATA.buttons.filter(button => button.category_id === category.id);
-      if (!buttons.length) {
-        const empty = document.createElement("div");
-        empty.className = "companion-empty";
-        empty.textContent = "Keine Buttons";
-        grid.appendChild(empty);
-      }
-
-      for (const info of buttons) {
-        const item = document.createElement("div");
-        item.className = "companion-button-item";
-        const press = document.createElement("button");
-        press.type = "button";
-        press.className = `companion-key ${info.kind === "companion" ? "remote" : info.kind}`;
-        press.dataset.companionPress = info.id;
-        press.textContent = info.label;
-        press.title = info.kind === "companion"
-          ? "In Bitfocus Companion ausführen"
-          : "Über den sicheren Mixer-Service ausführen";
-
-        const tools = document.createElement("div");
-        tools.className = "companion-button-tools";
-        const categorySelect = document.createElement("select");
-        categorySelect.className = "companion-category-select";
-        const COMPANION_BUTTON_BUSY = false;
-        const COMPANION_CATEGORY_BUSY = new Set();
-        let COMPANION_DATA = { categories: [], buttons: [], companion_targets: [] };
-        let COMPANION_GROUPS = {};
-
-        function renderCompanionButtons() {
-          const wrap = $("companion-categories");
-          wrap.replaceChildren();
-          for (const category of COMPANION_DATA.categories) {
-            const section = document.createElement("section");
-            section.className = "companion-category";
-            section.dataset.categoryId = category.id;
-            section.dataset.visible = String(category.visible);
-
-            const header = document.createElement("div");
-            header.className = "companion-category-head";
-            const toggle = document.createElement("button");
-            toggle.type = "button";
-            toggle.className = "companion-category-toggle";
-            toggle.dataset.companionCategoryToggle = category.id;
-            toggle.setAttribute("aria-expanded", String(category.visible));
-            toggle.textContent = category.name;
-            header.appendChild(toggle);
-
-            const grid = document.createElement("div");
-            grid.className = "companion-grid";
-            grid.hidden = !category.visible;
-            const buttons = COMPANION_DATA.buttons.filter(button => button.category_id === category.id);
-            if (!buttons.length) {
-              const empty = document.createElement("div");
-              empty.className = "companion-empty";
-              empty.textContent = "Keine Buttons";
-              grid.appendChild(empty);
-            }
-
-            for (const info of buttons) {
-              const item = document.createElement("div");
-              item.className = "companion-button-item";
-              const press = document.createElement("button");
-              press.type = "button";
-              press.className = `companion-key ${info.kind === "companion" ? "remote" : info.kind}`;
-              press.dataset.companionPress = info.id;
-              press.textContent = info.label;
-              press.title = info.kind === "companion"
-                ? "In Bitfocus Companion ausführen"
-                : "Über den sicheren Mixer-Service ausführen";
-
-              const tools = document.createElement("div");
-              tools.className = "companion-button-tools";
-              const categorySelect = document.createElement("select");
-              categorySelect.className = "companion-category-select";
-              categorySelect.dataset.companionCategorySelect = info.id;
-              categorySelect.setAttribute("aria-label", `${info.label}: Kategorie`);
-              for (const option of COMPANION_DATA.categories) {
-                const element = document.createElement("option");
-                element.value = option.id;
-                element.textContent = option.name;
-                element.selected = option.id === category.id;
-                categorySelect.appendChild(element);
-              }
-              const remove = document.createElement("button");
-              remove.type = "button";
-              remove.className = "companion-delete danger";
-              remove.dataset.companionDelete = info.id;
-              remove.setAttribute("aria-label", `${info.label} löschen`);
-              remove.title = "Button löschen";
-              remove.textContent = "×";
-              tools.append(categorySelect, remove);
-              item.append(press, tools);
-              grid.appendChild(item);
-            }
-
-            section.append(header, grid);
-            wrap.appendChild(section);
-          }
-        }
-
-        function openSnapshotCreateRow() {
-          $("snapshot-create-row").classList.add("visible");
-          $("snapshot-name").value = "";
-          $("snapshot-name").focus();
-        }
-
-        function closeSnapshotCreateRow() {
-          $("snapshot-create-row").classList.remove("visible");
-          $("snapshot-name").value = "";
-        }
-
-        async function saveCurrentMuteSnapshot() {
-          const name = $("snapshot-name").value.trim();
-          if (!name) {
-            toast("Bitte einen Namen eingeben", false);
-            return;
-          }
-          const persons = loadPersons();
-          if (persons.some(person => person.name.trim().toLocaleLowerCase() === name.toLocaleLowerCase())) {
-            toast("Eine Mute Gruppe mit diesem Namen existiert bereits", false);
-            return;
-          }
-
-          const saveButton = $("snapshot-save-btn");
-          saveButton.disabled = true;
-          try {
-            const result = await api("POST", "/groups/from-current-status", { name });
-            if (!result.ok || result.data.ok === false) {
-              const details = Array.isArray(result.data.details)
-                ? `: ${result.data.details.map(item => `ch${item.channel} ${item.reason}`).join(", ")}`
-                : "";
-              toast(`Mute Gruppe nicht erstellt: ${result.data.reason || "HTTP " + result.status}${details}`, false);
-              return;
-            }
-
-            const channels = {};
-            for (const channel of result.data.channels) {
-              channels[String(channel)] = {
-                fader_hex: result.data.fader_hex[String(channel)],
-                set_at: Date.now(),
-              };
-            }
-            persons.push({ id: genId(), name: result.data.group, channels });
-            savePersons(persons);
-            closeSnapshotCreateRow();
-            renderPersons();
-            toast(`Mute Gruppe „${name}“ mit ${result.data.channels.length} ungemuteten Channels erstellt`, true);
-          } catch (_) {
-            toast("Mute Gruppe konnte nicht erstellt werden", false);
-          } finally {
-            saveButton.disabled = false;
-          }
-        }
-
-        function replaceSelectOptions(select, options, placeholder) {
-          select.replaceChildren();
-          const first = document.createElement("option");
-          first.value = "";
-          first.textContent = placeholder;
-          select.appendChild(first);
-          for (const option of options) {
-            const element = document.createElement("option");
-            element.value = option.value;
-            element.textContent = option.label;
-            select.appendChild(element);
-          }
-          select.disabled = options.length === 0;
-        }
-  }
-  const result = await api("POST", "/companion/buttons", body);
-  if (!result.ok || result.data.ok === false) {
-    toast(result.data.reason || `HTTP ${result.status}`, false);
-    return;
-  }
-  $("companion-button-dialog").close();
-  $("companion-button-name").value = "";
-  await loadCompanionButtons();
-  toast("Button erstellt", true);
-}
-
-$("new-companion-category").addEventListener("click", () => {
-  $("companion-category-name").value = "";
-  $("companion-category-dialog").showModal();
-  $("companion-category-name").focus();
-});
-$("new-companion-button").addEventListener("click", () => {
-  replaceSelectOptions($("companion-button-category"), COMPANION_DATA.categories.map(category => ({
-    value: category.id, label: category.name,
-  })), "Kategorie wählen …");
-  $("companion-button-kind").value = "companion";
-  $("companion-button-name").value = "";
-  updateCompanionButtonForm();
-  $("companion-button-dialog").showModal();
-  $("companion-button-name").focus();
-});
-$("companion-category-form").addEventListener("submit", saveCompanionCategory);
-$("companion-button-form").addEventListener("submit", saveCompanionButton);
-$("companion-button-kind").addEventListener("change", updateCompanionButtonForm);
-$("companion-category-cancel").addEventListener("click", () => $("companion-category-dialog").close());
-$("companion-button-cancel").addEventListener("click", () => $("companion-button-dialog").close());
-
-$("companion-categories").addEventListener("click", async (event) => {
-  const toggle = event.target.closest("[data-companion-category-toggle]");
-  if (toggle) {
-    const category = COMPANION_DATA.categories.find(item => item.id === toggle.dataset.companionCategoryToggle);
-    if (!category || COMPANION_CATEGORY_BUSY.has(category.id)) return;
-    COMPANION_CATEGORY_BUSY.add(category.id);
-    toggle.disabled = true;
-    try {
-      const result = await api("POST", `/companion/categories/${encodeURIComponent(category.id)}/visibility`, { visible: !category.visible });
-      if (!result.ok || result.data.ok === false) toast(result.data.reason || `HTTP ${result.status}`, false);
-      else await loadCompanionButtons();
-    } finally {
-      COMPANION_CATEGORY_BUSY.delete(category.id);
-      if (toggle.isConnected) toggle.disabled = false;
-    }
-    return;
-  }
-
-  const remove = event.target.closest("[data-companion-delete]");
-  if (remove) {
-    const info = COMPANION_DATA.buttons.find(button => button.id === remove.dataset.companionDelete);
-    if (!info || !(await confirmDelete(remove, `Button „${info.label}“ löschen?`))) return;
-    const result = await api("POST", `/companion/buttons/${encodeURIComponent(info.id)}/delete`);
-    if (!result.ok || result.data.ok === false) toast(result.data.reason || `HTTP ${result.status}`, false);
-    else {
-      await loadCompanionButtons();
-      toast(`Button ${info.label} gelöscht`, true);
-    }
-    return;
-  }
-
-  const button = event.target.closest("[data-companion-press]");
-  if (!button || COMPANION_BUTTON_BUSY) return;
-  COMPANION_BUTTON_BUSY = true;
-  button.disabled = true;
-  try {
-    const result = await api("POST", `/companion/buttons/${encodeURIComponent(button.dataset.companionPress)}/press`);
-    if (!result.ok || result.data.ok === false) {
-      toast(`${button.textContent}: ${result.data.reason || "HTTP " + result.status}`, false);
-    } else {
-      toast(`${button.textContent}: ausgeführt`, true);
-      if (button.classList.contains("channel") || button.classList.contains("group")) await refresh();
-    }
-  } catch (_) {
-    toast(`${button.textContent}: Dienst nicht erreichbar`, false);
-  } finally {
-    COMPANION_BUTTON_BUSY = false;
-    button.disabled = false;
-  }
-});
-
-$("companion-categories").addEventListener("change", async (event) => {
-  const select = event.target.closest("[data-companion-category-select]");
-  if (!select) return;
-  const button = COMPANION_DATA.buttons.find(item => item.id === select.dataset.companionCategorySelect);
-  if (!button) return;
-  const result = await api("POST", `/companion/buttons/${encodeURIComponent(button.id)}/update`, {
-    label: button.label,
-    category_id: select.value,
-  });
-  if (!result.ok || result.data.ok === false) toast(result.data.reason || `HTTP ${result.status}`, false);
-  await loadCompanionButtons();
-});
-}
-
-// ---- refresh loop -------------------------------------------------------
-*/
+// ---- Steuerung (control keys) ----------------------------------------------
 let COMPANION_BUTTON_BUSY = false;
 const COMPANION_CATEGORY_BUSY = new Set();
 let COMPANION_DATA = { categories: [], buttons: [], companion_targets: [] };
@@ -2617,15 +2485,14 @@ function updateCompanionButtonForm() {
 }
 
 async function loadCompanionButtons() {
-  try {
-    const [buttons, groups] = await Promise.all([api("GET", "/companion/buttons"), api("GET", "/groups")]);
-    if (!buttons.ok) throw new Error("buttons unavailable");
-    COMPANION_DATA = buttons.data;
-    COMPANION_GROUPS = groups.ok ? groups.data : {};
-    renderCompanionButtons();
-  } catch (_) {
-    $("companion-categories").textContent = "Companion-Buttons konnten nicht geladen werden";
+  const [buttons, groups] = await Promise.all([api("GET", "/companion/buttons"), api("GET", "/groups")]);
+  if (!buttons.ok || !Array.isArray(buttons.data.buttons)) {
+    $("companion-categories").textContent = "Steuerungs-Tasten konnten nicht geladen werden";
+    return;
   }
+  COMPANION_DATA = { categories: [], companion_targets: [], ...buttons.data };
+  if (groups.ok) COMPANION_GROUPS = groups.data;
+  renderCompanionButtons();
 }
 
 async function saveCompanionCategory(event) {
@@ -2760,8 +2627,6 @@ $("companion-categories").addEventListener("click", async (event) => {
       toast(`${button.textContent}: ausgeführt`, true);
       if (button.classList.contains("channel") || button.classList.contains("group")) await refresh();
     }
-  } catch (_) {
-    toast(`${button.textContent}: Dienst nicht erreichbar`, false);
   } finally {
     COMPANION_BUTTON_BUSY = false;
     button.disabled = false;
@@ -2777,36 +2642,72 @@ $("companion-categories").addEventListener("change", async (event) => {
   await loadCompanionButtons();
 });
 
+// A copy of the last confirmed state with everything locked: shown while the
+// service does not answer, so the strips stay in place instead of vanishing.
+function staleCopy(state) {
+  const channels = {};
+  for (const [k, c] of Object.entries(state.channels || {})) channels[k] = { ...c, safe: false };
+  return { ...state, mixer_connected: false, channels };
+}
+
+function renderPanic() {
+  // Label and action both come from SERVICE_ENABLED. While it is unknown the
+  // key still disables: when in doubt, stop sending.
+  const pb = $("panic-btn");
+  const disabled = SERVICE_ENABLED === false;
+  pb.textContent = disabled ? "Re-enable" : "Panic (disable)";
+  pb.className = disabled ? "primary" : "danger";
+}
+
 let refreshSeq = 0;
 async function refresh() {
   const seq = ++refreshSeq;
-  try {
-    const [health, state, desktop] = await Promise.all([
-      api("GET", "/health"), api("GET", "/state"), api("GET", "/desktop/profiles"),
-    ]);
-    // Drop a stale response if a newer refresh has since started (e.g. the
-    // per-second poll resolving after a click's own refresh) -- otherwise it
-    // would overwrite the fresh state with pre-click data.
-    if (seq !== refreshSeq) return;
-    LAST_STATE = state.data;
-    await bootstrapPersonsFromBackend();
-    const h = health.data;
-    renderDesktopProfiles(desktop.data);
-    $("dot-conn").className = "dot " + (h.mixer_connected ? "ok" : "bad");
-    $("txt-conn").textContent = h.mixer_connected ? "mixer connected" : "mixer offline";
-    $("dot-en").className = "dot " + (h.enabled ? "ok" : "bad");
-    $("txt-en").textContent = h.enabled ? "sending enabled" : "PANIC (disabled)";
-    $("txt-age").textContent = "updates: " + fmtAge(h.last_update_age_seconds);
-    const pb = $("panic-btn");
-    pb.textContent = h.enabled ? "Panic (disable)" : "Re-enable";
-    pb.className = h.enabled ? "danger" : "primary";
-    $("agent-update-link").hidden = !h.desktop_display_enabled;
-    renderChannels(state.data);
-    renderPersons();
-  } catch (e) {
+  const [health, state, desktop] = await Promise.all([
+    api("GET", "/health"), api("GET", "/state"), api("GET", "/desktop/profiles"),
+  ]);
+  // Drop a stale response if a newer refresh has since started (e.g. the
+  // per-second poll resolving after a click's own refresh) -- otherwise it
+  // would overwrite the fresh state with pre-click data.
+  if (seq !== refreshSeq) return;
+  const stateOk = state.ok && state.data && typeof state.data.channels === "object";
+  if (stateOk) {
+    STATE_STALE = false;
+    CONFIRMED_STATE = LAST_STATE = state.data;
+  } else {
+    STATE_STALE = true;
+    LAST_STATE = staleCopy(CONFIRMED_STATE);
+  }
+  if (health.ok) SERVICE_ENABLED = !!health.data.enabled;
+  else if (stateOk) SERVICE_ENABLED = !!state.data.enabled;
+  else SERVICE_ENABLED = null;
+
+  const h = health.ok ? health.data : {};
+  if (!health.ok && !stateOk) {
     $("txt-conn").textContent = "service unreachable";
     $("dot-conn").className = "dot bad";
+    $("txt-en").textContent = "status unknown";
+    $("dot-en").className = "dot bad";
+  } else {
+    const connected = health.ok ? h.mixer_connected : LAST_STATE.mixer_connected;
+    $("dot-conn").className = "dot " + (connected ? "ok" : "bad");
+    $("txt-conn").textContent = connected ? "mixer connected" : "mixer offline";
+    $("dot-en").className = "dot " + (SERVICE_ENABLED ? "ok" : "bad");
+    $("txt-en").textContent = SERVICE_ENABLED ? "sending enabled" : "PANIC (disabled)";
   }
+  $("txt-age").textContent = "updates: " + fmtAge(h.last_update_age_seconds);
+  renderPanic();
+  if (health.ok) $("agent-update-link").hidden = !h.desktop_display_enabled;
+  if (desktop.ok) renderDesktopProfiles(desktop.data);
+  if (stateOk) await bootstrapPersonsFromBackend();
+  renderChannels(LAST_STATE);
+  renderPersons();
+}
+
+// Each poll starts one second after the previous one finished, so slow
+// answers (Wi-Fi, a busy service) never pile up.
+async function refreshLoop() {
+  await refresh();
+  setTimeout(refreshLoop, 1000);
 }
 
 // ---- Collapsible sections and compact channels ---------------------------
@@ -2960,6 +2861,7 @@ async function pollUpdate() {
     return;
   }
   const data = await fetchUpdateStatus();
+  if (!UPDATE.running) return;  // closed or finished while waiting
   if (!data) {
     UPDATE.sawRestart = true;
     setUpdateLcd('Service startet neu…<br><span class="dim">Die Seite verbindet sich danach automatisch wieder.</span>');
@@ -3010,13 +2912,16 @@ $("update-dialog").addEventListener("cancel", (e) => { e.preventDefault(); close
 
 // ---- events -------------------------------------------------------------
 
-// Optimistically reflect an action in the UI right away; the follow-up refresh
-// reconciles with the server (and reverts if the action was blocked).
+// Optimistically reflect an action in the UI right away. Only the shown copy
+// (LAST_STATE) is changed, never CONFIRMED_STATE: the follow-up refresh shows
+// the server's answer, and if that refresh fails the page falls back to the
+// confirmed state, so a failed action never stays on screen as if it worked.
 function optimistic(channels, muted) {
   refreshSeq++;  // a poll already in flight carries pre-click state; drop it
+  LAST_STATE = { ...LAST_STATE, channels: { ...LAST_STATE.channels } };
   for (const ch of channels) {
-    const c = LAST_STATE.channels && LAST_STATE.channels[ch];
-    if (c && c.safe) c.muted = muted === "toggle" ? !c.muted : muted;
+    const c = LAST_STATE.channels[ch];
+    if (c && c.safe) LAST_STATE.channels[ch] = { ...c, muted: muted === "toggle" ? !c.muted : muted };
   }
   renderChannels(LAST_STATE);
 }
@@ -3041,14 +2946,14 @@ async function setChannelAlwaysOn(ch, enabled) {
   const key = String(ch);
   const channel = LAST_STATE.channels && LAST_STATE.channels[key];
   if (!channel || ALWAYS_ON_BUSY.has(key)) return;
-  const previous = Boolean(channel.always_on);
-  channel.always_on = enabled;
+  refreshSeq++;
+  LAST_STATE = { ...LAST_STATE, channels: { ...LAST_STATE.channels, [key]: { ...channel, always_on: enabled } } };
   ALWAYS_ON_BUSY.add(key);
   renderChannels(LAST_STATE);
   try {
     const result = await api("POST", `/channels/${ch}/always-on`, { enabled });
     if (!result.ok || result.data.ok === false) {
-      channel.always_on = previous;
+      LAST_STATE = { ...LAST_STATE, channels: { ...LAST_STATE.channels, [key]: channel } };
       toast(`ch${ch}: ${result.data.reason || "HTTP " + result.status}`, false);
     } else {
       toast(`ch${ch}: ${enabled ? "Immer an" : "Gruppen-Schutz aus"}`, true);
@@ -3059,22 +2964,74 @@ async function setChannelAlwaysOn(ch, enabled) {
   }
 }
 
-document.addEventListener("change", (event) => {
-  const input = event.target.closest("[data-action=person-channel-description]");
-  if (!input) return;
+function savePersonChannelDescription(input) {
   const list = loadPersons();
   const person = list.find(item => item.id === input.dataset.pid);
   const channel = person && person.channels && person.channels[String(input.dataset.ch)];
   if (!channel) return;
   channel.description = input.value.trim();
   savePersons(list);
-  renderPersons();
+  // The field already shows the new text. Only remember the new markup instead
+  // of redrawing: a redraw now would swap the key the user is tapping (the tap
+  // that took the focus away is what fired this change).
+  PERSONS_HTML = buildPersonsHtml();
+}
+
+// ---- Small group faders --------------------------------------------------------
+// Only a drag that starts on the knob changes the value: a tap on the track
+// would otherwise jump the live fader there at once (they save and set right
+// away). Keyboard steps still work.
+const PERSON_SLIDER_THUMB_PX = 16;  // must match .fader-slider thumb width
+
+function sliderGestureStart(input, e) {
+  const r = input.getBoundingClientRect();
+  const frac = (Number(input.value) - Number(input.min)) / (Number(input.max) - Number(input.min));
+  const thumbX = r.left + PERSON_SLIDER_THUMB_PX / 2 + frac * (r.width - PERSON_SLIDER_THUMB_PX);
+  const onThumb = Math.abs(e.clientX - thumbX) <= 22;  // 44 px wide grip
+  input.dataset.gesture = onThumb ? "thumb" : "track";
+  input.dataset.startValue = input.value;
+  PERSON_SLIDER_ACTIVE = true;
+  if (!onThumb) e.preventDefault();
+}
+
+document.addEventListener("pointerdown", (e) => {
+  const input = e.target.closest && e.target.closest("[data-action=person-fader-input]");
+  if (input && !input.disabled) sliderGestureStart(input, e);
+}, true);
+for (const type of ["pointerup", "pointercancel"]) {
+  document.addEventListener(type, () => {
+    if (!PERSON_SLIDER_ACTIVE) return;
+    // The range's own change event follows the release; redraw after it.
+    setTimeout(() => { PERSON_SLIDER_ACTIVE = false; renderPersons(); }, 0);
+  }, true);
+}
+document.addEventListener("keydown", (e) => {
+  const input = e.target.closest && e.target.closest("[data-action=person-fader-input]");
+  if (input) input.dataset.gesture = "key";
+}, true);
+
+document.addEventListener("input", (e) => {
+  const input = e.target.closest("[data-action=person-fader-input]");
+  if (!input) return;
+  if (input.dataset.gesture === "track") input.value = input.dataset.startValue;
+  const label = input.parentElement.querySelector(".fader-label");
+  if (label) label.textContent = formatDb(Number(input.value));
 });
 
-document.addEventListener("change", (e) => {
-  const input = e.target.closest("[data-always-on-channel]");
-  if (!input) return;
-  setChannelAlwaysOn(Number(input.dataset.alwaysOnChannel), input.checked);
+document.addEventListener("change", (event) => {
+  const t = event.target;
+  if (t.matches("[data-action=person-channel-description]")) return savePersonChannelDescription(t);
+  if (t.matches("[data-always-on-channel]")) return setChannelAlwaysOn(Number(t.dataset.alwaysOnChannel), t.checked);
+  if (t.matches("[data-action=person-fader-input]")) {
+    const gesture = t.dataset.gesture;
+    delete t.dataset.gesture;
+    if (gesture === "track") {
+      t.value = t.dataset.startValue;
+      toast("Zum Verstellen den Griff ziehen", false);
+      return;
+    }
+    setPersonChannelFaderValue(t.dataset.pid, Number(t.dataset.ch), Number(t.value));
+  }
 });
 
 document.addEventListener("click", (e) => {
@@ -3108,14 +3065,6 @@ document.addEventListener("click", (e) => {
   }
 });
 
-document.addEventListener("change", (event) => {
-  const input = event.target;
-  if (!input || input.tagName !== "INPUT" || input.type !== "range") return;
-  if (input.dataset.action === "person-fader-input") {
-    setPersonChannelFaderValue(input.dataset.pid, Number(input.dataset.ch), Number(input.value));
-  }
-});
-
 
 $("new-person-btn").addEventListener("click", openPersonCreateRow);
 $("new-snapshot-btn").addEventListener("click", openSnapshotCreateRow);
@@ -3132,19 +3081,17 @@ $("new-person-name").addEventListener("keydown", (e) => {
   if (e.key === "Escape") { closePersonCreateRow(); }
 });
 $("panic-btn").addEventListener("click", () => {
-  const path = LAST_STATE.enabled ? "/panic/disable" : "/panic/enable";
+  const path = SERVICE_ENABLED === false ? "/panic/enable" : "/panic/disable";
   act("POST", path, undefined, "panic");
 });
-$("desktop-profiles").addEventListener("click", (event) => {
-  const button = event.target.closest("button[data-display-profile]");
-  if (!button || button.disabled) return;
-  act("POST", `/desktop/${encodeURIComponent(button.dataset.displayProfile)}/open`, undefined, button.dataset.label);
-});
-$("desktop-profiles").addEventListener("click", (event) => {
-  const button = event.target.closest("button[data-edit-profile]");
-  if (button) openProfileDialog(button.dataset.editProfile);
-});
 $("desktop-profiles").addEventListener("click", async (event) => {
+  const open = event.target.closest("button[data-display-profile]");
+  if (open) {
+    if (!open.disabled) act("POST", `/desktop/${encodeURIComponent(open.dataset.displayProfile)}/open`, undefined, open.dataset.label);
+    return;
+  }
+  const edit = event.target.closest("button[data-edit-profile]");
+  if (edit) { openProfileDialog(edit.dataset.editProfile); return; }
   const button = event.target.closest("button[data-delete-profile]");
   if (!button || !(await confirmDelete(button, `${button.title}?`))) return;
   button.disabled = true;
@@ -3197,7 +3144,13 @@ let PROGRAM_BUTTONS = [];
 let PROGRAM_BUTTON_CATEGORIES = {};
 let PROGRAM_DESKTOP_PROFILES = [];
 let PROGRAM_DRAFT = false;
-const PROGRAM_BUSY = new Set();
+const PROGRAM_BUSY = new Set();     // play / clone in progress, per item
+const PROGRAM_SAVING = new Set();   // a save is in flight, per item
+const PROGRAM_RESAVE = new Set();   // another edit arrived meanwhile
+const PROGRAM_FIELDS = [
+  "time", "title", "person", "group", "playback", "translation", "lyrics",
+  "playback_description", "translation_description", "lyrics_description",
+];
 
 function formatProgramDelay(seconds) {
   if (seconds === null || seconds === undefined) return "—";
@@ -3245,28 +3198,47 @@ function programInput(field, label, value, type, maxLength) {
   return input;
 }
 
+// The options of a select are kept with their signature, so a re-render only
+// rebuilds them when the list itself changed.
+function setSelectOptions(select, options, placeholder, value) {
+  const all = [{ value: "", label: placeholder }, ...options];
+  if (value && !options.some(option => option.value === value)) {
+    all.push({ value, label: `Nicht verfügbar: ${value}` });
+  }
+  const sig = JSON.stringify(all);
+  if (select.dataset.optionsSig !== sig) {
+    select.dataset.optionsSig = sig;
+    select.replaceChildren(...all.map(option => {
+      const node = document.createElement("option");
+      node.value = option.value;
+      node.textContent = option.label;
+      return node;
+    }));
+  }
+  select.value = value || "";
+}
+
 function programSelect(field, label, value, options, placeholder) {
   const select = document.createElement("select");
   select.dataset.programField = field;
   select.setAttribute("aria-label", label);
-  const empty = document.createElement("option");
-  empty.value = "";
-  empty.textContent = placeholder;
-  select.appendChild(empty);
-  for (const option of options) {
-    const node = document.createElement("option");
-    node.value = option.value;
-    node.textContent = option.label;
-    select.appendChild(node);
-  }
-  if (value && !options.some(option => option.value === value)) {
-    const missing = document.createElement("option");
-    missing.value = value;
-    missing.textContent = `Nicht verfügbar: ${value}`;
-    select.appendChild(missing);
-  }
-  select.value = value || "";
+  setSelectOptions(select, options, placeholder, value);
   return select;
+}
+
+function programGroupOptions() {
+  return Object.keys(PROGRAM_GROUPS).map(group => ({ value: group, label: group }));
+}
+
+function programActionOptions() {
+  const buttonOptions = PROGRAM_BUTTONS.map(button => {
+    const category = PROGRAM_BUTTON_CATEGORIES[button.category_id];
+    return { value: button.id, label: category ? `${category} · ${button.label}` : button.label };
+  });
+  return [
+    ...PROGRAM_DESKTOP_PROFILES.map(profile => ({ value: `desktop:${profile.id}`, label: `Desktop · ${profile.title}` })),
+    ...buttonOptions,
+  ];
 }
 
 function buildProgramRow(item, draft = false) {
@@ -3277,29 +3249,13 @@ function buildProgramRow(item, draft = false) {
   programCell(row, "Uhrzeit", programInput("time", "Uhrzeit", item.time, "text", 5));
   const delay = document.createElement("span");
   delay.className = "program-delay";
-  delay.textContent = draft ? "—" : formatProgramDelay(item.last_delay_seconds);
-  const delaySeconds = draft ? null : item.last_delay_seconds;
-  if (delaySeconds !== null && delaySeconds !== undefined) {
-    delay.classList.add(delaySeconds > 0 ? "late" : delaySeconds < 0 ? "early" : "ontime");
-  }
-  delay.title = item.last_played_at ? `Zuletzt geklickt: ${item.last_played_at}` : "Noch nicht gestartet";
+  delay.textContent = "—";
   programCell(row, "Verzögerung", delay);
   programCell(row, "Titel", programInput("title", "Titel", item.title, "text", 120));
   programCell(row, "Person", programInput("person", "Person", item.person, "text", 80));
-  programCell(row, "Mutegruppe", programSelect(
-    "group", "Mutegruppe", item.group,
-    Object.keys(PROGRAM_GROUPS).map(group => ({ value: group, label: group })),
-    "Gruppe wählen …",
-  ));
+  programCell(row, "Mutegruppe", programSelect("group", "Mutegruppe", item.group, programGroupOptions(), "Gruppe wählen …"));
 
-  const buttonOptions = PROGRAM_BUTTONS.map(button => {
-    const category = PROGRAM_BUTTON_CATEGORIES[button.category_id];
-    return { value: button.id, label: category ? `${category} · ${button.label}` : button.label };
-  });
-  const actionOptions = [
-    ...PROGRAM_DESKTOP_PROFILES.map(profile => ({ value: `desktop:${profile.id}`, label: `Desktop · ${profile.title}` })),
-    ...buttonOptions,
-  ];
+  const actionOptions = programActionOptions();
   for (const [field, label] of [["playback", "Playback"], ["translation", "Übersetzung"], ["lyrics", "Liedtext"]]) {
     const link = document.createElement("div");
     link.className = "program-action-link";
@@ -3329,7 +3285,6 @@ function buildProgramRow(item, draft = false) {
     clone.dataset.programId = item.id;
     clone.innerHTML = ICON_COPY;
     clone.title = "Programmpunkt klonen";
-    clone.setAttribute("aria-label", `${item.title} klonen`);
     actions.appendChild(clone);
   }
   const secondary = document.createElement("button");
@@ -3339,47 +3294,98 @@ function buildProgramRow(item, draft = false) {
   if (!draft) secondary.dataset.programId = item.id;
   secondary.innerHTML = draft ? ICON_X : ICON_TRASH;
   secondary.title = draft ? "Bearbeitung abbrechen" : "Programmpunkt löschen";
-  secondary.setAttribute("aria-label", draft ? "Programmpunkt abbrechen" : `${item.title} löschen`);
+  secondary.setAttribute("aria-label", draft ? "Programmpunkt abbrechen" : "Programmpunkt löschen");
   actions.appendChild(secondary);
   programCell(row, "Aktion", actions, "program-actions-cell");
+  if (!draft) updateProgramRow(row, item);
   return row;
 }
 
+// Bring an existing row up to date in place. The field that has the focus and
+// rows with an edit still being saved keep what the user typed.
+function updateProgramRow(row, item) {
+  const editing = PROGRAM_SAVING.has(item.id) || PROGRAM_RESAVE.has(item.id);
+  const groupOptions = programGroupOptions();
+  const actionOptions = programActionOptions();
+  for (const control of row.querySelectorAll("[data-program-field]")) {
+    const field = control.dataset.programField;
+    const keep = editing || control === document.activeElement;
+    if (control.tagName === "SELECT") {
+      const options = field === "group" ? groupOptions : actionOptions;
+      setSelectOptions(control, options, field === "group" ? "Gruppe wählen …" : "Keine Aktion",
+        keep ? control.value : item[field]);
+    } else if (!keep) {
+      control.value = item[field] || "";
+    }
+  }
+  const delay = row.querySelector(".program-delay");
+  const seconds = item.last_delay_seconds;
+  delay.textContent = formatProgramDelay(seconds);
+  delay.className = "program-delay" + (seconds === null || seconds === undefined ? ""
+    : seconds > 0 ? " late" : seconds < 0 ? " early" : " ontime");
+  delay.title = item.last_played_at ? `Zuletzt geklickt: ${item.last_played_at}` : "Noch nicht gestartet";
+  const label = item.title || "Programmpunkt";
+  const clone = row.querySelector('[data-program-action="clone"]');
+  if (clone) clone.setAttribute("aria-label", `${label} klonen`);
+  const del = row.querySelector('[data-program-action="delete"]');
+  if (del) del.setAttribute("aria-label", `${label} löschen`);
+}
+
+// Rows are kept and updated in place (focus, cursor and the draft row
+// survive); only new rows are built and removed ones dropped.
 function renderProgramItems() {
   const tbody = $("program-items");
-  tbody.replaceChildren();
-  for (const item of PROGRAM_ITEMS) tbody.appendChild(buildProgramRow(item));
-  if (PROGRAM_DRAFT) {
-    tbody.appendChild(buildProgramRow({ time: nextProgramTime(), group: Object.keys(PROGRAM_GROUPS)[0] || "" }, true));
+  const existing = new Map([...tbody.querySelectorAll("tr[data-program-id]")].map(row => [row.dataset.programId, row]));
+  const wanted = [];
+  for (const item of PROGRAM_ITEMS) {
+    let row = existing.get(item.id);
+    if (row) { updateProgramRow(row, item); existing.delete(item.id); }
+    else row = buildProgramRow(item);
+    wanted.push(row);
   }
+  for (const row of existing.values()) row.remove();
+  let draft = tbody.querySelector(".program-draft-row");
+  if (PROGRAM_DRAFT) {
+    if (!draft) draft = buildProgramRow({ time: nextProgramTime(), group: Object.keys(PROGRAM_GROUPS)[0] || "" }, true);
+    else {
+      const group = draft.querySelector('[data-program-field="group"]');
+      setSelectOptions(group, programGroupOptions(), "Gruppe wählen …", group.value);
+      for (const field of ["playback", "translation", "lyrics"]) {
+        const sel = draft.querySelector(`[data-program-field="${field}"]`);
+        setSelectOptions(sel, programActionOptions(), "Keine Aktion", sel.value);
+      }
+    }
+    wanted.push(draft);
+  } else if (draft) {
+    draft.remove();
+  }
+  // Only move rows that are out of place: moving a row would blur its field.
+  wanted.forEach((row, i) => { if (tbody.children[i] !== row) tbody.insertBefore(row, tbody.children[i] || null); });
   $("program-empty").hidden = PROGRAM_ITEMS.length > 0 || PROGRAM_DRAFT;
 }
 
 async function loadProgramItems() {
-  try {
-    const [items, groups, buttons, desktop] = await Promise.all([
-      api("GET", "/program/items"), api("GET", "/groups"), api("GET", "/companion/buttons"),
-      api("GET", "/desktop/profiles"),
-    ]);
-    if (!items.ok || !groups.ok || !buttons.ok || !desktop.ok) throw new Error("program data unavailable");
-    PROGRAM_ITEMS = items.data;
-    PROGRAM_GROUPS = groups.data;
-    PROGRAM_BUTTONS = buttons.data.buttons;
-    PROGRAM_BUTTON_CATEGORIES = Object.fromEntries((buttons.data.categories || []).map(category => [category.id, category.name]));
-    PROGRAM_DESKTOP_PROFILES = desktop.data.profiles || [];
-    renderProgramItems();
-  } catch (_) {
+  const [items, groups, buttons, desktop] = await Promise.all([
+    api("GET", "/program/items"), api("GET", "/groups"), api("GET", "/companion/buttons"),
+    api("GET", "/desktop/profiles"),
+  ]);
+  if (!items.ok || !Array.isArray(items.data) || !groups.ok || !buttons.ok || !desktop.ok) {
     $("program-empty").hidden = false;
     $("program-empty").textContent = "Programmdaten konnten nicht geladen werden";
+    return;
   }
+  $("program-empty").textContent = "Noch keine Programmpunkte.";
+  PROGRAM_ITEMS = items.data;
+  PROGRAM_GROUPS = groups.data;
+  PROGRAM_BUTTONS = buttons.data.buttons || [];
+  PROGRAM_BUTTON_CATEGORIES = Object.fromEntries((buttons.data.categories || []).map(category => [category.id, category.name]));
+  PROGRAM_DESKTOP_PROFILES = desktop.data.profiles || [];
+  renderProgramItems();
 }
 
 function readProgramRow(row) {
   const result = {};
-  for (const field of [
-    "time", "title", "person", "group", "playback", "translation", "lyrics",
-    "playback_description", "translation_description", "lyrics_description",
-  ]) {
+  for (const field of PROGRAM_FIELDS) {
     const control = row.querySelector(`[data-program-field="${field}"]`);
     result[field] = control ? control.value.trim() : "";
   }
@@ -3389,16 +3395,17 @@ function readProgramRow(row) {
 
 async function createProgramItem(row) {
   const button = row.querySelector('[data-program-action="create"]');
+  if (button.disabled) return;
   button.disabled = true;
-  const result = await api("POST", "/program/items", readProgramRow(row));
-  if (!result.ok || result.data.ok === false) {
-    toast(result.data.reason || `HTTP ${result.status}`, false);
+  try {
+    const result = await api("POST", "/program/items", readProgramRow(row));
+    if (!result.ok || result.data.ok === false) { toast(result.data.reason || `HTTP ${result.status}`, false); return; }
+    PROGRAM_DRAFT = false;
+    await loadProgramItems();
+    toast("Programmpunkt angelegt", true);
+  } finally {
     button.disabled = false;
-    return;
   }
-  PROGRAM_DRAFT = false;
-  await loadProgramItems();
-  toast("Programmpunkt angelegt", true);
 }
 
 async function cloneProgramItem(itemId, button) {
@@ -3406,42 +3413,47 @@ async function cloneProgramItem(itemId, button) {
   if (!item || PROGRAM_BUSY.has(itemId)) return;
   PROGRAM_BUSY.add(itemId);
   button.disabled = true;
-  const payload = {
-    time: nextProgramTime(),
-    title: item.title,
-    person: item.person,
-    group: item.group,
-    playback: item.playback,
-    translation: item.translation,
-    lyrics: item.lyrics,
-    playback_description: item.playback_description,
-    translation_description: item.translation_description,
-    lyrics_description: item.lyrics_description,
-  };
-  const result = await api("POST", "/program/items", payload);
-  PROGRAM_BUSY.delete(itemId);
-  if (!result.ok || result.data.ok === false) {
-    toast(result.data.reason || `HTTP ${result.status}`, false);
+  try {
+    const payload = {};
+    for (const field of PROGRAM_FIELDS) payload[field] = item[field] === undefined ? null : item[field];
+    payload.time = nextProgramTime();
+    const result = await api("POST", "/program/items", payload);
+    if (!result.ok || result.data.ok === false) { toast(result.data.reason || `HTTP ${result.status}`, false); return; }
+    await loadProgramItems();
+    toast("Programmpunkt geklont", true);
+  } finally {
+    PROGRAM_BUSY.delete(itemId);
     button.disabled = false;
-    return;
   }
-  await loadProgramItems();
-  toast("Programmpunkt geklont", true);
 }
 
+// One save per item at a time; an edit made while a save is in flight is sent
+// right after it (with the row's values at that moment), never dropped.
 async function updateProgramItem(row) {
   const itemId = row.dataset.programId;
-  if (!itemId || PROGRAM_BUSY.has(itemId)) return;
-  PROGRAM_BUSY.add(itemId);
-  const result = await api("PUT", `/program/items/${encodeURIComponent(itemId)}`, readProgramRow(row));
-  PROGRAM_BUSY.delete(itemId);
-  if (!result.ok || result.data.ok === false) {
-    toast(result.data.reason || `HTTP ${result.status}`, false);
-    await loadProgramItems();
-    return;
+  if (!itemId) return;
+  if (PROGRAM_SAVING.has(itemId)) { PROGRAM_RESAVE.add(itemId); return; }
+  PROGRAM_SAVING.add(itemId);
+  let result;
+  try {
+    do {
+      PROGRAM_RESAVE.delete(itemId);
+      result = await api("PUT", `/program/items/${encodeURIComponent(itemId)}`, readProgramRow(row));
+      if (!result.ok || result.data.ok === false) {
+        PROGRAM_RESAVE.delete(itemId);
+        toast(result.data.reason || `HTTP ${result.status}`, false);
+        break;
+      }
+    } while (PROGRAM_RESAVE.has(itemId) && row.isConnected);
+  } finally {
+    PROGRAM_SAVING.delete(itemId);
   }
-  PROGRAM_ITEMS = PROGRAM_ITEMS.map(item => item.id === itemId ? result.data.item : item);
-  renderProgramItems();
+  if (result.ok && result.data.ok !== false && result.data.item) {
+    PROGRAM_ITEMS = PROGRAM_ITEMS.map(item => item.id === itemId ? result.data.item : item);
+    renderProgramItems();
+  } else {
+    await loadProgramItems();  // show what the service really has
+  }
 }
 
 async function deleteProgramItem(itemId, button) {
@@ -3462,8 +3474,6 @@ async function playProgramItem(itemId, button) {
     if (!result.ok || result.data.ok === false) toast(result.data.reason || `HTTP ${result.status}`, false);
     else toast(`Programmpunkt gestartet · Verzögerung ${formatProgramDelay(result.data.delay_seconds)}`, true);
     await loadProgramItems();
-  } catch (_) {
-    toast("Programmpunkt konnte nicht gestartet werden", false);
   } finally {
     PROGRAM_BUSY.delete(itemId);
     button.disabled = false;
@@ -3474,7 +3484,7 @@ async function playProgramItem(itemId, button) {
 $("program-add-btn").addEventListener("click", () => {
   PROGRAM_DRAFT = true;
   renderProgramItems();
-  document.querySelector('#program-items [data-program-field="title"]')?.focus();
+  document.querySelector('#program-items .program-draft-row [data-program-field="title"]')?.focus();
 });
 $("program-items").addEventListener("change", event => {
   const field = event.target.closest("[data-program-field]");
@@ -3484,19 +3494,20 @@ $("program-items").addEventListener("change", event => {
 $("program-items").addEventListener("click", event => {
   const button = event.target.closest("[data-program-action]");
   if (!button) return;
-  if (button.dataset.programAction === "create") return createProgramItem(button.closest("tr"));
-  if (button.dataset.programAction === "cancel") { PROGRAM_DRAFT = false; renderProgramItems(); return; }
-    if (button.dataset.programAction === "clone") return cloneProgramItem(button.dataset.programId, button);
-  if (button.dataset.programAction === "delete") return deleteProgramItem(button.dataset.programId, button);
-  if (button.dataset.programAction === "play") return playProgramItem(button.dataset.programId, button);
+  const action = button.dataset.programAction;
+  if (action === "create") return createProgramItem(button.closest("tr"));
+  if (action === "cancel") { PROGRAM_DRAFT = false; renderProgramItems(); return; }
+  if (action === "clone") return cloneProgramItem(button.dataset.programId, button);
+  if (action === "delete") return deleteProgramItem(button.dataset.programId, button);
+  if (action === "play") return playProgramItem(button.dataset.programId, button);
 });
 
 loadProgramItems();
 $("txt-build").textContent = "build: " + resolvedBuildId();
 normalizeCollapsedGroups();
 migrateFaderPresets();
-refresh();
-setInterval(refresh, 1000);
+refreshLoop();
+setInterval(pullGroupsFromBackend, 5000);
 refreshUpdateButton();
 setInterval(refreshUpdateButton, 30000);
 loadChannelColors();
