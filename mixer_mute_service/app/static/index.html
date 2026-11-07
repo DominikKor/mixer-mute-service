@@ -263,26 +263,33 @@
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
   .display-key-meta { font: 600 10px/1 var(--mono); color: #7f8b98; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  /* A profile tile: the key plus a small pencil in its top-right corner. The
-     pencil's tap area is 44 x 44 px, only the visible chip is small. */
+  /* A profile tile: the key plus a "⋮" menu key in its top-right corner (tap
+     area 44 x 44 px, only the dots are visible). Edit and delete live in the
+     menu, so nothing covers the title. */
   .display-tile { position: relative; display: inline-flex; max-width: 100%; }
   .display-tile button.display-key { padding-right: 42px; }
-  button.display-edit {
-    position: absolute; top: 0; right: 44px; width: 44px; height: 44px; padding: 5px 5px 0 0;
+  button.display-menu-btn {
+    position: absolute; top: 0; right: 0; width: 44px; height: 44px; padding: 6px 4px 0 0;
     display: flex; align-items: flex-start; justify-content: flex-end;
     color: #6f8a93; background: none; border: none; box-shadow: none; transition: color .12s;
   }
-  button.display-delete {
-    position: absolute; top: 0; right: 0; width: 44px; height: 44px; padding: 5px 5px 0 0;
-    display: flex; align-items: flex-start; justify-content: flex-end;
-    color: #cc665d; background: none; border: none; box-shadow: none;
+  button.display-menu-btn:hover:not(:disabled), button.display-menu-btn[aria-expanded="true"] { color: #e6f4f8; filter: none; }
+  button.display-menu-btn:active:not(:disabled) { transform: none; box-shadow: none; }
+  .display-menu-btn svg { display: block; width: 18px; height: 18px; }
+  /* The tile menu: a small console panel under the dots */
+  .tile-menu {
+    position: fixed; z-index: 40; min-width: 180px; padding: 4px; border-radius: 6px; border: 1px solid #000;
+    background: var(--panel-bg); box-shadow: var(--panel-shadow), 0 10px 28px rgba(0,0,0,.6);
   }
-  button.display-delete:hover:not(:disabled) { color: #ff8576; filter: none; }
-  /* No background of its own: the pencil only lights up on hover */
-  button.display-edit:hover:not(:disabled) { color: #e6f4f8; filter: none; }
-  button.display-edit:active:not(:disabled) { transform: none; box-shadow: none; }
-  .display-edit-chip { display: grid; place-items: center; width: 22px; height: 22px; font-size: 13px; line-height: 1; }
-    .display-delete-chip { display: grid; place-items: center; width: 22px; height: 22px; font-size: 16px; line-height: 1; }
+  .tile-menu[hidden] { display: none; }
+  .tile-menu button {
+    display: flex; align-items: center; gap: 10px; width: 100%; min-height: 44px; padding: 0 12px; border-radius: 4px;
+    font-size: 13px; text-align: left; color: #c9ced6; background: none; border: none; box-shadow: none;
+  }
+  .tile-menu button:hover:not(:disabled), .tile-menu button:focus-visible { color: #fff; background: rgba(255,255,255,.07); filter: none; }
+  .tile-menu button:active:not(:disabled) { transform: none; box-shadow: none; }
+  .tile-menu button.danger { color: #ff8576; }
+  .tile-menu svg { width: 16px; height: 16px; flex-shrink: 0; }
   /* The grey "+" tile after the last profile */
   button.display-add {
     display: grid; place-items: center; align-self: stretch; min-width: 72px; min-height: 48px; padding: 0 20px;
@@ -885,6 +892,11 @@
     </div>
   </form>
 </dialog>
+
+<div id="tile-menu" class="tile-menu" role="menu" hidden>
+  <button type="button" role="menuitem" data-menu-action="edit"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/></svg>Bearbeiten</button>
+  <button type="button" role="menuitem" data-menu-action="delete" class="danger"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6"/></svg>Löschen</button>
+</div>
 
 <div id="toasts" class="toast-wrap"></div>
 
@@ -1836,26 +1848,67 @@ function renderDesktopProfiles(data) {
     metaEl.className = "display-key-meta";
     metaEl.textContent = meta;
     button.append(led, title, metaEl);
-    // Editing works even while the agent is not set up.
-    const edit = document.createElement("button");
-    edit.className = "display-edit";
-    edit.dataset.editProfile = profile.id;
-    edit.title = `${profile.title} bearbeiten`;
-    edit.setAttribute("aria-label", edit.title);
-    edit.innerHTML = '<span class="display-edit-chip" aria-hidden="true">&#9998;</span>';
-    const remove = document.createElement("button");
-    remove.className = "display-delete";
-    remove.dataset.deleteProfile = profile.id;
-    remove.title = `${profile.title} löschen`;
-    remove.setAttribute("aria-label", remove.title);
-    remove.innerHTML = '<span class="display-delete-chip" aria-hidden="true">&times;</span>';
+    // Edit/delete sit in the "⋮" menu; it works even while the agent is not set up.
+    const menuBtn = document.createElement("button");
+    menuBtn.className = "display-menu-btn";
+    menuBtn.dataset.profileMenu = profile.id;
+    menuBtn.title = `${profile.title}: bearbeiten oder löschen`;
+    menuBtn.setAttribute("aria-label", menuBtn.title);
+    menuBtn.setAttribute("aria-haspopup", "menu");
+    menuBtn.setAttribute("aria-expanded", "false");
+    menuBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>';
     const tile = document.createElement("span");
     tile.className = "display-tile";
-    tile.append(button, edit, remove);
+    tile.append(button, menuBtn);
     wrap.insertBefore(tile, addTile);
   }
+  closeTileMenu();
   status.textContent = !DESKTOP_PROFILES.length ? "Noch keine Profile – mit + anlegen"
     : data.ready ? "Profile bereit" : "Desktop-Agent nicht eingerichtet";
+}
+
+// ---- tile menu ("⋮") ------------------------------------------------------
+// One shared menu, placed under the dots of the tile it was opened from.
+
+let TILE_MENU_PROFILE = null;
+
+function openTileMenu(trigger) {
+  closeTileMenu();
+  const menu = $("tile-menu");
+  TILE_MENU_PROFILE = trigger.dataset.profileMenu;
+  trigger.setAttribute("aria-expanded", "true");
+  menu.hidden = false;
+  const r = trigger.getBoundingClientRect();
+  const w = menu.offsetWidth, h = menu.offsetHeight;
+  const left = Math.min(Math.max(8, r.right - w), innerWidth - w - 8);
+  const top = r.bottom + 4 + h > innerHeight - 8 ? Math.max(8, r.top - h - 4) : r.bottom + 4;
+  menu.style.left = `${left}px`;
+  menu.style.top = `${top}px`;
+  menu.querySelector("button").focus({ preventScroll: true });
+}
+
+function closeTileMenu(refocus = false) {
+  const menu = $("tile-menu");
+  if (menu.hidden) return;
+  menu.hidden = true;
+  const trigger = document.querySelector(`[data-profile-menu][aria-expanded="true"]`);
+  if (trigger) {
+    trigger.setAttribute("aria-expanded", "false");
+    if (refocus) trigger.focus();
+  }
+  TILE_MENU_PROFILE = null;
+}
+
+async function deleteDesktopProfile(profileId) {
+  const profile = DESKTOP_PROFILES.find(p => p.id === profileId);
+  if (!confirm(`„${profile ? profile.title : profileId}“ wirklich löschen?`)) return;
+  const result = await api("DELETE", `/desktop/profiles/${encodeURIComponent(profileId)}`);
+  if (!result.ok || result.data.ok === false) {
+    toast(result.data.reason || `HTTP ${result.status}`, false);
+    return;
+  }
+  DESKTOP_PROFILES_SIGNATURE = "";
+  await refresh();
 }
 
 // ---- desktop profile editor ---------------------------------------------
@@ -2999,22 +3052,34 @@ $("desktop-profiles").addEventListener("click", (event) => {
   act("POST", `/desktop/${encodeURIComponent(button.dataset.displayProfile)}/open`, undefined, button.dataset.label);
 });
 $("desktop-profiles").addEventListener("click", (event) => {
-  const button = event.target.closest("button[data-edit-profile]");
-  if (button) openProfileDialog(button.dataset.editProfile);
+  const trigger = event.target.closest("button[data-profile-menu]");
+  if (!trigger) return;
+  if (trigger.getAttribute("aria-expanded") === "true") closeTileMenu();
+  else openTileMenu(trigger);
 });
-$("desktop-profiles").addEventListener("click", async (event) => {
-  const button = event.target.closest("button[data-delete-profile]");
-  if (!button || !confirm(`${button.dataset.deleteProfile} wirklich löschen?`)) return;
-  button.disabled = true;
-  const result = await api("DELETE", `/desktop/profiles/${encodeURIComponent(button.dataset.deleteProfile)}`);
-  if (!result.ok || result.data.ok === false) {
-    button.disabled = false;
-    toast(result.data.reason || `HTTP ${result.status}`, false);
-    return;
-  }
-  DESKTOP_PROFILES_SIGNATURE = "";
-  await refresh();
+$("tile-menu").addEventListener("click", (event) => {
+  const item = event.target.closest("button[data-menu-action]");
+  if (!item) return;
+  const profileId = TILE_MENU_PROFILE;
+  closeTileMenu();
+  if (item.dataset.menuAction === "edit") openProfileDialog(profileId);
+  else if (item.dataset.menuAction === "delete") deleteDesktopProfile(profileId);
 });
+$("tile-menu").addEventListener("keydown", (event) => {
+  const items = [...$("tile-menu").querySelectorAll("button")];
+  const i = items.indexOf(document.activeElement);
+  if (event.key === "Escape") { event.preventDefault(); closeTileMenu(true); }
+  else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+    event.preventDefault();
+    items[(i + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length].focus();
+  } else if (event.key === "Tab") closeTileMenu();
+});
+// Close on any click elsewhere, and when the page scrolls or resizes.
+document.addEventListener("pointerdown", (event) => {
+  if (!event.target.closest("#tile-menu, [data-profile-menu]")) closeTileMenu();
+});
+window.addEventListener("scroll", () => closeTileMenu(), { passive: true });
+window.addEventListener("resize", () => closeTileMenu());
 $("new-profile-btn").addEventListener("click", () => openProfileDialog(null));
 $("profile-form").addEventListener("submit", saveProfile);
 $("pf-cancel").addEventListener("click", () => $("profile-dialog").close());
