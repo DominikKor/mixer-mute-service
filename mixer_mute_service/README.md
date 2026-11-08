@@ -55,10 +55,16 @@ in and out; the choice is remembered per device.
   per-channel fader presets (**Use** / **Use All**). **Mutegruppe aus Status**
   creates a group from the channels currently unmuted, with their observed
   fader values as presets.
-- **Programm**: an editable schedule with planned time, title, person, mute
-  group and optional actions for playback, translation and lyrics. Play
-  activates the group first, then triggers the linked actions in order; the
-  delay column records the actual click offset from the scheduled time.
+- **Programm**: a cue list with planned time, title, person, mute group
+  (optional: a row without one changes no mutes) and up to three actions for
+  playback, translation and lyrics. Play activates the group first, then runs
+  the linked actions in order; the delay records the click offset from the
+  planned time. The cue bar shows the clock, the next row and how long until
+  it is due; **Weiter** starts the next row (also from a Stream Deck via
+  `POST /program/next`). The row that ran last today is marked "Läuft", the
+  next one "Nächster", earlier ones are dimmed. **Duplizieren** puts the copy
+  right below its original, **Ablauf zurücksetzen** forgets all start times.
+  Times can be typed as `930`, `9:30` or `9.30`.
 - **Steuerung**: the keys imported from the former Companion setup (lights,
   cameras, OBS, beamer, "Overall" scene macros), grouped in categories. With
   **Bearbeiten** switched on, keys can be renamed, moved, created and deleted.
@@ -108,11 +114,16 @@ linked light/camera/OBS keys in order.
 | PUT  | `/program/items/{item_id}` | update a program point |
 | DELETE | `/program/items/{item_id}` | delete a program point |
 | POST | `/program/items/{item_id}/play` | activate group and linked actions |
+| POST | `/program/items/{item_id}/duplicate` | copy a row, placed right after it |
+| GET  | `/program/status` | `current_id` (started last today) and `next_id` |
+| POST | `/program/next` | start the next row (409 `program finished` at the end) |
+| POST | `/program/reset` | forget all start times and delays |
 | GET  | `/groups` | list all groups and their channels |
 | POST | `/groups` | create group `{name, channels}` |
 | GET  | `/groups/{group}` | one group's channels |
 | POST | `/groups/{group}/update` | replace a group's channels `{channels}` |
 | POST | `/groups/{group}/delete` | delete a group |
+| POST | `/groups/{group}/rename` | rename `{name}`; Programm rows, Steuerung keys and Overall macros follow |
 | PUT  | `/groups/{group}` | legacy alias for group update |
 | DELETE | `/groups/{group}` | legacy alias for group deletion |
 | GET  | `/desktop/profiles` | list desktop profiles |
@@ -172,6 +183,7 @@ Configure buttons to run HTTP requests — never raw bytes:
 curl -X POST http://localhost:8765/groups/drums/toggle
 curl -X POST http://localhost:8765/channels/2/mute
 curl -X POST http://localhost:8765/channels/2/unmute
+curl -X POST http://localhost:8765/program/next     # Programm: "Weiter"
 ```
 
 PowerShell (Windows):

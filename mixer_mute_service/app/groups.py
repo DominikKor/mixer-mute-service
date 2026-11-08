@@ -131,6 +131,23 @@ class GroupStore:
             self._persist()
             return list(chans)
 
+    async def rename(self, name: str, new_name: str) -> List[int]:
+        """Give a group a new name, keeping its channels."""
+        new_name = self._validate_name(new_name)
+        async with self._lock:
+            if name not in self._groups:
+                raise GroupError(f"unknown group: {name!r}")
+            if new_name == name:
+                return list(self._groups[name])
+            if new_name in self._groups:
+                raise GroupError(f"group already exists: {new_name!r}")
+            # Rebuild the dict so the group keeps its place.
+            self._groups = {
+                (new_name if key == name else key): value for key, value in self._groups.items()
+            }
+            self._persist()
+            return list(self._groups[new_name])
+
     async def delete(self, name: str) -> None:
         async with self._lock:
             if name not in self._groups:

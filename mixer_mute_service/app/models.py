@@ -17,6 +17,10 @@ class GroupUpdate(BaseModel):
     channels: List[int]
 
 
+class GroupRename(BaseModel):
+    name: str
+
+
 class GroupCaptureRequest(BaseModel):
     name: str
 
@@ -62,7 +66,7 @@ class ProgramItemRequest(BaseModel):
     time: str
     title: str
     person: str = ""
-    group: str
+    group: Optional[str] = ""  # empty: the row changes no mutes
     playback: Optional[str] = None
     translation: Optional[str] = None
     lyrics: Optional[str] = None

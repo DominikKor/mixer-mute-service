@@ -509,9 +509,22 @@
   .program-table tbody { display: grid; gap: 10px; }
   .program-table tr {
     display: grid; align-items: start; gap: 10px 12px; padding: 10px 12px; border-radius: 8px;
-    grid-template-columns: 96px minmax(0, 2.2fr) minmax(0, 1.2fr) minmax(0, 1.2fr) auto;
+    grid-template-columns: 96px minmax(0, 2.2fr) minmax(0, 1.2fr) minmax(0, 1.2fr) 88px;
     border: 1px solid #08090b; background: var(--panel-bg); box-shadow: var(--panel-shadow);
+    transition: box-shadow .2s, opacity .2s;
   }
+  /* Running row: green edge; next row: blue edge; rows done today are dimmed.
+     The time label turns into the state ("Läuft" / "Als Nächstes"). */
+  .program-table tr.program-current {
+    border-color: #0b3a1e; box-shadow: 0 0 0 1px rgba(46,204,113,.7), 0 0 18px rgba(46,204,113,.2), var(--panel-shadow);
+  }
+  .program-table tr.program-next {
+    border-color: #0d2a4d; box-shadow: 0 0 0 1px rgba(79,156,255,.7), 0 0 18px rgba(79,156,255,.18), var(--panel-shadow);
+  }
+  .program-table tr.program-done { opacity: .62; }
+  .program-table tr.program-done:focus-within, .program-table tr.program-done:hover { opacity: 1; }
+  .program-table tr.program-current td:first-child::before { content: "● Läuft"; color: #7ff0a8; }
+  .program-table tr.program-next td:first-child::before { content: "▸ Nächster"; color: #8fc2ff; }
   .program-table td { display: flex; flex-direction: column; gap: 5px; min-width: 0; padding: 0; }
   .program-table td::before {
     content: attr(data-label); font-size: 10px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase;
@@ -525,7 +538,7 @@
   .program-table td:nth-child(6) { grid-area: 2 / 2; }   /* Playback */
   .program-table td:nth-child(7) { grid-area: 2 / 3; }   /* Uebersetzung */
   .program-table td:nth-child(8) { grid-area: 2 / 4; }   /* Liedtext */
-  .program-table td.program-actions-cell { grid-area: 1 / 5 / 3 / 6; align-self: center; }
+  .program-table td.program-actions-cell { grid-area: 1 / 5 / 3 / 6; align-self: stretch; }
   .program-table td.program-actions-cell::before { content: none; }
   .program-table input, .program-table select {
     width: 100%; min-width: 0; min-height: 44px; padding: 8px 10px; border-radius: 5px;
@@ -553,16 +566,38 @@
   .program-delay.late { color: #ffbf4d; text-shadow: 0 0 6px rgba(255,191,77,.45); }    /* started after its time */
   .program-delay.early { color: #7ff0a8; text-shadow: 0 0 6px rgba(46,204,113,.45); }   /* started before */
   .program-delay.ontime { color: var(--lcd-text); text-shadow: var(--lcd-glow); }
-  .program-actions { display: flex; gap: 6px; }
-  .program-actions button { display: grid; place-items: center; width: 44px; height: 44px; padding: 0; }
+  /* Play, duplicate and delete stacked in one narrow column */
+  .program-actions { display: flex; flex-direction: column; justify-content: center; gap: 6px; height: 100%; }
+  .program-actions button { display: grid; place-items: center; width: 100%; height: 44px; padding: 0; }
+  .program-next button.program-play { animation: program-next-glow 1.6s ease-in-out infinite; }
+  @keyframes program-next-glow { 50% { box-shadow: 0 0 22px rgba(46,204,113,.75), inset 0 1px 0 rgba(255,255,255,.35); } }
+  @media (prefers-reduced-motion: reduce) { .program-next button.program-play { animation: none; } }
   button.program-play {  /* backlit green start key */
-    width: auto; min-width: 78px; padding: 0 16px; color: #fff; border-color: #0b3a1e;
+    color: #fff; border-color: #0b3a1e;
     font-weight: 800; letter-spacing: .12em; text-transform: uppercase;
     background: radial-gradient(ellipse at 50% 30%, #5ee38f, #22a356 55%, #146b38);
     box-shadow: 0 0 12px rgba(46,204,113,.35), inset 0 1px 0 rgba(255,255,255,.35),
       inset 0 -2px 0 rgba(0,0,0,.25), 0 2px 3px rgba(0,0,0,.55);
   }
   button.program-play:hover:not(:disabled) { color: #fff; }
+  /* Cue bar: clock, what comes next and the "Weiter" key */
+  .program-cue {
+    display: flex; align-items: stretch; gap: 12px; margin-bottom: 12px; padding: 10px 12px; border-radius: 8px;
+    border: 1px solid #08090b; background: var(--panel-bg); box-shadow: var(--panel-shadow);
+  }
+  .program-cue-lcd {
+    flex: 1; min-width: 0; display: flex; align-items: center; gap: 18px; padding: 6px 14px; border-radius: 5px;
+    background: var(--lcd-bg); border: 1px solid #000; box-shadow: var(--lcd-shadow);
+    font-family: var(--mono); color: var(--lcd-text); text-shadow: var(--lcd-glow);
+  }
+  .program-clock { font-size: 22px; font-weight: 700; letter-spacing: .04em; white-space: nowrap; }
+  .program-cue-next { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+  .program-cue-label { font-size: 10px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; color: var(--lcd-dim); text-shadow: none; }
+  .program-cue-title { font-size: 14px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .program-cue-count { margin-left: auto; font-size: 16px; font-weight: 700; white-space: nowrap; }
+  .program-cue-count.late { color: #ffbf4d; text-shadow: 0 0 6px rgba(255,191,77,.45); }
+  button.program-go { min-width: 132px; min-height: 52px; font-size: 15px; }
+  button.program-go:disabled { opacity: .45; animation: none; }
   .program-draft-row { box-shadow: 0 0 0 1px rgba(79,156,255,.6), 0 0 14px rgba(79,156,255,.18), var(--panel-shadow); }
   .program-empty {
     padding: 14px 16px; border-radius: 6px; border: 1px solid #000; background: var(--lcd-bg); box-shadow: var(--lcd-shadow);
@@ -572,7 +607,10 @@
     .program-table tr { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .program-table td:nth-child(n), .program-table td.program-actions-cell { grid-area: auto; }
     .program-table td:nth-child(3), .program-table td.program-actions-cell { grid-column: 1 / -1; }
-    .program-actions { justify-content: flex-end; }
+    .program-actions { flex-direction: row; justify-content: flex-end; }
+    .program-actions button { width: 88px; }
+    .program-cue { flex-wrap: wrap; }
+    button.program-go { flex: 1; }
   }
   .pc-saved { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; white-space: nowrap; }
   .pc-keys { display: flex; gap: 4px; }
@@ -784,9 +822,23 @@
 <section class="panel" data-section="program">
   <div class="panel-head">
     <button class="section-toggle" aria-expanded="true" aria-controls="program-body">Programm</button>
-    <div class="panel-tools"><button id="program-add-btn" class="add-key"><svg class="plus-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 4v16M4 12h16"/></svg>Programmpunkt</button></div>
+    <div class="panel-tools">
+      <button id="program-reset-btn" class="add-key" title="Startzeiten und Verzögerungen vergessen (neuer Gottesdienst, Probe)">Ablauf zurücksetzen</button>
+      <button id="program-add-btn" class="add-key"><svg class="plus-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 4v16M4 12h16"/></svg>Programmpunkt</button>
+    </div>
   </div>
   <div id="program-body" class="panel-body">
+    <div class="program-cue">
+      <div class="program-cue-lcd" aria-live="polite">
+        <span id="program-clock" class="program-clock">--:--:--</span>
+        <span class="program-cue-next">
+          <span id="program-cue-label" class="program-cue-label">Als Nächstes</span>
+          <span id="program-cue-title" class="program-cue-title">—</span>
+        </span>
+        <span id="program-cue-count" class="program-cue-count"></span>
+      </div>
+      <button id="program-go-btn" class="program-play program-go" title="Nächsten Programmpunkt starten">Weiter</button>
+    </div>
     <div class="program-table-wrap">
       <table class="program-table">
         <colgroup>
@@ -1418,9 +1470,19 @@ function mergeBackendGroups(backend) {
   const seen = loadSeenGroupNames();
   const local = loadPersons();
   const byName = new Map(local.map(p => [p.name, p]));
+  // Renamed on another device: a group known here vanished and a new one with
+  // the same channels appeared. It keeps its id and saved fader values.
+  const chKey = chs => JSON.stringify([...(chs || [])].map(Number).sort((a, b) => a - b));
+  const vanished = local.filter(p => !name_in(backend, p.name) && seen.has(p.name));
+  const renamedFrom = new Map();
+  for (const [name, chs] of Object.entries(backend)) {
+    if (byName.has(name)) continue;
+    const i = vanished.findIndex(p => chKey(personChannelList(p)) === chKey(chs));
+    if (i >= 0) renamedFrom.set(name, vanished.splice(i, 1)[0]);
+  }
   const merged = [];
   for (const [name, chs] of Object.entries(backend)) {
-    const prev = byName.get(name);
+    const prev = byName.get(name) || renamedFrom.get(name);
     const channels = {};
     for (const ch of chs || []) {
       channels[String(ch)] = (prev && prev.channels && prev.channels[String(ch)]) || { fader_hex: null, set_at: null };
@@ -1428,15 +1490,16 @@ function mergeBackendGroups(backend) {
     merged.push({ ...(prev || { id: genId() }), name, channels });
   }
   const dropped = [];
+  const renamedIds = new Set([...renamedFrom.values()].map(p => p.id));
   for (const p of local) {
-    if (name_in(backend, p.name)) continue;
+    if (name_in(backend, p.name) || renamedIds.has(p.id)) continue;
     if (personChannelList(p).length && seen.has(p.name)) dropped.push(p.name);
     else merged.push(p);  // no channels yet, or not sent yet
   }
   saveSeenGroupNames(Object.keys(backend));
   // Keep the local order; groups new to this device go to the end.
-  const order = new Map(local.map((p, i) => [p.name, i]));
-  merged.sort((a, b) => (order.has(a.name) ? order.get(a.name) : 1e9) - (order.has(b.name) ? order.get(b.name) : 1e9));
+  const order = new Map(local.map((p, i) => [p.id, i]));
+  merged.sort((a, b) => (order.has(a.id) ? order.get(a.id) : 1e9) - (order.has(b.id) ? order.get(b.id) : 1e9));
   const changed = JSON.stringify(merged) !== JSON.stringify(local);
   if (changed) savePersons(merged);
   if (dropped.length) toast(`Auf einem anderen Gerät gelöscht: ${dropped.join(", ")}`, false);
@@ -1536,14 +1599,17 @@ function genId() { return Date.now().toString(36) + Math.random().toString(36).s
 let GROUP_SYNC = Promise.resolve();
 let GROUP_SYNC_PENDING = 0;
 const GROUP_SYNC_REMOVED = new Set();   // names deleted locally
-const GROUP_SYNC_RENAMES = [];          // { from, to }
 
-function syncPersonGroupsToBackend({ removed = null, rename = null } = {}) {
-  if (removed) GROUP_SYNC_REMOVED.add(removed);
-  if (rename) GROUP_SYNC_RENAMES.push(rename);
+// Run a step in the sync queue (pulls from the service wait meanwhile).
+function queueGroupSync(step) {
   GROUP_SYNC_PENDING++;
-  GROUP_SYNC = GROUP_SYNC.then(runGroupSync).catch(() => {}).finally(() => { GROUP_SYNC_PENDING--; });
+  GROUP_SYNC = GROUP_SYNC.then(step).catch(() => {}).finally(() => { GROUP_SYNC_PENDING--; });
   return GROUP_SYNC;
+}
+
+function syncPersonGroupsToBackend({ removed = null } = {}) {
+  if (removed) GROUP_SYNC_REMOVED.add(removed);
+  return queueGroupSync(runGroupSync);
 }
 
 async function runGroupSync() {
@@ -1580,14 +1646,6 @@ async function runGroupSync() {
     else if (channels.length) synced.add(name);
   }
 
-  // Renames: point program items at the new name, then remove the old group --
-  // only once the new one exists, so nothing is lost if creating it failed.
-  for (const { from, to } of GROUP_SYNC_RENAMES.splice(0)) {
-    if (!known.has(from)) continue;
-    if (!synced.has(to)) { toast(`„${from}“ bleibt auf dem Dienst, bis „${to}“ gespeichert ist`, false); continue; }
-    await repointProgramGroup(from, to);
-    GROUP_SYNC_REMOVED.add(from);
-  }
   for (const name of [...GROUP_SYNC_REMOVED]) {
     GROUP_SYNC_REMOVED.delete(name);
     if (localNames.has(name) || !known.has(name)) continue;
@@ -1598,40 +1656,34 @@ async function runGroupSync() {
   if (after.ok && after.data && typeof after.data === "object") applyBackendGroups(after.data);
 }
 
-async function repointProgramGroup(from, to) {
-  const items = await api("GET", "/program/items");
-  if (!items.ok || !Array.isArray(items.data)) return;
-  let moved = 0;
-  for (const item of items.data.filter(i => i.group === from)) {
-    const body = {};
-    for (const field of PROGRAM_FIELDS) body[field] = item[field] === undefined ? null : item[field];
-    body.group = to;
-    const r = await api("PUT", `/program/items/${encodeURIComponent(item.id)}`, body);
-    if (r.ok && r.data.ok !== false) moved++;
-    else toast(`Programmpunkt „${item.title}“: ${(r.data && r.data.reason) || "HTTP " + r.status}`, false);
-  }
-  if (moved) await loadProgramItems();
-}
-
-// Steuerung keys name their group and cannot be re-pointed here, so a group
-// that keys still use keeps its name.
-async function renamePerson(personId, oldName, newName) {
+// The service renames the group together with its Programm rows, Steuerung
+// keys and Overall macros. A group that only exists here (no channels yet) is
+// just renamed locally.
+function renamePerson(personId, oldName, newName) {
   const err = groupNameError(newName, personId);
   if (err) { toast(err, false); return; }
-  const buttons = await api("GET", "/companion/buttons");
-  if (!buttons.ok) { toast("Umbenennen nicht möglich: Dienst nicht erreichbar", false); return; }
-  const users = (buttons.data.buttons || []).filter(b => b.kind === "group" && b.group === oldName);
-  if (users.length) {
-    toast(`Umbenennen nicht möglich: Steuerungs-Taste ${users.map(b => `„${b.label}“`).join(", ")} nutzt „${oldName}“`, false);
-    return;
-  }
-  const list = loadPersons();
-  const p = list.find(x => x.id === personId);
-  if (!p) return;
-  p.name = newName;
-  savePersons(list);
-  renderPersons(true);
-  syncPersonGroupsToBackend({ rename: { from: oldName, to: newName } });
+  return queueGroupSync(async () => {
+    const r = await api("POST", `/groups/${encodeURIComponent(oldName)}/rename`, { name: newName });
+    if (!r.ok && r.status !== 404) {
+      toast(`Umbenennen fehlgeschlagen: ${(r.data && r.data.reason) || "HTTP " + r.status}`, false);
+      return;
+    }
+    const list = loadPersons();
+    const p = list.find(x => x.id === personId);
+    if (p) { p.name = newName; savePersons(list); }
+    if (r.ok) {
+      const seen = loadSeenGroupNames();
+      seen.delete(oldName);
+      seen.add(newName);
+      saveSeenGroupNames(seen);
+      const moved = (r.data.program_items || 0) + (r.data.buttons || 0);
+      toast(moved ? `„${oldName}“ heißt jetzt „${newName}“ (${moved} Verweise angepasst)` : `„${oldName}“ heißt jetzt „${newName}“`, true);
+      const groups = await api("GET", "/groups");
+      if (groups.ok) applyBackendGroups(groups.data);
+      await Promise.all([loadProgramItems(), loadCompanionButtons()]);
+    }
+    renderPersons(true);
+  });
 }
 
 function openPersonCreateRow() {
@@ -2018,7 +2070,7 @@ function closeDeleteConfirm(confirmed) {
 }
 
 // Resolves true when "Löschen" is pressed, false otherwise.
-function confirmDelete(anchor, question) {
+function confirmDelete(anchor, question, okLabel = "Löschen") {
   closeDeleteConfirm(false);
   return new Promise(resolve => {
     const pop = document.createElement("div");
@@ -2035,7 +2087,7 @@ function confirmDelete(anchor, question) {
     const ok = document.createElement("button");
     ok.type = "button";
     ok.className = "key-mute";
-    ok.textContent = "Löschen";
+    ok.textContent = okLabel;
     const actions = document.createElement("div");
     actions.className = "delete-confirm-actions";
     actions.append(cancel, ok);
@@ -3215,6 +3267,7 @@ let PROGRAM_BUTTONS = [];
 let PROGRAM_BUTTON_CATEGORIES = {};
 let PROGRAM_DESKTOP_PROFILES = [];
 let PROGRAM_DRAFT = false;
+let PROGRAM_STATUS = { current_id: null, next_id: null };
 const PROGRAM_BUSY = new Set();     // play / clone in progress, per item
 const PROGRAM_SAVING = new Set();   // a save is in flight, per item
 const PROGRAM_RESAVE = new Set();   // another edit arrived meanwhile
@@ -3297,6 +3350,9 @@ function programSelect(field, label, value, options, placeholder) {
   return select;
 }
 
+// A row without a group leaves the mutes alone and only runs its actions.
+const NO_PROGRAM_GROUP = "Keine Mutegruppe";
+
 function programGroupOptions() {
   return Object.keys(PROGRAM_GROUPS).map(group => ({ value: group, label: group }));
 }
@@ -3324,7 +3380,7 @@ function buildProgramRow(item, draft = false) {
   programCell(row, "Verzögerung", delay);
   programCell(row, "Titel", programInput("title", "Titel", item.title, "text", 120));
   programCell(row, "Person", programInput("person", "Person", item.person, "text", 80));
-  programCell(row, "Mutegruppe", programSelect("group", "Mutegruppe", item.group, programGroupOptions(), "Gruppe wählen …"));
+  programCell(row, "Mutegruppe", programSelect("group", "Mutegruppe", item.group, programGroupOptions(), NO_PROGRAM_GROUP));
 
   const actionOptions = programActionOptions();
   for (const [field, label] of [["playback", "Playback"], ["translation", "Übersetzung"], ["lyrics", "Liedtext"]]) {
@@ -3355,7 +3411,7 @@ function buildProgramRow(item, draft = false) {
     clone.dataset.programAction = "clone";
     clone.dataset.programId = item.id;
     clone.innerHTML = ICON_COPY;
-    clone.title = "Programmpunkt klonen";
+    clone.title = "Duplizieren: Kopie direkt darunter";
     actions.appendChild(clone);
   }
   const secondary = document.createElement("button");
@@ -3383,7 +3439,7 @@ function updateProgramRow(row, item) {
     const keep = editing || control === document.activeElement;
     if (control.tagName === "SELECT") {
       const options = field === "group" ? groupOptions : actionOptions;
-      setSelectOptions(control, options, field === "group" ? "Gruppe wählen …" : "Keine Aktion",
+      setSelectOptions(control, options, field === "group" ? NO_PROGRAM_GROUP : "Keine Aktion",
         keep ? control.value : item[field]);
     } else if (!keep) {
       control.value = item[field] || "";
@@ -3395,9 +3451,13 @@ function updateProgramRow(row, item) {
   delay.className = "program-delay" + (seconds === null || seconds === undefined ? ""
     : seconds > 0 ? " late" : seconds < 0 ? " early" : " ontime");
   delay.title = item.last_played_at ? `Zuletzt geklickt: ${item.last_played_at}` : "Noch nicht gestartet";
+  const current = item.id === PROGRAM_STATUS.current_id;
+  row.classList.toggle("program-current", current);
+  row.classList.toggle("program-next", item.id === PROGRAM_STATUS.next_id);
+  row.classList.toggle("program-done", !current && playedToday(item));
   const label = item.title || "Programmpunkt";
   const clone = row.querySelector('[data-program-action="clone"]');
-  if (clone) clone.setAttribute("aria-label", `${label} klonen`);
+  if (clone) clone.setAttribute("aria-label", `${label} duplizieren`);
   const del = row.querySelector('[data-program-action="delete"]');
   if (del) del.setAttribute("aria-label", `${label} löschen`);
 }
@@ -3417,10 +3477,14 @@ function renderProgramItems() {
   for (const row of existing.values()) row.remove();
   let draft = tbody.querySelector(".program-draft-row");
   if (PROGRAM_DRAFT) {
-    if (!draft) draft = buildProgramRow({ time: nextProgramTime(), group: Object.keys(PROGRAM_GROUPS)[0] || "" }, true);
+    if (!draft) {
+      const last = PROGRAM_ITEMS[PROGRAM_ITEMS.length - 1];
+      const group = last && name_in(PROGRAM_GROUPS, last.group) ? last.group : (Object.keys(PROGRAM_GROUPS)[0] || "");
+      draft = buildProgramRow({ time: nextProgramTime(), group }, true);
+    }
     else {
       const group = draft.querySelector('[data-program-field="group"]');
-      setSelectOptions(group, programGroupOptions(), "Gruppe wählen …", group.value);
+      setSelectOptions(group, programGroupOptions(), NO_PROGRAM_GROUP, group.value);
       for (const field of ["playback", "translation", "lyrics"]) {
         const sel = draft.querySelector(`[data-program-field="${field}"]`);
         setSelectOptions(sel, programActionOptions(), "Keine Aktion", sel.value);
@@ -3433,13 +3497,15 @@ function renderProgramItems() {
   // Only move rows that are out of place: moving a row would blur its field.
   wanted.forEach((row, i) => { if (tbody.children[i] !== row) tbody.insertBefore(row, tbody.children[i] || null); });
   $("program-empty").hidden = PROGRAM_ITEMS.length > 0 || PROGRAM_DRAFT;
+  updateProgramCue();
 }
 
 async function loadProgramItems() {
-  const [items, groups, buttons, desktop] = await Promise.all([
+  const [items, groups, buttons, desktop, status] = await Promise.all([
     api("GET", "/program/items"), api("GET", "/groups"), api("GET", "/companion/buttons"),
-    api("GET", "/desktop/profiles"),
+    api("GET", "/desktop/profiles"), api("GET", "/program/status"),
   ]);
+  if (status.ok && status.data) PROGRAM_STATUS = status.data;
   if (!items.ok || !Array.isArray(items.data) || !groups.ok || !buttons.ok || !desktop.ok) {
     $("program-empty").hidden = false;
     $("program-empty").textContent = "Programmdaten konnten nicht geladen werden";
@@ -3454,10 +3520,81 @@ async function loadProgramItems() {
   renderProgramItems();
 }
 
+// Starts and the current/next row as other devices see them (every 5 s).
+async function refreshProgramState() {
+  if (!$("program-items").closest(".panel").classList.contains("open")) return;
+  const [items, status] = await Promise.all([api("GET", "/program/items"), api("GET", "/program/status")]);
+  if (!items.ok || !Array.isArray(items.data) || !status.ok) return;
+  PROGRAM_ITEMS = items.data;
+  PROGRAM_STATUS = status.data;
+  renderProgramItems();
+}
+
+function playedToday(item) {
+  if (!item || !item.last_played_at) return false;
+  const d = new Date();
+  const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  return item.last_played_at.startsWith(today);
+}
+
+// "930", "9:30", "9.30", "0930" -> "09:30"; anything else stays as typed
+// (and the field shows it as invalid).
+function normalizeProgramTime(value) {
+  const m = /^\s*(\d{1,2})(?:[:.,h ]?(\d{2}))?\s*$/.exec(value || "");
+  if (!m) return (value || "").trim();
+  let hours = m[1], minutes = m[2];
+  if (minutes === undefined) {
+    if (hours.length > 2) return value.trim();
+    minutes = "00";
+  }
+  if (Number(hours) > 23 || Number(minutes) > 59) return value.trim();
+  return `${hours.padStart(2, "0")}:${minutes}`;
+}
+
+function clockText(date) {
+  return [date.getHours(), date.getMinutes(), date.getSeconds()].map(n => String(n).padStart(2, "0")).join(":");
+}
+
+// Clock, the next row and the time until it is due.
+function updateProgramCue() {
+  const now = new Date();
+  $("program-clock").textContent = clockText(now);
+  const next = PROGRAM_ITEMS.find(item => item.id === PROGRAM_STATUS.next_id);
+  const go = $("program-go-btn");
+  const count = $("program-cue-count");
+  go.disabled = !next || PROGRAM_BUSY.size > 0;
+  if (!next) {
+    $("program-cue-label").textContent = PROGRAM_ITEMS.length ? "Programm" : "Als Nächstes";
+    $("program-cue-title").textContent = PROGRAM_ITEMS.length ? "Ende – alle Punkte gestartet" : "Noch keine Programmpunkte";
+    count.textContent = "";
+    count.classList.remove("late");
+    go.title = "Kein weiterer Programmpunkt";
+    return;
+  }
+  $("program-cue-label").textContent = "Als Nächstes";
+  $("program-cue-title").textContent = `${next.time} · ${next.title}${next.person ? " · " + next.person : ""}`;
+  go.title = `„${next.title}“ starten`;
+  const [h, m] = next.time.split(":").map(Number);
+  const due = new Date(now);
+  due.setHours(h, m, 0, 0);
+  let diff = Math.round((due - now) / 1000);
+  if (diff < -12 * 3600) diff += 24 * 3600;
+  if (diff > 12 * 3600) diff -= 24 * 3600;
+  const abs = Math.abs(diff);
+  // Durations, not clock times: "4:12 min", "25 min", "1 h 05 min".
+  const text = abs >= 3600
+    ? `${Math.floor(abs / 3600)} h ${String(Math.floor(abs % 3600 / 60)).padStart(2, "0")} min`
+    : abs >= 600 ? `${Math.floor(abs / 60)} min`
+    : `${Math.floor(abs / 60)}:${String(abs % 60).padStart(2, "0")} min`;
+  count.textContent = diff >= 0 ? `in ${text}` : `seit ${text} fällig`;
+  count.classList.toggle("late", diff < 0);
+}
+
 function readProgramRow(row) {
   const result = {};
   for (const field of PROGRAM_FIELDS) {
     const control = row.querySelector(`[data-program-field="${field}"]`);
+    if (control && field === "time") control.value = normalizeProgramTime(control.value);
     result[field] = control ? control.value.trim() : "";
   }
   for (const field of ["playback", "translation", "lyrics"]) result[field] ||= null;
@@ -3485,13 +3622,10 @@ async function cloneProgramItem(itemId, button) {
   PROGRAM_BUSY.add(itemId);
   button.disabled = true;
   try {
-    const payload = {};
-    for (const field of PROGRAM_FIELDS) payload[field] = item[field] === undefined ? null : item[field];
-    payload.time = nextProgramTime();
-    const result = await api("POST", "/program/items", payload);
+    const result = await api("POST", `/program/items/${encodeURIComponent(itemId)}/duplicate`);
     if (!result.ok || result.data.ok === false) { toast(result.data.reason || `HTTP ${result.status}`, false); return; }
     await loadProgramItems();
-    toast("Programmpunkt geklont", true);
+    toast(`„${item.title}“ dupliziert`, true);
   } finally {
     PROGRAM_BUSY.delete(itemId);
     button.disabled = false;
@@ -3536,21 +3670,44 @@ async function deleteProgramItem(itemId, button) {
   renderProgramItems();
 }
 
-async function playProgramItem(itemId, button) {
-  if (PROGRAM_BUSY.has(itemId)) return;
-  PROGRAM_BUSY.add(itemId);
+function programPlayToast(result) {
+  const title = result.data && result.data.title ? `„${result.data.title}“` : "Programmpunkt";
+  if (!result.ok || result.data.ok === false) {
+    toast(`${title}: ${(result.data && result.data.reason) || "HTTP " + result.status}`, false);
+  } else {
+    toast(`${title} gestartet · Verzögerung ${formatProgramDelay(result.data.delay_seconds)}`, true);
+  }
+}
+
+async function startProgram(key, path, button) {
+  if (PROGRAM_BUSY.has(key)) return;
+  PROGRAM_BUSY.add(key);
   button.disabled = true;
+  updateProgramCue();
   try {
-    const result = await api("POST", `/program/items/${encodeURIComponent(itemId)}/play`);
-    if (!result.ok || result.data.ok === false) toast(result.data.reason || `HTTP ${result.status}`, false);
-    else toast(`Programmpunkt gestartet · Verzögerung ${formatProgramDelay(result.data.delay_seconds)}`, true);
+    programPlayToast(await api("POST", path));
     await loadProgramItems();
   } finally {
-    PROGRAM_BUSY.delete(itemId);
+    PROGRAM_BUSY.delete(key);
     button.disabled = false;
+    updateProgramCue();
     await refresh();
   }
 }
+
+function playProgramItem(itemId, button) {
+  return startProgram(itemId, `/program/items/${encodeURIComponent(itemId)}/play`, button);
+}
+
+$("program-go-btn").addEventListener("click", event => startProgram("next", "/program/next", event.currentTarget));
+$("program-reset-btn").addEventListener("click", async event => {
+  const button = event.currentTarget;
+  if (!(await confirmDelete(button, "Startzeiten und Verzögerungen aller Punkte vergessen? „Weiter“ beginnt dann wieder oben.", "Zurücksetzen"))) return;
+  const result = await api("POST", "/program/reset");
+  if (!result.ok || result.data.ok === false) { toast(result.data.reason || `HTTP ${result.status}`, false); return; }
+  toast("Ablauf zurückgesetzt", true);
+  await loadProgramItems();
+});
 
 $("program-add-btn").addEventListener("click", () => {
   PROGRAM_DRAFT = true;
@@ -3559,6 +3716,7 @@ $("program-add-btn").addEventListener("click", () => {
 });
 $("program-items").addEventListener("change", event => {
   const field = event.target.closest("[data-program-field]");
+  if (field && field.dataset.programField === "time") field.value = normalizeProgramTime(field.value);
   const row = field && field.closest("tr");
   if (row && row.dataset.programId) updateProgramItem(row);
 });
@@ -3574,6 +3732,8 @@ $("program-items").addEventListener("click", event => {
 });
 
 loadProgramItems();
+setInterval(refreshProgramState, 5000);
+setInterval(updateProgramCue, 1000);
 $("txt-build").textContent = "build: " + resolvedBuildId();
 normalizeCollapsedGroups();
 migrateFaderPresets();

@@ -32,6 +32,7 @@ from .models import (
     CompanionCategoryVisibility,
     FaderRequest,
     GroupCreate,
+    GroupRename,
     GroupUpdate,
     ProgramItemRequest,
     RecallFaderRequest,
@@ -506,7 +507,7 @@ _PROGRAM_ACTION_FIELDS = ("playback", "translation", "lyrics")
 async def _program_reference_error(item: dict, request: Request):
     """Reason why a program row cannot run, or None. Checked on save and
     again before play, since a key or group may have been deleted since."""
-    if await request.app.state.groups.get(item["group"]) is None:
+    if item.get("group") and await request.app.state.groups.get(item["group"]) is None:
         return "unknown group"
     for field in _PROGRAM_ACTION_FIELDS:
         button_id = item.get(field)
@@ -567,8 +568,47 @@ async def delete_program_item(item_id: str, request: Request):
     return {"ok": True, "item_id": item_id, "deleted": True}
 
 
+@router.get("/program/status")
+async def program_status(request: Request):
+    """The row that ran last today and the one "Weiter" would start."""
+    return await request.app.state.program_items.status()
+
+
+@router.post("/program/items/{item_id}/duplicate")
+async def duplicate_program_item(item_id: str, request: Request):
+    item = await request.app.state.program_items.duplicate(item_id)
+    if item is None:
+        return JSONResponse({"ok": False, "reason": "unknown program item"}, 404)
+    return {"ok": True, "item": item}
+
+
+@router.post("/program/reset")
+async def reset_program(request: Request):
+    count = await request.app.state.program_items.reset_played()
+    return {"ok": True, "reset": count}
+
+
+# One program start at a time: two quick "Weiter" presses must not both start
+# the same row, and a row must not run twice in parallel.
+_program_lock = asyncio.Lock()
+
+
+@router.post("/program/next")
+async def play_next_program_item(request: Request):
+    async with _program_lock:
+        status = await request.app.state.program_items.status()
+        if status["next_id"] is None:
+            return JSONResponse({"ok": False, "reason": "program finished"}, 409)
+        return await _play_program_item(status["next_id"], request)
+
+
 @router.post("/program/items/{item_id}/play")
 async def play_program_item(item_id: str, request: Request):
+    async with _program_lock:
+        return await _play_program_item(item_id, request)
+
+
+async def _play_program_item(item_id: str, request: Request):
     program_store = request.app.state.program_items
     item = await program_store.get(item_id)
     if item is None:
@@ -578,18 +618,20 @@ async def play_program_item(item_id: str, request: Request):
     broken = await _program_reference_error(item, request)
     if broken:
         return JSONResponse({"ok": False, "reason": broken, "program_item_id": item_id}, 409)
-    played = await program_store.mark_played(item_id)
     _, _, _, controller = _ctx(request)
-    group_result = await controller.group_set(item["group"], False)
-    if not group_result.get("ok"):
-        return _respond({
-            "ok": False,
-            "reason": group_result.get("reason", "mute group could not be activated"),
-            "details": group_result.get("details"),
-            "program_item_id": item_id,
-            "delay_seconds": played["last_delay_seconds"],
-            "group_result": group_result,
-        })
+    group_result = None
+    if item.get("group"):
+        group_result = await controller.group_set(item["group"], False)
+        if not group_result.get("ok"):
+            # Not marked as started: "Weiter" still offers this row.
+            return _respond({
+                "ok": False,
+                "reason": group_result.get("reason", "mute group could not be activated"),
+                "details": group_result.get("details"),
+                "program_item_id": item_id,
+                "group_result": group_result,
+            })
+    played = await program_store.mark_played(item_id)
 
     linked_actions = []
     for field in _PROGRAM_ACTION_FIELDS:
@@ -605,8 +647,9 @@ async def play_program_item(item_id: str, request: Request):
         if status_code != 200 or result.get("ok") is False:
             return JSONResponse({
                 "ok": False,
-                "reason": f"{field} action failed after group activation",
+                "reason": f"{field} action failed" + (" after group activation" if group_result else ""),
                 "program_item_id": item_id,
+                "title": item["title"],
                 "delay_seconds": played["last_delay_seconds"],
                 "group_result": group_result,
                 "linked_actions": linked_actions,
@@ -615,6 +658,7 @@ async def play_program_item(item_id: str, request: Request):
     return {
         "ok": True,
         "program_item_id": item_id,
+        "title": item["title"],
         "delay_seconds": played["last_delay_seconds"],
         "group_result": group_result,
         "linked_actions": linked_actions,
@@ -681,6 +725,26 @@ async def delete_group_post(group: str, request: Request):
 @router.delete("/groups/{group}")
 async def delete_group(group: str, request: Request):
     return await _delete_group(group, request)
+
+
+@router.post("/groups/{group}/rename")
+async def rename_group(group: str, body: GroupRename, request: Request):
+    """Rename a group and every reference to it (Programm rows, Steuerung keys,
+    Overall macros), so nothing that used the old name breaks."""
+    state = request.app.state
+    try:
+        channels = await state.groups.rename(group, body.name)
+    except GroupError as exc:
+        status = 404 if str(exc).startswith("unknown group") else 400
+        return JSONResponse({"ok": False, "group": group, "reason": str(exc)}, status)
+    new_name = body.name.strip()
+    program_rows = await state.program_items.rename_group(group, new_name)
+    keys = await state.companion_button_store.rename_group(group, new_name)
+    log.info("Group %r renamed to %r (%d program rows, %d keys)", group, new_name, program_rows, keys)
+    return {
+        "ok": True, "group": new_name, "old_name": group, "channels": channels,
+        "program_items": program_rows, "buttons": keys,
+    }
 
 
 @router.post("/panic/disable")

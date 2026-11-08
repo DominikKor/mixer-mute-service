@@ -157,6 +157,16 @@ DEFAULT_CATEGORIES = [
 ]
 
 
+def _updated_action(current: dict, seed_button: dict) -> dict:
+    """The catalog's new action for a stored key. A macro keeps its mute group,
+    since the user may have renamed that group."""
+    action = deepcopy(seed_button["native_action"])
+    old = current.get("native_action")
+    if action.get("type") == "group-macro" and isinstance(old, dict) and old.get("group"):
+        action["group"] = old["group"]
+    return action
+
+
 class CompanionButtonStore:
     def __init__(self, path: Path, seed: List[dict]) -> None:
         self._path = path
@@ -189,7 +199,7 @@ class CompanionButtonStore:
                         buttons.append(deepcopy(seed_button))
                     elif current is not None and seed_button.get("kind") == "native":
                         current["kind"] = "native"
-                        current["native_action"] = deepcopy(seed_button["native_action"])
+                        current["native_action"] = _updated_action(current, seed_button)
                         current["category_id"] = seed_button["category_id"]
                 self._catalog_version = 2
                 migrated = True
@@ -208,7 +218,7 @@ class CompanionButtonStore:
                         button_map[seed_button["id"]] = current
                     elif current is not None and seed_button.get("kind") == "native":
                         current["kind"] = "native"
-                        current["native_action"] = deepcopy(seed_button["native_action"])
+                        current["native_action"] = _updated_action(current, seed_button)
                 self._catalog_version = _NATIVE_CATALOG_VERSION
                 migrated = True
             category_ids = {item["id"] for item in categories}
@@ -288,6 +298,22 @@ class CompanionButtonStore:
             button["category_id"] = category_id
             self._persist()
             return deepcopy(button)
+
+    async def rename_group(self, old: str, new: str) -> int:
+        """Point keys at a renamed mute group (group keys and Overall macros)."""
+        async with self._lock:
+            changed = 0
+            for button in self._buttons:
+                if button.get("kind") == "group" and button.get("group") == old:
+                    button["group"] = new
+                    changed += 1
+                action = button.get("native_action")
+                if isinstance(action, dict) and action.get("type") == "group-macro" and action.get("group") == old:
+                    action["group"] = new
+                    changed += 1
+            if changed:
+                self._persist()
+            return changed
 
     async def delete_button(self, button_id: str) -> None:
         async with self._lock:

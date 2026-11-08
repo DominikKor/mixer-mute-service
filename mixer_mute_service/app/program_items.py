@@ -65,9 +65,11 @@ class ProgramItemStore:
         person = str(data.get("person", "")).strip()
         if len(person) > 80:
             raise ProgramItemError("person must be at most 80 characters")
-        group = str(data.get("group", "")).strip()
-        if not group or len(group) > 64:
-            raise ProgramItemError("group is required")
+        # Optional: a row without a group leaves all mutes as they are and
+        # only runs its actions (e.g. a camera change during a sermon).
+        group = str(data.get("group") or "").strip()
+        if len(group) > 64:
+            raise ProgramItemError("group must be at most 64 characters")
         result = {"time": scheduled_time, "title": title, "person": person, "group": group}
         for field in _ACTION_FIELDS:
             value = data.get(field)
@@ -81,9 +83,34 @@ class ProgramItemStore:
             result[field] = value.strip()
         return result
 
+    def _ordered(self) -> List[dict]:
+        # By time; rows with the same time keep the order they were added in
+        # (a duplicate sits right after its original).
+        return sorted(self._items, key=lambda item: item["time"])
+
     async def list(self) -> List[dict]:
         async with self._lock:
-            return sorted(deepcopy(self._items), key=lambda item: (item["time"], item["id"]))
+            return deepcopy(self._ordered())
+
+    async def status(self, now: Optional[datetime] = None) -> dict:
+        """Which row ran last today ("current") and which comes next.
+
+        Only starts from today count, so last week's run does not decide what
+        is next. Without a start today, the first row is next.
+        """
+        today = (now or datetime.now().astimezone()).date().isoformat()
+        async with self._lock:
+            ordered = self._ordered()
+            played = [
+                (item["last_played_at"], index) for index, item in enumerate(ordered)
+                if isinstance(item.get("last_played_at"), str) and item["last_played_at"].startswith(today)
+            ]
+            current = max(played)[1] if played else None
+            following = 0 if current is None else current + 1
+            return {
+                "current_id": None if current is None else ordered[current]["id"],
+                "next_id": ordered[following]["id"] if following < len(ordered) else None,
+            }
 
     async def get(self, item_id: str) -> Optional[dict]:
         async with self._lock:
@@ -112,6 +139,46 @@ class ProgramItemStore:
             item.update(fields)
             self._persist()
             return deepcopy(item)
+
+    async def duplicate(self, item_id: str) -> Optional[dict]:
+        """Copy a row; the copy gets the same time and sits right after it."""
+        async with self._lock:
+            index = next((i for i, entry in enumerate(self._items) if entry["id"] == item_id), None)
+            if index is None:
+                return None
+            item = {
+                **deepcopy(self._items[index]),
+                "id": uuid.uuid4().hex,
+                "last_delay_seconds": None,
+                "last_played_at": None,
+            }
+            self._items.insert(index + 1, item)
+            self._persist()
+            return deepcopy(item)
+
+    async def reset_played(self) -> int:
+        """Forget all start times and delays (a new service or a rehearsal)."""
+        async with self._lock:
+            count = 0
+            for item in self._items:
+                if item.get("last_played_at") or item.get("last_delay_seconds") is not None:
+                    item["last_played_at"] = None
+                    item["last_delay_seconds"] = None
+                    count += 1
+            if count:
+                self._persist()
+            return count
+
+    async def rename_group(self, old: str, new: str) -> int:
+        async with self._lock:
+            changed = 0
+            for item in self._items:
+                if item.get("group") == old:
+                    item["group"] = new
+                    changed += 1
+            if changed:
+                self._persist()
+            return changed
 
     async def delete(self, item_id: str) -> bool:
         async with self._lock:

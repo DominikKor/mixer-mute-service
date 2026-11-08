@@ -423,6 +423,74 @@ with TestClient(app) as client:
     played_program = client.get("/program/items").json()[0]
     check("program play stores timing delay", played_program["last_delay_seconds"] is not None
           and played_program["last_played_at"] is not None)
+    # Duplicate: same time, right after the original, not started yet.
+    dup = client.post(f"/program/items/{program_id}/duplicate")
+    dup_id = dup.json()["item"]["id"]
+    ordered = client.get("/program/items").json()
+    check("duplicate sits right after its original with the same time",
+          dup.status_code == 200 and [i["id"] for i in ordered][:2] == [program_id, dup_id]
+          and ordered[1]["time"] == ordered[0]["time"] and ordered[1]["last_played_at"] is None)
+    check("duplicate of unknown row -> 404", client.post("/program/items/nope/duplicate").status_code == 404)
+
+    # Status / Weiter: the row started last today is current, the next follows.
+    status = client.get("/program/status").json()
+    check("status: started row is current, duplicate is next",
+          status["current_id"] == program_id and status["next_id"] == dup_id)
+    with patch.object(app.state.controller, "group_set", AsyncMock(return_value={"ok": True})), \
+            patch("app.routes.open_desktop_profile", new=AsyncMock(return_value={"ok": True})), \
+            patch("app.routes.companion_button_press", new=AsyncMock(return_value={"ok": True})):
+        nxt = client.post("/program/next")
+        check("Weiter starts the next row", nxt.status_code == 200 and nxt.json()["program_item_id"] == dup_id)
+        finished = client.post("/program/next")
+        check("Weiter at the end -> 409 program finished",
+              finished.status_code == 409 and finished.json()["reason"] == "program finished")
+    with patch.object(app.state.controller, "group_set", AsyncMock(return_value={"ok": False, "reason": "unsafe group operation"})):
+        client.post("/program/reset")
+        blocked_next = client.post("/program/next")
+        check("blocked group: row is not marked as started",
+              blocked_next.status_code == 409 and client.get("/program/status").json()["next_id"] == program_id)
+    reset = client.post("/program/reset")
+    check("reset forgets start times", reset.status_code == 200
+          and all(i["last_played_at"] is None for i in client.get("/program/items").json()))
+
+    # A row without a group changes no mutes and only runs its actions.
+    no_group = client.post("/program/items", json={
+        "time": "11:00", "title": "Nur Kamera", "group": "", "translation": "cam1-live",
+    })
+    check("row without group can be saved", no_group.status_code == 200 and no_group.json()["item"]["group"] == "")
+    with patch.object(app.state.controller, "group_set", AsyncMock(return_value={"ok": True})) as ng_group, \
+            patch("app.routes.companion_button_press", new=AsyncMock(return_value={"ok": True})) as ng_press:
+        ng_play = client.post(f"/program/items/{no_group.json()['item']['id']}/play")
+        check("row without group plays its actions without touching mutes",
+              ng_play.status_code == 200 and ng_group.await_count == 0 and ng_press.await_count == 1)
+    client.delete(f"/program/items/{no_group.json()['item']['id']}")
+    client.delete(f"/program/items/{dup_id}")
+
+    # Rename: the group, its Programm rows and its Steuerung keys move together.
+    client.post("/groups", json={"name": "Altname", "channels": [1, 2]})
+    rename_row = client.post("/program/items", json={"time": "12:00", "title": "Umbenennen", "group": "Altname"}).json()["item"]
+    rename_key = client.post("/companion/buttons", json={
+        "label": "Altname an", "category_id": "mixer", "kind": "group", "group": "Altname", "operation": "unmute",
+    }).json()["button"]
+    renamed = client.post("/groups/Altname/rename", json={"name": "Neuname"})
+    groups_now = client.get("/groups").json()
+    check("rename keeps channels under the new name", renamed.status_code == 200
+          and "Altname" not in groups_now and groups_now.get("Neuname") == [1, 2])
+    check("rename moves Programm rows", next(i for i in client.get("/program/items").json()
+                                              if i["id"] == rename_row["id"])["group"] == "Neuname")
+    check("rename moves Steuerung keys", next(b for b in client.get("/companion/buttons").json()["buttons"]
+                                               if b["id"] == rename_key["id"])["group"] == "Neuname")
+    check("rename reports what moved", renamed.json()["program_items"] == 1 and renamed.json()["buttons"] == 1)
+    check("rename to an existing name -> 400",
+          client.post("/groups/Neuname/rename", json={"name": "drums"}).status_code == 400)
+    check("rename unknown group -> 404",
+          client.post("/groups/Altname/rename", json={"name": "Egal"}).status_code == 404)
+    check("rename to invalid name -> 400",
+          client.post("/groups/Neuname/rename", json={"name": "/etc"}).status_code == 400)
+    client.delete(f"/program/items/{rename_row['id']}")
+    client.post(f"/companion/buttons/{rename_key['id']}/delete")
+    client.delete("/groups/Neuname")
+
     removed_program = client.delete(f"/program/items/{program_id}")
     check("program item deleted", removed_program.status_code == 200)
     check("mute blocked w/ 409 no connection", m.status_code == 409)
