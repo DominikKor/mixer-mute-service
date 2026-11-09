@@ -16,6 +16,9 @@ let PROGRAM_STATUS = { current_id: null, next_id: null };
 const PROGRAM_BUSY = new Set();     // play / clone in progress, per item
 const PROGRAM_SAVING = new Set();   // a save is in flight, per item
 const PROGRAM_RESAVE = new Set();   // another edit arrived meanwhile
+// Hide key: an open eye while the row is shown, struck through once hidden.
+const ICON_EYE = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>`;
+const ICON_EYE_OFF = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.6-7 10-7c2 0 3.8.7 5.2 1.6M22 12s-3.6 7-10 7c-2 0-3.8-.7-5.2-1.6"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2M3 3l18 18"/></svg>`;
 const PROGRAM_FIELDS = [
   "time", "title", "person", "group", "playback", "translation", "lyrics",
   "playback_description", "translation_description", "lyrics_description", "song", "light",
@@ -217,6 +220,15 @@ function buildProgramRow(item, draft = false) {
 
   const actions = document.createElement("div");
   actions.className = "program-actions";
+  if (!draft) {
+    // Top right of the row: grey the row out, "Weiter" then skips it.
+    const hide = document.createElement("button");
+    hide.type = "button";
+    hide.className = "program-hide";
+    hide.dataset.programAction = "hide";
+    hide.dataset.programId = item.id;
+    actions.appendChild(hide);
+  }
   const primary = document.createElement("button");
   primary.type = "button";
   primary.className = draft ? "primary" : "program-play";
@@ -286,7 +298,18 @@ function updateProgramRow(row, item) {
   row.classList.toggle("program-current", current);
   row.classList.toggle("program-next", item.id === PROGRAM_STATUS.next_id);
   row.classList.toggle("program-done", !current && playedToday(item));
+  const hidden = !!item.hidden;
+  row.classList.toggle("program-hidden", hidden);
   const label = item.title || "Programmpunkt";
+  const hide = row.querySelector('[data-program-action="hide"]');
+  if (hide && hide.getAttribute("aria-pressed") !== String(hidden)) {
+    hide.setAttribute("aria-pressed", String(hidden));
+    hide.innerHTML = hidden ? ICON_EYE_OFF : ICON_EYE;
+  }
+  if (hide) {
+    hide.title = hidden ? "Wieder einblenden: „Weiter“ startet ihn wieder" : "Ausblenden: grau, „Weiter“ überspringt ihn";
+    hide.setAttribute("aria-label", `${label} ${hidden ? "wieder einblenden" : "ausblenden und überspringen"}`);
+  }
   const clone = row.querySelector('[data-program-action="clone"]');
   if (clone) clone.setAttribute("aria-label", `${label} duplizieren`);
   const del = row.querySelector('[data-program-action="delete"]');
@@ -516,6 +539,21 @@ async function updateProgramItem(row) {
   }
 }
 
+async function toggleProgramHidden(itemId, button) {
+  const item = PROGRAM_ITEMS.find(entry => entry.id === itemId);
+  if (!item || button.disabled) return;
+  const hidden = !item.hidden;
+  button.disabled = true;
+  try {
+    const result = await api("POST", `/program/items/${encodeURIComponent(itemId)}/hidden`, { hidden });
+    if (!result.ok || result.data.ok === false) { toast(result.data.reason || `HTTP ${result.status}`, false); return; }
+    toast(hidden ? `„${item.title}“ ausgeblendet – „Weiter“ überspringt ihn` : `„${item.title}“ wieder eingeblendet`, true);
+    await loadProgramItems();  // "Als Nächstes" may have changed
+  } finally {
+    button.disabled = false;
+  }
+}
+
 async function deleteProgramItem(itemId, button) {
   const item = PROGRAM_ITEMS.find(entry => entry.id === itemId);
   if (!item || !(await confirmDelete(button, `Programmpunkt „${item.title}“ löschen?`))) return;
@@ -601,6 +639,7 @@ $("program-items").addEventListener("click", event => {
   if (action === "create") return createProgramItem(button.closest("tr"));
   if (action === "cancel") { PROGRAM_DRAFT = false; renderProgramItems(); return; }
   if (action === "clone") return cloneProgramItem(button.dataset.programId, button);
+  if (action === "hide") return toggleProgramHidden(button.dataset.programId, button);
   if (action === "delete") return deleteProgramItem(button.dataset.programId, button);
   if (action === "play") return playProgramItem(button.dataset.programId, button);
 });

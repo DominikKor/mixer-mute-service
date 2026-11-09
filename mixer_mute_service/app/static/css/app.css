@@ -683,6 +683,14 @@ button.collapse-btn:active:not(:disabled) .collapse-chip { transform: translateY
 .program-table tr.program-done:focus-within, .program-table tr.program-done:hover { opacity: 1; }
 .program-table tr.program-current td:first-child::before { content: "● Läuft"; color: #7ff0a8; }
 .program-table tr.program-next td:first-child::before { content: "▸ Nächster"; color: #8fc2ff; }
+/* Hidden row: grey, skipped by "Weiter"; its keys stay usable to show it again */
+.program-table tr.program-hidden { background: #16181c; box-shadow: none; border-style: dashed; border-color: #2a2e35; }
+.program-table tr.program-hidden td:not(.program-actions-cell) { opacity: .4; filter: grayscale(1); transition: opacity .2s; }
+.program-table tr.program-hidden:focus-within td:not(.program-actions-cell),
+.program-table tr.program-hidden:hover td:not(.program-actions-cell) { opacity: .7; }
+.program-table tr.program-hidden td:first-child::before { content: "Ausgeblendet"; color: #9aa1ad; letter-spacing: .04em; white-space: nowrap; }
+.program-table tr.program-hidden button.program-play { filter: grayscale(1); opacity: .5; animation: none; }
+button.program-hide[aria-pressed="true"] { color: #ffbf4d; border-color: #4a3410; }
 .program-table td { display: flex; flex-direction: column; gap: 5px; min-width: 0; padding: 0; }
 .program-table td::before {
   content: attr(data-label); font-size: 10px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase;
@@ -729,8 +737,15 @@ button.collapse-btn:active:not(:disabled) .collapse-chip { transform: translateY
 .program-delay.late { color: #ffbf4d; text-shadow: 0 0 6px rgba(255,191,77,.45); }    /* started after its time */
 .program-delay.early { color: #7ff0a8; text-shadow: 0 0 6px rgba(46,204,113,.45); }   /* started before */
 .program-delay.ontime { color: var(--lcd-text); text-shadow: var(--lcd-glow); }
-/* Play, duplicate and delete stacked in one narrow column */
+/* Hide, play, duplicate and delete stacked in one narrow column */
 .program-actions { display: flex; flex-direction: column; justify-content: center; gap: 6px; height: 100%; }
+/* Two-line layout: the keys start level with the first line of fields, so the
+   hide key sits in the row's top right corner (an empty label keeps the
+   same height as the field labels). */
+@media (min-width: 901px) {
+  .program-table td.program-actions-cell::before { content: "\00a0"; }
+  .program-actions { justify-content: flex-start; height: auto; }
+}
 .program-actions button { display: grid; place-items: center; width: 100%; height: 44px; padding: 0; }
 .program-next button.program-play { animation: program-next-glow 1.6s ease-in-out infinite; }
 @keyframes program-next-glow { 50% { box-shadow: 0 0 22px rgba(46,204,113,.75), inset 0 1px 0 rgba(255,255,255,.35); } }

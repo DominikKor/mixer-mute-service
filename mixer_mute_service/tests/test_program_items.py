@@ -57,6 +57,90 @@ class ProgramStoreTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([i["group"] for i in await self.store.list()], ["Neu", "Andere"])
 
 
+class ProgramHiddenTests(unittest.IsolatedAsyncioTestCase):
+    """A hidden row stays in the list, greyed out, and "Weiter" skips it."""
+
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp_dir.cleanup)
+        self.path = Path(self.temp_dir.name) / "program.json"
+        self.store = ProgramItemStore(self.path)
+        self.now = datetime(2026, 11, 8, 10, 5).astimezone()
+
+    async def test_next_skips_hidden_rows(self):
+        a = await self.store.create(row("10:00", "A"))
+        b = await self.store.create(row("10:10", "B"))
+        c = await self.store.create(row("10:20", "C"))
+        d = await self.store.create(row("10:30", "D"))
+        self.assertFalse(a["hidden"])
+
+        await self.store.set_hidden(a["id"], True)
+        self.assertEqual((await self.store.status(self.now))["next_id"], b["id"])
+        await self.store.mark_played(b["id"], self.now)
+        await self.store.set_hidden(c["id"], True)
+        self.assertEqual(await self.store.status(self.now), {"current_id": b["id"], "next_id": d["id"]})
+        await self.store.set_hidden(d["id"], True)
+        self.assertEqual((await self.store.status(self.now))["next_id"], None)   # only hidden rows left
+        await self.store.set_hidden(c["id"], False)
+        self.assertEqual((await self.store.status(self.now))["next_id"], c["id"])
+        self.assertEqual(len(await self.store.list()), 4)                         # nothing removed
+
+    async def test_hidden_survives_edits_restart_and_duplicate(self):
+        a = await self.store.create(row("10:00", "A"))
+        hidden = await self.store.set_hidden(a["id"], True)
+        self.assertTrue(hidden["hidden"])
+        edited = await self.store.update(a["id"], row("10:01", "A2"))
+        self.assertTrue(edited["hidden"])
+        copy = await self.store.duplicate(a["id"])
+        self.assertTrue(copy["hidden"])
+        reloaded = ProgramItemStore(self.path)
+        self.assertTrue((await reloaded.get(a["id"]))["hidden"])
+        self.assertIsNone(await self.store.set_hidden("nope", True))
+
+    async def test_old_rows_and_templates_are_visible(self):
+        self.path.write_text(json.dumps([{"id": "old", **row("10:00", "Alt")}]), encoding="utf-8")
+        self.assertFalse((await ProgramItemStore(self.path).get("old"))["hidden"])
+        replaced = await self.store.replace_all([row("11:00", "Neu")])
+        self.assertFalse(replaced[0]["hidden"])
+
+
+class ProgramHiddenRouteTests(unittest.TestCase):
+    def test_hide_route_and_next_skips(self):
+        import os
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as directory:
+            config_path = Path(directory) / "config.yaml"
+            config_path.write_text(
+                "mixer:\n  ip: 127.0.0.1\n  port: 9\n  max_channels: 8\n"
+                "server:\n  host: 127.0.0.1\n  port: 8765\n",
+                encoding="utf-8",
+            )
+            with patch.dict(os.environ, {"MIXER_CONFIG": str(config_path)}):
+                from fastapi.testclient import TestClient
+                from app.main import app
+
+                with TestClient(app) as client:
+                    ids = [client.post("/program/items", json={**row(t, t), "group": ""}).json()["item"]["id"]
+                           for t in ("10:00", "10:10", "10:20")]
+                    r = client.post(f"/program/items/{ids[0]}/hidden", json={"hidden": True})
+                    self.assertEqual(r.status_code, 200)
+                    self.assertTrue(r.json()["item"]["hidden"])
+                    listed = {i["id"]: i for i in client.get("/program/items").json()}
+                    self.assertTrue(listed[ids[0]]["hidden"])
+                    self.assertFalse(listed[ids[1]]["hidden"])
+                    self.assertEqual(client.get("/program/status").json()["next_id"], ids[1])
+
+                    played = client.post("/program/next", json={"expected_next_id": ids[1]})
+                    self.assertEqual(played.status_code, 200, played.text)
+                    self.assertEqual(played.json()["program_item_id"], ids[1])
+                    self.assertEqual(client.get("/program/status").json()["next_id"], ids[2])
+
+                    self.assertEqual(client.post(f"/program/items/{ids[0]}/hidden", json={"hidden": "ja"}).status_code, 400)
+                    self.assertEqual(client.post("/program/items/nope/hidden", json={"hidden": True}).status_code, 404)
+                    self.assertFalse(client.post(f"/program/items/{ids[0]}/hidden", json={"hidden": False}).json()["item"]["hidden"])
+
+
 class MacroRenameTests(unittest.IsolatedAsyncioTestCase):
     async def test_renamed_macro_group_survives_catalog_update(self):
         with tempfile.TemporaryDirectory() as temp_dir:

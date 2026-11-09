@@ -81,6 +81,18 @@ async def delete_program_item(item_id: str, request: Request):
     return {"ok": True, "item_id": item_id, "deleted": True}
 
 
+@router.post("/program/items/{item_id}/hidden")
+async def hide_program_item(item_id: str, request: Request, body: dict = Body(...)):
+    """{"hidden": true} greys the row out and "Weiter" skips it; false shows it again."""
+    hidden = body.get("hidden") if isinstance(body, dict) else None
+    if not isinstance(hidden, bool):
+        return fail("hidden must be true or false", 400)
+    item = await request.app.state.program_items.set_hidden(item_id, hidden)
+    if item is None:
+        return fail("unknown program item", 404)
+    return {"ok": True, "item": item}
+
+
 @router.get("/program/status")
 async def program_status(request: Request):
     """The row that ran last today and the one "Weiter" would start, plus

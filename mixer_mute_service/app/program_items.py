@@ -52,6 +52,7 @@ class ProgramItemStore:
                 **fields,
                 "last_delay_seconds": entry.get("last_delay_seconds"),
                 "last_played_at": entry.get("last_played_at"),
+                "hidden": entry.get("hidden") is True,
             })
         self._items = items
 
@@ -134,7 +135,8 @@ class ProgramItemStore:
         """Which row ran last today ("current") and which comes next.
 
         Only starts from today count, so last week's run does not decide what
-        is next. Without a start today, the first row is next.
+        is next. Without a start today, the first row is next. Hidden rows are
+        skipped: "next" is the first visible row after the current one.
         """
         today = (now or datetime.now().astimezone()).date().isoformat()
         async with self._lock:
@@ -145,9 +147,11 @@ class ProgramItemStore:
             ]
             current = max(played)[1] if played else None
             following = 0 if current is None else current + 1
+            upcoming = (item for item in ordered[following:] if not item.get("hidden"))
+            next_item = next(upcoming, None)
             return {
                 "current_id": None if current is None else ordered[current]["id"],
-                "next_id": ordered[following]["id"] if following < len(ordered) else None,
+                "next_id": None if next_item is None else next_item["id"],
             }
 
     async def get(self, item_id: str) -> Optional[dict]:
@@ -163,6 +167,7 @@ class ProgramItemStore:
                 **fields,
                 "last_delay_seconds": None,
                 "last_played_at": None,
+                "hidden": False,
             }
             self._items.append(item)
             self._persist()
@@ -199,11 +204,22 @@ class ProgramItemStore:
         fields = [self._validated_fields(row) for row in rows]
         async with self._lock:
             self._items = [
-                {"id": uuid.uuid4().hex, **row, "last_delay_seconds": None, "last_played_at": None}
+                {"id": uuid.uuid4().hex, **row, "last_delay_seconds": None, "last_played_at": None, "hidden": False}
                 for row in fields
             ]
             self._persist()
             return deepcopy(self._ordered())
+
+    async def set_hidden(self, item_id: str, hidden: bool) -> Optional[dict]:
+        """Grey a row out (it stays in the list but "Weiter" skips it) or show it again."""
+        async with self._lock:
+            item = next((entry for entry in self._items if entry["id"] == item_id), None)
+            if item is None:
+                return None
+            if item.get("hidden") is not hidden:
+                item["hidden"] = hidden
+                self._persist()
+            return deepcopy(item)
 
     async def reset_played(self) -> int:
         """Forget all start times and delays (a new service or a rehearsal)."""
