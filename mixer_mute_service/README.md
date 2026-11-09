@@ -81,7 +81,9 @@ in and out; the choice is remembered per device.
   `POST /program/next`). The row that ran last today is marked "Läuft", the
   next one "Nächster", earlier ones are dimmed. **Duplizieren** puts the copy
   right below its original, **Ablauf zurücksetzen** forgets all start times.
-  Times can be typed as `930`, `9:30` or `9.30`.
+  The eye key top right of a row hides it: the row turns grey and stays in
+  the list, but **Weiter** skips it (its own Play still works); tap it again
+  to show the row. Times can be typed as `930`, `9:30` or `9.30`.
 - **Steuerung**: the keys imported from the former Companion setup (lights,
   OBS, beamer, "Overall" scene macros), grouped in categories; the camera
   keys live in the Kameras section. With
@@ -180,7 +182,8 @@ linked light/camera/OBS keys in order.
 | DELETE | `/program/items/{item_id}` | delete a program point |
 | POST | `/program/items/{item_id}/play` | activate group and linked actions |
 | POST | `/program/items/{item_id}/duplicate` | copy a row, placed right after it |
-| GET  | `/program/status` | `current_id` (started last today) and `next_id` |
+| POST | `/program/items/{item_id}/hidden` | `{"hidden": true}` greys a row out, `/program/next` skips it |
+| GET  | `/program/status` | `current_id` (started last today) and `next_id` (hidden rows skipped) |
 | POST | `/program/next` | start the next row (409 `program finished` at the end) |
 | POST | `/program/reset` | forget all start times and delays |
 | GET  | `/groups` | list all groups and their channels |
