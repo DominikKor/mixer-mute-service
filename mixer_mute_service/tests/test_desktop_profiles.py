@@ -18,6 +18,7 @@ import sys
 import tempfile
 
 import yaml
+from unittest.mock import patch
 
 from app.config import DesktopProfileConfig, load_config
 from app.desktop_profiles import ProfileEditError, add_profile, delete_profile, update_profile
@@ -63,6 +64,10 @@ QR = DesktopProfileConfig(
     title="Gemeindegaben-QR", kind="image",
     path=r"I:\Googledrive\Streamingbilder\GemeindegabenQR.png",
     target_ip="192.168.188.11", fullscreen=True, monitor=2,
+)
+AUDIO = DesktopProfileConfig(
+    title="Hintergrundmusik", kind="audio", path=r"I:\Musik\Hintergrund.mp3",
+    target_ip="192.168.188.11",
 )
 
 
@@ -242,6 +247,35 @@ with TestClient(app) as client:
     check("invalid kind -> 400", r.status_code == 400)
     check("missing id -> 400", client.post("/desktop/profiles", json=OBS.model_dump()).status_code == 400)
     check("update unknown -> 404", client.put("/desktop/profiles/nope", json=upd).status_code == 404)
+    audio_body = {"id": "audio", **AUDIO.model_dump()}
+    r = client.post("/desktop/profiles", json=audio_body)
+    check("audio profile create 200", r.status_code == 200 and r.json()["ok"] is True)
+    listed = {p["id"]: p for p in client.get("/desktop/profiles").json()["profiles"]}
+    check("audio profile is listed", listed["audio"]["kind"] == "audio")
+    client.app.state.cfg.desktop_display.enabled = True
+    token_name = client.app.state.cfg.desktop_display.token_env
+    previous_token = os.environ.get(token_name)
+    os.environ[token_name] = "test-audio-token"
+    with patch("app.routes._forward_display_request", side_effect=lambda _url, _token, payload: {
+        "ok": True, "action": payload["action"]
+    }) as forward:
+        r = client.post("/desktop/audio/audio/play")
+        check("audio play forwarded", r.status_code == 200 and r.json()["action"] == "play")
+        check("play uses configured target and track", forward.call_args.args[0] ==
+              "http://192.168.188.11:8766/audio" and forward.call_args.args[2] == {
+                  "id": "audio", "action": "play", "path": AUDIO.path
+              })
+        r = client.post("/desktop/audio/audio/stop")
+        check("audio stop forwarded", r.status_code == 200 and r.json()["action"] == "stop")
+        check("stop does not send a track path", forward.call_args.args[2] == {
+            "id": "audio", "action": "stop", "path": None
+        })
+    if previous_token is None:
+        os.environ.pop(token_name, None)
+    else:
+        os.environ[token_name] = previous_token
+    check("audio profile cannot use display endpoint",
+          client.post("/desktop/audio/open").status_code == 400)
     text = http_cfg.read_text()
     check("manual comments still in the config", "# How a stored fader value is trusted" in text and "freshness_mode" in text)
     delete_response = client.delete("/desktop/profiles/obs")

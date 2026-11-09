@@ -281,11 +281,13 @@
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
   .display-key-meta { font: 600 10px/1 var(--mono); color: #7f8b98; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  /* A profile tile: the key plus a "⋮" menu key in its top-right corner (tap
-     area 44 x 44 px, only the dots are visible). Edit and delete live in the
-     menu, so nothing covers the title. */
+  /* Profile action key(s) plus a "⋮" menu key in the top-right corner. Edit
+     and delete live in the menu, so nothing covers the title. */
   .display-tile { position: relative; display: inline-flex; max-width: 100%; }
   .display-tile button.display-key { padding-right: 42px; }
+  .display-tile.audio { gap: 4px; padding-right: 88px; }
+  .display-tile.audio button.display-key { padding-right: 12px; }
+  button.display-audio-stop { min-width: 64px; min-height: 48px; padding: 8px; }
   button.display-menu-btn {
     position: absolute; top: 0; right: 0; width: 44px; height: 44px; padding: 6px 4px 0 0;
     display: flex; align-items: flex-start; justify-content: flex-end;
@@ -321,7 +323,10 @@
   /* Desktop profile editor */
   dialog.profile-dialog { width: min(640px, calc(100vw - 32px)); max-height: calc(100vh - 32px); overflow: auto; }
   .pf-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-  @media (max-width: 560px) { .pf-grid { grid-template-columns: 1fr; } }
+  @media (max-width: 560px) {
+    .pf-grid { grid-template-columns: 1fr; }
+    .kind-picker { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
   .pf-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
   #profile-form [hidden] { display: none; }
   .pf-label, .pf-field > span:first-child {
@@ -337,8 +342,8 @@
   .pf-input.invalid { outline: 2px solid var(--red); outline-offset: 1px; }
   textarea.pf-input { resize: vertical; min-height: 64px; }
   .pf-hint { font-size: 12px; color: var(--muted); }
-  /* Kind tiles: three large keys with an icon, the chosen one backlit */
-  .kind-picker { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  /* Kind tiles: large keys with an icon, the chosen one backlit */
+  .kind-picker { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
   button.kind-tile {
     display: flex; flex-direction: column; align-items: center; gap: 6px; min-height: 96px; padding: 12px 8px;
     text-align: center; color: #9aa1ad;
@@ -968,6 +973,10 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M6 3h8l5 5v13H6z"/><path d="M14 3v5h5M9 13h7M9 17h7"/></svg>
           <span class="kind-tile-name">Datei</span><span class="kind-tile-desc">mit Standard-App öffnen</span>
         </button>
+        <button type="button" class="kind-tile" role="radio" data-kind="audio" aria-label="Audio">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
+          <span class="kind-tile-name">Audio</span><span class="kind-tile-desc">mit mpv abspielen</span>
+        </button>
       </div>
     </div>
     <label class="pf-field"><span>Pfad auf dem Ziel-PC</span>
@@ -978,7 +987,7 @@
     <label class="pf-field"><span>Ziel-PC (IP-Adresse)</span>
       <input id="pf-ip" class="pf-input mono" type="text" inputmode="decimal" list="pf-ip-list" autocomplete="off" placeholder="192.168.188.11" />
       <datalist id="pf-ip-list"></datalist></label>
-    <div class="pf-display-row">
+    <div id="pf-display-row" class="pf-display-row">
       <div class="pf-field">
         <span class="pf-label" id="pf-monitor-label">Monitor</span>
         <div id="pf-monitor" class="monitor-picker" role="radiogroup" aria-labelledby="pf-monitor-label"></div>
@@ -2180,13 +2189,19 @@ function renderDesktopProfiles(data) {
   const addTile = $("new-profile-btn");
   wrap.querySelectorAll(".display-tile").forEach(el => el.remove());
   for (const profile of data.profiles || []) {
-    const meta = `${profile.target_ip} · Monitor ${profile.monitor}${profile.fullscreen ? " · Vollbild" : ""}`;
+    const audio = profile.kind === "audio";
+    const meta = audio ? `${profile.target_ip} · Audio` : `${profile.target_ip} · Monitor ${profile.monitor}${profile.fullscreen ? " · Vollbild" : ""}`;
     const button = document.createElement("button");
     button.className = "display-key";
-    button.dataset.displayProfile = profile.id;
+    if (audio) {
+      button.dataset.audioProfile = profile.id;
+      button.dataset.audioAction = "play";
+    } else {
+      button.dataset.displayProfile = profile.id;
+    }
     button.dataset.label = profile.title;
     button.disabled = !data.ready;
-    button.title = `${profile.title} · ${meta}`;
+    button.title = audio ? `${profile.title} auf ${profile.target_ip} abspielen` : `${profile.title} · ${meta}`;
     const led = document.createElement("span");
     led.className = "led" + (data.ready ? " safe" : "");
     const title = document.createElement("span");
@@ -2196,6 +2211,18 @@ function renderDesktopProfiles(data) {
     metaEl.className = "display-key-meta";
     metaEl.textContent = meta;
     button.append(led, title, metaEl);
+    const stop = document.createElement("button");
+    if (audio) {
+      stop.type = "button";
+      stop.className = "display-audio-stop";
+      stop.dataset.audioProfile = profile.id;
+      stop.dataset.audioAction = "stop";
+      stop.dataset.label = `Audio ${profile.target_ip}`;
+      stop.textContent = "Stop";
+      stop.title = `Musik auf ${profile.target_ip} stoppen`;
+      stop.setAttribute("aria-label", stop.title);
+      stop.disabled = !data.ready;
+    }
     // Edit/delete sit in the "⋮" menu; it works even while the agent is not set up.
     const menuBtn = document.createElement("button");
     menuBtn.className = "display-menu-btn";
@@ -2206,8 +2233,10 @@ function renderDesktopProfiles(data) {
     menuBtn.setAttribute("aria-expanded", "false");
     menuBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>';
     const tile = document.createElement("span");
-    tile.className = "display-tile";
-    tile.append(button, menuBtn);
+    tile.className = audio ? "display-tile audio" : "display-tile";
+    tile.append(button);
+    if (audio) tile.append(stop);
+    tile.append(menuBtn);
     wrap.insertBefore(tile, addTile);
   }
   closeTileMenu();
@@ -2273,6 +2302,8 @@ const KIND_INFO = {
              hint: "Pfad zur .exe auf dem Ziel-PC. Argumente werden einzeln und ohne Shell übergeben." },
   file: { placeholder: "D:\\Folien\\Predigt.pptx",
           hint: "Beliebige Datei auf dem Ziel-PC – Windows öffnet sie mit der Standard-App (PowerPoint, PDF …)." },
+  audio: { placeholder: "I:\\Musik\\Lied.mp3",
+           hint: "Audiodatei auf dem Ziel-PC. mpv muss dort installiert und über PATH oder MPV_PATH erreichbar sein." },
 };
 const POSITION_LABELS = {
   "top-left": "Oben links", "top-right": "Oben rechts", "center": "Mitte",
@@ -2323,6 +2354,7 @@ function syncProfileForm() {
   $("pf-path").placeholder = KIND_INFO[kind].placeholder;
   $("pf-path-hint").textContent = KIND_INFO[kind].hint;
   $("pf-args-wrap").hidden = kind !== "program";
+  $("pf-display-row").hidden = kind === "audio";
   renderMonitorKeys();
   const full = $("pf-fullscreen").checked;
   $("pf-fullscreen-text").textContent = full ? "Ein" : "Aus";
@@ -3201,6 +3233,18 @@ $("desktop-profiles").addEventListener("click", (event) => {
   if (open && !open.disabled) {
     act("POST", `/desktop/${encodeURIComponent(open.dataset.displayProfile)}/open`, undefined, open.dataset.label);
   }
+});
+$("desktop-profiles").addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-audio-action]");
+  if (!button || button.disabled) return;
+  const action = button.dataset.audioAction;
+  const label = button.dataset.label || button.title;
+  act(
+    "POST",
+    `/desktop/${encodeURIComponent(button.dataset.audioProfile)}/audio/${action}`,
+    undefined,
+    `${label} ${action === "play" ? "Play" : "Stop"}`,
+  );
 });
 $("tile-menu").addEventListener("click", (event) => {
   const item = event.target.closest("button[data-menu-action]");

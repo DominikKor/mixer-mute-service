@@ -217,7 +217,7 @@ desktop_display:
 ```
 
 Weitere Profile erhalten eigene IDs und Ziel-IPs. `kind` ist `image`,
-`program` oder `file`. Bei `program` muss `path` auf eine `.exe` zeigen;
+`program`, `file` oder `audio`. Bei `program` muss `path` auf eine `.exe` zeigen;
 `args` ist eine Liste separater Argumente, die ohne Shell gestartet werden.
 Bei `file` oeffnet Windows die Datei mit der Standardanwendung. `monitor` ist
 1-basiert; `fullscreen` aktiviert fuer Bilder bzw. Programmfenster den
@@ -226,9 +226,34 @@ Fensters fest: `top-left` (Standard), `top-right`, `bottom-left`,
 `bottom-right` oder `center`. Nach Aenderung der Konfiguration von Hand den
 Service neu starten.
 
+Ein `audio`-Profil enthaelt den Pfad zu einer Musikdatei auf dem Ziel-PC. Dort
+muss mpv installiert sein und entweder ueber `PATH` oder die Windows-Variable
+`MPV_PATH` auf `mpv.exe` auffindbar sein. Nach einer Aenderung der
+Umgebungsvariable den Ziel-PC ab- und wieder anmelden und den Desktop-Agenten
+neu starten. Die Audio-Kachel spielt den Titel ohne Player-Fenster ab; ein
+erneuter Play-Klick ersetzt die laufende, vom Agenten gestartete Wiedergabe.
+Stop beendet nur diesen Agenten-Player, keine anderen mpv-Instanzen. Der Agent
+laeuft im angemeldeten Benutzerkonto, sodass die normale Windows-Audioausgabe
+des Ziel-PCs verwendet wird. Bei Netzwerkdateien muss der Pfad fuer dieses
+Benutzerkonto erreichbar sein; ein UNC-Pfad ist robuster als ein verbundenes
+Laufwerk.
+
+Beispiel fuer eine Systemvariable auf dem Ziel-PC:
+
+```powershell
+[Environment]::SetEnvironmentVariable("MPV_PATH", "C:\Tools\mpv\mpv.exe", "Machine")
+```
+
+Die Wiedergabesteuerung verwendet `POST /desktop/{profile_id}/audio/play` und
+`POST /desktop/{profile_id}/audio/stop`.
+
 Profile lassen sich auch in der Weboberflaeche anlegen (graue **+**-Kachel
-hinter den Profilen) und bearbeiten (kleiner Stift oben rechts auf der
-Kachel); die Buttons erscheinen sofort, ohne Neustart. Dabei wird `config.yaml` nie neu geschrieben: ein neues Profil wird
+hinter den Profilen) und ueber das Drei-Punkte-Menue bearbeiten oder loeschen;
+die Buttons erscheinen sofort, ohne Neustart. Fuer ein Audio-Profil **Audio**
+waehlen, Titel und den vollstaendigen Musikdatei-Pfad auf dem Ziel-PC eintragen
+und die IP-Adresse dieses PCs angeben. Play startet die Wiedergabe ohne
+Player-Fenster, Stop beendet die laufende Agenten-Wiedergabe auf diesem PC.
+Dabei wird `config.yaml` nie neu geschrieben: ein neues Profil wird
 hinter dem letzten eingefuegt, beim Bearbeiten werden nur die geaenderten Werte
 ersetzt. Kommentare, andere Profile und alle anderen Einstellungen bleiben
 unveraendert. Vor dem Speichern wird geprueft, dass sich wirklich nur dieses

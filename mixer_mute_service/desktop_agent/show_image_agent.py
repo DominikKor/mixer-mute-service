@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import queue
+import shutil
 import subprocess
 import threading
 import time
@@ -22,6 +23,8 @@ HOST = "0.0.0.0"
 PORT = 8766
 requests: queue.Queue[dict] = queue.Queue()
 logger = logging.getLogger("display-agent")
+_audio_lock = threading.Lock()
+_audio_process: subprocess.Popen | None = None
 
 
 def monitor_bounds(display_number: int) -> tuple[int, int, int, int]:
@@ -210,6 +213,69 @@ def _launch_profile(profile: dict) -> None:
         logger.exception("Profile %s failed", profile["id"])
 
 
+def _find_mpv() -> str | None:
+    configured = os.environ.get("MPV_PATH", "").strip()
+    if configured:
+        if Path(configured).is_file():
+            return configured
+        resolved = shutil.which(configured)
+        if resolved:
+            return resolved
+    found = shutil.which("mpv")
+    if found:
+        return found
+    candidates = [
+        Path(__file__).with_name("mpv.exe"),
+        Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "mpv" / "mpv.exe",
+        Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "mpv" / "mpv.exe",
+    ]
+    return next((str(path) for path in candidates if path.is_file()), None)
+
+
+def _stop_audio_locked() -> bool:
+    global _audio_process
+    process = _audio_process
+    _audio_process = None
+    if process is None or process.poll() is not None:
+        return False
+    process.terminate()
+    try:
+        process.wait(timeout=3)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=3)
+    return True
+
+
+def _play_audio(profile_id: str, path: str) -> None:
+    global _audio_process
+    target = Path(path)
+    if not target.is_absolute() or not target.is_file():
+        raise ValueError("Configured audio file is not available")
+    mpv = _find_mpv()
+    if not mpv:
+        raise FileNotFoundError("mpv was not found; install mpv or set MPV_PATH")
+
+    with _audio_lock:
+        _stop_audio_locked()
+        process = subprocess.Popen(
+            [mpv, "--no-video", "--force-window=no", "--really-quiet", "--", str(target)],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        _audio_process = process
+    logger.info("Audio started profile=%s path=%s pid=%s", profile_id, target, process.pid)
+
+
+def _stop_audio() -> bool:
+    with _audio_lock:
+        stopped = _stop_audio_locked()
+    logger.info("Audio stopped active=%s", stopped)
+    return stopped
+
+
 def _show_image(root: tk.Tk, image_label: tk.Label, profile: dict) -> None:
     left, top, right, bottom = monitor_bounds(profile["monitor"])
     bounds = (right - left, bottom - top)
@@ -304,7 +370,7 @@ def _show_image(root: tk.Tk, image_label: tk.Label, profile: dict) -> None:
 
 class DisplayHandler(BaseHTTPRequestHandler):
     def do_POST(self):
-        if self.path != "/display":
+        if self.path not in ("/display", "/audio"):
             self.send_error(404)
             return
 
@@ -321,6 +387,9 @@ class DisplayHandler(BaseHTTPRequestHandler):
             body = json.loads(self.rfile.read(length))
         except (ValueError, json.JSONDecodeError):
             self.send_error(400)
+            return
+        if self.path == "/audio":
+            self._handle_audio(body)
             return
         required = {
             "id", "title", "kind", "path", "args", "fullscreen", "monitor", "position"
@@ -356,6 +425,39 @@ class DisplayHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(result)))
         self.end_headers()
         self.wfile.write(result)
+
+    def _handle_audio(self, body: dict) -> None:
+        if (
+            not isinstance(body, dict)
+            or set(body) != {"id", "action", "path"}
+            or not isinstance(body["id"], str)
+            or not body["id"].replace("-", "").replace("_", "").isalnum()
+            or body["action"] not in ("play", "stop")
+            or (body["action"] == "play" and not isinstance(body["path"], str))
+            or (body["action"] == "stop" and body["path"] is not None)
+        ):
+            self.send_error(400)
+            return
+        try:
+            if body["action"] == "play":
+                _play_audio(body["id"], body["path"])
+                result = {"ok": True, "playing": True, "profile": body["id"]}
+            else:
+                stopped = _stop_audio()
+                result = {"ok": True, "playing": False, "stopped": stopped}
+        except (FileNotFoundError, ValueError) as exc:
+            logger.warning("Audio %s rejected: %s", body["action"], exc)
+            result = {"ok": False, "reason": str(exc)}
+        except OSError:
+            logger.exception("Audio %s failed for profile=%s", body["action"], body["id"])
+            result = {"ok": False, "reason": "audio player could not be started"}
+        status = 200 if result["ok"] else 503
+        encoded = json.dumps(result).encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(encoded)))
+        self.end_headers()
+        self.wfile.write(encoded)
 
     def log_message(self, fmt, *args):
         logger.info("%s - %s", self.client_address[0], fmt % args)

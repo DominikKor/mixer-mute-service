@@ -130,7 +130,7 @@ class ServerConfig(BaseModel):
 
 class DesktopProfileConfig(BaseModel):
     title: str
-    kind: Literal["image", "program", "file"]
+    kind: Literal["image", "program", "file", "audio"]
     path: str
     target_ip: str = "192.168.188.11"
     args: List[str] = Field(default_factory=list)

@@ -370,6 +370,8 @@ async def open_desktop_profile(profile_id: str, request: Request):
     profile = cfg.profiles.get(profile_id)
     if profile is None:
         return JSONResponse({"ok": False, "reason": "unknown desktop profile"}, 404)
+    if profile.kind == "audio":
+        return JSONResponse({"ok": False, "reason": "audio profiles use the audio endpoint"}, 400)
     token = os.environ.get(cfg.token_env, "")
     if not cfg.enabled or not token:
         return JSONResponse(
@@ -389,6 +391,47 @@ async def open_desktop_profile(profile_id: str, request: Request):
         )
     except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
         log.warning("Display agent unavailable: %s", exc)
+        return JSONResponse(
+            {"ok": False, "reason": "display agent unavailable"}, 502
+        )
+
+
+@router.post("/desktop/{profile_id}/audio/{action}")
+async def control_desktop_audio(profile_id: str, action: str, request: Request):
+    cfg = request.app.state.cfg.desktop_display
+    profile = cfg.profiles.get(profile_id)
+    if profile is None:
+        return JSONResponse({"ok": False, "reason": "unknown desktop profile"}, 404)
+    if profile.kind != "audio":
+        return JSONResponse({"ok": False, "reason": "profile is not an audio profile"}, 400)
+    if action not in ("play", "stop"):
+        return JSONResponse({"ok": False, "reason": "unknown audio action"}, 404)
+    token = os.environ.get(cfg.token_env, "")
+    if not cfg.enabled or not token:
+        return JSONResponse(
+            {"ok": False, "reason": "desktop display is not configured"}, 503
+        )
+    payload = {
+        "id": profile_id,
+        "action": action,
+        "path": profile.path if action == "play" else None,
+    }
+    try:
+        return await asyncio.to_thread(
+            _forward_display_request,
+            f"http://{profile.target_ip}:8766/audio",
+            token,
+            payload,
+        )
+    except urllib.error.HTTPError as exc:
+        try:
+            details = json.loads(exc.read().decode("utf-8"))
+        except (ValueError, UnicodeDecodeError):
+            details = {"ok": False, "reason": "display agent rejected the audio request"}
+        log.warning("Display agent audio request failed: HTTP %s", exc.code)
+        return JSONResponse(details, exc.code)
+    except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
+        log.warning("Display agent unavailable for audio: %s", exc)
         return JSONResponse(
             {"ok": False, "reason": "display agent unavailable"}, 502
         )
