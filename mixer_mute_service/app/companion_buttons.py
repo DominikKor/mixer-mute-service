@@ -21,7 +21,8 @@ COMPANION_BUTTONS = [
     {"id": "pc2-live-top-right", "label": "PC2 Live", "kind": "native", "category_id": "obs", "native_action": {"type": "obs-live", "scene": "PC2", "source": "Capture_PC2"}},
     {"id": "start", "label": "Start", "kind": "native", "category_id": "obs", "native_action": {"type": "obs-scene", "scene": "Willkommen (neu)"}},
     {"id": "ende", "label": "Ende", "kind": "native", "category_id": "obs", "native_action": {"type": "obs-scene", "scene": "Ende (neu)"}},
-    {"id": "beamer-hide", "label": "Beamer hide", "kind": "native", "category_id": "beamer", "native_action": {"type": "beamer-script", "script": "beamer-hide"}},
+    {"id": "beamer-hide", "label": "Beamer hide", "kind": "native", "category_id": "beamer", "native_action": {"type": "beamer-set", "hidden": True}},
+    {"id": "beamer-unhide", "label": "Beamer unhide", "kind": "native", "category_id": "beamer", "native_action": {"type": "beamer-set", "hidden": False}},
     {"id": "cam1-live", "label": "Cam 1 Live", "kind": "native", "category_id": "obs", "native_action": {"type": "obs-live", "scene": "Cam 1", "source": "Cam1"}},
     {"id": "cam2-live-bottom", "label": "Cam 2 Live", "kind": "native", "category_id": "obs", "native_action": {"type": "obs-live", "scene": "Cam 2", "source": "Cam2"}},
     {"id": "beamer-live", "label": "Beamer Live", "kind": "native", "category_id": "obs", "native_action": {"type": "obs-live", "scene": "BeamerVonVorne", "source": "Beamer"}},
@@ -138,14 +139,16 @@ NATIVE_BUTTONS.extend({
 COMPANION_BUTTONS = COMPANION_BUTTONS + NATIVE_BUTTONS
 COMPANION_BUTTONS_BY_ID = {button["id"]: button for button in COMPANION_BUTTONS}
 # Bump when catalog actions change; stored native keys then get the new action.
-# v3 added the keys below, v4 made the Overall macros switch the light on.
-_NATIVE_CATALOG_VERSION = 4
+# v3 added the keys below, v4 made the Overall macros switch the light on,
+# and v5 added state-aware Beamer hide/unhide actions.
+_NATIVE_CATALOG_VERSION = 5
 _NATIVE_CATALOG_V3_IDS = {
     "native-artnet-start-up", "native-artnet-start-down",
     "native-artnet-steps-up", "native-artnet-steps-down",
     "native-artnet-fade-faster", "native-artnet-fade-slower",
     "native-obs-cam1-toggle", "native-obs-cam2-toggle", "native-obs-pc2-toggle",
 }
+_NATIVE_CATALOG_V5_IDS = {"beamer-unhide"}
 
 DEFAULT_CATEGORIES = [
     {"id": "beamer", "name": "Beamer", "visible": True},
@@ -210,9 +213,14 @@ class CompanionButtonStore:
                 # Keys added in v3 are added once; one the user deleted later
                 # must not come back with a newer catalog version.
                 add_v3 = self._catalog_version < 3
+                add_v5 = self._catalog_version < 5
                 for seed_button in self._buttons:
                     current = button_map.get(seed_button["id"])
-                    if current is None and add_v3 and seed_button["id"] in _NATIVE_CATALOG_V3_IDS:
+                    add_button = (
+                        (add_v3 and seed_button["id"] in _NATIVE_CATALOG_V3_IDS)
+                        or (add_v5 and seed_button["id"] in _NATIVE_CATALOG_V5_IDS)
+                    )
+                    if current is None and add_button:
                         current = deepcopy(seed_button)
                         buttons.append(current)
                         button_map[seed_button["id"]] = current

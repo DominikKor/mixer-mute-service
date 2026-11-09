@@ -813,6 +813,12 @@
   /* Steuerung: every category is a console panel with an engraved, tappable
      title; its keys carry an LED (blue: external control, green: mixer
      action). Re-filing and deleting keys only shows in "Bearbeiten" mode. */
+    .beamer-state-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+    .beamer-state-title { color: #a9bacb; font-size: 11px; font-weight: 800; text-transform: uppercase; }
+    .beamer-state-options { display: inline-flex; gap: 4px; }
+    button.beamer-state-key { min-width: 76px; min-height: 44px; padding: 6px 12px; }
+    button.beamer-state-key[aria-pressed="true"] { color: #fff; border-color: #245c76; background: linear-gradient(to bottom, #286a7e, #1d4e5e); }
+    .beamer-state-current { color: var(--lcd-dim); font: 600 11px/1.35 var(--mono); }
   .companion-categories { display: grid; gap: 12px; }
   .companion-category {
     min-width: 0; padding: 4px 12px 12px; border-radius: 8px; border: 1px solid #08090b;
@@ -1077,6 +1083,14 @@
     </div>
   </div>
   <div id="companion-body" class="panel-body">
+    <div id="beamer-state-control" class="beamer-state-bar">
+      <span class="beamer-state-title">Aktuellen Beamerzustand festlegen</span>
+      <div class="beamer-state-options" role="group" aria-label="Aktuellen Beamerzustand setzen">
+        <button type="button" class="beamer-state-key" data-beamer-state="true" aria-pressed="false" title="Zustand auf Hide setzen, ohne den Beamer umzuschalten">Hide</button>
+        <button type="button" class="beamer-state-key" data-beamer-state="false" aria-pressed="false" title="Zustand auf Unhide setzen, ohne den Beamer umzuschalten">Unhide</button>
+      </div>
+      <span id="beamer-state-current" class="beamer-state-current" role="status" aria-live="polite">Zustand unbekannt</span>
+    </div>
     <div id="companion-categories" class="companion-categories" aria-live="polite"></div>
   </div>
 </section>
@@ -2913,6 +2927,25 @@ let COMPANION_BUTTON_BUSY = false;
 const COMPANION_CATEGORY_BUSY = new Set();
 let COMPANION_DATA = { categories: [], buttons: [], companion_targets: [] };
 let COMPANION_GROUPS = {};
+let BEAMER_HIDDEN = null;
+
+function syncBeamerCommandButtons() {
+  const known = typeof BEAMER_HIDDEN === "boolean";
+  for (const button of document.querySelectorAll('[data-companion-press="beamer-hide"], [data-companion-press="beamer-unhide"]')) {
+    button.disabled = !known;
+    button.title = known ? "Zustandsbewusst ausführen" : "Zuerst den aktuellen Beamerzustand festlegen";
+  }
+}
+
+function renderBeamerState(data) {
+  BEAMER_HIDDEN = data && typeof data.hidden === "boolean" ? data.hidden : null;
+  const label = BEAMER_HIDDEN === null ? "Zustand unbekannt" : `Ist-Zustand: ${BEAMER_HIDDEN ? "Hide" : "Unhide"}`;
+  $("beamer-state-current").textContent = data && data.ok === false ? "Status nicht erreichbar" : label;
+  document.querySelectorAll("[data-beamer-state]").forEach(button => {
+    button.setAttribute("aria-pressed", String(BEAMER_HIDDEN === (button.dataset.beamerState === "true")));
+  });
+  syncBeamerCommandButtons();
+}
 
 function renderCompanionButtons() {
   const wrap = $("companion-categories");
@@ -2970,6 +3003,7 @@ function renderCompanionButtons() {
     section.append(header, grid);
     wrap.appendChild(section);
   }
+  syncBeamerCommandButtons();
 }
 
 function replaceSelectOptions(select, options, placeholder) {
@@ -3143,13 +3177,35 @@ $("companion-categories").addEventListener("click", async (event) => {
     const result = await api("POST", `/companion/buttons/${encodeURIComponent(button.dataset.companionPress)}/press`);
     if (!result.ok || result.data.ok === false) toast(`${button.textContent}: ${result.data.reason || "HTTP " + result.status}`, false);
     else {
-      toast(`${button.textContent}: ausgeführt`, true);
+      const isBeamerMode = button.dataset.companionPress === "beamer-hide" || button.dataset.companionPress === "beamer-unhide";
+      if (isBeamerMode) {
+        const state = await api("GET", "/beamer/state");
+        renderBeamerState(state.ok ? state.data : null);
+        toast(result.data.changed === false ? `${button.textContent}: bereits gesetzt, kein Toggle` : `${button.textContent}: ausgeführt`, true);
+      } else {
+        toast(`${button.textContent}: ausgeführt`, true);
+      }
       if (button.classList.contains("channel") || button.classList.contains("group")) await refresh();
     }
   } finally {
     COMPANION_BUTTON_BUSY = false;
-    button.disabled = false;
+    button.disabled = (button.dataset.companionPress === "beamer-hide" || button.dataset.companionPress === "beamer-unhide")
+      && typeof BEAMER_HIDDEN !== "boolean";
   }
+});
+$("beamer-state-control").addEventListener("click", async (event) => {
+  const button = event.target.closest("[data-beamer-state]");
+  if (!button || button.disabled) return;
+  const hidden = button.dataset.beamerState === "true";
+  button.disabled = true;
+  const result = await api("POST", "/beamer/state", { hidden });
+  button.disabled = false;
+  if (!result.ok || result.data.ok === false) {
+    toast(result.data.reason || `HTTP ${result.status}`, false);
+    return;
+  }
+  renderBeamerState(result.data);
+  toast(`Beamer-Ist-Zustand auf ${hidden ? "Hide" : "Unhide"} gesetzt`, true);
 });
 $("companion-categories").addEventListener("change", async (event) => {
   const select = event.target.closest("[data-companion-category-select]");
@@ -3181,9 +3237,9 @@ function renderPanic() {
 let refreshSeq = 0;
 async function refresh() {
   const seq = ++refreshSeq;
-  const [health, state, desktop, cameras] = await Promise.all([
+  const [health, state, desktop, cameras, beamer] = await Promise.all([
     api("GET", "/health"), api("GET", "/state"), api("GET", "/desktop/profiles"),
-    api("GET", "/camera-streams"),
+    api("GET", "/camera-streams"), api("GET", "/beamer/state"),
   ]);
   // Drop a stale response if a newer refresh has since started (e.g. the
   // per-second poll resolving after a click's own refresh) -- otherwise it
@@ -3219,6 +3275,7 @@ async function refresh() {
   if (health.ok) $("agent-update-link").hidden = !h.desktop_display_enabled;
   if (desktop.ok) renderDesktopProfiles(desktop.data);
   if (cameras.ok) renderCameraStreams(cameras.data);
+  renderBeamerState(beamer.ok ? beamer.data : null);
   if (stateOk) await bootstrapPersonsFromBackend();
   renderChannels(LAST_STATE);
   renderPersons();
