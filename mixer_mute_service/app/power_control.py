@@ -28,6 +28,16 @@ class PowerControlStore:
         except ipaddress.AddressValueError:
             return False
 
+    async def retarget(self, moves: dict) -> bool:
+        """Keep the selection when a PC's address changed."""
+        async with self._lock:
+            moved = {moves.get(ip, ip) for ip in self._targets}
+            if moved == self._targets:
+                return False
+            self._targets = moved
+            write_json_atomic(self._path, {"targets": sorted(self._targets), "beamer": self._beamer})
+            return True
+
     async def get(self, available_targets: set[str]) -> dict:
         async with self._lock:
             return {

@@ -33,6 +33,7 @@ from .groups import GroupStore
 from .mixer_client import MixerClient
 from .native_controls import NativeControlService
 from .power_control import PowerControlStore
+from .target_pcs import TargetPcStore
 from .proxy import ProxyServer
 from .request_guard import refusal
 from .program_items import ProgramItemStore
@@ -145,6 +146,8 @@ async def lifespan(app: FastAPI):
         app, "native controls", lambda: NativeControlService(data_dir / "native_control_state.json"))
     app.state.power_control = _optional(
         app, "power control", lambda: PowerControlStore(data_dir / "power_off_config.json"))
+    app.state.target_pcs = _optional(
+        app, "target PCs", lambda: TargetPcStore(data_dir / "target_pcs.json"))
     app.state.companion_button_store = _optional(
         app, "control keys", lambda: CompanionButtonStore(data_dir / "companion_buttons.json", COMPANION_BUTTONS))
     camera_streams = _optional(

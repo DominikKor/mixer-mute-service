@@ -405,9 +405,17 @@
   }
   .pf-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
   #profile-form [hidden] { display: none; }
-  .pf-label, .pf-field > span:first-child {
+  .pf-label, .pf-field > span:first-child, .pf-field > label:first-child {
     font-size: 10px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; color: #7d8594;
   }
+  /* Target PC: a choice of the two configured PCs, "PCs…" opens their settings */
+  .pc-select-row { display: flex; gap: 8px; min-width: 0; }
+  .pc-select-row select { flex: 1; min-width: 0; min-height: 44px; }
+  button.pc-edit-btn { flex-shrink: 0; min-height: 44px; padding: 0 14px; }
+  .pc-config-row { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); gap: 12px; }
+  @media (max-width: 560px) { .pc-config-row { grid-template-columns: 1fr; } }
+  .pc-config-head { font-size: 12px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; color: #c9ced6; }
+  #target-pcs-dialog .pf-input, #target-pcs-dialog .update-actions button { min-height: 44px; }
   .pf-input {
     width: 100%; font: inherit; font-size: 14px; font-weight: 600; padding: 8px 10px; border-radius: 5px; color: var(--lcd-text);
     background: #0b1418; border: 1px solid #000; box-shadow: inset 0 2px 4px rgba(0,0,0,.8), 0 1px 0 rgba(255,255,255,.05);
@@ -1261,6 +1269,9 @@
 <section class="panel" data-section="desktop">
   <div class="panel-head">
     <button class="section-toggle" aria-expanded="true" aria-controls="desktop-body">Desktop</button>
+    <div class="panel-tools">
+      <button id="target-pcs-btn" class="add-key" type="button" title="Namen und IP-Adressen von Streaming PC und Anzeige PC"><svg class="plus-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="1.5"/><path d="M9 20h6M12 16v4"/></svg>Ziel-PCs</button>
+    </div>
   </div>
   <div id="desktop-body" class="panel-body">
     <div id="desktop-profiles" class="desktop-launch-actions">
@@ -1574,12 +1585,13 @@
     <div class="pf-hint">Gilt für alle Lieder. Die Bibliothek bleibt im FoilPresenter-Ordner auf dem Anzeige-PC.</div>
     <label class="pf-field"><span>Bibliothek auf dem Anzeige-PC</span>
       <input id="sg-path" class="pf-input mono" type="text" autocomplete="off" spellcheck="false" placeholder="C:\Users\…\foilpresenter Bibliothek" /></label>
-    <div class="pf-grid">
-      <label class="pf-field"><span>Anzeige-PC (IP-Adresse)</span>
-        <input id="sg-ip" class="pf-input mono" type="text" inputmode="decimal" autocomplete="off" placeholder="192.168.188.11" /></label>
-      <div class="pf-field"><span class="pf-label" id="sg-monitor-label">Monitor</span>
-        <div id="sg-monitor" class="monitor-picker" role="radiogroup" aria-labelledby="sg-monitor-label"></div></div>
-    </div>
+    <div class="pf-field"><label for="sg-ip">Anzeige auf</label>
+      <div class="pc-select-row">
+        <select id="sg-ip" class="pf-input"></select>
+        <button type="button" class="pc-edit-btn" data-open-target-pcs title="Namen und IP-Adressen der PCs ändern">PCs…</button>
+      </div></div>
+    <div class="pf-field"><span class="pf-label" id="sg-monitor-label">Monitor</span>
+      <div id="sg-monitor" class="monitor-picker" role="radiogroup" aria-labelledby="sg-monitor-label"></div></div>
     <div class="pf-grid">
       <label class="pf-field"><span>Schrift</span>
         <input id="sg-font" class="pf-input" type="text" maxlength="60" autocomplete="off" /></label>
@@ -1619,6 +1631,32 @@
   </form>
 </dialog>
 
+<dialog id="target-pcs-dialog" class="update-dialog companion-create-dialog" aria-labelledby="target-pcs-title">
+  <form id="target-pcs-form" class="update-body" novalidate>
+    <h3 id="target-pcs-title">Ziel-PCs</h3>
+    <div class="pf-hint">Desktop-Tasten, Liedanzeige und Datei-Aktionen wählen einen dieser beiden PCs. Eine geänderte IP gilt sofort für alles, was den PC benutzt.</div>
+    <div class="pc-config-head">Streaming PC</div>
+    <div class="pc-config-row">
+      <label class="pf-field"><span>Name</span>
+        <input id="tp-streaming-name" class="pf-input" type="text" maxlength="40" autocomplete="off" /></label>
+      <label class="pf-field"><span>IP-Adresse</span>
+        <input id="tp-streaming-ip" class="pf-input mono" type="text" inputmode="decimal" autocomplete="off" placeholder="192.168.188.20" /></label>
+    </div>
+    <div class="pc-config-head">Anzeige PC</div>
+    <div class="pc-config-row">
+      <label class="pf-field"><span>Name</span>
+        <input id="tp-display-name" class="pf-input" type="text" maxlength="40" autocomplete="off" /></label>
+      <label class="pf-field"><span>IP-Adresse</span>
+        <input id="tp-display-ip" class="pf-input mono" type="text" inputmode="decimal" autocomplete="off" placeholder="192.168.188.11" /></label>
+    </div>
+    <div id="tp-error" class="update-lcd err" hidden></div>
+    <div class="update-actions">
+      <button type="button" id="tp-cancel">Abbrechen</button>
+      <button type="submit" id="tp-save" class="primary">Speichern</button>
+    </div>
+  </form>
+</dialog>
+
 <dialog id="profile-dialog" class="update-dialog profile-dialog" aria-labelledby="profile-title">
   <form id="profile-form" class="update-body" novalidate>
     <h3 id="profile-title">Neues Profil</h3>
@@ -1654,9 +1692,11 @@
     <div id="pf-path-hint" class="pf-hint"></div>
     <label id="pf-args-wrap" class="pf-field"><span>Argumente – eins pro Zeile (optional)</span>
       <textarea id="pf-args" class="pf-input mono" rows="3" spellcheck="false" placeholder="z. B. --startstreaming"></textarea></label>
-    <label class="pf-field"><span>Ziel-PC (IP-Adresse)</span>
-      <input id="pf-ip" class="pf-input mono" type="text" inputmode="decimal" list="pf-ip-list" autocomplete="off" placeholder="192.168.188.11" />
-      <datalist id="pf-ip-list"></datalist></label>
+    <div class="pf-field"><label for="pf-ip">Ziel-PC</label>
+      <div class="pc-select-row">
+        <select id="pf-ip" class="pf-input"></select>
+        <button type="button" class="pc-edit-btn" data-open-target-pcs title="Namen und IP-Adressen der PCs ändern">PCs…</button>
+      </div></div>
     <div id="pf-fade-row" class="pf-fade-row" hidden>
       <div class="pf-field">
         <span class="pf-label">Ein-/Ausfaden</span>
@@ -3235,7 +3275,8 @@ function renderDesktopProfiles(data) {
   wrap.querySelectorAll(".display-tile").forEach(el => el.remove());
   for (const profile of data.profiles || []) {
     const audio = profile.kind === "audio";
-    const meta = audio ? `${profile.target_ip} · Audio${profile.fade ? ` · Fade ${profile.fade_db} dB` : ""}` : `${profile.target_ip} · Monitor ${profile.monitor}${profile.fullscreen ? " · Vollbild" : ""}`;
+    const where = targetPcName(profile.target_ip) || profile.target_ip;
+    const meta = audio ? `${where} · Audio${profile.fade ? ` · Fade ${profile.fade_db} dB` : ""}` : `${where} · Monitor ${profile.monitor}${profile.fullscreen ? " · Vollbild" : ""}`;
     const button = document.createElement("button");
     button.className = "display-key";
     if (audio) {
@@ -3522,13 +3563,96 @@ function profileFormError(msg, field) {
   if (msg) box.scrollIntoView({ block: "nearest" });
 }
 
+// ---- Target PCs (Streaming PC, Anzeige PC) --------------------------------
+// Fields that send to another PC offer these two instead of an IP field; their
+// names and addresses live in the "Ziel-PCs" window. Settings still store the
+// IP, so an address that matches neither PC stays selectable ("Andere IP").
+
+let TARGET_PCS = [
+  { id: "streaming", name: "Streaming PC", ip: "192.168.188.20" },
+  { id: "display", name: "Anzeige PC", ip: "192.168.188.11" },
+];
+
+async function loadTargetPcs() {
+  const result = await api("GET", "/target-pcs");
+  if (result.ok && Array.isArray(result.data.pcs)) TARGET_PCS = result.data.pcs;
+}
+
+function targetPcName(ip) {
+  const pc = TARGET_PCS.find(item => item.ip === ip);
+  return pc ? pc.name : null;
+}
+
+function targetPcLabel(ip) {
+  const name = targetPcName(ip);
+  return name ? `${name} (${ip})` : ip;
+}
+
+// Fill a PC <select>; keeps an address that is neither of the two PCs.
+function fillTargetPcSelect(select, ip) {
+  const options = TARGET_PCS.map(pc => ({ value: pc.ip, label: `${pc.name} (${pc.ip})` }));
+  if (ip && !TARGET_PCS.some(pc => pc.ip === ip)) options.push({ value: ip, label: `Andere IP (${ip})` });
+  select.replaceChildren(...options.map(option => {
+    const element = document.createElement("option");
+    element.value = option.value;
+    element.textContent = option.label;
+    return element;
+  }));
+  select.value = ip && options.some(option => option.value === ip) ? ip : options[options.length > 1 ? 1 : 0].value;
+}
+
+function targetPcsError(message, field) {
+  document.querySelectorAll("#target-pcs-form .invalid").forEach(el => el.classList.remove("invalid"));
+  $("tp-error").hidden = !message;
+  $("tp-error").textContent = message || "";
+  if (field) { field.classList.add("invalid"); field.focus(); }
+}
+
+async function openTargetPcsDialog() {
+  await loadTargetPcs();
+  for (const pc of TARGET_PCS) {
+    $(`tp-${pc.id}-name`).value = pc.name;
+    $(`tp-${pc.id}-ip`).value = pc.ip;
+  }
+  targetPcsError(null);
+  $("tp-save").disabled = false;
+  $("target-pcs-dialog").showModal();
+}
+
+async function saveTargetPcs(event) {
+  event.preventDefault();
+  const pcs = TARGET_PCS.map(pc => ({ id: pc.id, name: $(`tp-${pc.id}-name`).value.trim(), ip: $(`tp-${pc.id}-ip`).value.trim() }));
+  for (const pc of pcs) {
+    if (!pc.name) return targetPcsError("Bitte einen Namen eingeben.", $(`tp-${pc.id}-name`));
+    if (!IPV4_RE.test(pc.ip)) return targetPcsError(`IP-Adresse ungültig, z. B. ${pc.id === "display" ? "192.168.188.11" : "192.168.188.20"}`, $(`tp-${pc.id}-ip`));
+  }
+  if (pcs[0].ip === pcs[1].ip) return targetPcsError("Die beiden PCs brauchen verschiedene IP-Adressen.", $("tp-display-ip"));
+  // Selections still open in other dialogs follow a changed address.
+  const moves = Object.fromEntries(TARGET_PCS.map(old => [old.ip, pcs.find(pc => pc.id === old.id).ip]).filter(([a, b]) => a !== b));
+  $("tp-save").disabled = true;
+  const result = await api("PUT", "/target-pcs", { pcs });
+  $("tp-save").disabled = false;
+  if (!result.ok || result.data.ok === false) return targetPcsError(result.data.reason || `HTTP ${result.status}`);
+  TARGET_PCS = result.data.pcs;
+  for (const select of [$("pf-ip"), $("sg-ip")]) {
+    if (select.options.length) fillTargetPcSelect(select, moves[select.value] || select.value);
+  }
+  $("target-pcs-dialog").close();
+  const moved = result.data.moved || {};
+  const problems = moved.problems || [];
+  if (problems.length) toast(`Ziel-PCs gespeichert, aber nicht umgestellt: ${problems.join("; ")}`, false);
+  else toast("Ziel-PCs gespeichert", true);
+  DESKTOP_PROFILES_SIGNATURE = "";
+  await Promise.all([refresh(), loadSongs()]);
+}
+
 function openProfileDialog(profileId) {
   const existing = profileId ? DESKTOP_PROFILES.find(p => p.id === profileId) : null;
   if (profileId && !existing) return toast("Profil nicht gefunden", false);
   const p = existing || {
     title: "", kind: "image", path: "", args: [], fullscreen: true, monitor: 1, position: "top-left",
     fade: false, fade_db: -30, fade_seconds: 5,
-    target_ip: (DESKTOP_PROFILES[DESKTOP_PROFILES.length - 1] || {}).target_ip || "",
+    target_ip: (TARGET_PCS.find(pc => pc.id === "display") || TARGET_PCS[0]).ip,
   };
   Object.assign(PROFILE_FORM, {
     mode: existing ? "edit" : "create", id: existing ? existing.id : null, idTouched: false,
@@ -3541,13 +3665,11 @@ function openProfileDialog(profileId) {
   $("pf-id").title = existing ? "Die ID eines bestehenden Profils bleibt gleich" : "Wird aus dem Namen erzeugt";
   $("pf-path").value = p.path || "";
   $("pf-args").value = (p.args || []).join("\n");
-  $("pf-ip").value = p.target_ip || "";
+  fillTargetPcSelect($("pf-ip"), p.target_ip);
   $("pf-fullscreen").checked = !!p.fullscreen;
   $("pf-fade").checked = !!p.fade;
   $("pf-fade-db").value = p.fade_db ?? -30;
   $("pf-fade-seconds").value = p.fade_seconds ?? 5;
-  const ips = [...new Set(DESKTOP_PROFILES.map(x => x.target_ip))];
-  $("pf-ip-list").innerHTML = ips.map(ip => `<option value="${escapeAttr(ip)}"></option>`).join("");
   profileFormError(null);
   $("pf-save").disabled = false;
   syncProfileForm();
@@ -3567,7 +3689,7 @@ function readProfileForm() {
   if (!PROFILE_ID_RE.test(id)) return profileFormError("ID: nur Buchstaben, Ziffern, - und _ (max. 64).", $("pf-id"));
   if (!WIN_ABS_PATH_RE.test(path)) return profileFormError("Pfad: vollständiger Windows-Pfad, z. B. " + KIND_INFO[kind].placeholder, $("pf-path"));
   if (kind === "program" && !/\.exe$/i.test(path)) return profileFormError("Ein Programm muss auf eine .exe zeigen.", $("pf-path"));
-  if (!IPV4_RE.test(ip)) return profileFormError("IP-Adresse ungültig, z. B. 192.168.188.11", $("pf-ip"));
+  if (!IPV4_RE.test(ip)) return profileFormError("Bitte einen Ziel-PC wählen.", $("pf-ip"));
   // Only audio fades; other kinds keep the defaults (and config.yaml stays short).
   const fade = kind === "audio" && $("pf-fade").checked;
   let fadeDb = -30, fadeSeconds = 5;
@@ -4712,6 +4834,12 @@ document.addEventListener("pointerdown", (event) => {
 window.addEventListener("scroll", () => closeTileMenu(), { passive: true });
 window.addEventListener("resize", () => closeTileMenu());
 $("new-profile-btn").addEventListener("click", () => openProfileDialog(null));
+$("target-pcs-btn").addEventListener("click", openTargetPcsDialog);
+document.addEventListener("click", event => {
+  if (event.target.closest("[data-open-target-pcs]")) openTargetPcsDialog();
+});
+$("target-pcs-form").addEventListener("submit", saveTargetPcs);
+$("tp-cancel").addEventListener("click", () => $("target-pcs-dialog").close());
 $("profile-form").addEventListener("submit", saveProfile);
 $("pf-cancel").addEventListener("click", () => $("profile-dialog").close());
 $("pf-title").addEventListener("input", () => {
@@ -5142,6 +5270,8 @@ function stageFlip(firsts) {
 }
 
 loadCompanionButtons();
+// Desktop keys name their PC once the list is in.
+loadTargetPcs().then(() => { DESKTOP_PROFILES_SIGNATURE = ""; });
 initSections();
 initStage();
 initCompanionEditing();
@@ -5632,11 +5762,17 @@ function fileKindText(path) {
 }
 
 function fileTargetOptions() {
-  const ips = new Set([...PROGRAM_DESKTOP_PROFILES.map(p => p.target_ip), SONG_SETTINGS && SONG_SETTINGS.target_ip]);
+  // The service runs on the Streaming PC, so its own agent is 127.0.0.1.
+  const streaming = TARGET_PCS.find(pc => pc.id === "streaming");
+  const ips = new Set([
+    ...TARGET_PCS.filter(pc => pc.id !== "streaming").map(pc => pc.ip),
+    ...PROGRAM_DESKTOP_PROFILES.map(p => p.target_ip), SONG_SETTINGS && SONG_SETTINGS.target_ip,
+  ]);
   ips.delete(THIS_PC);
   return [
-    { value: THIS_PC, label: "Streaming-PC (dieser Service)" },
+    { value: THIS_PC, label: `${streaming ? streaming.name : "Streaming PC"} (dieser PC)` },
     ...[...ips].filter(Boolean).sort().map(ip => {
+      if (targetPcName(ip)) return { value: ip, label: targetPcLabel(ip) };
       const names = PROGRAM_DESKTOP_PROFILES.filter(p => p.target_ip === ip).map(p => p.title).slice(0, 2);
       return { value: ip, label: names.length ? `${ip} · ${names.join(", ")}` : ip };
     }),
@@ -6815,10 +6951,10 @@ function setSongMonitor(n) {
 }
 
 async function openSongDialog() {
-  await loadSongs();
+  await Promise.all([loadSongs(), loadTargetPcs()]);
   const s = SONG_SETTINGS || {};
   $("sg-path").value = s.library_path || "";
-  $("sg-ip").value = s.target_ip || "";
+  fillTargetPcSelect($("sg-ip"), s.target_ip);
   $("sg-font").value = s.font || "Verdana";
   $("sg-size").value = s.font_size || 72;
   $("sg-text-color").value = s.text_color || "#ffffff";
