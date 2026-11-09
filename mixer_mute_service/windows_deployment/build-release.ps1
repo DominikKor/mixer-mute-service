@@ -59,7 +59,8 @@ if (-not (Test-Path $BuildPython)) {
 }
 
 Write-Host "Installing build dependencies into the isolated environment..."
-& $BuildPython -m pip install --disable-pip-version-check -r (Join-Path $ProjectDirectory "requirements.txt") -r (Join-Path $DeploymentDirectory "requirements-build.txt")
+# constraints.txt pins the exact versions a release ships (see that file).
+& $BuildPython -m pip install --disable-pip-version-check -r (Join-Path $ProjectDirectory "requirements.txt") -r (Join-Path $DeploymentDirectory "requirements-build.txt") -c (Join-Path $ProjectDirectory "constraints.txt")
 if ($LASTEXITCODE -ne 0) {
     throw "Dependency installation failed."
 }
