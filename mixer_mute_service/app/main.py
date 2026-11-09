@@ -31,6 +31,7 @@ from .mixer_client import MixerClient
 from .native_controls import NativeControlService
 from .proxy import ProxyServer
 from .program_items import ProgramItemStore
+from .file_actions import router as file_actions_router
 from .routes import router
 from .songs import SongService, router as songs_router
 from .updater import router as updater_router
@@ -141,6 +142,7 @@ app.include_router(updater_router)
 app.include_router(agent_download_router)
 app.include_router(channel_colors_router)
 app.include_router(songs_router)
+app.include_router(file_actions_router)
 app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="ui")
 
 

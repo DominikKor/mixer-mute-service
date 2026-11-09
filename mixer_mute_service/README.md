@@ -362,6 +362,21 @@ unter `C:\\ProgramData\\MixerMuteService\\config.yaml` muss
 `desktop_display.enabled: true` stehen. Die API listet Profile ueber
 `GET /desktop/profiles`; ein Button sendet `POST /desktop/{profile_id}/open`.
 
+## Dateien direkt im Programm
+
+Statt einer Desktop- oder Companion-Taste kann ein Programmpunkt in *Playback*,
+*Übersetzung* oder *Liedtext* auch direkt eine Datei starten: **Datei oder
+Pfad…** wählen, den vollständigen Pfad auf dem Ziel-PC eintragen und den PC
+wählen (*Streaming-PC (dieser Service)* oder ein PC aus den Desktop-Profilen).
+Musikdateien (mp3, wav, m4a, aac, flac, ogg, opus, wma) spielt der Display-Agent
+dort ohne Fenster mit mpv, `.exe` startet er, alles andere öffnet Windows mit
+der Standard-App. Gespeichert wird `file:<ip>|<pfad>` im jeweiligen Feld.
+
+**Durchsuchen…** gibt es nur, wenn die Weboberfläche auf dem Streaming-PC selbst
+geöffnet ist (`http://127.0.0.1:8765`): Der Service zeigt dann Ordner und
+Dateien dieses PCs (`GET /files/browse`). Anfragen von anderen Geräten lehnt er
+ab (403); dort wird der Pfad eingetippt.
+
 ## Lieder (FoilPresenter) im Programm
 
 Die FoilPresenter-Bibliothek bleibt auf dem Anzeige-PC (z. B. `.11`). Der
