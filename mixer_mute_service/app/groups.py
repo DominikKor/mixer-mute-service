@@ -27,10 +27,7 @@ class GroupError(ValueError):
 class GroupStore:
     def __init__(self, path: Path, valid_channels, seed: Dict[str, List[int]]) -> None:
         self._path = path
-        # All addressable channel numbers (inputs + buses). Accepts an int for
-        # backward compat (treated as 1..N).
-        if isinstance(valid_channels, int):
-            valid_channels = range(1, valid_channels + 1)
+        # All addressable channel numbers (inputs + buses).
         self._valid = set(valid_channels)
         self._lock = asyncio.Lock()
         self._groups: Dict[str, List[int]] = {}
@@ -45,8 +42,7 @@ class GroupStore:
         try:
             data = read_json(self._path, dict)
         except FileNotFoundError:
-            self._groups = {k: list(v) for k, v in seed.items()}
-            self._persist()
+            self._commit({k: list(v) for k, v in seed.items()})
             return
         except CorruptJSONError:
             # read_json kept the file as groups.json.corrupt. Use the seed in
@@ -67,8 +63,11 @@ class GroupStore:
                 log.warning("ignoring invalid group %r in %s: %s", name, self._path, exc)
         self._groups = groups
 
-    def _persist(self) -> None:
-        write_json_atomic(self._path, self._groups, sort_keys=True)
+    def _commit(self, groups: Dict[str, List[int]]) -> None:
+        """Write first, then switch: if the write fails, memory and disk still
+        agree (and the caller gets the error)."""
+        write_json_atomic(self._path, groups, sort_keys=True)
+        self._groups = groups
 
     # -- validation --------------------------------------------------------
 
@@ -118,8 +117,7 @@ class GroupStore:
         async with self._lock:
             if name in self._groups:
                 raise GroupError(f"group already exists: {name!r}")
-            self._groups[name] = chans
-            self._persist()
+            self._commit({**self._groups, name: chans})
             return list(chans)
 
     async def update(self, name: str, channels: List[int]) -> List[int]:
@@ -127,8 +125,7 @@ class GroupStore:
         async with self._lock:
             if name not in self._groups:
                 raise GroupError(f"unknown group: {name!r}")
-            self._groups[name] = chans
-            self._persist()
+            self._commit({**self._groups, name: chans})
             return list(chans)
 
     async def rename(self, name: str, new_name: str) -> List[int]:
@@ -142,15 +139,13 @@ class GroupStore:
             if new_name in self._groups:
                 raise GroupError(f"group already exists: {new_name!r}")
             # Rebuild the dict so the group keeps its place.
-            self._groups = {
+            self._commit({
                 (new_name if key == name else key): value for key, value in self._groups.items()
-            }
-            self._persist()
+            })
             return list(self._groups[new_name])
 
     async def delete(self, name: str) -> None:
         async with self._lock:
             if name not in self._groups:
                 raise GroupError(f"unknown group: {name!r}")
-            del self._groups[name]
-            self._persist()
+            self._commit({k: v for k, v in self._groups.items() if k != name})

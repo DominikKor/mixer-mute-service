@@ -95,14 +95,17 @@ class SafetyConfig(BaseModel):
     # How a stored fader value is judged trustworthy before sending:
     #   "latest"  - the most recent value observed on the current mixer link
     #               (default). Values from before a reconnect are never used.
-    #   "session" - same session rule; kept as an explicit name.
-    #   "age"     - additionally require values newer than max_fader_age_seconds.
+    #   "session" - identical to "latest" (an older name, still accepted).
+    #   "age"     - additionally require values newer than max_fader_age_seconds
+    #               (1 s if unset).
     freshness_mode: Literal["latest", "session", "age"] = "latest"
     # Optional hard age cap (used by "age" mode, or as an extra guard otherwise).
-    max_fader_age_seconds: Optional[float] = None
-    max_mute_age_seconds: Optional[float] = None
+    # null or 0 = no cap. In direct mode the dump refreshes values only every
+    # keepalive_seconds, so a smaller cap blocks most sends between dumps.
+    max_fader_age_seconds: Optional[float] = Field(default=None, ge=0)
+    max_mute_age_seconds: Optional[float] = Field(default=None, ge=0)
     allow_partial_groups: bool = False
-    # Solo behaviour: unmuting a group also mutes every other channel (buses
+    # Exclusive unmute: unmuting a group also mutes every other channel (buses
     # included). Muting a group never unmutes others. Channels without a safe
     # fader value are skipped, not forced.
     exclusive_group_unmute: bool = True
@@ -187,12 +190,28 @@ class Config(BaseModel):
         return f"Channel {channel}"
 
     def validate_groups(self) -> None:
-        """Ensure every group references only valid channels (inputs or buses)."""
+        """Check the seed groups. A channel above the inputs may be a bus that
+        is only discovered from the mixer later (buses.json), so it is accepted
+        here; the group store and the safety layer check it when it is used."""
         valid = self.valid_channels()
         for name, group in self.groups.items():
             for ch in group.channels:
+                if ch < 1:
+                    raise ValueError(f"group {name!r} references invalid channel {ch}")
                 if ch not in valid:
-                    raise ValueError(f"group {name!r} references unknown channel {ch}")
+                    log.info("seed group %r uses channel %s, not known yet (a bus?)", name, ch)
+
+    def warn_about_settings(self) -> None:
+        """Log settings that are valid but very likely not what was meant."""
+        caps = [c for c in (self.safety.max_fader_age_seconds, self.safety.max_mute_age_seconds) if c]
+        if self.safety.freshness_mode == "age" and not caps:
+            caps = [1.0]
+        keepalive = self.mixer.keepalive_seconds
+        if self.mixer.mode == "direct" and keepalive and caps and min(caps) < keepalive:
+            log.warning(
+                "safety age cap %.1fs is shorter than the dump interval (%.1fs): most sends "
+                "will be blocked between two dumps", min(caps), keepalive,
+            )
 
 
 def default_config_path() -> Path:
@@ -211,4 +230,5 @@ def load_config(path: Optional[Path] = None) -> Config:
     else:
         cfg = Config()
     cfg.validate_groups()
+    cfg.warn_about_settings()
     return cfg

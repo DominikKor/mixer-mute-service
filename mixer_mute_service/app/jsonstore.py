@@ -41,7 +41,11 @@ def read_json(path: Path, expected_type: type, default: Any = _MISSING) -> Any:
             raise
         return default
     try:
-        data = json.loads(text) if text.strip() else expected_type()
+        if not text.strip():
+            # Our writer always writes at least "{}" or "[]": an empty file is a
+            # crash mid-write or a damaged disk, not "no data".
+            raise CorruptJSONError("empty file")
+        data = json.loads(text)
         if not isinstance(data, expected_type):
             raise CorruptJSONError(
                 f"expected {expected_type.__name__}, got {type(data).__name__}"

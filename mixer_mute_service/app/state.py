@@ -1,9 +1,8 @@
 """Async-safe state store.
 
-The listener coroutine and the HTTP handlers run on the same event loop, so a
-plain dict would already be consistent; we still guard with an asyncio.Lock as
-the briefing requires, both for correctness if a thread executor is ever added
-and to make the read-modify-write of a channel atomic.
+The listener coroutine and the HTTP handlers run on the same event loop. The
+asyncio.Lock makes each read-modify-write of a channel atomic between those
+coroutines; it does NOT protect against other threads (none touch the store).
 
 Timestamps are taken from time.monotonic(): freshness is the safety-critical
 quantity, and a monotonic clock cannot jump backwards if the wall clock is
@@ -37,7 +36,6 @@ class ChannelState:
     fader_updated_at: Optional[float] = None
     muted: Optional[bool] = None
     muted_updated_at: Optional[float] = None
-    last_seen_raw: Optional[str] = None
     # Console solo (headphone monitoring), observed together with the mute
     # state. Every command re-sends it; None = not observed, sends blocked.
     solo: Optional[bool] = None
@@ -50,7 +48,9 @@ class StateStore:
         self._dump_guard = dump_guard_seconds
         # Monotonic time we last commanded each channel (see DUMP_GUARD_SECONDS).
         self._commanded_at: Dict[int, float] = {}
-        # Monotonic timestamp of the last successfully parsed frame (any channel).
+        # Monotonic time of the last state observed from the mixer (any
+        # channel). Our own commands do not count: /health shows how fresh the
+        # mixer's data is, not how recently we sent something.
         self.last_update_at: Optional[float] = None
 
     async def apply_event(self, event: FrameEvent) -> bool:
@@ -67,7 +67,6 @@ class StateStore:
             cs.muted = event.muted
             cs.muted_updated_at = now
             cs.solo = event.solo
-            cs.last_seen_raw = event.raw_match
             self._channels[event.channel] = cs
             self.last_update_at = now
             return True
@@ -98,7 +97,6 @@ class StateStore:
             cs.muted_updated_at = now
             self._channels[channel] = cs
             self._commanded_at[channel] = now
-            self.last_update_at = now
 
     async def set_fader(self, channel: int, fader_hex: str) -> None:
         """Optimistically record a fader value we just commanded (the mixer does
@@ -110,7 +108,6 @@ class StateStore:
             cs.fader_updated_at = now
             self._channels[channel] = cs
             self._commanded_at[channel] = now
-            self.last_update_at = now
 
     async def get_channel(self, channel: int) -> Optional[ChannelState]:
         async with self._lock:
