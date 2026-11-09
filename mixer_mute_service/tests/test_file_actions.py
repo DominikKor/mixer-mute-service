@@ -8,16 +8,12 @@ refuses requests that do not come from the streaming PC itself.
 
 import io
 import os
-import pathlib
-import tempfile
 import urllib.error
 
-_tmp = pathlib.Path(tempfile.mkdtemp(prefix="mixer_files_"))
-(_tmp / "config.yaml").write_text(
-    "mixer:\n  max_channels: 8\n"
-    "desktop_display:\n  enabled: true\n  token_env: FILE_TEST_TOKEN\n  profiles: {}\n"
-)
-os.environ["MIXER_CONFIG"] = str(_tmp / "config.yaml")
+from tests.helpers import use_app_config  # noqa: E402
+
+_tmp = use_app_config("mixer_files_",
+    "desktop_display:\n  enabled: true\n  token_env: FILE_TEST_TOKEN\n  profiles: {}\n")
 os.environ["FILE_TEST_TOKEN"] = "test-token"
 
 from fastapi.testclient import TestClient  # noqa: E402

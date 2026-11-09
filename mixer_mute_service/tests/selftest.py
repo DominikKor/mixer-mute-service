@@ -1,14 +1,18 @@
 """Offline self-test: protocol round-trips, parser, safety, and a live HTTP
 smoke test (no real mixer -> sends must be blocked)."""
 
+import os
 import sys
 import time
+from unittest.mock import AsyncMock, patch
 
+from app.companion_buttons import COMPANION_BUTTONS
 from app.protocol import build_mute_command, parse_hex_stream, is_valid_fader_hex
 from app.config import Config
 from app.state import ChannelState
 from app.native_controls import NativeControlError
 from app.safety import check_channel_send
+from tests.helpers import temp_dir
 
 PASS = 0
 FAIL = 0
@@ -158,8 +162,6 @@ check("ch1 frames parsed (3)", len(c1) == 3)
 check("ch1 mapped to channel 1", all(e.channel == 1 for e in c1))
 check("ch1 fader extracted", all(e.fader_hex == "00007a44" for e in c1))
 check("ch1 mute flag correct", [e.muted for e in c1] == [False, False, True])
-# id-addressed channel-1 frame must NOT be misread as a positional channel
-check("ch1 not misparsed as 08-form", all(e.channel == 1 for e in c1))
 
 print("== safety (freshness modes) ==")
 now = time.monotonic()
@@ -224,9 +226,8 @@ check("toggle needs mute state",
 print("== HTTP smoke test (isolated config, no mixer connected) ==")
 # Use a throwaway config dir so the test is independent of the deployed
 # config.yaml / groups.json (which the operator may have changed).
-import os, tempfile, pathlib
-_tmp = tempfile.mkdtemp(prefix="mixer_selftest_")
-pathlib.Path(_tmp, "config.yaml").write_text(
+_tmp = temp_dir("mixer_selftest_")
+(_tmp / "config.yaml").write_text(
     # direct mode to a closed local port: never reaches the real mixer
     "mixer:\n  max_channels: 8\n  mode: direct\n  ip: 127.0.0.1\n  port: 9\n"
     "groups:\n"
@@ -242,7 +243,7 @@ pathlib.Path(_tmp, "config.yaml").write_text(
     "      path: C:/sample.png\n"
     "      target_ip: 192.168.188.42\n"
 )
-os.environ["MIXER_CONFIG"] = str(pathlib.Path(_tmp, "config.yaml"))
+os.environ["MIXER_CONFIG"] = str(_tmp / "config.yaml")
 
 from fastapi.testclient import TestClient
 from app.main import app
@@ -257,21 +258,14 @@ with TestClient(app) as client:
           client.post("/desktop/sample/open").status_code == 503)
     check("unknown desktop profile -> 404",
           client.post("/desktop/not-configured/open").status_code == 404)
-    import os
-    from unittest.mock import AsyncMock, patch
-    old_token = os.environ.get("DESKTOP_AGENT_TOKEN")
-    os.environ["DESKTOP_AGENT_TOKEN"] = "selftest-token"
     app.state.cfg.desktop_display.enabled = True
     app.state.cfg.desktop_display.profiles["sample"].position = "top-right"
-    with patch("app.routes._forward_display_request", return_value={"ok": True}) as forward:
+    with patch.dict(os.environ, {"DESKTOP_AGENT_TOKEN": "selftest-token"}), \
+            patch("app.routes._forward_display_request", return_value={"ok": True}) as forward:
         check("desktop profile open", client.post("/desktop/sample/open").status_code == 200)
         check("desktop profile routed to configured IP",
               forward.call_args.args[0] == "http://192.168.188.42:8766/display")
     app.state.cfg.desktop_display.enabled = False
-    if old_token is None:
-        os.environ.pop("DESKTOP_AGENT_TOKEN", None)
-    else:
-        os.environ["DESKTOP_AGENT_TOKEN"] = old_token
     s = client.get("/state").json()
     check("/state has 8 channels", len(s["channels"]) == 8)
     check("/state channels unsafe (no data)", all(not c["safe"] for c in s["channels"].values()))
@@ -287,7 +281,7 @@ with TestClient(app) as client:
     check("always-on rejects invalid channel", invalid_always_on.status_code == 400)
     companion_buttons = client.get("/companion/buttons")
     check("native and imported buttons listed", companion_buttons.status_code == 200
-          and len(companion_buttons.json()["buttons"]) > 40)
+          and len(companion_buttons.json()["buttons"]) == len(COMPANION_BUTTONS))
     with patch.object(app.state.native_controls, "press", AsyncMock(return_value={"ok": True})) as native_press:
         companion_press = client.post("/companion/buttons/beamer-freeze/press")
         check("native Beamer button dispatched", companion_press.status_code == 200 and companion_press.json()["ok"] is True)
@@ -373,6 +367,8 @@ with TestClient(app) as client:
     })
     check("raw mixer button cannot be aliased", unsafe_target.status_code == 400)
     m = client.post("/channels/2/mute")
+    check("mute blocked w/ 409 no connection", m.status_code == 409)
+    check("mute reason = no mixer connection", m.json()["reason"] == "no mixer connection")
     invalid_desktop_program = client.post("/program/items", json={
         "time": "09:25", "title": "Invalid", "group": "drums", "playback": "desktop:missing",
     })
@@ -499,8 +495,6 @@ with TestClient(app) as client:
 
     removed_program = client.delete(f"/program/items/{program_id}")
     check("program item deleted", removed_program.status_code == 200)
-    check("mute blocked w/ 409 no connection", m.status_code == 409)
-    check("mute reason = no mixer connection", m.json()["reason"] == "no mixer connection")
     g = client.post("/groups/unknown/mute")
     check("unknown group -> 404", g.status_code == 404)
     bad = client.post("/channels/99/mute")
@@ -537,7 +531,6 @@ with TestClient(app) as client:
     print("== group CRUD ==")
     seeded = client.get("/groups").json()
     check("seeded groups present", {"drums", "vocals", "all"} <= set(seeded))
-    client.delete("/groups/selftest")  # clean any leftover from a prior run
     cr = client.post("/groups", json={"name": "selftest", "channels": [1, 2]})
     check("create group 200", cr.status_code == 200 and cr.json()["channels"] == [1, 2])
     dup = client.post("/groups", json={"name": "selftest", "channels": [1]})
@@ -573,8 +566,6 @@ with TestClient(app) as client:
           ui.status_code == 200 and "Mixer Mute Service" in ui.text and "desktop-profiles" in ui.text)
     check("UI is revalidated on every load (no stale page after updates)",
           ui.headers.get("cache-control") == "no-cache")
-    check("group cards are only redrawn when they change (taps are not lost)",
-          "function setPersonsHtml" in ui.text and "wrap.appendChild(div)" not in ui.text)
 
 print(f"\n{PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)

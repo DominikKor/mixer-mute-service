@@ -6,10 +6,10 @@ import json
 import unittest
 from unittest.mock import patch
 
-try:
-    import tkinter  # noqa: F401
-except ImportError:
-    tkinter = None
+from tests.helpers import require_tk
+
+# None without tkinter (tests skip); with REQUIRE_TK=1 (CI) that is an error.
+tkinter = require_tk()
 
 if tkinter is not None:
     from desktop_agent import show_image_agent as agent

@@ -9,16 +9,12 @@ refused (by the service, and by the agent on the display PC).
 
 import io
 import os
-import pathlib
-import tempfile
 import urllib.error
 
-_tmp = pathlib.Path(tempfile.mkdtemp(prefix="mixer_newsong_"))
-(_tmp / "config.yaml").write_text(
-    "mixer:\n  max_channels: 8\n"
-    "desktop_display:\n  enabled: true\n  token_env: NEWSONG_TEST_TOKEN\n  profiles: {}\n"
-)
-os.environ["MIXER_CONFIG"] = str(_tmp / "config.yaml")
+from tests.helpers import use_app_config  # noqa: E402
+
+_tmp = use_app_config("mixer_newsong_",
+    "desktop_display:\n  enabled: true\n  token_env: NEWSONG_TEST_TOKEN\n  profiles: {}\n")
 os.environ["NEWSONG_TEST_TOKEN"] = "test-token"
 
 from fastapi.testclient import TestClient  # noqa: E402

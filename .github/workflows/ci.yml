@@ -1,8 +1,9 @@
 name: CI and Windows release
 
-# Every push to main (and every version tag v*): run the offline tests, then
-# build the Windows release and publish it as a GitHub release, which the
-# streaming PC installs via the web UI's UPDATE key or the desktop shortcut.
+# Every push and pull request runs the checks (tests, web UI and PowerShell
+# syntax). Only pushes to main and version tags (v*) then build the Windows
+# release and publish it as a GitHub release, which the streaming PC installs
+# via the web UI's UPDATE key or the desktop shortcut.
 #
 # Release names come from `git describe`: a tagged commit is "v1.3.0", later
 # commits are "v1.3.0-2-gabc1234". So every build gets its own name and the
@@ -11,16 +12,18 @@ name: CI and Windows release
 
 on:
   push:
-    branches: [main]
+    branches: ["**"]
     tags: ["v*"]
+  pull_request:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: mixer_mute_service
@@ -29,27 +32,74 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.14"
-      - run: python -m pip install -r requirements-dev.txt
+      # constraints.txt: the exact versions the release ships (see that file).
+      - run: python -m pip install -r requirements-dev.txt -c constraints.txt
       - name: Offline tests
-        run: |
-          set -e
-          for t in tests/*.py; do
-            echo "== $t"
-            python -m "tests.$(basename "$t" .py)"
-          done
+        # Every module runs in its own process; all failures are reported, a
+        # module that tries to reach the network fails (tests/__init__.py).
+        # REQUIRE_TK: the desktop-agent tests must run here, not skip.
+        env:
+          REQUIRE_TK: "1"
+        run: python -m unittest discover -s tests -t . -v
       - name: Web UI script syntax
+        # Inline <script> blocks and local <script src> files are checked one
+        # by one, and the classic scripts also as one file in page order, so a
+        # top-level name declared twice across files is caught as well.
         run: |
           python - <<'EOF'
-          s = open("app/static/index.html", encoding="utf-8").read()
-          open("/tmp/ui.js", "w", encoding="utf-8").write(s[s.index("<script>") + 8:s.index("</script>")])
+          import pathlib, re, sys
+          static = pathlib.Path("app/static")
+          html = (static / "index.html").read_text(encoding="utf-8")
+          out = pathlib.Path("/tmp/ui-js"); out.mkdir(exist_ok=True)
+          classic, files = [], []
+          for i, m in enumerate(re.finditer(r"<script\b([^>]*)>(.*?)</script>", html, re.S)):
+              attrs, body = m.group(1), m.group(2)
+              module = re.search(r'type\s*=\s*["\']module["\']', attrs) is not None
+              src = re.search(r'src\s*=\s*["\']([^"\']+)["\']', attrs)
+              if src:
+                  path = src.group(1).split("?")[0]
+                  if "://" in path or path.startswith("//"):
+                      continue  # not ours
+                  code = (static / path.lstrip("/")).read_text(encoding="utf-8")
+                  name = path.replace("/", "_")
+              else:
+                  code, name = body, f"inline-{i}.js"
+              target = out / (name.rsplit(".", 1)[0] + (".mjs" if module else ".js"))
+              target.write_text(code, encoding="utf-8")
+              files.append(str(target))
+              if not module:
+                  classic.append(code)
+          if not files:
+              sys.exit("no script found in app/static/index.html")
+          (out / "all-classic.js").write_text("\n;\n".join(classic), encoding="utf-8")
+          (out / "files.txt").write_text("\n".join(files + [str(out / "all-classic.js")]))
           EOF
-          node --check /tmp/ui.js
+          while read -r f; do echo "node --check $f"; node --check "$f"; done < /tmp/ui-js/files.txt
       - name: Desktop agent compiles
         run: python -m py_compile desktop_agent/show_image_agent.py
+      - name: PowerShell scripts parse
+        # Includes the script the web UI generates for updating the display
+        # agent (it runs through Invoke-Expression on the display PCs).
+        shell: pwsh
+        run: |
+          python -c "import pathlib; from app.agent_download import build_update_cmd, agent_dir, MARKER; t = build_update_cmd(agent_dir(), 'ci').decode('utf-8'); pathlib.Path('/tmp/agent-update.ps1').write_text(t[t.index(MARKER):], encoding='utf-8')"
+          $failed = $false
+          $files = @(Get-ChildItem windows_deployment/*.ps1, desktop_agent/*.ps1) + @(Get-Item /tmp/agent-update.ps1)
+          foreach ($f in $files) {
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($f.FullName, [ref]$null, [ref]$errors) | Out-Null
+            if ($errors) { $failed = $true; $errors | ForEach-Object { Write-Error "$($f.Name): $_" } }
+            else { Write-Host "ok  $($f.Name)" }
+          }
+          if ($failed) { exit 1 }
 
   windows-release:
     needs: test
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
     runs-on: windows-latest
+    timeout-minutes: 45
+    permissions:
+      contents: write
     # One release at a time, so main and its tag never build the same name twice.
     concurrency:
       group: windows-release
@@ -81,21 +131,46 @@ jobs:
         if: steps.name.outputs.exists != 'true'
         with:
           python-version: "3.14"
-      - name: Check PowerShell scripts parse
-        if: steps.name.outputs.exists != 'true'
-        run: |
-          $failed = $false
-          foreach ($f in Get-ChildItem windows_deployment\*.ps1, desktop_agent\*.ps1) {
-            $errors = $null
-            [System.Management.Automation.Language.Parser]::ParseFile($f.FullName, [ref]$null, [ref]$errors) | Out-Null
-            if ($errors) { $failed = $true; $errors | ForEach-Object { Write-Error "$($f.Name): $_" } }
-          }
-          if ($failed) { exit 1 }
       - name: Build release
         if: steps.name.outputs.exists != 'true'
         env:
           RELEASE_TAG: ${{ steps.name.outputs.tag }}
         run: .\windows_deployment\build-release.ps1 -PythonCommand python
+      - name: Smoke-test the built service
+        # Start the built .exe on a throwaway config (mixer on a closed local
+        # port, so it never talks to real hardware) and check that it serves
+        # /health, the web UI and the API docs. Catches PyInstaller problems
+        # (missing modules or data files) before the release reaches the PC.
+        if: steps.name.outputs.exists != 'true'
+        run: |
+          $dir = Join-Path $env:RUNNER_TEMP "mixer-smoke"
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          $cfg = Join-Path $dir "config.yaml"
+          [System.IO.File]::WriteAllText($cfg, "mixer:`n  ip: 127.0.0.1`n  port: 9`n  max_channels: 8`nserver:`n  host: 127.0.0.1`n  port: 18765`n")
+          $env:MIXER_CONFIG = $cfg
+          $exe = Join-Path (Get-Location) "windows_deployment\release\MixerMuteService-Windows-x64\MixerMuteService.exe"
+          $proc = Start-Process -FilePath $exe -PassThru -NoNewWindow -RedirectStandardOutput (Join-Path $dir "out.log") -RedirectStandardError (Join-Path $dir "err.log")
+          try {
+            $up = $false
+            for ($i = 0; $i -lt 60 -and -not $up; $i++) {
+              Start-Sleep -Seconds 1
+              if ($proc.HasExited) { break }
+              try { $health = Invoke-RestMethod -TimeoutSec 2 http://127.0.0.1:18765/health; $up = $health.ok } catch { }
+            }
+            if (-not $up) { throw "The built service did not answer /health" }
+            foreach ($path in @("/", "/docs")) {
+              $r = Invoke-WebRequest -UseBasicParsing -TimeoutSec 5 "http://127.0.0.1:18765$path"
+              if ($r.StatusCode -ne 200) { throw "GET $path returned $($r.StatusCode)" }
+            }
+            Write-Host "Built service answers /health, / and /docs."
+          }
+          catch {
+            Get-Content (Join-Path $dir "out.log"), (Join-Path $dir "err.log") -ErrorAction SilentlyContinue
+            throw
+          }
+          finally {
+            if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force }
+          }
       - name: Checksum
         if: steps.name.outputs.exists != 'true'
         run: |

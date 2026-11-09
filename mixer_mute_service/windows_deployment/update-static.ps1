@@ -9,6 +9,11 @@
       2) install-service.ps1
     This ensures update behavior stays identical to uninstall+install.
 
+    Before that, the data files in C:\ProgramData\MixerMuteService
+    (*.json, *.yaml, *.yml) are saved to backups\<release>-<time>.zip there,
+    because the new version may migrate them on its first start. The newest
+    10 backups are kept.
+
 .EXAMPLE
     .\update-static.ps1
 #>
@@ -18,9 +23,10 @@ param()
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
-$ServiceName = "MixerMuteService"
 $InstallDirectory = Join-Path $env:ProgramFiles "MixerMuteService"
 $ProgramDataDirectory = Join-Path $env:ProgramData "MixerMuteService"
+$BackupDirectory = Join-Path $ProgramDataDirectory "backups"
+$BackupsToKeep = 10
 $SourceDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $UninstallScript = Join-Path $SourceDir "uninstall-service.ps1"
 $InstallScript = Join-Path $SourceDir "install-service.ps1"
@@ -40,10 +46,53 @@ if (-not (Test-Path $InstallScript)) {
 
 Write-Host "Updating Mixer Mute Service (uninstall + install)..." -ForegroundColor Cyan
 
+# ---- backup of the data files ---------------------------------------------------
+
+$DataFiles = @()
+if (Test-Path $ProgramDataDirectory) {
+    $DataFiles = @(Get-ChildItem -Path $ProgramDataDirectory -File |
+        Where-Object { $_.Extension -in @(".json", ".yaml", ".yml") })
+}
+if ($DataFiles.Count -gt 0) {
+    # A failed backup must not block the update itself: warn and go on.
+    try {
+        # Name after the release being replaced (or its build id), then the time.
+        $Previous = "unknown"
+        foreach ($Candidate in @((Join-Path $InstallDirectory "release-tag.txt"), (Join-Path $InstallDirectory "build-id.txt"))) {
+            if (Test-Path $Candidate) {
+                $Previous = (Get-Content -Path $Candidate -Raw).Trim()
+                break
+            }
+        }
+        $Previous = $Previous -replace '[^A-Za-z0-9._-]', '_'
+        $Stamp = Get-Date -Format "yyyyMMdd-HHmmss"
+        New-Item -ItemType Directory -Force -Path $BackupDirectory | Out-Null
+        $BackupPath = Join-Path $BackupDirectory ("{0}-{1}.zip" -f $Previous, $Stamp)
+        Compress-Archive -Path ($DataFiles | ForEach-Object { $_.FullName }) -DestinationPath $BackupPath -CompressionLevel Optimal
+        Write-Host "Backup of $($DataFiles.Count) data files: $BackupPath"
+
+        $Old = @(Get-ChildItem -Path $BackupDirectory -Filter "*.zip" -File | Sort-Object LastWriteTime -Descending | Select-Object -Skip $BackupsToKeep)
+        foreach ($File in $Old) {
+            Remove-Item -Force $File.FullName
+            Write-Host "Removed old backup: $($File.Name)"
+        }
+    }
+    catch {
+        Write-Warning "Backup of the data files failed ($($_.Exception.Message)); updating anyway."
+    }
+}
+else {
+    Write-Host "No data files to back up yet."
+}
+
+# ---- uninstall + install --------------------------------------------------------
+
 Write-Host "Step 1/2: Running uninstall-service.ps1"
-& $UninstallScript
-if ($LASTEXITCODE -ne 0) {
-    throw "uninstall-service.ps1 failed with exit code $LASTEXITCODE"
+try {
+    & $UninstallScript
+}
+catch {
+    throw "uninstall-service.ps1 failed: $($_.Exception.Message)"
 }
 
 Write-Host "Cleanup: removing stale installation directory"
@@ -56,17 +105,15 @@ if (Test-Path $InstallDirectory) {
     }
 }
 
-# Ensure no stale service process is left behind after uninstall.
-$Service = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
-if ($null -ne $Service -and $Service.Status -ne "Stopped") {
-    Stop-Service -Name $ServiceName -Force
+Write-Host "Step 2/2: Running install-service.ps1"
+try {
+    & $InstallScript
+}
+catch {
+    throw "install-service.ps1 failed: $($_.Exception.Message)"
 }
 
-Write-Host "Step 2/2: Running install-service.ps1"
-& $InstallScript
-if ($LASTEXITCODE -ne 0) {
-    throw "install-service.ps1 failed with exit code $LASTEXITCODE"
-}
+# ---- verification ------------------------------------------------------------------
 
 Write-Host "Verification: checking /health and /groups"
 $Health = Invoke-RestMethod -Uri "http://127.0.0.1:8765/health" -TimeoutSec 5
