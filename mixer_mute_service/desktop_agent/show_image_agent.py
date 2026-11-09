@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import queue
+import getpass
 import shutil
 import subprocess
 import threading
@@ -265,7 +266,18 @@ def _play_audio(profile_id: str, path: str) -> None:
     with _audio_lock:
         _stop_audio_locked()
         process = subprocess.Popen(
-            [mpv, "--no-video", "--force-window=no", "--really-quiet", "--", str(target)],
+            [
+                mpv,
+                "--no-config",
+                "--no-video",
+                "--vo=null",
+                "--audio-display=no",
+                "--force-window=no",
+                "--no-terminal",
+                "--really-quiet",
+                "--",
+                str(target),
+            ],
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -280,6 +292,32 @@ def _stop_audio() -> bool:
         stopped = _stop_audio_locked()
     logger.info("Audio stopped active=%s", stopped)
     return stopped
+
+
+def _schedule_shutdown() -> None:
+    timer = threading.Timer(2, _shutdown_agent_pc)
+    timer.daemon = True
+    timer.start()
+
+
+def _shutdown_agent_pc() -> None:
+    username = os.environ.get("USERNAME") or getpass.getuser()
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    commands = [
+        ["shutdown.exe", "/s", "/t", "10"],
+        ["taskkill.exe", "/F", "/FI", f"USERNAME eq {username}", "/FI", "STATUS eq RUNNING"],
+    ]
+    for command in commands:
+        try:
+            subprocess.Popen(
+                command,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                creationflags=flags,
+            )
+        except OSError:
+            logger.exception("Could not start agent shutdown command %s", command[0])
 
 
 def _show_image(root: tk.Tk, image_label: tk.Label, profile: dict) -> None:
@@ -507,7 +545,7 @@ def _show_song(root: tk.Tk, canvas: tk.Canvas, body: dict) -> None:
 
 class DisplayHandler(BaseHTTPRequestHandler):
     def do_POST(self):
-        if self.path not in ("/display", "/audio", "/song", "/songs/library"):
+        if self.path not in ("/display", "/audio", "/song", "/songs/library", "/power"):
             self.send_error(404)
             return
 
@@ -537,6 +575,8 @@ class DisplayHandler(BaseHTTPRequestHandler):
                 return
             requests.put({"kind": "song", "id": "song", **body})
             self._send_json(202, {"ok": True, "action": body["action"]})
+        if self.path == "/power":
+            self._handle_power(body)
             return
         required = {
             "id", "title", "kind", "path", "args", "fullscreen", "monitor", "position"
@@ -630,6 +670,18 @@ class DisplayHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(encoded)))
         self.end_headers()
         self.wfile.write(encoded)
+
+    def _handle_power(self, body: dict) -> None:
+        if not isinstance(body, dict) or body != {"action": "shutdown"}:
+            self.send_error(400)
+            return
+        result = json.dumps({"ok": True, "shutdown_scheduled": True, "delay_seconds": 10}).encode()
+        self.send_response(202)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(result)))
+        self.end_headers()
+        self.wfile.write(result)
+        _schedule_shutdown()
 
     def log_message(self, fmt, *args):
         logger.info("%s - %s", self.client_address[0], fmt % args)

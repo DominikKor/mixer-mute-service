@@ -93,11 +93,28 @@ The page polls `/state`, `/health` and `/groups` about once per second.
 The Beamer category has separate **Beamer hide** and **Beamer unhide** actions.
 Because the projector command is a toggle, first set the actual current mode in
 the **Beamerzustand** selector. This only records the current state; it does not
-send a projector command. A Hide/Unhide action sends one toggle only when its
-target differs from the recorded state. The state is persisted in
+send a projector command. A Hide/Unhide action sends one `avmute=AV Mute`
+HTTP form POST only when its target differs from the recorded state. The state is persisted in
 `native_control_state.json`; it starts as **unknown**, so both actions stay
 blocked until the operator declares the current mode. If the projector is
 toggled by another device, update the selector before using the web controls.
+Freeze, Beamer on and Beamer off also use direct HTTP form POSTs to
+`http://192.168.6.40/form/control_cgi`; no local Beamer scripts are needed.
+
+## Agent PCs und Alles ausschalten
+
+In **Steuerung** kannst du die Agent-PCs aus `desktop_display.profiles` und den
+Beamer fuer **Alles ausschalten** auswaehlen. Die Auswahl wird neben
+`config.yaml` in `power_off_config.json` gespeichert. Der Button fragt vor dem
+Ausfuehren nach einer Bestaetigung, schaltet den Beamer aus und sendet an jeden
+gewaehlten Agent-PC den authentifizierten Shutdown-Auftrag. Der Desktop-Agent
+plant `shutdown /s /t 10` und beendet danach laufende Prozesse des angemeldeten
+Windows-Benutzers mit `taskkill`. Die Agenten muessen dafuer aktualisiert sein;
+der Shutdown-Endpunkt ist nur fuer IP-Adressen konfigurierter Desktop-Profile
+erreichbar.
+
+Jede Agent-PC-Zeile hat zusaetzlich eine eigene, bestaetigungspflichtige
+**Herunterfahren**-Taste.
 
 ## Endpoints
 
@@ -105,9 +122,9 @@ toggled by another device, update the selector before using the web controls.
 
 The **Beamerzustand** selector declares the projector's current physical mode;
 it does not send a command. The state starts unknown, so **Beamer hide** and
-**Beamer unhide** stay blocked until the operator sets it. Each action uses the
-projector's toggle script only when the requested target differs from the
-stored state. On success, the new state is persisted in
+**Beamer unhide** stay blocked until the operator sets it. Each action sends an
+AV Mute HTTP form POST only when the requested target differs from the stored
+state. On success, the new state is persisted in
 `native_control_state.json`. If the projector is toggled by another device,
 update the selector before using the web buttons.
 
@@ -115,12 +132,16 @@ update the selector before using the web buttons.
 | ------ | ---- | ------- |
 | GET | `/beamer/state` | read the stored state (`hidden: true`, `false` or `null`) |
 | POST | `/beamer/state` | declare the current state `{ "hidden": true/false }` without toggling |
+| GET | `/power/off-config` | read the selected agent PCs and Beamer for **Alles ausschalten** |
+| PUT | `/power/off-config` | save `{ "target_ips": [...], "beamer": true/false }` |
+| POST | `/power/off` | execute the saved shutdown selection |
+| POST | `/power/agents/{target_ip}/shutdown` | shut down one configured agent PC |
 
 ### Steuerung keys (`/companion/...`)
 
 The keys started as a Companion export and now run directly from the service
-(Shelly lights, Art-Net stage light, VISCA cameras, OBS WebSocket, beamer
-scripts on the service PC); Companion itself is no longer needed. The two
+(Shelly lights, Art-Net stage light, VISCA cameras, OBS WebSocket and direct
+Beamer HTTP controls); Companion itself is no longer needed. The two
 mixer keys of the export are mapped to the safe channel endpoints instead of
 replaying its raw HEX. Categories and key changes are stored in
 `companion_buttons.json` next to `config.yaml`. New keys can call one of the

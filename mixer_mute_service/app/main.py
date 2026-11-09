@@ -31,6 +31,7 @@ from .controller import Controller
 from .groups import GroupStore
 from .mixer_client import MixerClient
 from .native_controls import NativeControlService
+from .power_control import PowerControlStore
 from .proxy import ProxyServer
 from .program_items import ProgramItemStore
 from .file_actions import router as file_actions_router
@@ -101,6 +102,7 @@ async def lifespan(app: FastAPI):
     program_items = ProgramItemStore(data_dir / "program_items.json")
     songs = SongService(data_dir)
     native_controls = NativeControlService(data_dir / "native_control_state.json")
+    power_control = PowerControlStore(data_dir / "power_off_config.json")
     companion_button_store = CompanionButtonStore(
         data_dir / "companion_buttons.json", COMPANION_BUTTONS
     )
@@ -115,6 +117,7 @@ async def lifespan(app: FastAPI):
     app.state.program_items = program_items
     app.state.songs = songs
     app.state.native_controls = native_controls
+    app.state.power_control = power_control
     app.state.companion_button_store = companion_button_store
     app.state.channel_preferences = channel_preferences
     app.state.camera_streams = camera_streams

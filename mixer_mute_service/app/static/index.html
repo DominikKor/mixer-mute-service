@@ -945,6 +945,20 @@
     .beamer-state-options { display: inline-flex; gap: 4px; }
     button.beamer-state-key { min-width: 76px; min-height: 44px; padding: 6px 12px; }
     button.beamer-state-key[aria-pressed="true"] { color: #fff; border-color: #245c76; background: linear-gradient(to bottom, #286a7e, #1d4e5e); }
+  .power-off-panel { display: grid; gap: 10px; margin: 0 0 14px; padding: 12px; border: 1px solid #08090b; border-radius: 6px; background: var(--panel-bg); box-shadow: var(--panel-shadow); }
+  .power-off-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  .power-off-title { color: var(--text); font-size: 13px; font-weight: 800; }
+  .power-off-hint, .power-off-status { color: var(--lcd-dim); font: 600 11px/1.4 var(--mono); }
+  .power-off-status.bad { color: #ff8576; }
+  .power-off-targets { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 4px 10px; }
+  .power-off-agent { display: flex; align-items: center; gap: 6px; min-width: 0; }
+  .power-off-target { display: flex; align-items: center; gap: 9px; min-width: 0; min-height: 44px; color: #c9ced6; font-size: 12px; cursor: pointer; }
+  .power-off-agent .power-off-target { flex: 1; }
+  .power-off-target input { flex: 0 0 18px; width: 18px; height: 18px; margin: 0; accent-color: #ff8576; }
+  .power-off-target span { min-width: 0; overflow-wrap: anywhere; }
+  button.power-off-button { min-width: 160px; min-height: 44px; }
+  button.power-off-button:disabled { cursor: not-allowed; opacity: .5; filter: none; }
+  button.power-agent-shutdown { min-width: 112px; min-height: 44px; padding: 6px 9px; font-size: 10px; }
     .beamer-state-current { color: var(--lcd-dim); font: 600 11px/1.35 var(--mono); }
   .companion-categories { display: grid; gap: 12px; }
   .companion-category {
@@ -1236,6 +1250,17 @@
         <button type="button" class="beamer-state-key" data-beamer-state="false" aria-pressed="false" title="Zustand auf Unhide setzen, ohne den Beamer umzuschalten">Unhide</button>
       </div>
       <span id="beamer-state-current" class="beamer-state-current" role="status" aria-live="polite">Zustand unbekannt</span>
+    </div>
+    <div id="power-off-panel" class="power-off-panel">
+      <div class="power-off-head">
+        <div>
+          <div class="power-off-title">Alles ausschalten</div>
+          <div class="power-off-hint">Auswahl wird gespeichert; Agent-PCs fahren nach 10 Sekunden herunter.</div>
+        </div>
+        <button id="power-off-selected" class="danger power-off-button" type="button" disabled>Alles ausschalten</button>
+      </div>
+      <div id="power-off-targets" class="power-off-targets"></div>
+      <div id="power-off-status" class="power-off-status" role="status" aria-live="polite">Abschaltziele werden geladen</div>
     </div>
     <div id="companion-categories" class="companion-categories" aria-live="polite"></div>
   </div>
@@ -3368,6 +3393,11 @@ const COMPANION_CATEGORY_BUSY = new Set();
 let COMPANION_DATA = { categories: [], buttons: [], companion_targets: [] };
 let COMPANION_GROUPS = {};
 let BEAMER_HIDDEN = null;
+let POWER_OFF_CONFIG = null;
+let POWER_OFF_CONFIG_SIGNATURE = "";
+let POWER_OFF_CONFIG_BUSY = false;
+let POWER_OFF_CONFIG_SAVE_PENDING = false;
+let POWER_OFF_BUSY = false;
 
 function syncBeamerCommandButtons() {
   const known = typeof BEAMER_HIDDEN === "boolean";
@@ -3385,6 +3415,124 @@ function renderBeamerState(data) {
     button.setAttribute("aria-pressed", String(BEAMER_HIDDEN === (button.dataset.beamerState === "true")));
   });
   syncBeamerCommandButtons();
+}
+
+function renderPowerOffConfig(data) {
+  if (POWER_OFF_CONFIG_BUSY) return;
+  const config = data && Array.isArray(data.available_targets) ? data : null;
+  POWER_OFF_CONFIG = config;
+  const signature = JSON.stringify(config);
+  if (signature === POWER_OFF_CONFIG_SIGNATURE) {
+    const selected = new Set(config ? config.selected_targets || [] : []);
+    $("power-off-selected").disabled = POWER_OFF_CONFIG_BUSY || POWER_OFF_BUSY
+      || !config || (!selected.size && config.beamer !== true);
+    return;
+  }
+  POWER_OFF_CONFIG_SIGNATURE = signature;
+  const targets = $("power-off-targets");
+  targets.replaceChildren();
+  if (!config) {
+    $("power-off-status").textContent = "Abschaltauswahl nicht erreichbar";
+    $("power-off-status").classList.add("bad");
+    $("power-off-selected").disabled = true;
+    return;
+  }
+  const selected = new Set(config.selected_targets || []);
+  const addTarget = (label, checked, attribute, value = "") => {
+    const row = document.createElement("label");
+    row.className = "power-off-target";
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.checked = checked;
+    input.disabled = POWER_OFF_CONFIG_BUSY;
+    if (attribute === "beamer") input.dataset.powerBeamer = "true";
+    else {
+      input.dataset.powerTarget = value;
+      input.value = value;
+    }
+    const text = document.createElement("span");
+    text.textContent = label;
+    row.append(input, text);
+    targets.append(row);
+  };
+  const addAgentTarget = target => {
+    const row = document.createElement("div");
+    row.className = "power-off-agent";
+    const label = document.createElement("label");
+    label.className = "power-off-target";
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.checked = selected.has(target.ip);
+    input.disabled = POWER_OFF_CONFIG_BUSY;
+    input.dataset.powerTarget = target.ip;
+    input.value = target.ip;
+    const text = document.createElement("span");
+    text.textContent = `${target.label} · ${target.ip}`;
+    label.append(input, text);
+    const shutdown = document.createElement("button");
+    shutdown.type = "button";
+    shutdown.className = "power-agent-shutdown danger";
+    shutdown.dataset.powerAgentShutdown = target.ip;
+    shutdown.textContent = "Herunterfahren";
+    shutdown.title = `${target.label} in 10 Sekunden herunterfahren`;
+    row.append(label, shutdown);
+    targets.append(row);
+  };
+  addTarget("Beamer ausschalten", config.beamer === true, "beamer");
+  for (const target of config.available_targets) addAgentTarget(target);
+  const status = $("power-off-status");
+  status.classList.remove("bad");
+  status.textContent = config.available_targets.length
+    ? "Auswahl wird automatisch gespeichert."
+    : "Keine Agent-PCs in Desktop-Profilen konfiguriert.";
+  $("power-off-selected").disabled = POWER_OFF_CONFIG_BUSY || POWER_OFF_BUSY || (!selected.size && config.beamer !== true);
+}
+
+async function loadPowerOffConfig() {
+  const result = await api("GET", "/power/off-config");
+  renderPowerOffConfig(result.ok ? result.data : null);
+}
+
+async function savePowerOffConfig() {
+  if (POWER_OFF_CONFIG_BUSY) {
+    POWER_OFF_CONFIG_SAVE_PENDING = true;
+    return;
+  }
+  const body = {
+    target_ips: [...new Set([...document.querySelectorAll("[data-power-target]:checked")].map(input => input.dataset.powerTarget))].sort(),
+    beamer: Boolean(document.querySelector("[data-power-beamer]")?.checked),
+  };
+  const savedTargets = [...(POWER_OFF_CONFIG?.selected_targets || [])].sort();
+  if (POWER_OFF_CONFIG && JSON.stringify(body.target_ips) === JSON.stringify(savedTargets)
+      && body.beamer === POWER_OFF_CONFIG.beamer) {
+    POWER_OFF_CONFIG_SAVE_PENDING = false;
+    $("power-off-selected").disabled = POWER_OFF_BUSY || (!body.target_ips.length && !body.beamer);
+    return;
+  }
+  POWER_OFF_CONFIG_BUSY = true;
+  $("power-off-selected").disabled = true;
+  const result = await api("PUT", "/power/off-config", body);
+  POWER_OFF_CONFIG_BUSY = false;
+  if (!result.ok || result.data.ok === false) {
+    POWER_OFF_CONFIG_SAVE_PENDING = false;
+    toast(result.data.reason || `HTTP ${result.status}`, false);
+    POWER_OFF_CONFIG_SIGNATURE = "";
+    await loadPowerOffConfig();
+    return;
+  }
+  POWER_OFF_CONFIG = {
+    ...POWER_OFF_CONFIG,
+    selected_targets: result.data.selected_targets,
+    beamer: result.data.beamer,
+  };
+  if (POWER_OFF_CONFIG_SAVE_PENDING) {
+    POWER_OFF_CONFIG_SAVE_PENDING = false;
+    await savePowerOffConfig();
+    return;
+  }
+  POWER_OFF_CONFIG_SIGNATURE = "";
+  renderPowerOffConfig(POWER_OFF_CONFIG);
+  toast("Abschaltauswahl gespeichert", true);
 }
 
 function renderCompanionButtons() {
@@ -3648,6 +3796,38 @@ $("beamer-state-control").addEventListener("click", async (event) => {
   renderBeamerState(result.data);
   toast(`Beamer-Ist-Zustand auf ${hidden ? "Hide" : "Unhide"} gesetzt`, true);
 });
+$("power-off-targets").addEventListener("change", event => {
+  if (event.target.matches("[data-power-target], [data-power-beamer]")) savePowerOffConfig();
+});
+$("power-off-targets").addEventListener("click", async event => {
+  const button = event.target.closest("button[data-power-agent-shutdown]");
+  if (!button || button.disabled) return;
+  const targetIp = button.dataset.powerAgentShutdown;
+  const target = POWER_OFF_CONFIG?.available_targets.find(item => item.ip === targetIp);
+  if (!target || !(await confirmDelete(button, `${target.label} (${targetIp}) in 10 Sekunden herunterfahren?`, "Herunterfahren"))) return;
+  button.disabled = true;
+  const result = await api("POST", `/power/agents/${encodeURIComponent(targetIp)}/shutdown`);
+  button.disabled = false;
+  if (!result.ok || result.data.ok === false) toast(result.data.reason || `HTTP ${result.status}`, false);
+  else toast(`${target.label}: Herunterfahren eingeleitet`, true);
+});
+$("power-off-selected").addEventListener("click", async event => {
+  const button = event.currentTarget;
+  if (POWER_OFF_BUSY || button.disabled) return;
+  if (!(await confirmDelete(button, "Ausgewählte Agent-PCs und den Beamer wirklich ausschalten?", "Ausschalten"))) return;
+  POWER_OFF_BUSY = true;
+  button.disabled = true;
+  const result = await api("POST", "/power/off");
+  POWER_OFF_BUSY = false;
+  if (result.ok && result.data.ok !== false) {
+    toast("Ausschalten wurde eingeleitet", true);
+  } else {
+    const failed = (result.data.results || []).filter(item => item.ok === false);
+    const details = failed.map(item => `${item.target}: ${item.reason || "nicht erreichbar"}`).join(", ");
+    toast(details || result.data.reason || `HTTP ${result.status}`, false);
+  }
+  await refresh();
+});
 $("companion-categories").addEventListener("change", async (event) => {
   const select = event.target.closest("[data-companion-category-select]");
   if (!select) return;
@@ -3678,9 +3858,9 @@ function renderPanic() {
 let refreshSeq = 0;
 async function refresh() {
   const seq = ++refreshSeq;
-  const [health, state, desktop, cameras, beamer] = await Promise.all([
+  const [health, state, desktop, cameras, beamer, power] = await Promise.all([
     api("GET", "/health"), api("GET", "/state"), api("GET", "/desktop/profiles"),
-    api("GET", "/camera-streams"), api("GET", "/beamer/state"),
+    api("GET", "/camera-streams"), api("GET", "/beamer/state"), api("GET", "/power/off-config"),
   ]);
   // Drop a stale response if a newer refresh has since started (e.g. the
   // per-second poll resolving after a click's own refresh) -- otherwise it
@@ -3717,6 +3897,7 @@ async function refresh() {
   if (desktop.ok) renderDesktopProfiles(desktop.data);
   if (cameras.ok) renderCameraStreams(cameras.data);
   renderBeamerState(beamer.ok ? beamer.data : null);
+  renderPowerOffConfig(power.ok ? power.data : null);
   if (stateOk) await bootstrapPersonsFromBackend();
   renderChannels(LAST_STATE);
   renderPersons();

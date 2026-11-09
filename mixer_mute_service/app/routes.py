@@ -23,6 +23,7 @@ from .companion_buttons import COMPANION_BUTTONS, COMPANION_BUTTONS_BY_ID
 from .desktop_profiles import ProfileEditError, add_profile, delete_profile, update_profile
 from .groups import GroupError
 from .native_controls import VISCA_CAMERAS, NativeControlError
+from .power_control import PowerControlStore
 from .program_items import ProgramItemError
 from .channel_settings import SettingsError
 from .file_actions import is_file_action, run_file_action
@@ -42,6 +43,7 @@ from .models import (
     GroupRename,
     GroupUpdate,
     ProgramItemRequest,
+    PowerOffConfigRequest,
     RecallFaderRequest,
     StagePreferenceRequest,
 )
@@ -317,6 +319,94 @@ async def remember_stage(body: StagePreferenceRequest):
         max_age=STAGE_COOKIE_MAX_AGE, path="/", samesite="lax",
     )
     return response
+
+
+def _agent_targets(cfg) -> list[dict]:
+    labels: dict[str, list[str]] = {}
+    for profile in cfg.desktop_display.profiles.values():
+        labels.setdefault(profile.target_ip, []).append(profile.title)
+    return [
+        {"ip": ip, "label": ", ".join(dict.fromkeys(names))}
+        for ip, names in sorted(labels.items())
+    ]
+
+
+async def _shutdown_agent(target_ip: str, cfg) -> tuple[dict, int]:
+    token = os.environ.get(cfg.desktop_display.token_env, "")
+    if not cfg.desktop_display.enabled or not token:
+        return {"ok": False, "reason": "desktop display is not configured"}, 503
+    try:
+        response = await asyncio.to_thread(
+            _forward_display_request,
+            f"http://{target_ip}:8766/power",
+            token,
+            {"action": "shutdown"},
+        )
+        return response, 202
+    except urllib.error.HTTPError as exc:
+        try:
+            return json.loads(exc.read().decode("utf-8")), exc.code
+        except (ValueError, UnicodeDecodeError):
+            return {"ok": False, "reason": "display agent rejected the shutdown request"}, exc.code
+    except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
+        log.warning("Display agent unavailable for shutdown target=%s: %s", target_ip, exc)
+        return {"ok": False, "reason": "display agent unavailable"}, 502
+
+
+@router.get("/power/off-config")
+async def power_off_config(request: Request):
+    available_targets = _agent_targets(request.app.state.cfg)
+    selection = await request.app.state.power_control.get({item["ip"] for item in available_targets})
+    return {
+        "ok": True,
+        "available_targets": available_targets,
+        "selected_targets": selection["targets"],
+        "beamer": selection["beamer"],
+    }
+
+
+@router.put("/power/off-config")
+async def power_off_config_update(body: PowerOffConfigRequest, request: Request):
+    available = {item["ip"] for item in _agent_targets(request.app.state.cfg)}
+    try:
+        selection = await request.app.state.power_control.set(body.target_ips, body.beamer, available)
+    except ValueError as exc:
+        return JSONResponse({"ok": False, "reason": str(exc)}, 400)
+    return {"ok": True, "selected_targets": selection["targets"], "beamer": selection["beamer"]}
+
+
+@router.post("/power/agents/{target_ip}/shutdown")
+async def power_off_agent(target_ip: str, request: Request):
+    available = {item["ip"] for item in _agent_targets(request.app.state.cfg)}
+    if target_ip not in available:
+        return JSONResponse({"ok": False, "reason": "unknown agent PC"}, 404)
+    result, status = await _shutdown_agent(target_ip, request.app.state.cfg)
+    return JSONResponse(result, status_code=status)
+
+
+@router.post("/power/off")
+async def power_off_selected(request: Request):
+    cfg = request.app.state.cfg
+    available = {item["ip"] for item in _agent_targets(cfg)}
+    selection = await request.app.state.power_control.get(available)
+    if not selection["targets"] and not selection["beamer"]:
+        return JSONResponse({"ok": False, "reason": "no shutdown targets selected"}, 400)
+
+    results = []
+    if selection["beamer"]:
+        try:
+            result = await request.app.state.native_controls.press(
+                {"type": "beamer-command", "command": "power-off"}
+            )
+            results.append({"target": "beamer", **result})
+        except NativeControlError as exc:
+            results.append({"target": "beamer", "ok": False, "reason": str(exc)})
+    for target_ip in selection["targets"]:
+        result, status = await _shutdown_agent(target_ip, cfg)
+        results.append({"target": target_ip, **result, "status": status})
+
+    ok = all(result.get("ok") for result in results)
+    return JSONResponse({"ok": ok, "results": results}, status_code=200 if ok else 207)
 
 
 @router.get("/camera-streams")
