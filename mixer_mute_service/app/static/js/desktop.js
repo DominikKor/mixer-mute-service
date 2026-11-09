@@ -18,6 +18,9 @@ const KIND_INFO = {
   audio: { placeholder: "I:\\Musik\\Lied.mp3",
            hint: "Audiodatei auf dem Ziel-PC. mpv muss dort installiert und über PATH oder MPV_PATH erreichbar sein." },
 };
+// "*" in a path stands for an unknown part of a name (the display agent fills
+// it in on the target PC; with several matches the newest file is used).
+const WILDCARD_HINT = " Unbekannter Teil eines Namens: * (z. B. Ansage_*.mp3; passen mehrere, gilt die neueste Datei).";
 const POSITION_LABELS = {
   "top-left": "Oben links", "top-right": "Oben rechts", "center": "Mitte",
   "bottom-left": "Unten links", "bottom-right": "Unten rechts",
@@ -65,7 +68,7 @@ function syncProfileForm() {
   const kind = PROFILE_FORM.kind;
   setRadio($("pf-kind"), "data-kind", kind);
   $("pf-path").placeholder = KIND_INFO[kind].placeholder;
-  $("pf-path-hint").textContent = KIND_INFO[kind].hint;
+  $("pf-path-hint").textContent = KIND_INFO[kind].hint + WILDCARD_HINT;
   $("pf-args-wrap").hidden = kind !== "program";
   $("pf-display-row").hidden = kind === "audio";
   $("pf-fade-row").hidden = kind !== "audio";
@@ -217,7 +220,7 @@ function readProfileForm() {
   if (!title) return profileFormError("Bitte einen Namen eingeben.", $("pf-title"));
   if (!PROFILE_ID_RE.test(id)) return profileFormError("ID: nur Buchstaben, Ziffern, - und _ (max. 64).", $("pf-id"));
   if (!WIN_ABS_PATH_RE.test(path)) return profileFormError("Pfad: vollständiger Windows-Pfad, z. B. " + KIND_INFO[kind].placeholder, $("pf-path"));
-  if (kind === "program" && !/\.exe$/i.test(path)) return profileFormError("Ein Programm muss auf eine .exe zeigen.", $("pf-path"));
+  if (kind === "program" && !/(\.exe|\*)$/i.test(path)) return profileFormError("Ein Programm muss auf eine .exe zeigen (oder auf * enden).", $("pf-path"));
   if (!IPV4_RE.test(ip)) return profileFormError("Bitte einen Ziel-PC wählen.", $("pf-ip"));
   // Only audio fades; other kinds keep the defaults (and config.yaml stays short).
   const fade = kind === "audio" && $("pf-fade").checked;

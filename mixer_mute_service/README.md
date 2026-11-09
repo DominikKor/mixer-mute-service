@@ -432,6 +432,17 @@ Fensters fest: `top-left` (Standard), `top-right`, `bottom-left`,
 `bottom-right` oder `center`. Nach Aenderung der Konfiguration von Hand den
 Service neu starten.
 
+**Platzhalter `*` in Pfaden:** In allen Pfaden (Profile, Datei-Aktionen im
+Programm, Liederbibliothek) steht `*` fuer einen unbekannten Teil eines Namens,
+auch eines Ordners, z. B. `I:\Musik\Ansage_*.mp3`,
+`C:\Program Files\obs-studio*\bin\64bit\obs64.exe` oder
+`C:\Users\*\foilpresenter Bibliothek`. Der Display-Agent setzt ihn auf dem
+Ziel-PC ein; passen mehrere Eintraege, gilt der zuletzt geaenderte. Ein
+Programmpfad darf statt auf `.exe` auch auf `*` enden, dann kommen nur
+`.exe`-Dateien in Frage. Programme auf Netzlaufwerken bleiben auch mit `*`
+gesperrt. Der Platzhalter braucht den aktuellen Display-Agent (Update-Taste
+bzw. „Display Service herunterladen“ auf dem Ziel-PC).
+
 Ein `audio`-Profil enthaelt den Pfad zu einer Musikdatei auf dem Ziel-PC. Dort
 muss mpv installiert sein und entweder ueber `PATH` oder die Windows-Variable
 `MPV_PATH` auf `mpv.exe` auffindbar sein. Nach einer Aenderung der

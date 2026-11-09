@@ -55,7 +55,7 @@ def parse_file_action(value: str) -> Tuple[str, str]:
         raise ValueError("target must be a LAN address")
     if not path or len(path) > MAX_PATH or not _ABSOLUTE_RE.match(path) or any(ord(c) < 32 for c in path):
         raise ValueError("file path must be a full path on the target PC")
-    if path.startswith("\\\\") and PureWindowsPath(path).suffix.lower() == ".exe":
+    if path.startswith("\\\\") and (PureWindowsPath(path).suffix.lower() == ".exe" or path.endswith("*")):
         # Never start a program from a network share (anyone who can write
         # there could swap it).
         raise ValueError("programs must be on the target PC, not on a network share")

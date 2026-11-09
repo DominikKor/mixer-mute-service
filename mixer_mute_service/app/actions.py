@@ -156,8 +156,9 @@ def _profile(request: Request, profile_id: str):
 def network_program(kind: str, path: str) -> bool:
     """A program on a network share: never started (anyone who can write
     there could swap it)."""
+    # A name ending in "*" may resolve to an .exe on the target PC, too.
     return kind == "program" and (path.startswith("\\\\") or path.startswith("//")) \
-        and PureWindowsPath(path).suffix.lower() == ".exe"
+        and (PureWindowsPath(path).suffix.lower() == ".exe" or path.endswith("*"))
 
 
 async def show_profile(request: Request, profile_id: str) -> Result:
