@@ -140,6 +140,19 @@ class ProgramTemplateStore:
                 self._persist()
             return changed
 
+    async def rename(self, template_id: str, name) -> dict:
+        """KeyError: unknown template; FileExistsError: name taken."""
+        name = _clean_name(name)
+        async with self._lock:
+            template = next((t for t in self._templates if t["id"] == template_id), None)
+            if template is None:
+                raise KeyError(template_id)
+            if any(t is not template and t["name"].casefold() == name.casefold() for t in self._templates):
+                raise FileExistsError(name)
+            template["name"] = name
+            self._persist()
+            return self._view(template)
+
     async def delete(self, template_id: str) -> bool:
         async with self._lock:
             before = len(self._templates)

@@ -55,9 +55,12 @@ function renderPowerOffConfig(data) {
   const selected = new Set(config.selected_targets || []);
   // One key per target; tapping it toggles whether "Ausschalten" includes it
   // (a hidden checkbox inside the key carries the state).
-  const addTarget = (name, meta, checked, data) => {
+  const addTarget = (name, meta, checked, data, nameId, defaultName) => {
     const tile = document.createElement("div");
     tile.className = "power-tile";
+    tile.dataset.powerName = nameId;
+    tile.dataset.name = name;
+    tile.dataset.defaultName = defaultName;
     const key = document.createElement("label");
     key.className = "power-off-target";
     const input = document.createElement("input");
@@ -75,12 +78,18 @@ function renderPowerOffConfig(data) {
     key.title = `${name}: ${checked ? "wird mit ausgeschaltet" : "bleibt an"} – tippen zum Umschalten`;
     key.append(input, title, sub);
     tile.append(key);
+    // Renaming (shown with "Bearbeiten"): stored on the service for all devices.
+    const tools = document.createElement("div");
+    tools.className = "power-tile-tools";
+    tools.appendChild(renamePencil(name));
+    tile.append(tools);
     targets.append(tile);
     return tile;
   };
-  addTarget("Beamer", "Projektor", config.beamer === true, { powerBeamer: "true" });
+  addTarget(config.beamer_label || "Beamer", "Projektor", config.beamer === true, { powerBeamer: "true" }, "beamer", "Beamer");
   for (const target of config.available_targets) {
-    const tile = addTarget(target.label, target.ip, selected.has(target.ip), { powerTarget: target.ip });
+    const tile = addTarget(target.label, target.ip, selected.has(target.ip), { powerTarget: target.ip },
+      target.ip, target.default_label || target.label);
     tile.classList.add("agent");
     const shutdown = document.createElement("button");
     shutdown.type = "button";
@@ -162,7 +171,9 @@ function renderCompanionButtons() {
     toggle.dataset.companionCategoryToggle = category.id;
     toggle.setAttribute("aria-expanded", String(category.visible));
     toggle.textContent = category.name;
-    header.appendChild(toggle);
+    const pencil = renamePencil(`Kategorie ${category.name}`);
+    pencil.dataset.companionCategoryRename = category.id;
+    header.append(toggle, pencil);
 
     const grid = document.createElement("div");
     grid.className = "companion-grid";
@@ -345,6 +356,17 @@ $("companion-category-cancel").addEventListener("click", () => $("companion-cate
 $("companion-button-cancel").addEventListener("click", () => $("companion-button-dialog").close());
 
 $("companion-categories").addEventListener("click", async (event) => {
+  const rename = event.target.closest("[data-companion-category-rename]");
+  if (rename) {
+    const category = COMPANION_DATA.categories.find(item => item.id === rename.dataset.companionCategoryRename);
+    if (!category) return;
+    startInlineRename(rename.closest(".companion-category-head"), category.name, { save: async name => {
+      if (await saveName("POST", `/companion/categories/${encodeURIComponent(category.id)}/rename`, name, "Kategorie")) {
+        await loadCompanionButtons();
+      }
+    } });
+    return;
+  }
   const toggle = event.target.closest("[data-companion-category-toggle]");
   if (toggle) {
     const category = COMPANION_DATA.categories.find(item => item.id === toggle.dataset.companionCategoryToggle);
@@ -412,6 +434,20 @@ $("power-off-targets").addEventListener("change", event => {
   if (event.target.matches("[data-power-target], [data-power-beamer]")) savePowerOffConfig();
 });
 $("power-off-targets").addEventListener("click", async event => {
+  const pencil = event.target.closest(".power-tile-tools .rename-btn");
+  if (pencil) {
+    const tile = pencil.closest(".power-tile");
+    const current = tile.dataset.name === tile.dataset.defaultName ? "" : tile.dataset.name;
+    startInlineRename(tile, current, {
+      placeholder: tile.dataset.defaultName, allowEmpty: true,
+      save: async name => {
+        if (await saveName("PUT", `/names/power-target/${encodeURIComponent(tile.dataset.powerName)}`, name, "Name")) {
+          await loadPowerOffConfig();
+        }
+      },
+    });
+    return;
+  }
   const button = event.target.closest("button[data-power-agent-shutdown]");
   if (!button || button.disabled) return;
   const targetIp = button.dataset.powerAgentShutdown;

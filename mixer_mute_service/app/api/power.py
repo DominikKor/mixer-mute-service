@@ -41,11 +41,18 @@ async def _shutdown_agent(target_ip: str, cfg) -> Result:
 async def power_off_config(request: Request):
     available_targets = _agent_targets(request.app.state.cfg)
     selection = await request.app.state.power_control.get({item["ip"] for item in available_targets})
+    store = request.app.state.names
+    names = store.get("power-target") if store else {}
+    for item in available_targets:
+        # The user's name (app/names.py); default_label: the profile titles.
+        item["default_label"] = item["label"]
+        item["label"] = names.get(item["ip"]) or item["label"]
     return {
         "ok": True,
         "available_targets": available_targets,
         "selected_targets": selection["targets"],
         "beamer": selection["beamer"],
+        "beamer_label": names.get("beamer") or "Beamer",
     }
 
 

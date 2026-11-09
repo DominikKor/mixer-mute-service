@@ -37,11 +37,17 @@ async def _view(request: Request) -> dict:
     native = _native(request)
     circuits = await request.app.state.light_circuits.get(native)
     scenes = request.app.state.light_scenes
+    store = request.app.state.names
+    zone_names = store.get("light-zone") if store else {}
+    circuit_names = store.get("light-circuit") if store else {}
     return {
         "ok": True,
         "stage": native.stage_state(),
-        "zone_labels": ARTNET_ZONE_LABELS,
-        "circuits": [{"id": k, "label": SHELLY_LABELS.get(k, k), "on": circuits.get(k)} for k in SHELLY_HOSTS],
+        # The user's names (app/names.py), else the built-in ones.
+        "zone_labels": {k: zone_names.get(k) or v for k, v in ARTNET_ZONE_LABELS.items()},
+        "zone_defaults": ARTNET_ZONE_LABELS,
+        "circuits": [{"id": k, "label": circuit_names.get(k) or SHELLY_LABELS.get(k, k),
+                      "default_label": SHELLY_LABELS.get(k, k), "on": circuits.get(k)} for k in SHELLY_HOSTS],
         "scenes": await scenes.list() if scenes is not None else [],
     }
 

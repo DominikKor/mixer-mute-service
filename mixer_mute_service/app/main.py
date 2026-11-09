@@ -34,6 +34,7 @@ from .group_presets import GroupPresetStore
 from .groups import GroupStore
 from .mixer_client import MixerClient
 from .lights import CircuitCache, LightSceneStore
+from .names import NameStore
 from .native_controls import NativeControlService
 from .power_control import PowerControlStore
 from .target_pcs import TargetPcStore
@@ -155,6 +156,7 @@ async def lifespan(app: FastAPI):
             app, "program camera presets", lambda: device_camera_program(app.state.native_controls))
     app.state.camera_program = camera_program
     app.state.light_scenes = _optional(app, "light scenes", lambda: LightSceneStore(data_dir / "light_scenes.json"))
+    app.state.names = _optional(app, "names", lambda: NameStore(data_dir / "display_names.json"))
     app.state.light_circuits = CircuitCache()
     app.state.power_control = _optional(
         app, "power control", lambda: PowerControlStore(data_dir / "power_off_config.json"))

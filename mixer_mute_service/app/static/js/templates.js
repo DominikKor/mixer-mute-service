@@ -91,7 +91,14 @@ function renderTemplateList() {
       if (TEMPLATES.selected === template.id) TEMPLATES.selected = null;
       await loadTemplates();
     });
-    item.append(pick, del);
+    const pencil = renamePencil(`Vorlage „${template.name}“`);
+    pencil.addEventListener("click", () => startInlineRename(item, template.name, { maxLength: 60, save: async name => {
+      if (await saveName("PUT", `/program/templates/${encodeURIComponent(template.id)}`, name, "Vorlage")) {
+        if ($("tp-name").value === template.name) $("tp-name").value = name;
+        await loadTemplates();
+      }
+    } }));
+    item.append(pick, pencil, del);
     list.appendChild(item);
   }
 }

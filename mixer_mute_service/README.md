@@ -730,6 +730,28 @@ startet die Zeile nicht mehr („unknown light scene“), bis eine andere gewäh
 | POST | `/lights/scenes/{id}/apply` | Szene einblenden |
 | DELETE | `/lights/scenes/{id}` | Szene löschen |
 
+## Umbenennen
+
+Ein Stift (✎) neben dem Namen macht ihn zum Textfeld: Enter oder Wegtippen
+speichert, Escape bricht ab. Die Namen speichert der Dienst, alle Geräte sehen
+sie.
+
+- **Licht**: Bühnenzonen, Raumlicht-Kreise und Szenen (Stift immer sichtbar).
+  Bei Zonen und Kreisen stellt ein leerer Name den eingebauten Namen wieder her.
+- **Steuerung** (mit *Bearbeiten*): Kategorien und die Geräte unter *Alles
+  ausschalten* (Beamer, Agent-PCs; leer = Name aus den Desktop-Profilen).
+- **Programm → Vorlagen**: die Vorlagen.
+
+Kanäle, Mutegruppen, Steuerungstasten, Kameras und Desktop-Profile ließen sich
+schon vorher umbenennen.
+
+| Methode | Pfad | |
+|---|---|---|
+| PUT | `/names/{art}/{id}` `{"name"}` | `light-zone`, `light-circuit`, `power-target` (IP oder `beamer`); `""` = eingebauter Name |
+| PUT | `/lights/scenes/{id}` `{"name"}` | Szene umbenennen |
+| PUT | `/program/templates/{id}` `{"name"}` | Vorlage umbenennen |
+| POST | `/companion/categories/{id}/rename` `{"name"}` | Kategorie umbenennen |
+
 ## Configuration (`config.yaml`)
 
 - `mixer.ip` / `mixer.port` / `mixer.max_channels` (input channels, default 16)

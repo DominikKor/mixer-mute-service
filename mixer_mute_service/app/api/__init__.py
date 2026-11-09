@@ -14,7 +14,7 @@ from ..file_actions import router as file_actions_router
 from ..program_templates import router as program_templates_router
 from ..songs import router as songs_router
 from ..updater import router as updater_router
-from . import cameras, controls, desktop, groups, lights, mixer, power, program
+from . import cameras, controls, desktop, groups, lights, mixer, names, power, program
 
 router = APIRouter()
 for _sub in (
@@ -26,6 +26,7 @@ for _sub in (
     power.router,
     cameras.router,
     lights.router,
+    names.router,
     updater_router,
     agent_download_router,
     agent_update_router,

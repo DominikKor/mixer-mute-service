@@ -346,6 +346,20 @@ class CompanionButtonStore:
             self._persist()
             return deepcopy(category)
 
+    async def rename_category(self, category_id: str, name) -> dict:
+        name = (name or "").strip() if isinstance(name, str) else ""
+        if not name or len(name) > 40:
+            raise ValueError("category name must be 1 to 40 characters")
+        async with self._lock:
+            category = next((item for item in self._categories if item["id"] == category_id), None)
+            if category is None:
+                raise KeyError(category_id)
+            if any(item is not category and item["name"].casefold() == name.casefold() for item in self._categories):
+                raise ValueError("category already exists")
+            category["name"] = name
+            self._persist()
+            return deepcopy(category)
+
     async def create_button(self, label: str, category_id: str, action: dict) -> dict:
         label = (label or "").strip()
         if not label or len(label) > 40:

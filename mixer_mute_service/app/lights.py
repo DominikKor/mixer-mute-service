@@ -105,6 +105,19 @@ class LightSceneStore:
             self._persist()
             return deepcopy(scene)
 
+    async def rename(self, scene_id: str, name) -> dict:
+        """KeyError: unknown scene; FileExistsError: name taken; SceneError: bad name."""
+        async with self._lock:
+            scene = next((s for s in self._scenes if s["id"] == scene_id), None)
+            if scene is None:
+                raise KeyError(scene_id)
+            new = _clean_scene({**scene, "name": name})["name"]
+            if any(s is not scene and s["name"].casefold() == new.casefold() for s in self._scenes):
+                raise FileExistsError(new)
+            scene["name"] = new
+            self._persist()
+            return deepcopy(scene)
+
     async def delete(self, scene_id: str) -> bool:
         async with self._lock:
             before = len(self._scenes)

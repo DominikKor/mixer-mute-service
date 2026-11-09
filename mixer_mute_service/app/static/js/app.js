@@ -137,7 +137,11 @@ function setSectionOpen(panel, open) {
 
 function initCompanionEditing() {
   const toggle = $("companion-edit-toggle");
-  const apply = () => $("companion-categories").classList.toggle("editing", toggle.checked);
+  // Editing also shows the pencils of the categories and of "Alles ausschalten".
+  const apply = () => {
+    $("companion-categories").classList.toggle("editing", toggle.checked);
+    $("power-off-panel").classList.toggle("editing", toggle.checked);
+  };
   toggle.checked = !!loadUiPrefs().companionEditing;
   apply();
   toggle.addEventListener("change", () => {
