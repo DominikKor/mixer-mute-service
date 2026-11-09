@@ -16,6 +16,7 @@ POST /songs/next | /songs/prev    step through the current song; after the
                                   last slide "next" blanks the screen
 POST /songs/blank                 background only (song stays selected)
 POST /songs/hide                  close the song window
+POST /songs/create                a new song: written as .foil into the library
 """
 
 from __future__ import annotations
@@ -36,7 +37,7 @@ from fastapi import APIRouter, Body, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
-from .foil import FoilError, parse_foil
+from .foil import FoilError, build_foil, parse_foil, song_file_name
 from .jsonstore import read_json, write_json_atomic
 
 router = APIRouter()
@@ -133,6 +134,12 @@ class SongService:
         }, ensure_ascii=False)
         return {"ok": True, "count": len(songs), "errors": errors}
 
+    def add_song(self, name: str, song: dict) -> None:
+        self.songs[name] = song
+        write_json_atomic(self._library_path, {
+            "loaded_at": self.loaded_at, "songs": self.songs, "errors": self.errors,
+        }, ensure_ascii=False)
+
     def slide_payload(self, song_id: str, slide: int) -> dict:
         song, s = self.songs[song_id], self.settings
         first = slide == 0
@@ -181,9 +188,11 @@ async def _call_agent(request: Request, path: str, payload: dict, timeout: float
         return await asyncio.to_thread(_agent_post, url, token, payload, timeout), 200
     except urllib.error.HTTPError as exc:
         log.warning("Display agent rejected %s: HTTP %s", path, exc.code)
-        reason = "song library folder not found on the display PC" if exc.code == 404 and path == "/songs/library" \
-            else "display agent rejected the request (update the display service?)"
-        return {"ok": False, "reason": reason}, 502
+        if exc.code == 409 and path == "/songs/save":
+            return {"ok": False, "reason": "a song file with this name already exists in the library"}, 409
+        if exc.code == 404 and path in ("/songs/library", "/songs/save"):
+            return {"ok": False, "reason": "song library folder not found on the display PC"}, 502
+        return {"ok": False, "reason": "display agent rejected the request (update the display service?)"}, 502
     except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
         log.warning("Display agent unavailable for %s: %s", path, exc)
         return {"ok": False, "reason": "display agent unavailable"}, 502
@@ -328,6 +337,60 @@ async def song_hide(request: Request):
             log.info("SONG hide")
             return {"ok": True, **_live_view(service)}
         return _respond(result, status)
+
+
+def _new_song_fields(body: dict) -> Tuple[str, str, list, list]:
+    """(title, copyright, verses, order) of a new song, or ValueError."""
+    title, copyright = body.get("title"), body.get("copyright", "")
+    slides, refrain, order = body.get("slides"), body.get("refrain"), body.get("order")
+    if not isinstance(title, str) or not 0 < len(title.strip()) <= 120:
+        raise ValueError("title must have 1 to 120 characters")
+    if not isinstance(copyright, str) or len(copyright) > 500:
+        raise ValueError("copyright must be at most 500 characters")
+    if (not isinstance(slides, list) or not 0 < len(slides) <= 40
+            or not all(isinstance(t, str) and t.strip() and len(t) <= 2000 for t in slides)):
+        raise ValueError("1 to 40 slides with text are needed")
+    if refrain is not None and (not isinstance(refrain, int) or isinstance(refrain, bool) or not 0 <= refrain < len(slides)):
+        raise ValueError("refrain must name one of the slides")
+    if (not isinstance(order, list) or not 0 < len(order) <= 100
+            or not all(isinstance(i, int) and not isinstance(i, bool) and 0 <= i < len(slides) for i in order)):
+        raise ValueError("order must list the slides to show")
+    # Slides keep their order in the file; verses are numbered, the refrain is "Ref".
+    verses, number = [], 0
+    for index, text in enumerate(slides):
+        if index == refrain:
+            key = "Ref"
+        else:
+            number += 1
+            key = str(number)
+        verses.append({"key": key, "text": text.strip()})
+    return title.strip(), copyright.strip(), verses, order
+
+
+@router.post("/songs/create")
+async def create_song(request: Request, body: dict = Body(...)):
+    service: SongService = request.app.state.songs
+    if not service.settings.library_path:
+        return JSONResponse({"ok": False, "reason": "no song library folder configured"}, 400)
+    try:
+        title, copyright, verses, order = _new_song_fields(body)
+        xml = build_foil(title, verses, order, copyright)
+        song = parse_foil(xml)  # the same reader as for the library
+        name = song_file_name(title)
+    except (ValueError, FoilError) as exc:
+        return JSONResponse({"ok": False, "reason": str(exc)}, 400)
+    if name in service.songs:
+        return JSONResponse({"ok": False, "reason": "a song file with this name already exists in the library",
+                             "song_id": name}, 409)
+    result, status = await _call_agent(request, "/songs/save", {
+        "path": service.settings.library_path, "name": name, "xml": xml.decode("utf-8"),
+    }, timeout=10)
+    if status != 200 or result.get("ok") is False:
+        return JSONResponse(result, status if status != 200 else 502)
+    async with service.lock:
+        service.add_song(name, song)
+    log.info("SONG created %r (%s slides)", name, len(song["slides"]))
+    return {"ok": True, "song_id": name, "song": {"id": name, **song}}
 
 
 @router.get("/songs/{song_id:path}")

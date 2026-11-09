@@ -45,6 +45,24 @@ class SongLibraryTests(unittest.TestCase):
         with self.assertRaises(FileNotFoundError):
             agent._read_song_library("relative/path")
 
+    def test_saves_a_new_song_into_the_library(self):
+        with tempfile.TemporaryDirectory() as directory:
+            songs = Path(directory) / "Songs"
+            songs.mkdir()
+            target = agent._save_song(directory, "Gott_ du bist da.foil", "<x>ä</x>")
+            self.assertEqual(target, songs / "Gott_ du bist da.foil")
+            self.assertEqual(target.read_text(encoding="utf-8"), "<x>ä</x>")
+            with self.assertRaises(FileExistsError):
+                agent._save_song(directory, "Gott_ du bist da.foil", "<neu/>")
+            self.assertEqual(target.read_text(encoding="utf-8"), "<x>ä</x>")  # never replaced
+            for name in ("../boese.foil", "Unter\\ordner.foil", "a/b.foil", "kein-foil.txt", ".foil", " Lied.foil"):
+                with self.subTest(name=name), self.assertRaises(ValueError):
+                    agent._save_song(directory, name, "<x/>")
+            with self.assertRaises(ValueError):
+                agent._save_song(directory, "Gross.foil", "x" * (agent.MAX_SONG_FILE_BYTES + 1))
+            with self.assertRaises(FileNotFoundError):
+                agent._save_song(str(Path(directory) / "fehlt"), "Lied.foil", "<x/>")
+
     def test_song_requests(self):
         self.assertTrue(agent._valid_song_request(SHOW))
         self.assertTrue(agent._valid_song_request({**SHOW, "action": "blank", "text": ""}))
