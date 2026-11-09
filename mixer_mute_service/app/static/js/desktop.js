@@ -15,8 +15,8 @@ const KIND_INFO = {
              hint: "Pfad zur .exe auf dem Ziel-PC. Argumente werden einzeln und ohne Shell übergeben." },
   file: { placeholder: "D:\\Folien\\Predigt.pptx",
           hint: "Beliebige Datei auf dem Ziel-PC – Windows öffnet sie mit der Standard-App (PowerPoint, PDF …)." },
-  audio: { placeholder: "I:\\Musik\\Lied.mp3",
-           hint: "Audiodatei auf dem Ziel-PC. mpv muss dort installiert und über PATH oder MPV_PATH erreichbar sein." },
+  audio: { placeholder: "I:\\Musik\\Lied.mp3 oder https://youtu.be/…",
+           hint: "Audiodatei auf dem Ziel-PC oder ein YouTube-Link (wird erkannt). mpv muss dort installiert und über PATH oder MPV_PATH erreichbar sein, für YouTube zusätzlich yt-dlp." },
 };
 // "*" in a path stands for an unknown part of a name (the display agent fills
 // it in on the target PC; with several matches the newest file is used).
@@ -28,6 +28,21 @@ const POSITION_LABELS = {
 const PROFILE_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 const IPV4_RE = /^(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$/;
 const WIN_ABS_PATH_RE = /^([A-Za-z]:[\\/]|[\\/]{2}[^\\/]+[\\/][^\\/]+)/;
+// A YouTube link instead of a path (audio only; the display agent plays its
+// sound with mpv and yt-dlp). Same check as app/youtube.py and the agent.
+const YOUTUBE_URL_RE = /^https?:\/\/(?:(?:www|m|music)\.)?(?:youtube\.com\/(?:watch\?(?:[^\s#]*&)?v=[\w-]{6,}|shorts\/[\w-]{6,}|live\/[\w-]{6,}|embed\/[\w-]{6,})|youtu\.be\/[\w-]{6,})\S*$/;
+const YOUTUBE_HINT = "YouTube-Link erkannt: der Ziel-PC spielt den Ton ohne Fenster ab (mpv + yt-dlp), mit Ein- und Ausblenden wie bei einer Datei.";
+
+function isYoutubeUrl(value) {
+  return value.length <= 500 && YOUTUBE_URL_RE.test(value);
+}
+
+// Typing or pasting a YouTube link makes the profile an audio profile.
+function syncProfilePath() {
+  const youtube = isYoutubeUrl($("pf-path").value.trim());
+  if (youtube && PROFILE_FORM.kind !== "audio") PROFILE_FORM.kind = "audio";
+  syncProfileForm();
+}
 
 function slugifyProfileId(title) {
   const base = title.toLowerCase()
@@ -68,7 +83,9 @@ function syncProfileForm() {
   const kind = PROFILE_FORM.kind;
   setRadio($("pf-kind"), "data-kind", kind);
   $("pf-path").placeholder = KIND_INFO[kind].placeholder;
-  $("pf-path-hint").textContent = KIND_INFO[kind].hint + WILDCARD_HINT;
+  const youtube = kind === "audio" && isYoutubeUrl($("pf-path").value.trim());
+  $("pf-path-hint").textContent = youtube ? YOUTUBE_HINT : KIND_INFO[kind].hint + WILDCARD_HINT;
+  $("pf-path-hint").classList.toggle("youtube", youtube);
   $("pf-args-wrap").hidden = kind !== "program";
   $("pf-display-row").hidden = kind === "audio";
   $("pf-fade-row").hidden = kind !== "audio";
@@ -219,7 +236,9 @@ function readProfileForm() {
     ? $("pf-args").value.split(/\r?\n/).map(a => a.trim()).filter(Boolean) : [];
   if (!title) return profileFormError("Bitte einen Namen eingeben.", $("pf-title"));
   if (!PROFILE_ID_RE.test(id)) return profileFormError("ID: nur Buchstaben, Ziffern, - und _ (max. 64).", $("pf-id"));
-  if (!WIN_ABS_PATH_RE.test(path)) return profileFormError("Pfad: vollständiger Windows-Pfad, z. B. " + KIND_INFO[kind].placeholder, $("pf-path"));
+  const youtube = isYoutubeUrl(path);
+  if (youtube && kind !== "audio") return profileFormError("Ein YouTube-Link spielt nur als Audio.", $("pf-path"));
+  if (!youtube && !WIN_ABS_PATH_RE.test(path)) return profileFormError("Pfad: vollständiger Windows-Pfad, z. B. " + KIND_INFO[kind].placeholder.split(" oder ")[0] + (kind === "audio" ? ", oder ein YouTube-Link" : ""), $("pf-path"));
   if (kind === "program" && !/(\.exe|\*)$/i.test(path)) return profileFormError("Ein Programm muss auf eine .exe zeigen (oder auf * enden).", $("pf-path"));
   if (!IPV4_RE.test(ip)) return profileFormError("Bitte einen Ziel-PC wählen.", $("pf-ip"));
   // Only audio fades; other kinds keep the defaults (and config.yaml stays short).

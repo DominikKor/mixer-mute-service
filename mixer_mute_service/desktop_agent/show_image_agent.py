@@ -289,6 +289,45 @@ def _find_mpv() -> str | None:
     return next((str(path) for path in candidates if path.is_file()), None)
 
 
+# -- YouTube links (audio profiles) -----------------------------------------
+# An audio profile's path may be a YouTube link instead of a file: mpv plays
+# its sound, fetched with yt-dlp (which must be installed on this PC). Only
+# YouTube addresses are accepted, so the agent never streams arbitrary URLs.
+YOUTUBE_URL_RE = re.compile(
+    r"^https?://(?:(?:www|m|music)\.)?"
+    r"(?:youtube\.com/(?:watch\?(?:[^\s#]*&)?v=[\w-]{6,}|shorts/[\w-]{6,}|live/[\w-]{6,}|embed/[\w-]{6,})"
+    r"|youtu\.be/[\w-]{6,})[^\s]*$"
+)
+# A stream needs a moment before its first sound (yt-dlp, buffering).
+STREAM_START_SECONDS = 30.0
+
+
+def is_youtube_url(value) -> bool:
+    return (isinstance(value, str) and len(value) <= 500
+            and not any(ord(c) < 32 for c in value) and YOUTUBE_URL_RE.match(value) is not None)
+
+
+def _find_ytdlp(mpv: str | None = None) -> str | None:
+    configured = os.environ.get("YTDLP_PATH", "").strip()
+    if configured:
+        if Path(configured).is_file():
+            return configured
+        resolved = shutil.which(configured)
+        if resolved:
+            return resolved
+    found = shutil.which("yt-dlp")
+    if found:
+        return found
+    candidates = [
+        Path(__file__).with_name("yt-dlp.exe"),
+        Path(os.environ.get("LOCALAPPDATA", "")) / "Microsoft" / "WinGet" / "Links" / "yt-dlp.exe",
+        Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "yt-dlp" / "yt-dlp.exe",
+    ]
+    if mpv:
+        candidates.insert(0, Path(mpv).with_name("yt-dlp.exe"))
+    return next((str(path) for path in candidates if path.is_file()), None)
+
+
 # -- audio (mpv) -------------------------------------------------------------
 # With a fade, mpv starts silent and its volume is driven over mpv's JSON IPC
 # (a named pipe on Windows): up to the profile's dB level on play, down to
@@ -437,8 +476,10 @@ def _ipc_address() -> str:
 
 
 class _Playback:
-    def __init__(self, profile_id: str, process: subprocess.Popen, ipc: MpvIpc | None, fade: dict | None):
+    def __init__(self, profile_id: str, process: subprocess.Popen, ipc: MpvIpc | None, fade: dict | None,
+                 stream: bool = False):
         self.profile_id = profile_id
+        self.stream = stream  # a YouTube link: sound only after loading
         self.process = process
         self.ipc = ipc
         self.fade = fade
@@ -497,7 +538,26 @@ def _stop_audio_locked() -> bool:
     return playing.terminate() if playing is not None else False
 
 
+def _wait_until_playing(playback: _Playback) -> bool:
+    """A stream: wait for its first sound, so the fade is heard. False if it
+    was stopped, mpv ended or nothing played within STREAM_START_SECONDS."""
+    deadline = time.monotonic() + STREAM_START_SECONDS
+    while time.monotonic() < deadline:
+        if playback.stop_fade.wait(0.2):
+            return False
+        try:
+            if isinstance(playback.ipc.command("get_property", "playback-time"), (int, float)):
+                return True
+        except (OSError, ValueError):
+            if playback.process.poll() is not None:
+                return False
+    logger.warning("Audio stream profile=%s did not start within %.0fs", playback.profile_id, STREAM_START_SECONDS)
+    return False
+
+
 def _fade_in(playback: _Playback) -> None:
+    if playback.stream and not _wait_until_playing(playback):
+        return
     if playback.ramp(playback.fade["db"], playback.fade["seconds"]):
         logger.info("Audio faded in profile=%s to %.1f dB", playback.profile_id, playback.fade["db"])
 
@@ -521,15 +581,23 @@ def _fade_out(playback: _Playback, seconds: float) -> None:
 
 def _play_audio(profile_id: str, path: str, fade: dict | None = None) -> None:
     global _playback
-    try:
-        target = resolve_path(path)
-    except FileNotFoundError:
-        raise ValueError("Configured audio file is not available") from None
-    if not target.is_absolute() or not target.is_file():
-        raise ValueError("Configured audio file is not available")
+    stream = is_youtube_url(path)
+    if stream:
+        target = path
+    else:
+        try:
+            target = resolve_path(path)
+        except FileNotFoundError:
+            raise ValueError("Configured audio file is not available") from None
+        if not target.is_absolute() or not target.is_file():
+            raise ValueError("Configured audio file is not available")
     mpv = _find_mpv()
     if not mpv:
         raise FileNotFoundError("mpv was not found; install mpv or set MPV_PATH")
+    ytdlp = _find_ytdlp(mpv) if stream else None
+    if stream and not ytdlp:
+        raise FileNotFoundError("yt-dlp was not found on this PC; install it (winget install yt-dlp.yt-dlp) "
+                                "or put yt-dlp.exe next to mpv.exe")
 
     startup_info = None
     if os.name == "nt":
@@ -550,6 +618,10 @@ def _play_audio(profile_id: str, path: str, fade: dict | None = None) -> None:
         # error message and agent support.
         f"--log-file={mpv_log_path()}",
     ]
+    if stream:
+        # Sound only, one video (no playlist), fetched by the yt-dlp found here.
+        command += ["--ytdl=yes", "--ytdl-format=bestaudio/best", "--ytdl-raw-options=no-playlist=",
+                    f"--script-opts=ytdl_hook-ytdl_path={ytdlp}"]
     address = _ipc_address() if fade else None
     if fade:
         command += ["--volume=0", f"--input-ipc-server={address}"]
@@ -563,7 +635,7 @@ def _play_audio(profile_id: str, path: str, fade: dict | None = None) -> None:
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             startupinfo=startup_info,
         )
-        playback = _Playback(profile_id, process, MpvIpc(address) if fade else None, fade)
+        playback = _Playback(profile_id, process, MpvIpc(address) if fade else None, fade, stream)
         if fade:
             try:
                 playback.ipc.connect(process, IPC_CONNECT_SECONDS)

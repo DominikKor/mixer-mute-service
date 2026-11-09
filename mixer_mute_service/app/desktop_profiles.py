@@ -28,6 +28,7 @@ import yaml
 from pydantic import ValidationError
 
 from .config import Config, DesktopProfileConfig
+from .youtube import is_youtube_url
 
 PROFILE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 # Order in which a new profile's keys are written.
@@ -63,6 +64,14 @@ def validate_profile(profile: DesktopProfileConfig) -> None:
             raise ProfileEditError("text must not contain line breaks or control characters")
     if len(profile.title) > 80:
         raise ProfileEditError("title is too long (max 80 characters)")
+    if is_youtube_url(profile.path):
+        # The agent plays a YouTube link's sound (mpv + yt-dlp); nothing else
+        # can use a link.
+        if profile.kind != "audio":
+            raise ProfileEditError("a YouTube link can only be used by an audio profile")
+        if profile.kind != "program" and profile.args:
+            raise ProfileEditError("arguments are only used for programs")
+        return
     path = PureWindowsPath(profile.path)
     if not path.is_absolute():
         raise ProfileEditError(r"path must be an absolute Windows path, e.g. C:\Folder\file.png")

@@ -139,9 +139,14 @@ class FakeMpv(FakeProcess):
     """Listens on the --input-ipc-server address like mpv and records every
     volume it is set to."""
 
+    # A stream (YouTube) answers "playback-time" only after this many asks.
+    loading_polls = 0
+
     def __init__(self, command):
         super().__init__()
         self.volumes = []
+        self.command = command
+        self.polls = 0
         address = next(arg.split("=", 1)[1] for arg in command if arg.startswith("--input-ipc-server="))
         self.initial_volume = next(arg.split("=", 1)[1] for arg in command if arg.startswith("--volume="))
         self.server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -157,6 +162,13 @@ class FakeMpv(FakeProcess):
                 request = json.loads(line)
                 if request["command"][:2] == ["set_property", "volume"]:
                     self.volumes.append(request["command"][2])
+                if request["command"] == ["get_property", "playback-time"]:
+                    self.polls += 1
+                    if self.polls <= self.loading_polls:
+                        stream.write(json.dumps({"request_id": request["request_id"], "error": "property unavailable"}).encode() + b"\n")
+                        continue
+                    stream.write(json.dumps({"request_id": request["request_id"], "error": "success", "data": 0.25}).encode() + b"\n")
+                    continue
                 stream.write(json.dumps({"request_id": request["request_id"], "error": "success", "data": None}).encode() + b"\n")
 
     def terminate(self):
@@ -293,6 +305,28 @@ class AudioFadeTests(unittest.TestCase):
         # mpv on Windows often needs several seconds on a cold start.
         self.assertGreaterEqual(agent.IPC_CONNECT_SECONDS, 10)
 
+    def test_youtube_fade_waits_for_the_first_sound(self):
+        url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+        with patch.object(FakeMpv, "loading_polls", 3), patch.object(agent, "_find_ytdlp", return_value="/opt/yt-dlp"):
+            agent._play_audio("yt", url, {"db": 0, "seconds": 0.2})
+            mpv = self.processes[0]
+            self.assertEqual(mpv.command[-2:], ["--", url])
+            self.assertIn("--script-opts=ytdl_hook-ytdl_path=/opt/yt-dlp", mpv.command)
+            self.wait_for(lambda: mpv.volumes and abs(mpv.volumes[-1] - 100.0) < 1e-9)
+        # No volume step before the stream played (3 "unavailable" answers first).
+        self.assertGreaterEqual(mpv.polls, 4)
+        self.assertEqual(mpv.volumes, sorted(mpv.volumes))
+
+    def test_youtube_stopped_while_loading_never_fades_in(self):
+        url = "https://youtu.be/dQw4w9WgXcQ"
+        with patch.object(FakeMpv, "loading_polls", 10_000), patch.object(agent, "_find_ytdlp", return_value="/opt/yt-dlp"):
+            agent._play_audio("yt", url, {"db": 0, "seconds": 0.2})
+            mpv = self.processes[0]
+            self.wait_for(lambda: mpv.polls >= 2)
+            self.assertTrue(agent._stop_audio())
+        self.assertTrue(mpv.terminated)
+        self.assertEqual(mpv.volumes, [])
+
     def test_fade_request_validation(self):
         self.assertTrue(agent._valid_fade({"db": -30, "seconds": 5}))
         self.assertTrue(agent._valid_fade({"db": -12.5, "seconds": 0.5}))
@@ -348,3 +382,59 @@ class AudioHandlerTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+@unittest.skipIf(tkinter is None, "this Python has no tkinter; the desktop agent needs it")
+class YoutubeAudioTests(unittest.TestCase):
+    def tearDown(self):
+        agent._stop_audio()
+
+    def test_youtube_links_recognised_and_others_not(self):
+        for url in ("https://www.youtube.com/watch?v=dQw4w9WgXcQ", "https://youtu.be/dQw4w9WgXcQ?t=42",
+                    "https://music.youtube.com/watch?v=dQw4w9WgXcQ&list=RD1", "https://m.youtube.com/shorts/abcdefghij",
+                    "https://www.youtube.com/watch?list=PL1&v=dQw4w9WgXcQ", "https://www.youtube.com/live/abcdefghij"):
+            self.assertTrue(agent.is_youtube_url(url), url)
+        for value in ("https://evil.example/youtube.com/watch?v=dQw4w9WgXcQ", "https://www.youtube.com.evil.example/watch?v=dQw4w9WgXcQ",
+                      "https://youtube.com@evil.example/watch?v=dQw4w9WgXcQ", "https://www.youtube.com/@kanal",
+                      "https://www.youtube.com/watch?v=dQw4 w9WgXcQ", "C:\\Musik\\a.mp3", "ftp://youtu.be/dQw4w9WgXcQ",
+                      "https://youtu.be/" + "a" * 600, None):
+            self.assertFalse(agent.is_youtube_url(value), value)
+
+    def test_youtube_link_plays_sound_only_through_yt_dlp(self):
+        process = FakeProcess()
+        url = "https://youtu.be/dQw4w9WgXcQ"
+        with patch.object(agent, "_find_mpv", return_value=r"C:\tools\mpv.exe"), \
+                patch.object(agent, "_find_ytdlp", return_value=r"C:\tools\yt-dlp.exe") as find, \
+                patch.object(agent.subprocess, "Popen", return_value=process) as popen:
+            agent._play_audio("yt", url)
+        command = popen.call_args.args[0]
+        self.assertEqual(command[-2:], ["--", url])
+        self.assertTrue({"--no-video", "--ytdl=yes", "--ytdl-format=bestaudio/best", "--ytdl-raw-options=no-playlist=",
+                         r"--script-opts=ytdl_hook-ytdl_path=C:\tools\yt-dlp.exe"}.issubset(command))
+        find.assert_called_once_with(r"C:\tools\mpv.exe")
+        self.assertTrue(agent._playback.stream)
+
+    def test_without_yt_dlp_a_clear_error_and_nothing_started(self):
+        with patch.object(agent, "_find_mpv", return_value="mpv"), \
+                patch.object(agent, "_find_ytdlp", return_value=None), \
+                patch.object(agent.subprocess, "Popen") as popen:
+            with self.assertRaisesRegex(FileNotFoundError, "yt-dlp"):
+                agent._play_audio("yt", "https://youtu.be/dQw4w9WgXcQ")
+        popen.assert_not_called()
+
+    def test_other_links_are_not_streamed(self):
+        with patch.object(agent, "_find_mpv", return_value="mpv"), patch.object(agent.subprocess, "Popen") as popen:
+            with self.assertRaises(ValueError):
+                agent._play_audio("x", "https://example.com/song.mp3")
+        popen.assert_not_called()
+
+    def test_yt_dlp_found_next_to_mpv(self):
+        with tempfile.TemporaryDirectory() as directory:
+            mpv = Path(directory) / "mpv.exe"
+            ytdlp = Path(directory) / "yt-dlp.exe"
+            mpv.touch()
+            ytdlp.touch()
+            with patch.dict(os.environ, {"YTDLP_PATH": ""}), patch.object(agent.shutil, "which", return_value=None):
+                self.assertEqual(agent._find_ytdlp(str(mpv)), str(ytdlp))
+                with patch.dict(os.environ, {"LOCALAPPDATA": directory + "/none", "ProgramFiles": directory + "/none"}), \
+                        patch.object(agent, "__file__", str(Path(directory) / "sub" / "agent.py")):
+                    self.assertIsNone(agent._find_ytdlp(None))
