@@ -7,6 +7,9 @@ let PROGRAM_GROUPS = {};
 let PROGRAM_BUTTONS = [];
 let PROGRAM_BUTTON_CATEGORIES = {};
 let PROGRAM_DESKTOP_PROFILES = [];
+// Preset choices per camera for the rows' camera line: {cam1: [{value, label}], ...}
+let PROGRAM_CAMERA_PRESETS = { cam1: [], cam2: [] };
+let PROGRAM_CAMERA_SEQ = null;  // last camera outcome already reported
 let PROGRAM_DRAFT = false;
 let PROGRAM_STATUS = { current_id: null, next_id: null };
 const PROGRAM_BUSY = new Set();     // play / clone in progress, per item
@@ -15,7 +18,9 @@ const PROGRAM_RESAVE = new Set();   // another edit arrived meanwhile
 const PROGRAM_FIELDS = [
   "time", "title", "person", "group", "playback", "translation", "lyrics",
   "playback_description", "translation_description", "lyrics_description", "song",
+  "cam1_preset", "cam2_preset", "camera_wait_seconds",
 ];
+const PROGRAM_CAMERAS = [["cam1", "Cam 1"], ["cam2", "Cam 2"]];
 
 function formatProgramDelay(seconds) {
   if (seconds === null || seconds === undefined) return "—";
@@ -112,6 +117,65 @@ function programActionOptions(value) {
   ];
 }
 
+// ---- Camera presets of a row (app/camera_program.py) ----------------------
+// Each row may name a preset per camera. When the row starts, only the camera
+// that is not live in OBS moves; OBS switches to it after the wait, then the
+// other camera gets its preset (without switching).
+
+function programCameraPresets(cameraButtons) {
+  const presets = {};
+  for (const [cam, camLabel] of PROGRAM_CAMERAS) {
+    const named = {};
+    for (const button of cameraButtons) {
+      const action = button.native_action || {};
+      if (action.type === "visca-preset" && action.camera === cam) {
+        named[action.preset] = (button.label || "").replace(/^\s*cam\s*\d\s*(pset\s*)?/i, "").trim();
+      }
+    }
+    presets[cam] = Array.from({ length: 16 }, (_, i) => i + 1).map(n => ({
+      value: String(n), label: `${camLabel} · ${named[n] ? `${named[n]} (${n})` : `Preset ${n}`}`,
+    }));
+  }
+  return presets;
+}
+
+function buildProgramCamera(item) {
+  const box = document.createElement("div");
+  box.className = "program-camera";
+  for (const [cam, camLabel] of PROGRAM_CAMERAS) {
+    const field = `${cam}_preset`;
+    const placeholder = `${camLabel} · kein Preset`;
+    const select = programSelect(field, `${camLabel} Preset`, item[field] ? String(item[field]) : "", PROGRAM_CAMERA_PRESETS[cam], placeholder);
+    select.dataset.programCamera = cam;
+    select.dataset.placeholder = placeholder;
+    box.appendChild(select);
+  }
+  const wait = document.createElement("label");
+  wait.className = "program-camera-wait";
+  wait.title = "So lange fährt die Kamera, bevor OBS auf sie umschaltet";
+  const input = programInput("camera_wait_seconds", "Umschalten nach Sekunden", item.camera_wait_seconds ?? 5, "text", 4);
+  input.inputMode = "decimal";
+  input.placeholder = "5";
+  wait.append("Umschalten nach", input, "s");
+  box.appendChild(wait);
+  return box;
+}
+
+// Report a camera outcome once (the switch runs in the background).
+function noteCameraProgram(camera) {
+  if (!camera || typeof camera.seq !== "number") return;
+  const first = PROGRAM_CAMERA_SEQ === null;
+  if (!first && camera.seq > PROGRAM_CAMERA_SEQ && ["done", "aborted", "failed", "skipped"].includes(camera.state)) {
+    toast(`Kamera: ${camera.message}`, camera.state === "done" || camera.state === "skipped");
+  }
+  if (first || camera.seq > PROGRAM_CAMERA_SEQ) PROGRAM_CAMERA_SEQ = camera.seq;
+}
+
+async function checkCameraProgram() {
+  const status = await api("GET", "/program/status");
+  if (status.ok && status.data) noteCameraProgram(status.data.camera);
+}
+
 function buildProgramRow(item, draft = false) {
   const row = document.createElement("tr");
   if (draft) row.className = "program-draft-row";
@@ -138,6 +202,8 @@ function buildProgramRow(item, draft = false) {
     link.appendChild(description);
     programCell(row, label, link);
   }
+
+  programCell(row, "Kamera-Presets · nur auf der Kamera, die nicht live ist", buildProgramCamera(item));
 
   const actions = document.createElement("div");
   actions.className = "program-actions";
@@ -182,13 +248,16 @@ function updateProgramRow(row, item) {
     const field = control.dataset.programField;
     // "Datei oder Pfad…" stays chosen while its path is still being entered.
     const keep = editing || control === document.activeElement || control.value === FILE_CHOOSE;
-    if (control.tagName === "SELECT") {
+    if (control.tagName === "SELECT" && control.dataset.programCamera) {
+      const value = keep ? control.value : (item[field] ? String(item[field]) : "");
+      setSelectOptions(control, PROGRAM_CAMERA_PRESETS[control.dataset.programCamera], control.dataset.placeholder, value);
+    } else if (control.tagName === "SELECT") {
       const value = keep ? control.value : item[field];
       const options = field === "group" ? groupOptions : programActionOptions(value);
       setSelectOptions(control, options, field === "group" ? NO_PROGRAM_GROUP : "Keine Aktion", value);
       if (field !== "group") syncFileAction(control);
     } else if (!keep) {
-      control.value = item[field] || "";
+      control.value = item[field] ?? "";
     }
   }
   const picker = row.querySelector(".song-picker");
@@ -267,6 +336,8 @@ async function loadProgramItems() {
   PROGRAM_BUTTONS = [...(buttons.data.buttons || []), ...(buttons.data.camera_buttons || [])];
   PROGRAM_BUTTON_CATEGORIES = { cameras: "Kameras", ...Object.fromEntries((buttons.data.categories || []).map(category => [category.id, category.name])) };
   PROGRAM_DESKTOP_PROFILES = desktop.data.profiles || [];
+  PROGRAM_CAMERA_PRESETS = programCameraPresets(buttons.data.camera_buttons || []);
+  noteCameraProgram(PROGRAM_STATUS.camera);
   renderProgramItems();
 }
 
@@ -277,6 +348,7 @@ async function refreshProgramState() {
   if (!items.ok || !Array.isArray(items.data) || !status.ok) return;
   PROGRAM_ITEMS = items.data;
   PROGRAM_STATUS = status.data;
+  noteCameraProgram(PROGRAM_STATUS.camera);
   renderProgramItems();
 }
 
@@ -351,6 +423,10 @@ function readProgramRow(row) {
     if (result[field] === FILE_CHOOSE) result[field] = null;  // file chosen, path not entered yet
     result[field] ||= null;
   }
+  for (const [cam] of PROGRAM_CAMERAS) {
+    result[`${cam}_preset`] = result[`${cam}_preset`] ? Number(result[`${cam}_preset`]) : null;
+  }
+  result.camera_wait_seconds ||= null;  // empty: the service's default
   return result;
 }
 
@@ -425,6 +501,9 @@ async function deleteProgramItem(itemId, button) {
 
 function programPlayToast(result) {
   const title = result.data && result.data.title ? `„${result.data.title}“` : "Programmpunkt";
+  // What the camera part said is in this toast; later outcomes come from the status.
+  const cameraSeq = result.data && result.data.camera && result.data.camera.seq;
+  if (typeof cameraSeq === "number") PROGRAM_CAMERA_SEQ = Math.max(PROGRAM_CAMERA_SEQ ?? 0, cameraSeq);
   if (!result.ok || result.data.ok === false) {
     // Name the action that failed and why (e.g. a file missing on the target PC).
     const failed = ((result.data && result.data.linked_actions) || []).find(action => action.ok === false);
@@ -435,7 +514,11 @@ function programPlayToast(result) {
     }
     toast(`${title}: ${(result.data && result.data.reason) || "HTTP " + result.status}${detail}`, false);
   } else {
-    toast(`${title} gestartet · Verzögerung ${formatProgramDelay(result.data.delay_seconds)}`, true);
+    const camera = result.data.camera && result.data.camera.message ? ` · ${result.data.camera.message}` : "";
+    toast(`${title} gestartet · Verzögerung ${formatProgramDelay(result.data.delay_seconds)}${camera}`, true);
+    // Switching follows in the background: ask for the outcome once it is due.
+    const wait = result.data.camera && result.data.camera.switch_in_seconds;
+    if (wait) setTimeout(checkCameraProgram, (wait + 4) * 1000);
   }
 }
 

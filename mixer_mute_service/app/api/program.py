@@ -12,6 +12,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Body, Request
 
+from ..camera_program import CAMERAS, DEFAULT_WAIT_SECONDS
 from ..actions import (
     PROGRAM_ACTION_FIELDS,
     program_conflict_error,
@@ -81,8 +82,12 @@ async def delete_program_item(item_id: str, request: Request):
 
 @router.get("/program/status")
 async def program_status(request: Request):
-    """The row that ran last today and the one "Weiter" would start."""
-    return await request.app.state.program_items.status()
+    """The row that ran last today and the one "Weiter" would start, plus
+    the last outcome of a row's camera presets (switching runs in the
+    background, so the UI learns here whether it happened)."""
+    status = await request.app.state.program_items.status()
+    camera_program = getattr(request.app.state, "camera_program", None)
+    return {**status, "camera": camera_program.status if camera_program is not None else None}
 
 
 @router.post("/program/items/{item_id}/duplicate")
@@ -170,4 +175,19 @@ async def _play(item_id: str, request: Request):
             return fail(reason, status_code if status_code != 200 else 502,
                         **summary, linked_actions=linked_actions)
 
-    return {"ok": True, "song": song_result, **summary, "linked_actions": linked_actions}
+    # Last: the camera presets. Only the camera that is off air moves now;
+    # switching to it and the other camera's preset follow in the background.
+    camera_result = None
+    presets = {cam: item.get(f"{cam}_preset") for cam in CAMERAS}
+    if any(presets.values()):
+        camera_program = getattr(request.app.state, "camera_program", None)
+        if camera_program is None:
+            return fail("camera presets unavailable", 503, **summary, linked_actions=linked_actions)
+        camera_result = await camera_program.run(
+            presets, item.get("camera_wait_seconds") or DEFAULT_WAIT_SECONDS, item["title"])
+        if not camera_result.get("ok"):
+            return fail(camera_result.get("reason", "camera presets failed"), 502,
+                        **summary, linked_actions=linked_actions, camera=camera_result)
+
+    return {"ok": True, "song": song_result, **summary, "linked_actions": linked_actions,
+            "camera": camera_result}

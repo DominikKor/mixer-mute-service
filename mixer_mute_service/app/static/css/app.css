@@ -696,7 +696,11 @@ button.collapse-btn:active:not(:disabled) .collapse-chip { transform: translateY
 .program-table td:nth-child(6) { grid-area: 2 / 2; }   /* Playback */
 .program-table td:nth-child(7) { grid-area: 2 / 3; }   /* Uebersetzung */
 .program-table td:nth-child(8) { grid-area: 2 / 4; }   /* Liedtext */
-.program-table td.program-actions-cell { grid-area: 1 / 5 / 3 / 6; align-self: stretch; }
+.program-table td:nth-child(9) { grid-area: 3 / 1 / 4 / 5; }   /* Kamera */
+.program-table td.program-actions-cell { grid-area: 1 / 5 / 4 / 6; align-self: stretch; }
+.program-camera { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; gap: 8px 12px; align-items: center; }
+.program-camera-wait { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 700; color: #9aa3b0; white-space: nowrap; }
+.program-table .program-camera-wait input { width: 64px; text-align: center; }
 .program-table td.program-actions-cell::before { content: none; }
 .program-table input, .program-table select {
   width: 100%; min-width: 0; min-height: 44px; padding: 8px 10px; border-radius: 5px;
@@ -935,7 +939,9 @@ button.program-go:disabled { opacity: .45; animation: none; }
 @media (max-width: 900px) {
   .program-table tr { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .program-table td:nth-child(n), .program-table td.program-actions-cell { grid-area: auto; }
-  .program-table td:nth-child(3), .program-table td.program-actions-cell { grid-column: 1 / -1; }
+  .program-table td:nth-child(3), .program-table td:nth-child(9), .program-table td.program-actions-cell { grid-column: 1 / -1; }
+  .program-camera { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .program-camera-wait { grid-column: 1 / -1; }
   .program-actions { flex-direction: row; justify-content: flex-end; }
   .program-actions button { width: 88px; }
   .program-cue { flex-wrap: wrap; }

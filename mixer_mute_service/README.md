@@ -606,6 +606,35 @@ herunterladen*, auf dem Anzeige-PC ausführen). Endpunkte, z. B. für Companion:
 | POST | `/songs/show` `{"song_id", "slide"}` | Folie anzeigen |
 | POST | `/songs/next`, `/songs/prev`, `/songs/blank`, `/songs/hide` | weiter, zurück, schwarz, aus |
 
+## Kamera-Presets im Programm
+
+Jeder Programmpunkt hat eine Zeile **Kamera-Presets**: pro Kamera (Cam 1,
+Cam 2) ein VISCA-Preset (Namen wie bei den Preset-Tasten der Kamera-Sektion)
+und **Umschalten nach … s** (Standard 5 s, 1 bis 30 s). Ein Preset faehrt
+die Kamera sichtbar an; damit diese Bewegung nie im Stream zu sehen ist,
+bewegt der Dienst nur die Kamera, die in OBS gerade **nicht** live ist
+(`app/camera_program.py`):
+
+1. OBS wird gefragt, welche Kamera live ist. Heisst die Programmszene wie eine
+   Kamera („Cam 1“, „Cam 2“), ist es diese. In jeder anderen Szene zaehlt jede
+   sichtbare Kamera-Quelle („Cam1_klein“, auch in verschachtelten Szenen).
+   Ist OBS nicht erreichbar, bewegt sich keine Kamera.
+2. Die Kamera, die nicht live ist, faehrt ihr Preset an.
+3. Nach der Wartezeit schaltet OBS auf sie um (wie die Taste „Cam N Live“).
+   Hat inzwischen jemand OBS umgeschaltet, passiert nichts mehr.
+4. Nach der Ueberblendung faehrt die vorher aktive Kamera ihr Preset an; auf
+   sie wird **nicht** umgeschaltet, das macht der Bediener von Hand.
+
+Sonderfaelle: Ist keine Kamera live (Titel, PC, Beamer), fahren beide sofort
+an und es wird nicht umgeschaltet. Ein Preset nur fuer die Kamera, die live ist,
+wird uebersprungen; ebenso alles, wenn beide live sind (Bild im Bild). Der
+naechste Programmpunkt bricht ein noch wartendes Umschalten ab. Die Meldung
+nach dem Start nennt den ersten Schritt, das Ergebnis des Umschaltens folgt
+als zweite Meldung (`GET /program/status` → `camera`).
+
+Die Wartezeit ist fest: Ob eine Kamera ihr Ziel erreicht hat, meldet VISCA
+nicht zuverlaessig. Langsame Preset-Fahrten brauchen einen groesseren Wert.
+
 ## Programm-Vorlagen
 
 Ein Gottesdienst sieht meist gleich aus: **Programm → Vorlagen… → Speichern**

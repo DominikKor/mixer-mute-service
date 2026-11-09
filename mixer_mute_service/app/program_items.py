@@ -11,6 +11,7 @@ from datetime import datetime, time as clock_time
 from pathlib import Path
 from typing import List, Optional
 
+from .camera_program import CAMERAS, DEFAULT_WAIT_SECONDS, MAX_WAIT_SECONDS, MIN_WAIT_SECONDS
 from .file_actions import file_action_error, is_file_action
 from .jsonstore import read_json, write_json_atomic
 from .target_pcs import retarget_file_action
@@ -93,6 +94,27 @@ class ProgramItemStore:
         if song is not None and (not isinstance(song, str) or len(song) > 200):
             raise ProgramItemError("song must be a song file name or empty")
         result["song"] = song or None
+        # Camera presets (app/camera_program.py): one per camera, or none.
+        for cam in CAMERAS:
+            value = data.get(f"{cam}_preset")
+            if isinstance(value, str) and value.strip().isdigit():
+                value = int(value.strip())
+            if value in (None, "", 0):
+                value = None
+            elif type(value) is not int or not 1 <= value <= 16:
+                raise ProgramItemError(f"{cam}_preset must be a preset 1 to 16 or empty")
+            result[f"{cam}_preset"] = value
+        wait = data.get("camera_wait_seconds")
+        if wait in (None, ""):
+            wait = DEFAULT_WAIT_SECONDS
+        try:
+            wait = float(str(wait).replace(",", "."))
+        except ValueError:
+            raise ProgramItemError("camera_wait_seconds must be a number") from None
+        if not MIN_WAIT_SECONDS <= wait <= MAX_WAIT_SECONDS:
+            raise ProgramItemError(
+                f"camera_wait_seconds must be {MIN_WAIT_SECONDS:g} to {MAX_WAIT_SECONDS:g} seconds")
+        result["camera_wait_seconds"] = wait
         return result
 
     def _ordered(self) -> List[dict]:

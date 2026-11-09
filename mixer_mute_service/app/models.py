@@ -104,3 +104,7 @@ class ProgramItemRequest(BaseModel):
     translation_description: str = Field(default="", max_length=160)
     lyrics_description: str = Field(default="", max_length=160)
     song: Optional[str] = None  # FoilPresenter song (file name), shown when the row starts
+    # Camera presets, moved only while that camera is off air (app/camera_program.py)
+    cam1_preset: Optional[int] = None
+    cam2_preset: Optional[int] = None
+    camera_wait_seconds: Optional[float] = None

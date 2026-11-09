@@ -23,6 +23,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .buses import BusRegistry
 from .channel_settings import ChannelSettingsCache, ChannelSettingsStore
+from .camera_program import device_camera_program
 from .camera_ptz import PanTiltControl
 from .camera_streams import CameraStreamStore, MediaMTXRelay
 from .channel_preferences import ChannelPreferences
@@ -147,6 +148,11 @@ async def lifespan(app: FastAPI):
     app.state.camera_ptz = camera_ptz
     app.state.native_controls = _optional(
         app, "native controls", lambda: NativeControlService(data_dir / "native_control_state.json"))
+    camera_program = None
+    if app.state.native_controls is not None:
+        camera_program = _optional(
+            app, "program camera presets", lambda: device_camera_program(app.state.native_controls))
+    app.state.camera_program = camera_program
     app.state.power_control = _optional(
         app, "power control", lambda: PowerControlStore(data_dir / "power_off_config.json"))
     app.state.target_pcs = _optional(
@@ -186,6 +192,8 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        if camera_program is not None:
+            camera_program.cancel()
         try:
             await client.stop()
         finally:
