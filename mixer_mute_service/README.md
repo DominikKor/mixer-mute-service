@@ -205,6 +205,7 @@ linked light/camera/OBS keys in order.
 | GET  | `/desktop/profiles` | list desktop profiles |
 | POST | `/desktop/profiles` | add a profile (with `id`) |
 | PUT  | `/desktop/profiles/{id}` | change a profile (also `POST .../update`) |
+| POST | `/desktop/profiles/{id}/duplicate` | copy a profile ("… (Kopie)", new id), placed right after it |
 | DELETE | `/desktop/profiles/{id}` | delete a profile |
 | POST | `/desktop/{id}/open` | show/open the profile on its target PC |
 | GET  | `/desktop/agent/update.cmd` | one-click agent update (first install, agents without self-update) |
@@ -491,7 +492,8 @@ lehnt Play/Stop mit Fade ab (die Meldung sagt das), ohne Fade laeuft alles wie
 bisher. Dateien, die ein Programmpunkt direkt abspielt, werden nicht gefadet.
 
 Profile lassen sich auch in der Weboberflaeche anlegen (graue **+**-Kachel
-hinter den Profilen) und ueber das Drei-Punkte-Menue bearbeiten oder loeschen;
+hinter den Profilen) und ueber das Drei-Punkte-Menue bearbeiten, duplizieren
+(die Kopie "… (Kopie)" steht direkt hinter dem Original) oder loeschen;
 die Buttons erscheinen sofort, ohne Neustart. Fuer ein Audio-Profil **Audio**
 waehlen, Titel und den vollstaendigen Musikdatei-Pfad auf dem Ziel-PC eintragen
 und die IP-Adresse dieses PCs angeben. Play startet die Wiedergabe ohne

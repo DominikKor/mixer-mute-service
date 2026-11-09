@@ -277,11 +277,11 @@ function renderDesktopProfiles(data) {
       stop.setAttribute("aria-label", stop.title);
       stop.disabled = !data.ready;
     }
-    // Edit/delete sit in the "⋮" menu; it works even while the agent is not set up.
+    // Edit/duplicate/delete sit in the "⋮" menu; it works even while the agent is not set up.
     const menuBtn = document.createElement("button");
     menuBtn.className = "display-menu-btn";
     menuBtn.dataset.profileMenu = profile.id;
-    menuBtn.title = `${profile.title}: bearbeiten oder löschen`;
+    menuBtn.title = `${profile.title}: bearbeiten, duplizieren oder löschen`;
     menuBtn.setAttribute("aria-label", menuBtn.title);
     menuBtn.setAttribute("aria-haspopup", "menu");
     menuBtn.setAttribute("aria-expanded", "false");
@@ -424,6 +424,21 @@ function closeTileMenu(refocus = false) {
     if (refocus) trigger.focus();
   }
   TILE_MENU_PROFILE = null;
+}
+
+// The copy ("… (Kopie)") is placed right after the original; its editor opens
+// so it can be renamed or pointed at another file straight away.
+async function duplicateDesktopProfile(profileId) {
+  const profile = DESKTOP_PROFILES.find(p => p.id === profileId);
+  const result = await api("POST", `/desktop/profiles/${encodeURIComponent(profileId)}/duplicate`);
+  if (!result.ok || result.data.ok === false) {
+    toast(result.data.reason || `HTTP ${result.status}`, false);
+    return;
+  }
+  toast(`„${profile ? profile.title : profileId}“ dupliziert`, true);
+  DESKTOP_PROFILES_SIGNATURE = "";
+  await refresh();
+  if (DESKTOP_PROFILES.some(p => p.id === result.data.id)) openProfileDialog(result.data.id);
 }
 
 async function deleteDesktopProfile(profileId, anchor) {

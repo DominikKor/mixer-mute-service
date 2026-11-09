@@ -361,11 +361,13 @@ button.display-key {
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .display-key-meta { font: 600 10px/1 var(--mono); color: #7f8b98; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-/* Profile action key(s) plus a "⋮" menu key in the top-right corner. Edit
-   and delete live in the menu, so nothing covers the title. */
+/* Profile action key(s) plus a "⋮" menu key in the top-right corner. Edit,
+   duplicate and delete live in the menu, so nothing covers the title. On a
+   music tile the dots sit right after Stop: the padding is exactly the menu
+   key's 44 px, so there is no empty gap between them. */
 .display-tile { position: relative; display: inline-flex; max-width: 100%; }
 .display-tile button.display-key { padding-right: 42px; }
-.display-tile.audio { gap: 4px; padding-right: 88px; }
+.display-tile.audio { gap: 4px; padding-right: 44px; }
 .display-tile.audio button.display-key { padding-right: 12px; }
 button.display-audio-stop { min-width: 64px; min-height: 48px; padding: 8px; }
 button.display-menu-btn {
@@ -376,6 +378,9 @@ button.display-menu-btn {
 button.display-menu-btn:hover:not(:disabled), button.display-menu-btn[aria-expanded="true"] { color: #e6f4f8; filter: none; }
 button.display-menu-btn:active:not(:disabled) { transform: none; box-shadow: none; }
 .display-menu-btn svg { display: block; width: 18px; height: 18px; }
+/* Music tile: the dots stand right next to Stop, centred on it; the key keeps
+   its full 44 px tap area to the right. */
+.display-tile.audio button.display-menu-btn { height: auto; bottom: 0; padding: 0 0 0 2px; align-items: center; justify-content: flex-start; }
 /* The tile menu: a small console panel under the dots */
 .tile-menu {
   position: fixed; z-index: 40; min-width: 180px; padding: 4px; border-radius: 6px; border: 1px solid #000;

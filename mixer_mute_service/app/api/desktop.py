@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from typing import Optional
 
 from fastapi import APIRouter, Body, Request
 from fastapi.responses import JSONResponse
@@ -13,7 +14,7 @@ from pydantic import ValidationError
 from .. import display_agent
 from ..actions import control_audio, network_program, show_profile
 from ..config import DesktopProfileConfig, default_config_path
-from ..desktop_profiles import ProfileEditError, add_profile, delete_profile, update_profile
+from ..desktop_profiles import ProfileEditError, add_profile, delete_profile, duplicate_profile, update_profile
 from ..models import StagePreferenceRequest
 from ..responses import fail, reply
 from ..target_pcs import TargetPcError
@@ -54,12 +55,17 @@ def _validation_reason(exc: ValidationError) -> str:
     return f"{field}: {err.get('msg', 'invalid value')}"
 
 
-async def _edit_config(request: Request, profile_id: str, edit, *args):
-    """Run one config.yaml edit and take over the new profile list."""
+async def _edit_config(request: Request, profile_id: str, edit, *args, out: Optional[dict] = None):
+    """Run one config.yaml edit and take over the new profile list. An edit
+    may return (Config, info); info is then put in out["info"]."""
     path = default_config_path()
     async with _profile_lock:
         try:
             cfg = await asyncio.to_thread(edit, path, profile_id, *args)
+            if isinstance(cfg, tuple):
+                cfg, info = cfg
+                if out is not None:
+                    out["info"] = info
         except ProfileEditError as exc:
             log.warning("Desktop profile %s not saved: %s", profile_id, exc)
             return fail(str(exc), exc.status, id=profile_id)
@@ -102,6 +108,18 @@ async def create_desktop_profile(request: Request, body: dict = Body(...)):
 @router.post("/desktop/profiles/{profile_id}/update")
 async def update_desktop_profile(profile_id: str, request: Request, body: dict = Body(...)):
     return await _save_profile(request, profile_id, body, create=False)
+
+
+@router.post("/desktop/profiles/{profile_id}/duplicate")
+async def duplicate_desktop_profile(profile_id: str, request: Request):
+    """Copy a profile; the copy ("… (Kopie)") sits right after the original."""
+    out: dict = {}
+    failed = await _edit_config(request, profile_id, duplicate_profile, out=out)
+    if failed:
+        return failed
+    new_id = out["info"]
+    log.info("Desktop profile %s duplicated as %s", profile_id, new_id)
+    return {"ok": True, "id": new_id, "source": profile_id, "created": True}
 
 
 @router.delete("/desktop/profiles/{profile_id}")

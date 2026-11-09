@@ -20,7 +20,9 @@ import yaml
 from unittest.mock import patch
 
 from app.config import DesktopProfileConfig, load_config
-from app.desktop_profiles import ProfileEditError, add_profile, delete_profile, update_profile
+from app.desktop_profiles import (
+    ProfileEditError, add_profile, delete_profile, duplicate_profile, update_profile,
+)
 from tests.helpers import temp_dir
 
 PASS = 0
@@ -226,6 +228,38 @@ for field, value in (("fade_seconds", 0.0), ("fade_seconds", 31.0)):
     except ValueError:
         check(f"{field}={value} refused", True)
 
+print("== duplicate ==")
+dup_cfg = cfg_file("dup", "# my comment\nmixer:\n  max_channels: 8\n")
+add_profile(dup_cfg, "qr", QR)
+add_profile(dup_cfg, "music", AUDIO.model_copy(update={"fade": True, "fade_seconds": 8.0}))
+add_profile(dup_cfg, "obs", OBS)
+before_text = dup_cfg.read_text()
+cfg, new_id = duplicate_profile(dup_cfg, "music")
+profiles = cfg.desktop_display.profiles
+check("copy gets a free id", new_id == "music-kopie")
+check("copy sits right after the original", list(profiles) == ["qr", "music", "music-kopie", "obs"])
+check("copy has every setting of the original",
+      profiles["music-kopie"] == profiles["music"].model_copy(update={"title": "Hintergrundmusik (Kopie)"}))
+check("only lines were added (comment and others kept)",
+      all(line in dup_cfg.read_text().splitlines() for line in before_text.splitlines()))
+_, second = duplicate_profile(dup_cfg, "music")
+_, third = duplicate_profile(dup_cfg, "music-kopie")
+profiles = load_config(dup_cfg).desktop_display.profiles
+check("second and third copies count on",
+      (second, third) == ("music-kopie-2", "music-kopie-3")
+      and profiles["music-kopie-2"].title == "Hintergrundmusik (Kopie 2)"
+      and profiles["music-kopie-3"].title == "Hintergrundmusik (Kopie 3)")
+check("copy of the last profile goes to the end", list(profiles)[-1] == "obs"
+      and duplicate_profile(dup_cfg, "obs")[1] == "obs-kopie"
+      and list(load_config(dup_cfg).desktop_display.profiles)[-1] == "obs-kopie")
+r = refused(duplicate_profile, dup_cfg, "nope")
+check("duplicate unknown -> 404", r is not None and r[0] == 404)
+long_title = AUDIO.model_copy(update={"title": "x" * 80})
+add_profile(dup_cfg, "long", long_title)
+_, long_copy = duplicate_profile(dup_cfg, "long")
+check("long title is shortened to fit", load_config(dup_cfg).desktop_display.profiles[long_copy].title
+      == "x" * 72 + " (Kopie)")
+
 print("== refused changes leave the file alone ==")
 guard = cfg_file("guard", (ROOT / "config.yaml").read_text())
 original = guard.read_bytes()
@@ -345,6 +379,13 @@ with TestClient(app) as client:
     text = http_cfg.read_text()
     check("manual comments still in the config",
           original_comments and all(comment in text for comment in original_comments))
+    dup = client.post("/desktop/profiles/obs/duplicate")
+    check("duplicate route 200 with new id", dup.status_code == 200 and dup.json()["id"] == "obs-kopie")
+    order = [p["id"] for p in client.get("/desktop/profiles").json()["profiles"]]
+    check("duplicate listed right after the original without restart",
+          order[order.index("obs") + 1] == "obs-kopie")
+    check("duplicate unknown route -> 404", client.post("/desktop/profiles/nope/duplicate").status_code == 404)
+    client.delete("/desktop/profiles/obs-kopie")
     delete_response = client.delete("/desktop/profiles/obs")
     check("DELETE profile 200", delete_response.status_code == 200 and delete_response.json()["deleted"] is True)
     check("deleted profile removed without restart",
