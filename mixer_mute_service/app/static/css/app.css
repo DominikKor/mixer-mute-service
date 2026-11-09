@@ -744,7 +744,7 @@ button.program-hide[aria-pressed="true"] { color: #ffbf4d; border-color: #4a3410
 .program-delay.late { color: #ffbf4d; text-shadow: 0 0 6px rgba(255,191,77,.45); }    /* started after its time */
 .program-delay.early { color: #7ff0a8; text-shadow: 0 0 6px rgba(46,204,113,.45); }   /* started before */
 .program-delay.ontime { color: var(--lcd-text); text-shadow: var(--lcd-glow); }
-/* Hide, play, duplicate and delete stacked in one narrow column */
+/* Hide, play and the "⋮" menu (duplicate, delete) stacked in one narrow column */
 .program-actions { display: flex; flex-direction: column; justify-content: center; gap: 6px; height: 100%; }
 /* Two-line layout: the keys start level with the first line of fields, so the
    hide key sits in the row's top right corner (an empty label keeps the

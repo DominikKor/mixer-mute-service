@@ -187,24 +187,26 @@ $("tile-menu").addEventListener("click", (event) => {
   if (!item) return;
   const profileId = TILE_MENU_PROFILE;
   // The tile's "⋮" key anchors the delete question once the menu is gone.
-  const trigger = document.querySelector('[data-profile-menu][aria-expanded="true"]');
+  const trigger = OPEN_MENU && OPEN_MENU.trigger;
   closeTileMenu();
   if (item.dataset.menuAction === "edit") openProfileDialog(profileId);
   else if (item.dataset.menuAction === "duplicate") duplicateDesktopProfile(profileId);
   else if (item.dataset.menuAction === "delete") deleteDesktopProfile(profileId, trigger);
 });
-$("tile-menu").addEventListener("keydown", (event) => {
-  const items = [...$("tile-menu").querySelectorAll("button")];
-  const i = items.indexOf(document.activeElement);
-  if (event.key === "Escape") { event.preventDefault(); closeTileMenu(true); }
-  else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-    event.preventDefault();
-    items[(i + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length].focus();
-  } else if (event.key === "Tab") closeTileMenu();
-});
+for (const menu of document.querySelectorAll(".tile-menu")) {
+  menu.addEventListener("keydown", (event) => {
+    const items = [...menu.querySelectorAll("button")];
+    const i = items.indexOf(document.activeElement);
+    if (event.key === "Escape") { event.preventDefault(); closeTileMenu(true); }
+    else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      items[(i + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length].focus();
+    } else if (event.key === "Tab") closeTileMenu();
+  });
+}
 // Close on any click elsewhere, and when the page scrolls or resizes.
 document.addEventListener("pointerdown", (event) => {
-  if (!event.target.closest("#tile-menu, [data-profile-menu]")) closeTileMenu();
+  if (OPEN_MENU && !OPEN_MENU.menu.contains(event.target) && !OPEN_MENU.trigger.contains(event.target)) closeTileMenu();
 });
 window.addEventListener("scroll", () => closeTileMenu(), { passive: true });
 window.addEventListener("resize", () => closeTileMenu());
