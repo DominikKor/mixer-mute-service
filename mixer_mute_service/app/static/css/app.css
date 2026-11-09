@@ -1391,8 +1391,28 @@ button.light-circuit[data-state="on"] .light-circuit-state { color: #ffd45c; }
 button.light-circuit[data-state="unknown"] { opacity: .65; }
 button.light-circuit[data-state="unknown"] .light-lamp { background: none; border: 1px dashed #6d7686; box-shadow: none; }
 .light-block button.busy { opacity: .6; pointer-events: none; }
+/* New scene: name, then which lights belong to it (toggle keys, blue = chosen) */
+.light-scene-create { display: none; margin-bottom: 12px; }
+.light-scene-create.visible { display: block; }
+.light-scene-create-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.light-scene-create-row input { width: 260px; max-width: 100%; min-height: 44px; }
+.light-scene-create-row button { min-height: 44px; }
+.light-pick-hint { margin: 10px 0 4px; font-size: 12px; color: var(--muted); }
+.light-pick { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); gap: 4px 20px; }
+.light-pick-head { display: flex; align-items: center; gap: 10px; min-height: 44px; }
+button.light-pick-all { min-height: 44px; min-width: 64px; padding: 0 12px; font-size: 12px; }
+.light-pick-keys { display: grid; grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); gap: 6px; }
+button.light-pick-key {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; min-height: 44px;
+  padding: 0 12px; font-size: 13px; font-weight: 700; text-align: left;
+}
+.light-pick-key .light-pick-name { flex-shrink: 0; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.light-pick-key .light-pick-now { min-width: 0; font: 700 11px/1 var(--mono); color: #8d96a3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+button.light-pick-key[aria-pressed="true"] { color: #fff; border-color: #0a2550; background: linear-gradient(to bottom, #3a6fae, #2a5590 55%, #224a80); }
+button.light-pick-key[aria-pressed="true"] .light-pick-now { color: #cfe2ff; }
 @media (max-width: 1100px) {
   .light-grid { grid-template-columns: minmax(0, 1fr); }
+  .light-pick { grid-template-columns: minmax(0, 1fr); }
 }
 
 /* ---- Renaming in place (js/rename.js) ------------------------------------------ */

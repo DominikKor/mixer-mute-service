@@ -131,14 +131,27 @@
 <section class="panel" data-section="lights">
   <div class="panel-head">
     <button class="section-toggle" aria-expanded="true" aria-controls="lights-body">Licht</button>
-    <div class="panel-tools"><button id="light-scene-add" class="add-key" title="Das Licht, wie es gerade ist, als Szene speichern"><svg class="plus-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 4v16M4 12h16"/></svg>Szene</button></div>
+    <div class="panel-tools"><button id="light-scene-add" class="add-key" title="Gewählte Lichter, wie sie gerade sind, als Szene speichern"><svg class="plus-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 4v16M4 12h16"/></svg>Szene</button></div>
   </div>
   <div id="lights-body" class="panel-body">
     <div id="light-status" class="light-status" role="status" aria-live="polite" hidden></div>
-    <div id="light-scene-create" class="person-create-row light-scene-create">
-      <input id="light-scene-name" class="rename-input" type="text" placeholder="Name der Szene, z. B. Predigt" autocomplete="off" maxlength="40" />
-      <button id="light-scene-save" class="primary">Aktuelles Licht speichern</button>
-      <button id="light-scene-cancel">Abbrechen</button>
+    <div id="light-scene-create" class="light-block light-scene-create">
+      <div class="light-scene-create-row">
+        <input id="light-scene-name" class="rename-input" type="text" placeholder="Name der Szene, z. B. Predigt" autocomplete="off" maxlength="40" />
+        <button id="light-scene-save" class="primary">Aktuelles Licht speichern</button>
+        <button id="light-scene-cancel">Abbrechen</button>
+      </div>
+      <div class="light-pick-hint">Welche Lichter gehören zur Szene? Nur diese werden gespeichert und beim Einblenden gesetzt, alle anderen bleiben, wie sie sind.</div>
+      <div class="light-pick">
+        <div class="light-pick-group">
+          <div class="light-pick-head"><span class="light-block-title">Bühne</span><button type="button" class="light-pick-all" data-light-pick-all="stage">Alle</button></div>
+          <div id="light-pick-stage" class="light-pick-keys"></div>
+        </div>
+        <div class="light-pick-group">
+          <div class="light-pick-head"><span class="light-block-title">Raumlicht</span><button type="button" class="light-pick-all" data-light-pick-all="room">Alle</button></div>
+          <div id="light-pick-room" class="light-pick-keys"></div>
+        </div>
+      </div>
     </div>
     <div class="light-block">
       <div class="light-block-head"><span class="light-block-title">Szenen</span><span class="light-block-hint">Antippen: Szene einblenden</span></div>
@@ -154,6 +167,8 @@
           </div>
         </div>
         <div id="light-faders" class="light-faders"></div>
+        <div class="light-block-head light-settings-head"><span class="light-block-title">Einstellungen</span></div>
+        <div id="light-settings" class="light-faders light-settings"></div>
       </div>
       <div class="light-block">
         <div class="light-block-head">
@@ -164,8 +179,6 @@
           </div>
         </div>
         <div id="light-circuits" class="light-circuits"></div>
-        <div class="light-block-head light-settings-head"><span class="light-block-title">Einstellungen</span></div>
-        <div id="light-settings" class="light-faders light-settings"></div>
       </div>
     </div>
   </div>

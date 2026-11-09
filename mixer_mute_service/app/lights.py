@@ -1,11 +1,13 @@
 """Licht: the stage (Art-Net zones), the room light (Shelly circuits) and
 light scenes.
 
-A scene is the light as it was when saved: the four stage zones, warm and
-cold, and every room light circuit whose state was known then (a circuit
-that did not answer is left out and is not switched when the scene is
-applied). Program rows name a scene in their "light" field; it is applied
-when the row starts.
+A scene is the light as it was when saved, but only for the lights chosen
+for it: any of the stage zones, the colour (warm and cold together) and
+room light circuits. Applying it sets only those; every other light stays
+as it is. A chosen circuit whose state was unknown when saving (it did not
+answer) is left out. Scenes saved before the choice existed hold all
+stage zones and the colour. Program rows name a scene in their "light"
+field; it is applied when the row starts.
 
 The HTTP routes are in app/api/lights.py.
 """
@@ -51,17 +53,22 @@ def _clean_scene(entry: dict) -> dict:
         raise SceneError("scene name must contain 1 to 40 characters")
     stage = entry.get("stage") or {}
     zones = stage.get("zones") or {}
-    if set(zones) != set(ARTNET_ZONES) or not all(_level(v) for v in zones.values()):
-        raise SceneError("scene needs a level 0..255 for every stage zone")
-    if not _level(stage.get("warm")) or not _level(stage.get("cold")):
-        raise SceneError("scene needs warm and cold 0..255")
+    if not isinstance(zones, dict) or any(z not in ARTNET_ZONES or not _level(v) for z, v in zones.items()):
+        raise SceneError("scene stage zones must be known zones with a level 0..255")
+    warm, cold = stage.get("warm"), stage.get("cold")
+    # The colour is one choice: warm and cold together, or neither.
+    if (warm is None) != (cold is None) or (warm is not None and not (_level(warm) and _level(cold))):
+        raise SceneError("scene needs warm and cold 0..255 together, or neither")
     circuits = entry.get("circuits") or {}
-    if any(target not in SHELLY_HOSTS or not isinstance(on, bool) for target, on in circuits.items()):
+    if not isinstance(circuits, dict) or any(
+            target not in SHELLY_HOSTS or not isinstance(on, bool) for target, on in circuits.items()):
         raise SceneError("invalid room light circuit in scene")
+    if not zones and warm is None and not circuits:
+        raise SceneError("a scene must control at least one light")
     return {
         "id": str(entry.get("id") or uuid.uuid4().hex),
         "name": name,
-        "stage": {"zones": {k: zones[k] for k in ARTNET_ZONES}, "warm": stage["warm"], "cold": stage["cold"]},
+        "stage": {"zones": {k: zones[k] for k in ARTNET_ZONES if k in zones}, "warm": warm, "cold": cold},
         "circuits": {k: circuits[k] for k in SHELLY_HOSTS if k in circuits},
     }
 
@@ -167,10 +174,13 @@ async def apply_scene(request: Request, scene_id: str) -> Tuple[dict, int]:
     if scene["circuits"]:
         errors = await native.set_circuits(scene["circuits"])
         state.light_circuits.update({k: v for k, v in scene["circuits"].items() if k not in errors})
-    try:
-        await native.set_stage(scene["stage"]["zones"], scene["stage"]["warm"], scene["stage"]["cold"])
-    except (NativeControlError, OSError) as exc:
-        errors["stage"] = str(exc)
+    stage = scene["stage"]
+    # Only the chosen stage parts; zones not named keep their level.
+    if stage["zones"] or stage["warm"] is not None:
+        try:
+            await native.set_stage(stage["zones"], stage["warm"], stage["cold"])
+        except (NativeControlError, OSError) as exc:
+            errors["stage"] = str(exc)
     if errors:
         log.warning("Light scene %r applied with errors: %s", scene["name"], errors)
         return {"ok": False, "reason": "light scene not fully applied", "scene": scene["name"], "errors": errors}, 502

@@ -6,7 +6,9 @@ POST   /lights/stage {zones, warm, cold, fade}   absolute values, faded
 PUT    /lights/settings {start, steps, fade_ms}
 POST   /lights/circuits {states: {target: bool}} room light on/off
 GET    /lights/scenes                    only the scenes (no device asked)
-POST   /lights/scenes {name, replace}            save the current light
+POST   /lights/scenes {name, replace, lights: {zones, color, circuits}}
+                                     save the current light of the chosen
+                                     lights (without lights: all of them)
 DELETE /lights/scenes/{id}
 POST   /lights/scenes/{id}/apply
 GET    /lights/artnet                    ask the stage node (ArtPoll): name and
@@ -22,7 +24,7 @@ from fastapi import APIRouter, Body, Request
 
 from ..lights import SceneError, apply_scene
 from ..native_controls import (
-    ARTNET_HOST, ARTNET_ZONE_LABELS, SHELLY_HOSTS, SHELLY_LABELS, NativeControlError, artnet_status,
+    ARTNET_HOST, ARTNET_ZONE_LABELS, ARTNET_ZONES, SHELLY_HOSTS, SHELLY_LABELS, NativeControlError, artnet_status,
 )
 from ..responses import fail, reply
 
@@ -130,6 +132,25 @@ async def lights_circuits(request: Request, body: dict = Body(...)):
     return {"ok": True}
 
 
+def _chosen_lights(lights):
+    """The lights a new scene controls: (zones, colour, circuits), or the
+    reason it is invalid. Without a choice: every light (older callers)."""
+    if lights is None:
+        return list(ARTNET_ZONES), True, list(SHELLY_HOSTS)
+    if not isinstance(lights, dict):
+        return "lights must be {zones, color, circuits}"
+    zones, color, circuits = lights.get("zones") or [], lights.get("color", False), lights.get("circuits") or []
+    if not isinstance(zones, list) or any(z not in ARTNET_ZONES for z in zones):
+        return "unknown stage zone in lights"
+    if not isinstance(circuits, list) or any(c not in SHELLY_HOSTS for c in circuits):
+        return "unknown room light circuit in lights"
+    if not isinstance(color, bool):
+        return "lights.color must be true or false"
+    if not zones and not color and not circuits:
+        return "choose at least one light for the scene"
+    return zones, color, circuits
+
+
 @router.get("/lights/scenes")
 async def lights_scenes(request: Request):
     """Only the scenes (program rows): no device is asked."""
@@ -142,21 +163,27 @@ async def lights_scene_save(request: Request, body: dict = Body(...)):
     native, scenes = _native(request), request.app.state.light_scenes
     if native is None or scenes is None:
         return _unavailable()
+    chosen = _chosen_lights(body.get("lights"))
+    if isinstance(chosen, str):
+        return fail(chosen, 400)
+    zones, color, circuits = chosen
     request.app.state.light_circuits.forget()  # save what the room light is now
     view = await _view(request)
     stage = view["stage"]
+    states = {c["id"]: c["on"] for c in view["circuits"] if c["id"] in circuits}
     entry = {
         "name": body.get("name"),
-        "stage": {"zones": stage["zones"], "warm": stage["warm"], "cold": stage["cold"]},
-        "circuits": {c["id"]: c["on"] for c in view["circuits"] if isinstance(c["on"], bool)},
+        "stage": {"zones": {z: stage["zones"][z] for z in zones},
+                  "warm": stage["warm"] if color else None, "cold": stage["cold"] if color else None},
+        "circuits": {k: on for k, on in states.items() if isinstance(on, bool)},
     }
     try:
         scene = await scenes.save(entry, replace=body.get("replace") is True)
     except KeyError:
         return fail("a light scene with this name already exists", 409)
     except SceneError as exc:
-        return fail(str(exc), 400)
-    unknown = [c["id"] for c in view["circuits"] if c["on"] is None]
+        return fail(str(exc), 400, unknown_circuits=[k for k, on in states.items() if on is None])
+    unknown = [k for k, on in states.items() if on is None]
     log.info("Light scene %r saved (%s room circuits unknown)", scene["name"], len(unknown))
     return {"ok": True, "scene": scene, "unknown_circuits": unknown}
 
