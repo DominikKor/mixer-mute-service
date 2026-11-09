@@ -12,16 +12,14 @@ HLS, and its script parses; index.html uses it for every device.
 """
 
 import json
-import os
-import pathlib
 import re
-import tempfile
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-_tmp = pathlib.Path(tempfile.mkdtemp(prefix="mixer_camwebrtc_"))
-(_tmp / "config.yaml").write_text("mixer:\n  max_channels: 8\n")
-os.environ["MIXER_CONFIG"] = str(_tmp / "config.yaml")
+from tests.helpers import use_app_config  # noqa: E402
+
+# Mixer pointed at a closed local port: the test never reaches the console.
+_tmp = use_app_config("mixer_camwebrtc_")
 CAM = "cam-0123456789ab"
 SESSION = "5b6c7d8e-1111-2222-3333-444455556666"
 (_tmp / "camera_streams.json").write_text(json.dumps({"cameras": [

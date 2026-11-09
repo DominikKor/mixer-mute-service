@@ -6,7 +6,7 @@ import sys
 import time
 from unittest.mock import AsyncMock, patch
 
-from app.companion_buttons import COMPANION_BUTTONS
+from app.companion_buttons import CAMERA_BUTTONS, COMPANION_BUTTONS
 from app.protocol import build_mute_command, parse_hex_stream, is_valid_fader_hex
 from app.config import Config
 from app.state import ChannelState
@@ -281,7 +281,8 @@ with TestClient(app) as client:
     check("always-on rejects invalid channel", invalid_always_on.status_code == 400)
     companion_buttons = client.get("/companion/buttons")
     check("native and imported buttons listed", companion_buttons.status_code == 200
-          and len(companion_buttons.json()["buttons"]) == len(COMPANION_BUTTONS))
+          # every catalog key except the camera keys, which moved to the camera section
+          and len(companion_buttons.json()["buttons"]) == len(COMPANION_BUTTONS) - len(CAMERA_BUTTONS))
     with patch.object(app.state.native_controls, "press", AsyncMock(return_value={"ok": True})) as native_press:
         companion_press = client.post("/companion/buttons/beamer-freeze/press")
         check("native Beamer button dispatched", companion_press.status_code == 200 and companion_press.json()["ok"] is True)
