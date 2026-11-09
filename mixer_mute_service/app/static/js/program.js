@@ -221,15 +221,7 @@ function buildProgramRow(item, draft = false) {
 
   const actions = document.createElement("div");
   actions.className = "program-actions";
-  if (!draft) {
-    // Top right of the row: grey the row out, "Weiter" then skips it.
-    const hide = document.createElement("button");
-    hide.type = "button";
-    hide.className = "program-hide";
-    hide.dataset.programAction = "hide";
-    hide.dataset.programId = item.id;
-    actions.appendChild(hide);
-  }
+  // Top to bottom: Play (the big key), hide, "⋮"; a draft row: save, cancel.
   const primary = document.createElement("button");
   primary.type = "button";
   primary.className = draft ? "primary" : "program-play";
@@ -249,6 +241,13 @@ function buildProgramRow(item, draft = false) {
     cancel.setAttribute("aria-label", "Programmpunkt abbrechen");
     actions.appendChild(cancel);
   } else {
+    // Grey the row out; "Weiter" then skips it.
+    const hide = document.createElement("button");
+    hide.type = "button";
+    hide.className = "program-hide";
+    hide.dataset.programAction = "hide";
+    hide.dataset.programId = item.id;
+    actions.appendChild(hide);
     // Duplicate and delete sit in the "⋮" menu (#program-menu).
     const menu = document.createElement("button");
     menu.type = "button";
