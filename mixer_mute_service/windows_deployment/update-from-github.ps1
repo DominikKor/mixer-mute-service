@@ -229,7 +229,7 @@ function Invoke-Update {
         if ($Code -in 403, 404) {
             # 403 is also GitHub's rate limit and 404 also means "no release
             # yet", so the token is kept.
-            throw "GitHub answered HTTP $Code: the token has no read access to $Repo, the rate limit was hit, or there is no release yet. If the token is the problem, run 'Mixer Service aktualisieren' with -ResetToken to enter a new one."
+            throw "GitHub answered HTTP ${Code}: the token has no read access to $Repo, the rate limit was hit, or there is no release yet. If the token is the problem, run 'Mixer Service aktualisieren' with -ResetToken to enter a new one."
         }
         throw "GitHub is not reachable ($($_.Exception.Message)). Check the internet connection and try again."
     }
