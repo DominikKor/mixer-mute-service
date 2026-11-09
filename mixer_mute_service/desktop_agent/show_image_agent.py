@@ -458,16 +458,22 @@ def _valid_song_request(body) -> bool:
     if body["action"] == "hide":
         return set(body) == {"action"}
     style = body.get("style")
+    base = {"action", "monitor", "fullscreen", "style", "text", "title", "copyright"}
+    style_base = {"font", "font_size", "text_color", "background_color"}
+    # "next" (preview of the next slide) and style "align" are newer and
+    # optional, so an older service still works with this agent.
     return (
-        set(body) == {"action", "monitor", "fullscreen", "style", "text", "title", "copyright"}
+        base <= set(body) <= base | {"next"}
         and isinstance(body["monitor"], int) and not isinstance(body["monitor"], bool) and body["monitor"] >= 1
         and isinstance(body["fullscreen"], bool)
-        and all(isinstance(body[k], str) and len(body[k]) <= 8000 for k in ("text", "title", "copyright"))
+        and all(isinstance(body.get(k, ""), str) and len(body.get(k, "")) <= 8000
+                for k in ("text", "title", "copyright", "next"))
         and isinstance(style, dict)
-        and set(style) == {"font", "font_size", "text_color", "background_color"}
+        and style_base <= set(style) <= style_base | {"align"}
         and isinstance(style["font"], str) and 0 < len(style["font"]) <= 60
         and isinstance(style["font_size"], int) and 12 <= style["font_size"] <= 240
         and all(isinstance(style[k], str) and _COLOR_RE.match(style[k]) for k in ("text_color", "background_color"))
+        and style.get("align", "center") in ("left", "center", "right")
     )
 
 
@@ -476,6 +482,34 @@ def _valid_song_request(body) -> bool:
 SLIDE_PAD_X, SLIDE_PAD_Y = 0.06, 0.07
 SLIDE_TITLE_H, SLIDE_COPY_H = 0.12, 0.08
 SLIDE_LINE = 1.25
+# Preview of the next slide: grey (text colour mixed into the background),
+# at most half the slide's text size and never below 20 px on 1080 lines; only
+# in the room left under the centred text, which never moves for it.
+PREVIEW_SCALE, PREVIEW_MIN, PREVIEW_GAP, PREVIEW_MIX = 0.5, 20, 0.5, 0.45
+
+
+def _mix_color(fg: str, bg: str, amount: float) -> str:
+    """fg mixed into bg: amount 0 = bg, 1 = fg (both #rrggbb)."""
+    a, b = int(fg[1:], 16), int(bg[1:], 16)
+    parts = [round(((b >> s) & 255) + (((a >> s) & 255) - ((b >> s) & 255)) * amount) for s in (16, 8, 0)]
+    return "#" + "".join(f"{p:02x}" for p in parts)
+
+
+def _preview_layout(measure, lines: list[str], next_lines: list[str], px: float, box_w: float,
+                    box_h: float, height: int):
+    """(size, lines) of the next-slide preview, or None if it does not fit.
+    measure(text, size) gives the width of text at that pixel size."""
+    if not next_lines:
+        return None
+    min_px = PREVIEW_MIN * height / 1080
+    pp = PREVIEW_SCALE * px
+    while pp >= min_px and max(measure(line, pp) for line in next_lines) > box_w:
+        pp *= 0.94
+    if pp < min_px:
+        return None
+    free = (box_h - len(lines) * px * SLIDE_LINE) / 2 - PREVIEW_GAP * px
+    count = min(len(next_lines), int(free // (pp * SLIDE_LINE)) if free > 0 else 0)
+    return (pp, next_lines[:count]) if count >= 1 else None
 
 
 def _draw_slide(canvas: tk.Canvas, width: int, height: int, body: dict) -> None:
@@ -484,11 +518,16 @@ def _draw_slide(canvas: tk.Canvas, width: int, height: int, body: dict) -> None:
     canvas.configure(background=style["background_color"])
     if body["action"] == "blank":
         return
+    align = style.get("align", "center")
     pad_x, pad_y = SLIDE_PAD_X * width, SLIDE_PAD_Y * height
     title_h = SLIDE_TITLE_H * height if body["title"] else 0
     copy_h = SLIDE_COPY_H * height if body["copyright"] else 0
     box_w = width - 2 * pad_x
     box_h = height - 2 * pad_y - title_h - copy_h
+    # x and anchors for the alignment: line tops ("n") and centred blocks
+    x = {"left": pad_x, "center": width / 2, "right": width - pad_x}[align]
+    top_anchor = {"left": "nw", "center": "n", "right": "ne"}[align]
+    mid_anchor = {"left": "w", "center": "center", "right": "e"}[align]
     lines = body["text"].split("\n")
     px = style["font_size"] * height / 1080
     while px > 8:
@@ -499,16 +538,28 @@ def _draw_slide(canvas: tk.Canvas, width: int, height: int, body: dict) -> None:
     font = tkfont.Font(family=style["font"], size=-max(8, round(px)))
     top = pad_y + title_h + (box_h - len(lines) * px * SLIDE_LINE) / 2
     for i, line in enumerate(lines):
-        canvas.create_text(width / 2, top + i * px * SLIDE_LINE, text=line, anchor="n",
-                           fill=style["text_color"], font=font)
+        canvas.create_text(x, top + i * px * SLIDE_LINE, text=line, anchor=top_anchor,
+                           fill=style["text_color"], font=font, justify=align)
+    next_text = body.get("next", "")
+    preview = _preview_layout(
+        lambda text, size: tkfont.Font(family=style["font"], size=-max(1, round(size))).measure(text),
+        lines, next_text.split("\n") if next_text else [], px, box_w, box_h, height)
+    if preview:
+        pp, shown = preview
+        preview_font = tkfont.Font(family=style["font"], size=-max(1, round(pp)))
+        grey = _mix_color(style["text_color"], style["background_color"], PREVIEW_MIX)
+        preview_top = pad_y + title_h + box_h - len(shown) * pp * SLIDE_LINE
+        for i, line in enumerate(shown):
+            canvas.create_text(x, preview_top + i * pp * SLIDE_LINE, text=line, anchor=top_anchor,
+                               fill=grey, font=preview_font, justify=align)
     if body["title"]:
         title_font = tkfont.Font(family=style["font"], size=-round(0.05 * height), weight="bold")
-        canvas.create_text(width / 2, pad_y + title_h / 2, text=body["title"], anchor="center",
-                           fill=style["text_color"], font=title_font, width=box_w)
+        canvas.create_text(x, pad_y + title_h / 2, text=body["title"], anchor=mid_anchor,
+                           fill=style["text_color"], font=title_font, width=box_w, justify=align)
     if body["copyright"]:
         copy_font = tkfont.Font(family=style["font"], size=-round(0.026 * height))
-        canvas.create_text(width / 2, height - pad_y - copy_h / 2, text=body["copyright"], anchor="center",
-                           fill=style["text_color"], font=copy_font, width=box_w)
+        canvas.create_text(x, height - pad_y - copy_h / 2, text=body["copyright"], anchor=mid_anchor,
+                           fill=style["text_color"], font=copy_font, width=box_w, justify=align)
 
 
 def _show_widget(root: tk.Tk, widget: tk.Widget) -> None:
