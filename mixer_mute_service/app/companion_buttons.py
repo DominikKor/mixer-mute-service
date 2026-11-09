@@ -140,11 +140,16 @@ NATIVE_BUTTONS.extend({
 
 COMPANION_BUTTONS = COMPANION_BUTTONS + NATIVE_BUTTONS
 COMPANION_BUTTONS_BY_ID = {button["id"]: button for button in COMPANION_BUTTONS}
+# The VISCA keys (presets, zoom) stay catalog actions: the Overall macros,
+# program rows and the camera section use them by ID. Since v7 they are no
+# longer keys in Steuerung; the camera section shows them instead.
+CAMERA_BUTTONS = [button for button in COMPANION_BUTTONS if button.get("category_id") == "cameras"]
+CAMERA_BUTTON_IDS = {button["id"] for button in CAMERA_BUTTONS}
 # Bump when catalog actions change; stored native keys then get the new action.
 # v3 added the keys below, v4 made the Overall macros switch the light on,
-# v5 added state-aware Beamer hide/unhide actions and v6 adds direct projector
-# power and freeze commands.
-_NATIVE_CATALOG_VERSION = 6
+# v5 added state-aware Beamer hide/unhide actions, v6 adds direct projector
+# power and freeze commands and v7 removes the camera keys from Steuerung.
+_NATIVE_CATALOG_VERSION = 7
 _NATIVE_CATALOG_V3_IDS = {
     "native-artnet-start-up", "native-artnet-start-down",
     "native-artnet-steps-up", "native-artnet-steps-down",
@@ -157,7 +162,6 @@ _NATIVE_CATALOG_V6_IDS = {"beamer-power-off", "beamer-power-on"}
 DEFAULT_CATEGORIES = [
     {"id": "beamer", "name": "Beamer", "visible": True},
     {"id": "light", "name": "Licht", "visible": True},
-    {"id": "cameras", "name": "Kameras", "visible": True},
     {"id": "obs", "name": "OBS", "visible": True},
     {"id": "overall", "name": "Overall", "visible": True},
     {"id": "mixer", "name": "Mixer", "visible": True},
@@ -174,12 +178,32 @@ def _updated_action(current: dict, seed_button: dict) -> dict:
     return action
 
 
+def _remove_camera_keys(buttons: List[dict], categories: List[dict], camera_labels: dict):
+    """v7: the catalog's camera keys leave Steuerung, wherever the user moved
+    them; a renamed one keeps its label for the camera section. The Kameras
+    category goes too, unless the user put keys of their own in it. Overall
+    macros link catalog actions by ID and stay as they are."""
+    for button in buttons:
+        if button.get("id") not in CAMERA_BUTTON_IDS:
+            continue
+        label = button.get("label")
+        if isinstance(label, str) and label.strip() and label != COMPANION_BUTTONS_BY_ID[button["id"]]["label"]:
+            camera_labels.setdefault(button["id"], label)
+    buttons = [button for button in buttons if button.get("id") not in CAMERA_BUTTON_IDS]
+    if not any(button.get("category_id") == "cameras" for button in buttons):
+        categories = [category for category in categories if category.get("id") != "cameras"]
+    return buttons, categories
+
+
 class CompanionButtonStore:
     def __init__(self, path: Path, seed: List[dict]) -> None:
         self._path = path
         self._lock = asyncio.Lock()
         self._categories = deepcopy(DEFAULT_CATEGORIES)
-        self._buttons = deepcopy(seed)
+        self._buttons = deepcopy([button for button in seed if button["id"] not in CAMERA_BUTTON_IDS])
+        # Labels of the camera keys as they were stored in Steuerung before v7
+        # (only those that differ from the catalog); the camera section uses them.
+        self._camera_labels: dict = {}
         self._catalog_version = _NATIVE_CATALOG_VERSION
         self._load()
 
@@ -196,6 +220,9 @@ class CompanionButtonStore:
             if not isinstance(categories, list) or not isinstance(buttons, list):
                 raise ValueError("invalid Companion button data")
             self._catalog_version = int(data.get("native_catalog_version", 0))
+            camera_labels = data.get("camera_labels", {})
+            if not isinstance(camera_labels, dict):
+                raise ValueError("invalid camera labels")
             if self._catalog_version < 2:
                 category_ids = {item["id"] for item in categories}
                 categories.extend(item for item in deepcopy(DEFAULT_CATEGORIES) if item["id"] not in category_ids)
@@ -233,6 +260,8 @@ class CompanionButtonStore:
                     elif current is not None and seed_button.get("kind") == "native":
                         current["kind"] = "native"
                         current["native_action"] = _updated_action(current, seed_button)
+                if self._catalog_version < 7:
+                    buttons, categories = _remove_camera_keys(buttons, categories, camera_labels)
                 self._catalog_version = _NATIVE_CATALOG_VERSION
                 migrated = True
             category_ids = {item["id"] for item in categories}
@@ -240,13 +269,18 @@ class CompanionButtonStore:
                 raise ValueError("button references missing category")
             self._categories = categories
             self._buttons = buttons
+            self._camera_labels = {
+                key: value for key, value in camera_labels.items()
+                if key in CAMERA_BUTTON_IDS and isinstance(value, str) and value.strip()
+            }
             if migrated:
                 self._persist()
         except (ValueError, TypeError, KeyError) as exc:
             backup = backup_corrupt(self._path)
             log.error("Invalid %s (%s); kept it as %s and restored the catalog", self._path, exc, backup)
             self._categories = deepcopy(DEFAULT_CATEGORIES)
-            self._buttons = deepcopy(COMPANION_BUTTONS)
+            self._buttons = deepcopy([b for b in COMPANION_BUTTONS if b["id"] not in CAMERA_BUTTON_IDS])
+            self._camera_labels = {}
             self._persist()
 
     def _persist(self) -> None:
@@ -254,11 +288,20 @@ class CompanionButtonStore:
             "categories": self._categories,
             "buttons": self._buttons,
             "native_catalog_version": self._catalog_version,
+            "camera_labels": self._camera_labels,
         })
 
     async def snapshot(self) -> dict:
         async with self._lock:
             return {"categories": deepcopy(self._categories), "buttons": deepcopy(self._buttons)}
+
+    async def camera_buttons(self) -> List[dict]:
+        """The catalog's camera keys, with the labels they had in Steuerung."""
+        async with self._lock:
+            buttons = deepcopy(CAMERA_BUTTONS)
+            for button in buttons:
+                button["label"] = self._camera_labels.get(button["id"], button["label"])
+            return buttons
 
     async def get_button(self, button_id: str):
         async with self._lock:

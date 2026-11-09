@@ -321,20 +321,31 @@
   .camera-empty { min-height: 64px; place-items: start; padding: 10px 0; }
   .camera-empty[hidden], .camera-controls[hidden] { display: none; }
   @media (max-width: 760px) { .camera-grid { grid-template-columns: minmax(0, 1fr); } }
-  /* PTZ controls under a camera named Cam1/Cam2: preset keys (the camera keys
-     of the Steuerung section) and hold-to-zoom keys */
+  /* PTZ controls under a camera named Cam1/Cam2: preset keys and hold-to-move
+     keys (arrows for pan/tilt like a keyboard's arrow keys, zoom beside them) */
   .camera-controls { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px 12px; border-top: 1px solid #08090b; box-shadow: inset 0 1px 0 rgba(255,255,255,.04); }
   .camera-controls-label { font-size: 10px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; color: #7d8594; }
   .camera-presets { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 6px; }
   button.camera-preset { min-height: 44px; padding: 6px 8px; font-size: 12px; line-height: 1.2; overflow-wrap: anywhere; }
   button.camera-preset[aria-pressed="true"] { color: #fff; border-color: #0a2550; background: linear-gradient(to bottom, #3a6fae, #2a5590 55%, #224a80); }
-  .camera-zoom { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
-  button.camera-zoom-key {
-    display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 48px; padding: 0 12px;
+  .camera-ptz {
+    display: grid; gap: 6px;
+    grid-template-columns: repeat(3, minmax(44px, 1fr)) minmax(76px, 1.3fr);
+    grid-template-areas: ". up . in" "left down right out";
+  }
+  button.camera-move-key {
+    display: flex; align-items: center; justify-content: center; gap: 8px; min-width: 0; min-height: 48px; padding: 0 8px;
     font-size: 12px; touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
   }
-  button.camera-zoom-key svg { width: 20px; height: 20px; flex-shrink: 0; }
-  button.camera-zoom-key.active { color: #fff; border-color: #0a2550; background: linear-gradient(to bottom, #62adff, #3584e6 55%, #2a6cc4); transform: translateY(1px); }
+  button.camera-move-key svg { width: 20px; height: 20px; flex-shrink: 0; }
+  .camera-ptz [data-direction="up"] { grid-area: up; }
+  .camera-ptz [data-direction="left"] { grid-area: left; }
+  .camera-ptz [data-direction="down"] { grid-area: down; }
+  .camera-ptz [data-direction="right"] { grid-area: right; }
+  .camera-ptz [data-direction="in"] { grid-area: in; }
+  .camera-ptz [data-direction="out"] { grid-area: out; }
+  button.camera-zoom-key { margin-left: 6px; }
+  button.camera-move-key.active { color: #fff; border-color: #0a2550; background: linear-gradient(to bottom, #62adff, #3584e6 55%, #2a6cc4); transform: translateY(1px); }
   button.display-key {
     display: inline-grid; grid-template-columns: auto 1fr; align-items: center; gap: 4px 10px;
     min-width: 200px; max-width: 100%; min-height: 48px; padding: 8px 14px 9px 12px; text-align: left;
@@ -2867,7 +2878,7 @@ function renderCameraStreams(data) {
   const status = $("camera-stream-status");
   status.textContent = data.relay_ready ? (cameras.length ? "MediaMTX bereit" : "") : (data.reason || "MediaMTX-Relay nicht bereit");
   status.classList.toggle("bad", !data.relay_ready);
-  stopAllCameraZoom();
+  stopAllCameraMoves();
   grid.replaceChildren();
   $("camera-empty").hidden = cameras.length > 0;
   for (const camera of cameras) {
@@ -2920,25 +2931,30 @@ function renderCameraStreams(data) {
 }
 
 // ---- PTZ controls in the camera section ----------------------------------
-// A stream card named "Cam1"/"Cam2" gets the VISCA keys of that camera from the
-// Steuerung catalog (presets, as stored there with their labels) plus
-// hold-to-zoom keys: the catalog's zoom keys only start a zoom that runs to
-// the end stop, here releasing the key stops it.
+// A stream card named "Cam1"/"Cam2" gets that camera's VISCA presets (catalog
+// camera keys with the labels they had in Steuerung, where they no longer
+// appear) plus hold-to-move keys: arrows pan/tilt and Weit/Nah zoom while
+// held, releasing the key stops the camera.
 
 const CAMERA_LAST_PRESET = {};
-const CAMERA_ZOOM = {};
+// Per camera and kind ("pan" / "zoom"): the command chain, the held direction
+// and its timers.
+const CAMERA_MOVES = {};
+const CAMERA_MOVE_KINDS = {
+  // The service stops a pan/tilt after 3 s without news, so a held arrow
+  // repeats its direction every second.
+  pan: { path: "pan-tilt", name: "Schwenken", keepalive: 1000, failsafe: 30000 },
+  zoom: { path: "zoom", name: "Zoom", keepalive: 0, failsafe: 15000 },
+};
+const CAMERA_ARROWS = {
+  up: { label: "nach oben neigen", path: "M12 19V5M5.5 11.5L12 5l6.5 6.5" },
+  left: { label: "nach links schwenken", path: "M19 12H5M11.5 5.5L5 12l6.5 6.5" },
+  down: { label: "nach unten neigen", path: "M12 5v14M5.5 12.5L12 19l6.5-6.5" },
+  right: { label: "nach rechts schwenken", path: "M5 12h14M12.5 5.5L19 12l-6.5 6.5" },
+};
 
 function viscaCameraId(name) {
   return (name || "").toLowerCase().replace(/[^a-z0-9]/g, "");
-}
-
-function viscaAction(button) {
-  if (button.kind === "native") return button.native_action || null;
-  if (button.kind === "companion") {
-    const target = (COMPANION_DATA.companion_targets || []).find(t => t.id === button.target_button_id);
-    return target ? target.native_action || null : null;
-  }
-  return null;
 }
 
 function cameraPresetLabel(label) {
@@ -2947,35 +2963,41 @@ function cameraPresetLabel(label) {
 
 function renderCameraControls() {
   const presets = {};
-  for (const button of COMPANION_DATA.buttons || []) {
-    const action = viscaAction(button);
+  for (const button of COMPANION_DATA.camera_buttons || []) {
+    const action = button.native_action;
     if (!action || action.type !== "visca-preset") continue;
     (presets[action.camera] = presets[action.camera] || []).push({ id: button.id, label: button.label, preset: action.preset });
   }
   for (const controls of document.querySelectorAll(".camera-controls")) {
     const cam = controls.dataset.viscaCamera;
     const list = (presets[cam] || []).sort((a, b) => a.preset - b.preset);
-    // Only cameras the Steuerung catalog knows (cam1, cam2) get controls.
+    // Only cameras the catalog knows (cam1, cam2) get controls.
     controls.hidden = !list.length;
     const name = controls.closest(".camera-card").querySelector(".camera-card-title").textContent;
-    // Rebuild only on a real change, so a held zoom key is never replaced.
+    // Rebuild only on a real change, so a held key is never replaced.
     const signature = JSON.stringify([name, list]);
     if (controls.dataset.signature === signature) continue;
     controls.dataset.signature = signature;
-    stopCameraZoom(cam);
+    stopCameraMoves(cam);
     if (!list.length) { controls.replaceChildren(); continue; }
+    const c = escapeAttr(cam);
+    const n = escapeAttr(name);
+    const arrows = Object.entries(CAMERA_ARROWS).map(([direction, arrow]) => `
+        <button type="button" class="camera-move-key camera-arrow" data-camera-move="pan" data-direction="${direction}" data-camera="${c}"
+          title="${n} ${arrow.label}" aria-label="${n} ${arrow.label}, gedrückt halten">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${arrow.path}"/></svg></button>`).join("");
     controls.innerHTML = `
       <div class="camera-controls-label">Presets</div>
       <div class="camera-presets">${list.map(p => `
-        <button type="button" class="camera-preset" data-camera-preset="${escapeAttr(p.id)}" data-camera="${escapeAttr(cam)}"
+        <button type="button" class="camera-preset" data-camera-preset="${escapeAttr(p.id)}" data-camera="${c}"
           aria-pressed="${CAMERA_LAST_PRESET[cam] === p.id}" title="${escapeAttr(p.label)} (Preset ${p.preset})">${escapeHtml(cameraPresetLabel(p.label))}</button>`).join("")}
       </div>
-      <div class="camera-controls-label">Zoom – gedrückt halten</div>
-      <div class="camera-zoom">
-        <button type="button" class="camera-zoom-key" data-camera-zoom="out" data-camera="${escapeAttr(cam)}" aria-label="${escapeAttr(name)} herauszoomen, gedrückt halten">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5L21 21M7.5 10.5h6"/></svg>Weit</button>
-        <button type="button" class="camera-zoom-key" data-camera-zoom="in" data-camera="${escapeAttr(cam)}" aria-label="${escapeAttr(name)} hineinzoomen, gedrückt halten">
+      <div class="camera-controls-label">Schwenken &amp; Zoom – gedrückt halten</div>
+      <div class="camera-ptz">${arrows}
+        <button type="button" class="camera-move-key camera-zoom-key" data-camera-move="zoom" data-direction="in" data-camera="${c}" aria-label="${n} hineinzoomen, gedrückt halten">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5L21 21M7.5 10.5h6M10.5 7.5v6"/></svg>Nah</button>
+        <button type="button" class="camera-move-key camera-zoom-key" data-camera-move="zoom" data-direction="out" data-camera="${c}" aria-label="${n} herauszoomen, gedrückt halten">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5L21 21M7.5 10.5h6"/></svg>Weit</button>
       </div>`;
   }
 }
@@ -2998,44 +3020,66 @@ async function pressCameraPreset(key) {
   }
 }
 
-// Commands of one camera go out strictly in order, so a quick tap never lets
-// "stop" overtake its "in"/"out".
-function sendCameraZoom(camera, direction) {
-  const state = CAMERA_ZOOM[camera] || (CAMERA_ZOOM[camera] = { chain: Promise.resolve(), direction: null, timer: null });
+function cameraMoveState(camera, kind) {
+  const id = `${camera}:${kind}`;
+  return CAMERA_MOVES[id] || (CAMERA_MOVES[id] = { camera, kind, chain: Promise.resolve(), direction: null, timer: null, keepalive: null });
+}
+
+// Commands of one camera and kind go out strictly in order, so a quick tap
+// never lets "stop" overtake its move.
+function sendCameraMove(state, direction) {
+  const kind = CAMERA_MOVE_KINDS[state.kind];
   state.chain = state.chain
-    .then(() => api("POST", `/cameras/${encodeURIComponent(camera)}/zoom`, { direction }))
+    .then(() => api("POST", `/cameras/${encodeURIComponent(state.camera)}/${kind.path}`, { direction }))
     .then(result => {
-      if (!result.ok || result.data.ok === false) toast(`Zoom ${camera}: ${result.data.reason || "HTTP " + result.status}`, false);
+      if (!result.ok || result.data.ok === false) toast(`${kind.name} ${state.camera}: ${result.data.reason || "HTTP " + result.status}`, false);
     })
-    .catch(() => toast(`Zoom ${camera}: Dienst nicht erreichbar`, false));
+    .catch(() => toast(`${kind.name} ${state.camera}: Dienst nicht erreichbar`, false));
 }
 
-function startCameraZoom(key) {
-  const camera = key.dataset.camera;
-  const direction = key.dataset.cameraZoom;
-  const state = CAMERA_ZOOM[camera];
-  if (state && state.direction === direction) return;
-  if (state && state.direction) stopCameraZoom(camera);
-  sendCameraZoom(camera, direction);
-  const current = CAMERA_ZOOM[camera];
-  current.direction = direction;
+function startCameraMove(key) {
+  const state = cameraMoveState(key.dataset.camera, key.dataset.cameraMove);
+  const direction = key.dataset.direction;
+  if (state.direction === direction) return;
+  if (state.direction) stopCameraMove(state);
+  const kind = CAMERA_MOVE_KINDS[state.kind];
+  state.direction = direction;
+  sendCameraMove(state, direction);
   key.classList.add("active");
-  // Failsafe: never keep zooming if a release got lost.
-  clearTimeout(current.timer);
-  current.timer = setTimeout(() => stopCameraZoom(camera), 15000);
+  if (kind.keepalive) {
+    // Only while the previous command is through, so a slow network never
+    // piles up requests.
+    state.keepalive = setInterval(() => {
+      if (state.direction === direction && !state.pending) {
+        state.pending = true;
+        sendCameraMove(state, direction);
+        state.chain = state.chain.finally(() => { state.pending = false; });
+      }
+    }, kind.keepalive);
+  }
+  // Failsafe: never keep moving if a release got lost.
+  state.timer = setTimeout(() => stopCameraMove(state), kind.failsafe);
 }
 
-function stopCameraZoom(camera) {
-  const state = CAMERA_ZOOM[camera];
+function stopCameraMove(state) {
   if (!state || !state.direction) return;
   state.direction = null;
   clearTimeout(state.timer);
-  document.querySelectorAll(`[data-camera-zoom][data-camera="${camera}"].active`).forEach(b => b.classList.remove("active"));
-  sendCameraZoom(camera, "stop");
+  clearInterval(state.keepalive);
+  document.querySelectorAll(`[data-camera-move="${state.kind}"][data-camera="${state.camera}"].active`).forEach(b => b.classList.remove("active"));
+  sendCameraMove(state, "stop");
 }
 
-function stopAllCameraZoom() {
-  for (const camera of Object.keys(CAMERA_ZOOM)) stopCameraZoom(camera);
+function stopCameraMoves(camera) {
+  for (const state of Object.values(CAMERA_MOVES)) if (state.camera === camera) stopCameraMove(state);
+}
+
+function stopAllCameraMoves() {
+  for (const state of Object.values(CAMERA_MOVES)) stopCameraMove(state);
+}
+
+function stopCameraMoveKey(key) {
+  stopCameraMove(CAMERA_MOVES[`${key.dataset.camera}:${key.dataset.cameraMove}`]);
 }
 
 let DESKTOP_PROFILES_SIGNATURE = "";
@@ -4437,40 +4481,43 @@ $("camera-grid").addEventListener("click", async (event) => {
   const preset = event.target.closest("button[data-camera-preset]");
   if (preset) return pressCameraPreset(preset);
 });
-// Hold-to-zoom: zoom while the key is held (finger, mouse or Enter/Space).
+// Hold-to-move (arrows, zoom): move while the key is held (finger, mouse or
+// Enter/Space); releasing, sliding off or losing the pointer stops it.
+const cameraMoveKey = event => event.target.closest("button[data-camera-move]");
 $("camera-grid").addEventListener("pointerdown", (event) => {
-  const key = event.target.closest("button[data-camera-zoom]");
+  const key = cameraMoveKey(event);
   if (!key || event.button > 0) return;
   event.preventDefault();
-  try { key.setPointerCapture(event.pointerId); } catch (_) { /* release still ends the zoom */ }
-  startCameraZoom(key);
+  try { key.setPointerCapture(event.pointerId); } catch (_) { /* release still ends the move */ }
+  startCameraMove(key);
 });
 for (const type of ["pointerup", "pointercancel", "lostpointercapture"]) {
   $("camera-grid").addEventListener(type, (event) => {
-    const key = event.target.closest("button[data-camera-zoom]");
-    if (key) stopCameraZoom(key.dataset.camera);
+    const key = cameraMoveKey(event);
+    if (key) stopCameraMoveKey(key);
   });
 }
 $("camera-grid").addEventListener("keydown", (event) => {
-  const key = event.target.closest("button[data-camera-zoom]");
+  const key = cameraMoveKey(event);
   if (!key || (event.key !== "Enter" && event.key !== " ")) return;
   event.preventDefault();
-  if (!event.repeat) startCameraZoom(key);
+  if (!event.repeat) startCameraMove(key);
 });
 $("camera-grid").addEventListener("keyup", (event) => {
-  const key = event.target.closest("button[data-camera-zoom]");
-  if (key && (event.key === "Enter" || event.key === " ")) stopCameraZoom(key.dataset.camera);
+  const key = cameraMoveKey(event);
+  if (key && (event.key === "Enter" || event.key === " ")) stopCameraMoveKey(key);
 });
 $("camera-grid").addEventListener("focusout", (event) => {
-  const key = event.target.closest("button[data-camera-zoom]");
-  if (key && key.classList.contains("active")) stopCameraZoom(key.dataset.camera);
+  const key = cameraMoveKey(event);
+  if (key && key.classList.contains("active")) stopCameraMoveKey(key);
 });
 $("camera-grid").addEventListener("contextmenu", (event) => {
-  if (event.target.closest("button[data-camera-zoom]")) event.preventDefault();
+  if (cameraMoveKey(event)) event.preventDefault();
 });
-// Never leave a camera zooming when the page loses focus or is hidden.
-window.addEventListener("blur", stopAllCameraZoom);
-document.addEventListener("visibilitychange", () => { if (document.hidden) stopAllCameraZoom(); });
+// Never leave a camera moving when the page loses focus or is hidden.
+window.addEventListener("blur", stopAllCameraMoves);
+window.addEventListener("pagehide", stopAllCameraMoves);
+document.addEventListener("visibilitychange", () => { if (document.hidden) stopAllCameraMoves(); });
 $("tile-menu").addEventListener("click", (event) => {
   const item = event.target.closest("button[data-menu-action]");
   if (!item) return;
@@ -5191,8 +5238,9 @@ async function loadProgramItems() {
   $("program-empty").textContent = "Noch keine Programmpunkte.";
   PROGRAM_ITEMS = items.data;
   PROGRAM_GROUPS = groups.data;
-  PROGRAM_BUTTONS = buttons.data.buttons || [];
-  PROGRAM_BUTTON_CATEGORIES = Object.fromEntries((buttons.data.categories || []).map(category => [category.id, category.name]));
+  // Camera presets left Steuerung but program rows can still run them.
+  PROGRAM_BUTTONS = [...(buttons.data.buttons || []), ...(buttons.data.camera_buttons || [])];
+  PROGRAM_BUTTON_CATEGORIES = { cameras: "Kameras", ...Object.fromEntries((buttons.data.categories || []).map(category => [category.id, category.name])) };
   PROGRAM_DESKTOP_PROFILES = desktop.data.profiles || [];
   renderProgramItems();
 }
