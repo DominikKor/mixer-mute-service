@@ -443,6 +443,44 @@
   .strips.compact .card { gap: 10px; padding-bottom: 10px; }
   .strips.compact .card-title { font-size: 16px; }
   .strips.compact button.mute-key { width: 100%; height: 48px; }
+  /* Ultra-compact channels: one slim row per channel with the name and a small
+     mute key, up to 8 per line like the console's banks. Builds on .compact. */
+  .strips.ultra {
+    gap: 6px; grid-template-columns: repeat(auto-fill, minmax(max(128px, calc((100% - 7 * 6px) / 8)), 1fr));
+  }
+  .strips.ultra .card { flex-direction: row; gap: 4px; height: 44px; padding: 0 3px; border-radius: 6px; }
+  .strips.ultra .scribble { flex: 1; min-width: 0; height: 34px; padding: 0 4px; display: flex; align-items: center; }
+  .strips.ultra .scribble-top { display: none; }
+  .strips.ultra .card .card-title-wrap { flex: 1; min-width: 0; min-height: 0; margin: 0; }
+  .strips.ultra button.card-title-btn { justify-content: flex-start; margin: -5px 0; padding: 0; } /* 44 px tap height */
+  /* The name itself stays the rename key; the pencil would only cost width */
+  .strips.ultra .card-title-btn .rename-icon { display: none; }
+  /* Break opportunity after + / _ - in names, only where names may wrap */
+  .name-break { display: none; }
+  .strips.ultra .name-break { display: inline; }
+  /* Long names wrap onto a second line instead of being cut off */
+  .strips.ultra .card-title {
+    display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+    font-size: 11px; line-height: 1.15; white-space: normal; overflow-wrap: anywhere; text-align: left;
+  }
+  .strips.ultra button.mute-key {
+    position: relative; flex-shrink: 0; width: 40px; height: 34px; font-size: 10px; letter-spacing: .04em;
+  }
+  .strips.ultra button.mute-key.unk { font-size: 9px; letter-spacing: 0; }
+  .strips.ultra button.mute-key::after { content: ""; position: absolute; inset: -5px -3px; } /* 44 px tap area */
+  .strips.ultra .color-pop { top: 48px; }
+  /* Three-way view switch of the channel section: Voll / Kompakt / Ultra */
+  .view-switch {
+    display: inline-flex; gap: 3px; padding: 3px; border-radius: 8px; border: 1px solid #000;
+    background: #0b1418; box-shadow: inset 0 2px 5px rgba(0,0,0,.85), 0 1px 0 rgba(255,255,255,.05);
+  }
+  .view-switch button {
+    min-height: 44px; padding: 0 14px; font-size: 11px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase;
+  }
+  .view-switch button[aria-checked="true"] {
+    color: #fff; border-color: #0a2550; background: linear-gradient(to bottom, #62adff, #3584e6 55%, #2a6cc4);
+    box-shadow: 0 0 10px rgba(79,156,255,.35), inset 0 1px 0 rgba(255,255,255,.35), 0 2px 3px rgba(0,0,0,.55);
+  }
   @media (max-width: 700px) {
     header { padding: 8px 12px; }
     .pill.opt { display: none; }
@@ -817,7 +855,11 @@
   <div class="panel-head">
     <button class="section-toggle" aria-expanded="true" aria-controls="channels-body">Channels</button>
     <div class="panel-tools">
-      <label class="compact-switch"><input id="compact-toggle" type="checkbox" /><span class="track"></span>Kompakt</label>
+      <div class="view-switch" role="radiogroup" aria-label="Ansicht der Channels">
+        <button type="button" role="radio" data-channel-view="full" title="Mit Fadern">Voll</button>
+        <button type="button" role="radio" data-channel-view="compact" title="Name und große Mute-Taste">Kompakt</button>
+        <button type="button" role="radio" data-channel-view="ultra" title="Nur Name und kleine Mute-Taste, viele pro Zeile">Ultra</button>
+      </div>
     </div>
   </div>
   <div id="channels-body" class="panel-body">
@@ -2483,7 +2525,7 @@ function updateChannelCard(ch, c) {
     titleWrap.innerHTML = `
       <button class="card-title-btn" data-action="channel-rename" data-channel="${ch}" data-name="${escapeAttr(displayName)}"
         title="${escapeAttr(displayName)} – umbenennen, Farbe" aria-label="${escapeAttr(displayName)} umbenennen">
-        <span class="card-title" data-rename-ch="${ch}">${escapeHtml(displayName)}</span><span class="rename-icon" aria-hidden="true">&#9998;</span>
+        <span class="card-title" data-rename-ch="${ch}">${escapeHtml(displayName).replace(/([+\/_-])/g, '$1<span class="name-break">&#8203;</span>')}</span><span class="rename-icon" aria-hidden="true">&#9998;</span>
       </button>`;
   }
 
@@ -2848,8 +2890,9 @@ async function refreshLoop() {
   setTimeout(refreshLoop, 1000);
 }
 
-// ---- Collapsible sections and compact channels ---------------------------
-// Open/closed state and the compact switch are remembered per device.
+// ---- Collapsible sections and channel view --------------------------------
+// Open/closed state and the channel view (Voll / Kompakt / Ultra) are
+// remembered per device.
 
 function loadUiPrefs() {
   try { return JSON.parse(localStorage.getItem("mixer_ui_prefs") || "{}"); } catch { return {}; }
@@ -2889,15 +2932,32 @@ function initSections() {
       saveUiPrefs(p);
     });
   });
-  const compact = $("compact-toggle");
-  compact.checked = !!prefs.compact;
-  $("channels").classList.toggle("compact", compact.checked);
-  compact.addEventListener("change", () => {
-    $("channels").classList.toggle("compact", compact.checked);
-    const p = loadUiPrefs();
-    p.compact = compact.checked;
-    saveUiPrefs(p);
+  initChannelView(prefs);
+}
+
+const CHANNEL_VIEWS = ["full", "compact", "ultra"];
+
+function applyChannelView(view) {
+  const strips = $("channels");
+  // Ultra builds on compact (no faders, no "Immer an"), so it keeps that class.
+  strips.classList.toggle("compact", view !== "full");
+  strips.classList.toggle("ultra", view === "ultra");
+  document.querySelectorAll("[data-channel-view]").forEach(button => {
+    button.setAttribute("aria-checked", String(button.dataset.channelView === view));
   });
+}
+
+function initChannelView(prefs) {
+  // Earlier versions stored only the on/off Kompakt switch.
+  const view = CHANNEL_VIEWS.includes(prefs.channelView) ? prefs.channelView : (prefs.compact ? "compact" : "full");
+  applyChannelView(view);
+  document.querySelectorAll("[data-channel-view]").forEach(button => button.addEventListener("click", () => {
+    applyChannelView(button.dataset.channelView);
+    const p = loadUiPrefs();
+    p.channelView = button.dataset.channelView;
+    delete p.compact;
+    saveUiPrefs(p);
+  }));
 }
 
 // ---- update from GitHub ---------------------------------------------------
