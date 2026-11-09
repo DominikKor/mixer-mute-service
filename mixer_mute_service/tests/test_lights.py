@@ -71,6 +71,21 @@ class LightsApiTests(unittest.TestCase):
         self.assertEqual(len(self.devices.frames) - faded, 1)
         self.assertEqual(self.devices.zone_white("left"), 100)
 
+    def test_artnet_status_route(self):
+        node = {"short_name": "Stage", "long_name": "", "report": "",
+                "outputs": [{"sending_dmx": True, "merging": True, "merge_mode": "HTP"}]}
+        with mock.patch("app.api.lights.artnet_status", return_value=node):
+            data = self.client.get("/lights/artnet").json()
+        self.assertTrue(data["ok"])
+        self.assertTrue(data["merging"])
+        self.assertEqual(data["host"], native_mod.ARTNET_HOST)
+        with mock.patch("app.api.lights.artnet_status", return_value=None):
+            self.assertEqual(self.client.get("/lights/artnet").status_code, 504)
+        with mock.patch("app.api.lights.artnet_status", side_effect=native_mod.NativeControlError("port taken")):
+            r = self.client.get("/lights/artnet")
+            self.assertEqual(r.status_code, 502)
+            self.assertIn("port taken", r.json()["reason"])
+
     def test_state_lists_stage_circuits_and_scenes(self):
         data = self.client.get("/lights").json()
         self.assertEqual(set(data["stage"]["zones"]), set(native_mod.ARTNET_ZONES))
