@@ -803,6 +803,67 @@
   #ns-order-hint.bad { color: #ff8576; }
   .ns-preview { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 8px; }
   .ns-preview .slide-box { border-radius: 3px; }
+  /* Program templates dialog */
+  dialog.template-dialog { width: min(980px, calc(100vw - 32px)); max-height: calc(100vh - 32px); overflow: auto; }
+  .tp-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  .tp-tabs { display: inline-flex; padding: 3px; gap: 3px; border-radius: 8px; border: 1px solid #000; background: #0b1418; }
+  .tp-tabs button {
+    min-height: 44px; min-width: 120px; padding: 0 16px; border: none; background: none; box-shadow: none;
+    font-size: 12px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; color: #8d96a3;
+  }
+  .tp-tabs button[aria-selected="true"] {
+    color: #e6e9ee; background: linear-gradient(to bottom, #4a5160, #353b47); box-shadow: 0 1px 2px rgba(0,0,0,.6), inset 0 1px 0 rgba(255,255,255,.12);
+  }
+  .tp-panel { display: flex; flex-direction: column; gap: 14px; }
+  .tp-panel[hidden] { display: none; }
+  .tp-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; }
+  .tp-item { display: flex; gap: 4px; min-width: 0; }
+  .tp-item button.tp-pick {
+    flex: 1; min-width: 0; min-height: 52px; padding: 6px 12px; text-align: left;
+    display: flex; flex-direction: column; justify-content: center; gap: 2px;
+  }
+  .tp-pick .tp-name { font-size: 14px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tp-pick .tp-meta { font: 600 11px/1.2 var(--mono); color: #8d96a3; }
+  .tp-item button.tp-pick[aria-checked="true"] {
+    color: #fff; border-color: #0a2550; background: linear-gradient(to bottom, #3a6fae, #2a5590 55%, #224a80);
+    box-shadow: 0 0 12px rgba(79,156,255,.35), inset 0 1px 0 rgba(255,255,255,.25), 0 2px 3px rgba(0,0,0,.55);
+  }
+  .tp-item button.tp-pick[aria-checked="true"] .tp-meta { color: #c9dcf5; }
+  .tp-item button.tp-delete { width: 44px; min-height: 52px; padding: 0; flex-shrink: 0; font-size: 18px; color: #9aa1ad; }
+  .tp-item button.tp-delete.armed { width: auto; padding: 0 10px; font-size: 12px; font-weight: 800; color: #fff; background: linear-gradient(to bottom, #c2443a, #9c2f27); }
+  .tp-empty { color: #8d96a3; font-size: 13px; padding: 6px 2px; }
+  .tp-columns { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 14px; align-items: start; }
+  #tp-songs { min-height: 190px; font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  #tp-add-song { align-self: flex-start; min-height: 44px; }
+  .tp-matches, .tp-preview { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+  .tp-match {
+    display: grid; grid-template-columns: 24px minmax(0, 1fr) auto; align-items: center; gap: 4px 10px;
+    min-height: 52px; padding: 4px 4px 4px 10px; border-radius: 6px; background: rgba(0,0,0,.2);
+  }
+  .tp-match .tp-no { font: 800 12px/1 var(--mono); color: #7d8594; text-align: right; }
+  .tp-match .tp-texts { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+  .tp-match .tp-line { font-size: 11px; color: #8d96a3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tp-match .tp-song { font-size: 14px; font-weight: 700; color: #7ff0a8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tp-match.missing .tp-song { color: #ffb36b; }
+  .tp-match button { min-height: 44px; min-width: 88px; padding: 0 12px; font-size: 12px; }
+  .tp-preview li {
+    display: grid; grid-template-columns: 52px minmax(0, 1fr) minmax(0, 1fr); gap: 10px; align-items: center;
+    min-height: 32px; padding: 4px 10px; border-radius: 5px; background: rgba(0,0,0,.18); font-size: 13px;
+  }
+  .tp-preview .tp-time { font: 700 12px/1 var(--mono); color: var(--lcd-text); }
+  .tp-preview .tp-title, .tp-preview .tp-psong { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tp-preview .tp-psong { color: #9fd0ff; }
+  .tp-preview li.song .tp-title { color: #e6e9ee; font-weight: 700; }
+  .tp-rows { display: flex; flex-direction: column; gap: 4px; }
+  .tp-row {
+    display: grid; grid-template-columns: auto 52px minmax(0, 1fr) minmax(0, 1fr); gap: 10px; align-items: center;
+    padding: 0 10px 0 2px; border-radius: 6px; background: rgba(0,0,0,.2); font-size: 13px;
+  }
+  .tp-row .compact-switch { font-size: 11px; }
+  .tp-row .tp-time { font: 700 12px/1 var(--mono); color: var(--lcd-text); }
+  .tp-row .tp-title { font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tp-row .tp-psong { color: #9fd0ff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  button.primary.armed { background: linear-gradient(to bottom, #c2443a, #9c2f27); border-color: #4a0f0b; }
   .song-search {
     position: absolute; z-index: 9; width: min(420px, calc(100vw - 16px)); padding: 10px; border-radius: 8px;
     border: 1px solid #000; background: var(--panel-bg); box-shadow: var(--panel-shadow), 0 14px 32px rgba(0,0,0,.65);
@@ -1235,6 +1296,7 @@
     <button class="section-toggle" aria-expanded="true" aria-controls="program-body">Programm</button>
     <div class="panel-tools">
       <button id="song-settings-btn" class="add-key" title="Liedanzeige: Bibliothek, Anzeige-PC und Aussehen für alle Lieder">Liedanzeige</button>
+      <button id="program-template-btn" class="add-key" title="Programm als Vorlage speichern oder eine Vorlage mit den Liedern des Tages anwenden">Vorlagen…</button>
       <button id="program-reset-btn" class="add-key" title="Startzeiten und Verzögerungen vergessen (neuer Gottesdienst, Probe)">Ablauf zurücksetzen</button>
       <button id="program-add-btn" class="add-key"><svg class="plus-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 4v16M4 12h16"/></svg>Programmpunkt</button>
     </div>
@@ -1415,6 +1477,50 @@
     <div id="fb-list" class="fb-list"></div>
     <div id="fb-error" class="update-lcd err" hidden></div>
     <div class="update-actions"><button type="button" id="fb-cancel">Abbrechen</button></div>
+  </div>
+</dialog>
+
+<dialog id="template-dialog" class="update-dialog profile-dialog template-dialog" aria-labelledby="tp-heading">
+  <div class="update-body">
+    <div class="tp-head">
+      <h3 id="tp-heading">Programm-Vorlagen</h3>
+      <div class="tp-tabs" role="tablist" aria-label="Vorlage anwenden oder speichern">
+        <button type="button" role="tab" id="tp-tab-apply" aria-selected="true" aria-controls="tp-apply">Anwenden</button>
+        <button type="button" role="tab" id="tp-tab-save" aria-selected="false" aria-controls="tp-save">Speichern</button>
+      </div>
+    </div>
+    <div id="tp-apply" class="tp-panel" role="tabpanel" aria-labelledby="tp-tab-apply">
+      <div class="pf-field"><span class="pf-label" id="tp-list-label">Vorlage</span>
+        <div id="tp-list" class="tp-list" role="radiogroup" aria-labelledby="tp-list-label"></div></div>
+      <div class="tp-columns">
+        <div class="pf-field">
+          <label class="pf-label" for="tp-songs">Lieder – ein Lied pro Zeile (Titel oder Liederbuch-Nummer)</label>
+          <textarea id="tp-songs" class="pf-input" rows="8" spellcheck="false" placeholder="Gott, du bist da&#10;EG 331&#10;In Christus ist mein ganzer Halt"></textarea>
+          <button type="button" id="tp-add-song" class="add-key"><svg class="plus-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 4v16M4 12h16"/></svg>Lied aus der Bibliothek</button>
+        </div>
+        <div class="pf-field"><span class="pf-label">In der Bibliothek gefunden</span>
+          <ol id="tp-matches" class="tp-matches" aria-live="polite"></ol></div>
+      </div>
+      <div class="pf-field"><span class="pf-label" id="tp-preview-label">Programm danach</span>
+        <ol id="tp-preview" class="tp-preview" aria-labelledby="tp-preview-label"></ol>
+        <span id="tp-hint" class="pf-hint"></span></div>
+      <div id="tp-apply-error" class="update-lcd err" hidden></div>
+      <div class="update-actions">
+        <button type="button" class="tp-close">Schließen</button>
+        <button type="button" id="tp-apply-btn" class="primary">Programm ersetzen</button>
+      </div>
+    </div>
+    <div id="tp-save" class="tp-panel" role="tabpanel" aria-labelledby="tp-tab-save" hidden>
+      <label class="pf-field"><span>Name der Vorlage</span>
+        <input id="tp-name" class="pf-input" type="text" maxlength="60" autocomplete="off" placeholder="z. B. Gottesdienst" /></label>
+      <div class="pf-field"><span class="pf-label">Aktuelles Programm – Liedplätze bekommen beim Anwenden die Lieder des Tages</span>
+        <div id="tp-rows" class="tp-rows"></div></div>
+      <div id="tp-save-error" class="update-lcd err" hidden></div>
+      <div class="update-actions">
+        <button type="button" class="tp-close">Schließen</button>
+        <button type="button" id="tp-save-btn" class="primary">Als Vorlage speichern</button>
+      </div>
+    </div>
   </div>
 </dialog>
 
@@ -6095,22 +6201,32 @@ function songMatches(query) {
   }).slice(0, 40);
 }
 
-// onPick(song or null); allowNone adds "Kein Lied".
-function openSongSearch(anchor, onPick, allowNone = true) {
+// onPick(song or null); allowNone adds "Kein Lied". Inside a modal dialog
+// (everything outside it is inert) the popover opens in the dialog; options
+// .candidates are listed first while the search is empty.
+function openSongSearch(anchor, onPick, allowNone = true, options = {}) {
   closeSongSearch();
   const pop = document.createElement("div");
   pop.className = "song-search";
   pop.innerHTML = '<input type="search" class="pf-input" placeholder="Titel oder Liederbuch-Nummer" aria-label="Lied suchen" autocomplete="off" /><div class="song-search-list" role="listbox"></div>';
-  document.body.appendChild(pop);
+  const dialog = anchor.closest("dialog[open]");
+  (dialog || document.body).appendChild(pop);
   const r = anchor.getBoundingClientRect();
   const width = pop.offsetWidth;
-  pop.style.left = `${Math.min(Math.max(8, r.left), innerWidth - width - 8) + scrollX}px`;
-  pop.style.top = `${r.bottom + 4 + scrollY}px`;
+  const left = Math.min(Math.max(8, r.left), innerWidth - width - 8);
+  if (dialog) {
+    pop.style.position = "fixed";  // placed after the first render (placeInDialog)
+    pop.style.left = `${left}px`;
+  } else {
+    pop.style.left = `${left + scrollX}px`;
+    pop.style.top = `${r.bottom + 4 + scrollY}px`;
+  }
   const input = pop.querySelector("input");
   const list = pop.querySelector(".song-search-list");
   const pick = song => { closeSongSearch(); onPick(song); };
   const render = () => {
-    const matches = songMatches(input.value);
+    const candidates = !input.value.trim() && options.candidates?.length ? options.candidates : null;
+    const matches = candidates || songMatches(input.value);
     list.replaceChildren();
     if (allowNone) {
       const none = document.createElement("button");
@@ -6149,6 +6265,15 @@ function openSongSearch(anchor, onPick, allowNone = true) {
   document.addEventListener("pointerdown", onOutside, true);
   SONG_SEARCH = { pop, onOutside };
   render();
+  if (dialog) {
+    // Below the key, or above it when there is more room there; the list
+    // shrinks so the whole popover stays on screen.
+    const below = innerHeight - r.bottom - 12, above = r.top - 12;
+    const room = below >= 300 || below >= above ? below : above;
+    list.style.maxHeight = `${Math.max(120, Math.min(320, room - (pop.offsetHeight - list.offsetHeight)))}px`;
+    if (room === below) pop.style.top = `${r.bottom + 4}px`;
+    else pop.style.bottom = `${innerHeight - r.top + 4}px`;
+  }
   input.focus();
 }
 
@@ -6166,6 +6291,344 @@ $("program-items").addEventListener("click", event => {
     hidden.dispatchEvent(new Event("change", { bubbles: true }));
   });
 });
+
+// ---- program templates: save the program, apply it with the day's songs ----
+//
+// The songs come as text, one per line (or one by one from the library). The
+// service matches each line (POST /songs/match); a line it cannot place gets
+// a "Wählen" key. The preview is the service's own result (dry run), so what
+// is shown is exactly what "Programm ersetzen" writes.
+
+const TEMPLATES = { list: [], selected: null, matches: [], picked: new Map(), seq: 0, timer: null };
+const SLOT_TITLE_RE = /lied|lobpreis|song|worship|anbetung/i;
+
+function songById(id) { return SONG_INDEX.get(id) || null; }
+
+// A key that needs a second tap: true when it was already armed.
+function armKey(button, label) {
+  if (button.dataset.armed) {
+    clearTimeout(Number(button.dataset.armed));
+    delete button.dataset.armed;
+    button.classList.remove("armed");
+    button.textContent = button.dataset.label;
+    return true;
+  }
+  button.dataset.label = button.textContent;
+  button.textContent = label;
+  button.classList.add("armed");
+  button.dataset.armed = String(setTimeout(() => {
+    delete button.dataset.armed;
+    button.classList.remove("armed");
+    button.textContent = button.dataset.label;
+  }, 6000));
+  return false;
+}
+
+function disarmKey(button) {
+  if (button.dataset.armed) armKey(button, "");
+}
+
+function templateTab(save) {
+  $("tp-tab-apply").setAttribute("aria-selected", String(!save));
+  $("tp-tab-save").setAttribute("aria-selected", String(save));
+  $("tp-apply").hidden = save;
+  $("tp-save").hidden = !save;
+  closeSongSearch();
+  if (save) renderTemplateRows();
+}
+
+function renderTemplateList() {
+  const list = $("tp-list");
+  list.replaceChildren();
+  if (!TEMPLATES.list.length) {
+    const empty = document.createElement("div");
+    empty.className = "tp-empty";
+    empty.textContent = "Noch keine Vorlage. Unter „Speichern“ das aktuelle Programm als Vorlage ablegen.";
+    list.appendChild(empty);
+  }
+  for (const template of TEMPLATES.list) {
+    const item = document.createElement("div");
+    item.className = "tp-item";
+    const pick = document.createElement("button");
+    pick.type = "button";
+    pick.className = "tp-pick";
+    pick.setAttribute("role", "radio");
+    pick.setAttribute("aria-checked", String(template.id === TEMPLATES.selected));
+    const name = document.createElement("span");
+    name.className = "tp-name";
+    name.textContent = template.name;
+    const meta = document.createElement("span");
+    meta.className = "tp-meta";
+    meta.textContent = `${template.rows.length} Punkte · ${template.slot_count} ${template.slot_count === 1 ? "Liedplatz" : "Liedplätze"}`;
+    pick.append(name, meta);
+    pick.addEventListener("click", () => {
+      TEMPLATES.selected = template.id;
+      $("tp-name").value = template.name;
+      renderTemplateList();
+      updateTemplatePreview();
+    });
+    const del = document.createElement("button");
+    del.type = "button";
+    del.className = "tp-delete";
+    del.textContent = "×";
+    del.title = `Vorlage „${template.name}“ löschen`;
+    del.setAttribute("aria-label", del.title);
+    del.addEventListener("click", async () => {
+      if (!armKey(del, "Löschen?")) return;
+      const result = await api("DELETE", `/program/templates/${encodeURIComponent(template.id)}`);
+      if (!result.ok) { toast(result.data.reason || `HTTP ${result.status}`, false); return; }
+      toast(`Vorlage „${template.name}“ gelöscht`, true);
+      if (TEMPLATES.selected === template.id) TEMPLATES.selected = null;
+      await loadTemplates();
+    });
+    item.append(pick, del);
+    list.appendChild(item);
+  }
+}
+
+async function loadTemplates() {
+  const result = await api("GET", "/program/templates");
+  TEMPLATES.list = result.ok && Array.isArray(result.data.templates) ? result.data.templates : [];
+  if (!TEMPLATES.list.some(t => t.id === TEMPLATES.selected)) TEMPLATES.selected = TEMPLATES.list[0]?.id || null;
+  renderTemplateList();
+  updateTemplatePreview();
+}
+
+// The songs to apply: each line's match, or what was picked for that line.
+function templateSongs() {
+  return TEMPLATES.matches.map(match => {
+    const picked = TEMPLATES.picked.has(match.line) ? TEMPLATES.picked.get(match.line) : match.song_id;
+    return { song_id: picked && songById(picked) ? picked : null, text: match.line };
+  });
+}
+
+function renderTemplateMatches() {
+  const list = $("tp-matches");
+  list.replaceChildren();
+  if (!TEMPLATES.matches.length) {
+    const empty = document.createElement("li");
+    empty.className = "tp-empty";
+    empty.textContent = SONG_LIST.length ? "Noch keine Lieder eingegeben." : "Bibliothek noch nicht geladen – unter „Liedanzeige“ laden.";
+    list.appendChild(empty);
+    return;
+  }
+  const songs = templateSongs();
+  TEMPLATES.matches.forEach((match, i) => {
+    const song = songs[i].song_id ? songById(songs[i].song_id) : null;
+    const li = document.createElement("li");
+    li.className = "tp-match" + (song ? "" : " missing");
+    const no = document.createElement("span");
+    no.className = "tp-no";
+    no.textContent = String(i + 1);
+    const texts = document.createElement("span");
+    texts.className = "tp-texts";
+    const line = document.createElement("span");
+    line.className = "tp-line";
+    line.textContent = match.line;
+    const found = document.createElement("span");
+    found.className = "tp-song";
+    found.textContent = song ? `♪ ${song.title}`
+      : match.candidates.length ? "Nicht eindeutig – bitte wählen" : "Nicht gefunden – kommt als Text in den Titel";
+    texts.append(found, line);
+    const choose = document.createElement("button");
+    choose.type = "button";
+    choose.textContent = song ? "Ändern" : "Wählen";
+    choose.setAttribute("aria-label", `Lied für Zeile ${i + 1} wählen`);
+    choose.addEventListener("click", () => {
+      const candidates = match.candidates.map(c => songById(c.song_id)).filter(Boolean);
+      openSongSearch(choose, picked => {
+        TEMPLATES.picked.set(match.line, picked ? picked.id : null);
+        renderTemplateMatches();
+        updateTemplatePreview();
+      }, true, { candidates });
+    });
+    li.append(no, texts, choose);
+    list.appendChild(li);
+  });
+}
+
+async function matchTemplateSongs() {
+  const lines = $("tp-songs").value.split("\n").map(l => l.trim()).filter(Boolean).slice(0, 40);
+  const seq = ++TEMPLATES.seq;
+  const result = lines.length ? await api("POST", "/songs/match", { lines }) : { ok: true, data: { matches: [] } };
+  if (seq !== TEMPLATES.seq) return;  // typed on meanwhile
+  TEMPLATES.matches = result.ok && Array.isArray(result.data.matches) ? result.data.matches : [];
+  renderTemplateMatches();
+  updateTemplatePreview();
+}
+
+async function updateTemplatePreview() {
+  const list = $("tp-preview");
+  const template = TEMPLATES.list.find(t => t.id === TEMPLATES.selected);
+  const apply = $("tp-apply-btn");
+  disarmKey(apply);
+  apply.disabled = !template;
+  if (!template) {
+    list.replaceChildren();
+    $("tp-hint").textContent = "";
+    return;
+  }
+  const songs = templateSongs();
+  const seq = TEMPLATES.seq;
+  const result = await api("POST", `/program/templates/${encodeURIComponent(template.id)}/apply`, { dry_run: true, songs });
+  if (seq !== TEMPLATES.seq || template.id !== TEMPLATES.selected) return;
+  list.replaceChildren();
+  if (!result.ok || !Array.isArray(result.data.rows)) {
+    $("tp-hint").textContent = result.data.reason || `Vorschau nicht möglich (HTTP ${result.status})`;
+    return;
+  }
+  const daySongs = new Set(songs.map(s => s.song_id).filter(Boolean));
+  for (const row of result.data.rows) {
+    const li = document.createElement("li");
+    if (row.song && daySongs.has(row.song)) li.className = "song";
+    const time = document.createElement("span");
+    time.className = "tp-time";
+    time.textContent = row.time;
+    const title = document.createElement("span");
+    title.className = "tp-title";
+    title.textContent = row.title;
+    const song = document.createElement("span");
+    song.className = "tp-psong";
+    song.textContent = row.song ? `♪ ${songById(row.song)?.title || row.song}` : "";
+    li.append(time, title, song);
+    list.appendChild(li);
+  }
+  const extra = Math.max(0, songs.length - template.slot_count);
+  const empty = Math.max(0, template.slot_count - songs.length);
+  const missing = songs.filter(s => !s.song_id).length;
+  $("tp-hint").textContent = [
+    extra ? `${extra} ${extra === 1 ? "Lied wird" : "Lieder werden"} nach dem letzten Liedplatz angehängt.` : "",
+    empty ? `${empty} ${empty === 1 ? "Liedplatz bleibt" : "Liedplätze bleiben"} ohne Lied.` : "",
+    missing ? `${missing} ohne Lied aus der Bibliothek (Text steht im Titel).` : "",
+    PROGRAM_ITEMS.length ? `Ersetzt das aktuelle Programm (${PROGRAM_ITEMS.length} Punkte).` : "",
+  ].filter(Boolean).join(" ");
+}
+
+function renderTemplateRows() {
+  const rows = $("tp-rows");
+  rows.replaceChildren();
+  $("tp-save-btn").disabled = !PROGRAM_ITEMS.length;
+  if (!PROGRAM_ITEMS.length) {
+    const empty = document.createElement("div");
+    empty.className = "tp-empty";
+    empty.textContent = "Das Programm ist leer – erst Programmpunkte anlegen.";
+    rows.appendChild(empty);
+    return;
+  }
+  for (const item of PROGRAM_ITEMS) {
+    const row = document.createElement("div");
+    row.className = "tp-row";
+    const label = document.createElement("label");
+    label.className = "compact-switch";
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.dataset.slot = item.id;
+    input.checked = Boolean(item.song) || SLOT_TITLE_RE.test(item.title);
+    const track = document.createElement("span");
+    track.className = "track";
+    label.append(input, track, "Liedplatz");
+    const time = document.createElement("span");
+    time.className = "tp-time";
+    time.textContent = item.time;
+    const title = document.createElement("span");
+    title.className = "tp-title";
+    title.textContent = item.title;
+    const song = document.createElement("span");
+    song.className = "tp-psong";
+    song.textContent = item.song ? `♪ ${songById(item.song)?.title || item.song}` : "";
+    row.append(label, time, title, song);
+    rows.appendChild(row);
+  }
+}
+
+function templateError(id, message) {
+  $(id).hidden = !message;
+  $(id).textContent = message || "";
+}
+
+async function openTemplateDialog() {
+  closeSongSearch();
+  templateError("tp-apply-error", "");
+  templateError("tp-save-error", "");
+  $("tp-songs").value = "";
+  TEMPLATES.matches = [];
+  TEMPLATES.picked.clear();
+  $("template-dialog").showModal();
+  await Promise.all([loadSongs(), loadProgramItems()]);
+  await loadTemplates();
+  $("tp-name").value = TEMPLATES.list.find(t => t.id === TEMPLATES.selected)?.name || "";
+  templateTab(!TEMPLATES.list.length);
+  renderTemplateMatches();
+}
+
+$("program-template-btn").addEventListener("click", openTemplateDialog);
+$("tp-tab-apply").addEventListener("click", () => templateTab(false));
+$("tp-tab-save").addEventListener("click", () => templateTab(true));
+$("template-dialog").querySelectorAll(".tp-close").forEach(b => b.addEventListener("click", () => $("template-dialog").close()));
+$("template-dialog").addEventListener("close", closeSongSearch);
+$("template-dialog").addEventListener("scroll", closeSongSearch);
+$("tp-songs").addEventListener("input", () => {
+  clearTimeout(TEMPLATES.timer);
+  TEMPLATES.timer = setTimeout(matchTemplateSongs, 250);
+});
+$("tp-add-song").addEventListener("click", event => {
+  openSongSearch(event.currentTarget, song => {
+    const area = $("tp-songs");
+    const text = area.value.replace(/\s+$/, "");
+    area.value = (text ? text + "\n" : "") + song.title;
+    TEMPLATES.picked.set(song.title, song.id);
+    matchTemplateSongs();
+  }, false);
+});
+$("tp-apply-btn").addEventListener("click", async event => {
+  const button = event.currentTarget;
+  const template = TEMPLATES.list.find(t => t.id === TEMPLATES.selected);
+  if (!template) return;
+  if (PROGRAM_ITEMS.length && !armKey(button, `Wirklich ersetzen? (${PROGRAM_ITEMS.length} Punkte)`)) return;
+  button.disabled = true;
+  try {
+    const result = await api("POST", `/program/templates/${encodeURIComponent(template.id)}/apply`, { songs: templateSongs() });
+    if (!result.ok || result.data.ok === false) {
+      templateError("tp-apply-error", result.data.reason || `HTTP ${result.status}`);
+      return;
+    }
+    $("template-dialog").close();
+    toast(`Vorlage „${template.name}“ angewendet: ${result.data.items.length} Programmpunkte`, true);
+    for (const warning of result.data.warnings || []) toast(`${warning.title}: ${warning.reason}`, false);
+    await loadProgramItems();
+  } finally {
+    button.disabled = false;
+  }
+});
+$("tp-save-btn").addEventListener("click", async event => {
+  const button = event.currentTarget;
+  const name = $("tp-name").value.trim();
+  if (!name) { templateError("tp-save-error", "Bitte einen Namen eingeben."); $("tp-name").focus(); return; }
+  const replace = button.classList.contains("armed");
+  if (replace) armKey(button, "");
+  const slots = [...$("tp-rows").querySelectorAll("input[data-slot]:checked")].map(input => input.dataset.slot);
+  button.disabled = true;
+  try {
+    const result = await api("POST", "/program/templates", { name, slots, replace });
+    if (result.status === 409) {
+      templateError("tp-save-error", `Es gibt schon eine Vorlage „${name}“.`);
+      armKey(button, "Vorlage ersetzen?");
+      return;
+    }
+    if (!result.ok || result.data.ok === false) {
+      templateError("tp-save-error", result.data.reason || `HTTP ${result.status}`);
+      return;
+    }
+    templateError("tp-save-error", "");
+    toast(`Vorlage „${result.data.template.name}“ gespeichert (${result.data.template.slot_count} Liedplätze)`, true);
+    TEMPLATES.selected = result.data.template.id;
+    await loadTemplates();
+    templateTab(false);
+  } finally {
+    button.disabled = false;
+  }
+});
+$("tp-name").addEventListener("input", () => { disarmKey($("tp-save-btn")); templateError("tp-save-error", ""); });
 
 // ---- shared song settings dialog -------------------------------------------
 

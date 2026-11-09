@@ -100,6 +100,12 @@ def api():
         print("== apply ==")
         client.post(f"/program/items/{ids[0]}/play")
         apply = lambda songs: client.post(f"/program/templates/{tpl['id']}/apply", json={"songs": songs})
+        before = client.get("/program/items").json()
+        r = client.post(f"/program/templates/{tpl['id']}/apply", json={"dry_run": True, "songs": [
+            {"song_id": "Gott_ du bist da.foil"}, {"song_id": "Dir sei Ehre.foil"}, {"song_id": "In Christus.foil"}]})
+        check("dry run: rows returned, program unchanged",
+              [row["song"] for row in r.json()["rows"]][1:4] == ["Gott_ du bist da.foil", "Dir sei Ehre.foil", "In Christus.foil"]
+              and client.get("/program/items").json() == before)
         r = apply([{"song_id": "Gott_ du bist da.foil", "text": "Gott du bist da"},
                    {"song_id": None, "text": "1. Neues Lied"},
                    {"song_id": "Dir sei Ehre.foil", "text": ""},

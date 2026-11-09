@@ -14,7 +14,8 @@ POST   /program/templates {name, slots, replace}
                                               save the current program; slots
                                               are the ids of its song-slot rows
 DELETE /program/templates/{id}
-POST   /program/templates/{id}/apply {songs: [{song_id, text}]}
+POST   /program/templates/{id}/apply {songs: [{song_id, text}], dry_run}
+                                              dry_run: only return the rows
 POST   /songs/match {lines: [...]}            [{line, song_id, title, candidates}]
 """
 
@@ -322,6 +323,8 @@ async def apply_template(template_id: str, request: Request, body: dict = Body(.
     rows = fill_template(template["rows"], cleaned)
     if len(rows) > MAX_ROWS:
         return _fail(f"at most {MAX_ROWS} rows")
+    if body.get("dry_run") is True:  # preview: the rows, nothing changed
+        return {"ok": True, "rows": sorted(rows, key=lambda row: row["time"])}
     try:
         items = await request.app.state.program_items.replace_all(rows)
     except ProgramItemError as exc:

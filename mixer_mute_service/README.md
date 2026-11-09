@@ -487,6 +487,33 @@ herunterladen*, auf dem Anzeige-PC ausführen). Endpunkte, z. B. für Companion:
 | POST | `/songs/show` `{"song_id", "slide"}` | Folie anzeigen |
 | POST | `/songs/next`, `/songs/prev`, `/songs/blank`, `/songs/hide` | weiter, zurück, schwarz, aus |
 
+## Programm-Vorlagen
+
+Ein Gottesdienst sieht meist gleich aus: **Programm → Vorlagen… → Speichern**
+legt das aktuelle Programm unter einem Namen ab (`program_templates.json`). Pro
+Zeile gibt es den Schalter **Liedplatz**: dort kommen beim Anwenden die Lieder
+des Tages hinein (vorbelegt für Zeilen mit Lied oder mit „Lied“/„Lobpreis“ im
+Titel). Ein Lied in einer Zeile ohne Liedplatz bleibt fest in der Vorlage.
+
+**Anwenden**: Vorlage wählen, Lieder eintragen, entweder als Text (ein Lied pro
+Zeile, Titel oder Liederbuch-Nummer wie `GHS 20`, Nummerierung wie `1.` wird
+ignoriert) oder einzeln über **Lied aus der Bibliothek**. Jede Zeile wird in der
+Bibliothek gesucht; ist sie nicht eindeutig oder fehlt sie, gibt es **Wählen**
+(Vorschläge zuerst). Die Lieder füllen die Liedplätze der Reihe nach; mehr Lieder
+als Liedplätze werden direkt nach dem letzten Liedplatz angehängt (als Kopie
+dieser Zeile), übrige Liedplätze bleiben ohne Lied, ein Lied, das nicht in der
+Bibliothek ist, steht als Text im Titel. Die Vorschau zeigt das Programm genau so,
+wie es danach aussieht. **Programm ersetzen** (zweimal tippen) ersetzt das ganze
+Programm und setzt den Ablauf zurück.
+
+| Methode | Pfad | |
+|---|---|---|
+| GET | `/program/templates` | Vorlagen |
+| POST | `/program/templates` `{"name", "slots", "replace"}` | aktuelles Programm speichern (`slots`: IDs der Liedplatz-Zeilen) |
+| DELETE | `/program/templates/{id}` | Vorlage löschen |
+| POST | `/program/templates/{id}/apply` `{"songs": [{"song_id", "text"}], "dry_run"}` | anwenden (`dry_run`: nur Vorschau) |
+| POST | `/songs/match` `{"lines"}` | Liedzeilen in der Bibliothek suchen |
+
 ## Configuration (`config.yaml`)
 
 - `mixer.ip` / `mixer.port` / `mixer.max_channels` (input channels, default 16)
