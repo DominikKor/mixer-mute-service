@@ -193,7 +193,9 @@ $("tile-menu").addEventListener("click", (event) => {
   else if (item.dataset.menuAction === "duplicate") duplicateDesktopProfile(profileId);
   else if (item.dataset.menuAction === "delete") deleteDesktopProfile(profileId, trigger);
 });
-for (const menu of document.querySelectorAll(".tile-menu")) {
+// The mute groups' menu (#person-menu, js/groups.js) has its own keys: its
+// state lives in the cards' markup so it survives their redraw.
+for (const menu of document.querySelectorAll(".tile-menu:not(#person-menu)")) {
   menu.addEventListener("keydown", (event) => {
     const items = [...menu.querySelectorAll("button")];
     const i = items.indexOf(document.activeElement);

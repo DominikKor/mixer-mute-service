@@ -617,21 +617,43 @@ button.section-toggle:active:not(:disabled) { transform: none; box-shadow: none;
 @media (max-width: 1199px) { #persons { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 759px) { #persons { grid-template-columns: minmax(0, 1fr); } }
 .person-card {
-  min-width: 0; padding: 12px; border-radius: 8px; border: 1px solid #08090b;
+  min-width: 0; padding: 8px 10px 10px; border-radius: 8px; border: 1px solid #08090b;
   background: var(--panel-bg); box-shadow: var(--panel-shadow);
 }
-.person-head { display: flex; align-items: center; gap: 10px; }
-.person-name-wrap { display: flex; align-items: center; gap: 6px; min-width: 0; flex: 1; }
-.person-name {
-  min-width: 0; padding: 4px 10px; border-radius: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  background: var(--lcd-bg); border: 1px solid #000; box-shadow: var(--lcd-shadow);
-  font-size: 14px; font-weight: 700; color: var(--lcd-text); text-shadow: var(--lcd-glow);
+/* Head: collapse | LED | display (name up to two lines, contents below) | pencil | ⋮,
+   the three keys under the display. */
+.person-head {
+  display: grid; grid-template-columns: auto auto minmax(0, 1fr) auto auto;
+  align-items: center; column-gap: 8px; row-gap: 8px;
 }
-/* Duplicate and delete as icon keys in the head; Mute/Solo/Use All below */
-.person-tools { display: flex; gap: 6px; flex-shrink: 0; }
+.person-name-wrap { display: flex; align-items: center; min-width: 0; }
+.person-lcd {
+  display: flex; flex-direction: column; gap: 3px; flex: 1; min-width: 0; padding: 6px 10px 7px; border-radius: 4px;
+  background: var(--lcd-bg); border: 1px solid #000; box-shadow: var(--lcd-shadow);
+}
+.person-name {
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere;
+  font-size: 16px; line-height: 1.25; font-weight: 700; color: var(--lcd-text); text-shadow: var(--lcd-glow);
+}
+.person-meta {
+  font: 600 10px/1.3 var(--mono); letter-spacing: .02em; color: var(--lcd-dim);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.person-head .rename-btn { margin: 0 -10px 0 -6px; }
+.person-name-wrap .rename-input { flex: 1; min-width: 0; min-height: 44px; font-size: 16px; }
+button.person-menu-btn {
+  display: grid; place-items: center; flex-shrink: 0; width: 44px; height: 44px; margin-right: -8px; padding: 0;
+  color: #6f8a93; background: none; border: none; box-shadow: none; transition: color .12s;
+}
+button.person-menu-btn:hover:not(:disabled), button.person-menu-btn[aria-expanded="true"] { color: #e6f4f8; filter: none; }
+button.person-menu-btn:active:not(:disabled) { transform: none; box-shadow: none; }
 button.icon-btn { display: grid; place-items: center; width: 44px; height: 44px; padding: 0; }
-.person-actions { display: flex; gap: 6px; margin-top: 10px; }
-.person-actions button { flex: 1; min-height: 44px; }
+/* Mute / Solo / Use All: compact keys in line with the display */
+.person-actions { grid-column: 3 / -1; display: flex; gap: 6px; }
+.person-actions button {
+  min-width: 66px; min-height: 44px; padding: 0 12px;
+  font-size: 11px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase;
+}
 button.collapse-btn {
   display: grid; place-items: center; width: 44px; height: 44px; margin: 0 -8px; padding: 0; flex-shrink: 0;
   background: none; border: none; box-shadow: none;

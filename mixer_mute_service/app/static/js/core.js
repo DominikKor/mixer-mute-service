@@ -134,6 +134,9 @@ function formatDb(value) {
 
 // ---- Shared helpers: talking to the service, messages, escaping ----------
 
+// The "⋮" of every menu key (desktop tiles, Programm rows, mute groups).
+const ICON_DOTS = `<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>`;
+
 // Never throws: a network error comes back like a failed request
 // (status 0), so every caller handles both the same way. data is always an
 // object or an array. A request that gets no answer within ``timeout`` ms is
