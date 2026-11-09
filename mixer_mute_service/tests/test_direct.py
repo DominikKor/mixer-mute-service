@@ -12,7 +12,6 @@ from app.mixer_client import MixerClient
 from app.protocol import SUBSCRIBE_HANDSHAKE_HEX
 from app.state import StateStore
 
-MIXER_PORT = 16402
 HANDSHAKE = bytes.fromhex(SUBSCRIBE_HANDSHAKE_HEX)
 STATE_CH9_MUTE = "5a5a5a5a5a5a0000006d0000010009080820012d00805844"
 
@@ -59,10 +58,12 @@ async def main():
                 await writer.drain()
         writer.close()
 
-    srv = await asyncio.start_server(fake_mixer, "127.0.0.1", MIXER_PORT)
+    # Port from the OS (port 0): never collides with another run or fake mixer.
+    srv = await asyncio.start_server(fake_mixer, "127.0.0.1", 0)
+    mixer_port = srv.sockets[0].getsockname()[1]
 
     cfg = Config(mixer={
-        "ip": "127.0.0.1", "port": MIXER_PORT, "mode": "direct",
+        "ip": "127.0.0.1", "port": mixer_port, "mode": "direct",
         "max_channels": 16, "keepalive_seconds": 0.4,
     })
     store = StateStore()

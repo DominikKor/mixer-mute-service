@@ -14,8 +14,6 @@ from app.proxy import ProxyServer
 from app.safety import check_channel_send
 from app.state import StateStore
 
-PROXY_PORT = 16400
-MIXER_PORT = 16401
 
 IPAD_MUTE_CH2 = "5a5a5a5a5a5a0000006e0000000909080120012d1f14b643"
 MIXER_STATUS_UNMUTE_CH2 = "5a5a5a5a5a5a0000006d000001000708012d00005143000000000000"
@@ -59,22 +57,27 @@ async def main():
                 await writer.drain()
         writer.close()
 
-    mixer_srv = await asyncio.start_server(fake_mixer, "127.0.0.1", MIXER_PORT)
+    # Ports come from the OS (port 0), so a parallel run or another fake mixer
+    # on this machine can never collide with this test.
+    mixer_srv = await asyncio.start_server(fake_mixer, "127.0.0.1", 0)
+    mixer_port = mixer_srv.sockets[0].getsockname()[1]
 
     cfg = Config(
         mixer={
-            "ip": "127.0.0.1", "port": MIXER_PORT,
-            "listen_host": "127.0.0.1", "listen_port": PROXY_PORT,
+            "ip": "127.0.0.1", "port": mixer_port,
+            "listen_host": "127.0.0.1", "listen_port": 0,
             "mode": "proxy", "max_channels": 8,
         }
     )
     store = StateStore()
     proxy = ProxyServer(cfg, store)
     proxy.start()
-    await asyncio.sleep(0.2)  # let the proxy bind
+    while proxy._server is None or not proxy._server.sockets:  # let the proxy bind
+        await asyncio.sleep(0.01)
+    proxy_port = proxy._server.sockets[0].getsockname()[1]
 
     # Fake iPad connects to the proxy and sends a mute command.
-    ipad_reader, ipad_writer = await asyncio.open_connection("127.0.0.1", PROXY_PORT)
+    ipad_reader, ipad_writer = await asyncio.open_connection("127.0.0.1", proxy_port)
     await wait_for(lambda: proxy.connected)
     check("proxy reports session connected", proxy.connected)
 
@@ -110,7 +113,7 @@ async def main():
     # echo our injected commands). Two toggles must alternate mute -> unmute.
     from app.config import Config as _C
     from app.controller import Controller
-    cfg2 = _C(mixer={"ip": "127.0.0.1", "port": MIXER_PORT, "max_channels": 8})
+    cfg2 = _C(mixer={"ip": "127.0.0.1", "port": mixer_port, "max_channels": 8})
     from app.groups import GroupStore
     gs = GroupStore(Path(tempfile.mkdtemp()) / "groups.json", set(range(1, 9)), {})
     ctrl = Controller(cfg2, store, proxy, gs)
