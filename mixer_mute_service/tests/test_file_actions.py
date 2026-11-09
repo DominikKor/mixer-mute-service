@@ -19,6 +19,7 @@ os.environ["FILE_TEST_TOKEN"] = "test-token"
 from fastapi.testclient import TestClient  # noqa: E402
 
 import app.file_actions as file_actions  # noqa: E402
+import app.display_agent as display_agent  # noqa: E402
 from app.main import app  # noqa: E402
 
 PASS = 0
@@ -45,7 +46,7 @@ class FakeAgent:
 
 def main():
     agent = FakeAgent()
-    file_actions._agent_post = agent
+    display_agent._post = agent
     row = {"time": "10:00", "title": "Einspieler", "group": ""}
     with TestClient(app) as client:
         print("== saving ==")
@@ -54,13 +55,15 @@ def main():
             ("bad PC address", "file:pc11|C:\\Musik\\a.mp3"),
             ("relative path", "file:127.0.0.1|Musik\\a.mp3"),
             ("path too long", "file:127.0.0.1|C:\\" + "a" * 500),
+            ("internet address", "file:8.8.8.8|C:\\Musik\\a.mp3"),
+            ("program on a network share", "file:192.168.188.11|\\\\server\\share\\Start.exe"),
         ]:
             r = client.post("/program/items", json={**row, "playback": value})
             check(f"{name} refused", r.status_code == 400 and r.json()["reason"].startswith("playback:"))
         long_path = "I:\\GoogleDrive\\Musikbeiträge\\" + "Sehr langer Ordnername\\" * 4 + "Hintergrundmusik.mp3"
         r = client.post("/program/items", json={
             **row, "playback": "file:127.0.0.1|" + long_path,
-            "translation": "file:192.168.188.11|\\\\server\\share\\Start.exe",
+            "translation": "file:192.168.188.11|C:\\Programme\\Uhr\\Start.exe",
             "lyrics": "file:192.168.188.11|C:\\Users\\Beamer\\Desktop\\Uhr.url",
         })
         check("row with three file actions saved (paths longer than key IDs)",
@@ -74,7 +77,7 @@ def main():
         check("music plays on this PC via /audio",
               u1 == "http://127.0.0.1:8766/audio" and p1 == {"id": "program-file", "action": "play", "path": long_path})
         check(".exe starts on the target PC",
-              u2 == "http://192.168.188.11:8766/display" and p2["kind"] == "program" and p2["path"] == "\\\\server\\share\\Start.exe")
+              u2 == "http://192.168.188.11:8766/display" and p2["kind"] == "program" and p2["path"] == "C:\\Programme\\Uhr\\Start.exe")
         check("other files open with the default app",
               u3 == "http://192.168.188.11:8766/display" and p3["kind"] == "file" and p3["title"] == "Uhr.url"
               and set(p3) == {"id", "title", "kind", "path", "args", "fullscreen", "monitor", "position"})

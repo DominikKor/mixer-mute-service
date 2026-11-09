@@ -31,9 +31,11 @@ from pathlib import Path
 from typing import List, Optional
 
 from fastapi import APIRouter, Body, Request
-from fastapi.responses import JSONResponse
 
+
+from .actions import program_reference_error
 from .jsonstore import read_json, write_json_atomic
+from .responses import fail
 from .program_items import ProgramItemError, ProgramItemStore
 
 router = APIRouter()
@@ -251,15 +253,11 @@ def match_lines(lines: List[str], songs: dict) -> List[dict]:
 
 # ---- HTTP ------------------------------------------------------------------------
 
-def _fail(reason: str, status: int = 400, **extra):
-    return JSONResponse({"ok": False, "reason": reason, **extra}, status)
-
-
 @router.post("/songs/match")
 async def songs_match(request: Request, body: dict = Body(...)):
     lines = body.get("lines")
     if not isinstance(lines, list) or len(lines) > MAX_SONGS or not all(isinstance(l, str) and len(l) <= 200 for l in lines):
-        return _fail(f"lines must be a list of at most {MAX_SONGS} texts")
+        return fail(f"lines must be a list of at most {MAX_SONGS} texts")
     songs = request.app.state.songs.songs
     return {"ok": True, "library_loaded": bool(songs), "matches": match_lines(lines, songs)}
 
@@ -273,18 +271,18 @@ async def list_templates(request: Request):
 async def save_template(request: Request, body: dict = Body(...)):
     slots = body.get("slots", [])
     if not isinstance(slots, list) or not all(isinstance(s, str) for s in slots):
-        return _fail("slots must be a list of program row ids")
+        return fail("slots must be a list of program row ids")
     items = await request.app.state.program_items.list()
     unknown = set(slots) - {item["id"] for item in items}
     if unknown:
-        return _fail("unknown program item", 404)
+        return fail("unknown program item", 404)
     try:
         template = await request.app.state.program_templates.save(
             body.get("name"), items, set(slots), replace=body.get("replace") is True)
     except KeyError:
-        return _fail("a template with this name already exists", 409)
+        return fail("a template with this name already exists", 409)
     except (TemplateError, ProgramItemError) as exc:
-        return _fail(str(exc))
+        return fail(str(exc))
     log.info("Program template saved: %s (%s rows, %s song slots)",
              template["name"], len(template["rows"]), template["slot_count"])
     return {"ok": True, "template": template}
@@ -293,47 +291,45 @@ async def save_template(request: Request, body: dict = Body(...)):
 @router.delete("/program/templates/{template_id}")
 async def delete_template(template_id: str, request: Request):
     if not await request.app.state.program_templates.delete(template_id):
-        return _fail("unknown template", 404)
+        return fail("unknown template", 404)
     return {"ok": True}
 
 
 @router.post("/program/templates/{template_id}/apply")
 async def apply_template(template_id: str, request: Request, body: dict = Body(...)):
-    from .routes import _program_reference_error  # routes imports most of the app
-
     template = await request.app.state.program_templates.get(template_id)
     if template is None:
-        return _fail("unknown template", 404)
+        return fail("unknown template", 404)
     songs = body.get("songs", [])
     if not isinstance(songs, list) or len(songs) > MAX_SONGS:
-        return _fail(f"songs must be a list of at most {MAX_SONGS} entries")
+        return fail(f"songs must be a list of at most {MAX_SONGS} entries")
     library = request.app.state.songs.songs
     cleaned = []
     for song in songs:
         if not isinstance(song, dict):
-            return _fail("each song must be {song_id, text}")
+            return fail("each song must be {song_id, text}")
         song_id, text = song.get("song_id"), song.get("text") or ""
         if not isinstance(text, str) or len(text) > 200:
-            return _fail("song text must be at most 200 characters")
+            return fail("song text must be at most 200 characters")
         if song_id is not None and (not isinstance(song_id, str) or song_id not in library):
-            return _fail("unknown song", 404, song_id=song_id)
+            return fail("unknown song", 404, song_id=song_id)
         if song_id or text.strip():
             cleaned.append({"song_id": song_id, "text": clean_line(text),
                             "title": library[song_id]["title"] if song_id else clean_line(text)})
     rows = fill_template(template["rows"], cleaned)
     if len(rows) > MAX_ROWS:
-        return _fail(f"at most {MAX_ROWS} rows")
+        return fail(f"at most {MAX_ROWS} rows")
     if body.get("dry_run") is True:  # preview: the rows, nothing changed
         return {"ok": True, "rows": sorted(rows, key=lambda row: row["time"])}
     try:
         items = await request.app.state.program_items.replace_all(rows)
     except ProgramItemError as exc:
-        return _fail(str(exc))
+        return fail(str(exc))
     # Keys or groups deleted since the template was saved: the program is
     # applied anyway (those rows refuse to start until fixed), but say so.
     warnings = []
     for item in items:
-        reason = await _program_reference_error(item, request)
+        reason = await program_reference_error(request, item)
         if reason:
             warnings.append({"id": item["id"], "title": item["title"], "reason": reason})
     log.info("Program template applied: %s (%s rows, %s songs)", template["name"], len(items), len(cleaned))

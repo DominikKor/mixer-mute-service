@@ -24,14 +24,9 @@ POST /songs/create                a new song: written as .foil into the library
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
-import os
 import re
 import time
-import urllib.error
-import urllib.request
-from ipaddress import IPv4Address
 from pathlib import Path
 from typing import Literal, Optional, Tuple
 
@@ -39,13 +34,15 @@ from fastapi import APIRouter, Body, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
+from . import display_agent
+from .display_agent import AgentError
 from .foil import FoilError, build_foil, parse_foil, song_file_name
 from .jsonstore import read_json, write_json_atomic
+from .responses import reply
 
 router = APIRouter()
 log = logging.getLogger("mixer.songs")
 
-AGENT_PORT = 8766
 TITLE_SLIDE_KEY = "Titel"
 _COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 # C:\... or \\server\share\...
@@ -83,7 +80,8 @@ class SongSettings(BaseModel):
     @field_validator("target_ip")
     @classmethod
     def _target_ip(cls, value: str) -> str:
-        IPv4Address(value)
+        if not display_agent.allowed_target(value):
+            raise ValueError("target_ip must be a LAN address of the display PC")
         return value
 
     @field_validator("font")
@@ -127,7 +125,10 @@ class SongService:
         write_json_atomic(self._settings_path, settings.model_dump(), ensure_ascii=False, indent=2)
         self.settings = settings
 
-    def replace_library(self, files: list) -> dict:
+    @staticmethod
+    def parse_library(files: list) -> Tuple[dict, list]:
+        """(songs, errors) of the agent's file list. Slow for a big library:
+        runs in a worker thread, not in the event loop (the mixer link)."""
         songs, errors = {}, []
         for entry in files:
             name = entry.get("name") if isinstance(entry, dict) else None
@@ -138,6 +139,9 @@ class SongService:
                 songs[name] = parse_foil(xml.encode("utf-8"))
             except FoilError as exc:
                 errors.append({"file": name, "reason": str(exc)})
+        return songs, errors
+
+    def set_library(self, songs: dict, errors: list) -> dict:
         self.songs, self.errors, self.loaded_at = songs, errors, time.time()
         write_json_atomic(self._library_path, {
             "loaded_at": self.loaded_at, "songs": songs, "errors": errors,
@@ -207,50 +211,29 @@ def legacy_song_payload(payload: dict) -> dict:
     return legacy
 
 
-def _agent_post(url: str, token: str, payload: dict, timeout: float) -> dict:
-    req = urllib.request.Request(
-        url,
-        data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json", "X-Display-Token": token},
-        method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=timeout) as response:
-        return json.loads(response.read().decode("utf-8"))
-
-
 async def _call_agent(request: Request, path: str, payload: dict, timeout: float = 3) -> Tuple[dict, int]:
     """(result, status) of a call to the display agent named in the song settings."""
     cfg = request.app.state.cfg.desktop_display
-    token = os.environ.get(cfg.token_env, "")
-    if not cfg.enabled or not token:
-        return {"ok": False, "reason": "desktop display is not configured"}, 503
-    service: SongService = request.app.state.songs
-    url = f"http://{service.settings.target_ip}:{AGENT_PORT}{path}"
+    target = request.app.state.songs.settings.target_ip
     try:
         try:
-            return await asyncio.to_thread(_agent_post, url, token, payload, timeout), 200
-        except urllib.error.HTTPError as exc:
+            return await display_agent.call(cfg, target, path, payload, timeout), 200
+        except AgentError as exc:
             legacy = legacy_song_payload(payload) if path == "/song" else payload
-            if exc.code != 400 or legacy == payload:
+            if exc.agent_status != 400 or legacy == payload:
                 raise
             # An older display agent: show the slide without preview/alignment
             # rather than not at all, until the display service is updated.
             log.warning("Display agent refused the song preview/alignment (old version?); sending the plain slide")
-            return await asyncio.to_thread(_agent_post, url, token, legacy, timeout), 200
-    except urllib.error.HTTPError as exc:
-        log.warning("Display agent rejected %s: HTTP %s", path, exc.code)
-        if exc.code == 409 and path == "/songs/save":
+            return await display_agent.call(cfg, target, path, legacy, timeout), 200
+    except AgentError as exc:
+        if exc.agent_status == 409 and path == "/songs/save":
             return {"ok": False, "reason": "a song file with this name already exists in the library"}, 409
-        if exc.code == 404 and path in ("/songs/library", "/songs/save"):
+        if exc.agent_status == 404 and path in ("/songs/library", "/songs/save"):
             return {"ok": False, "reason": "song library folder not found on the display PC"}, 502
-        return {"ok": False, "reason": "display agent rejected the request (update the display service?)"}, 502
-    except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
-        log.warning("Display agent unavailable for %s: %s", path, exc)
-        return {"ok": False, "reason": "display agent unavailable"}, 502
-
-
-def _respond(result: dict, status: int):
-    return result if status == 200 and result.get("ok") is not False else JSONResponse(result, status if status != 200 else 502)
+        if exc.agent_status is not None:
+            return {"ok": False, "reason": "display agent rejected the request (update the display service?)"}, 502
+        return exc.answer(), exc.status
 
 
 def _live_view(service: SongService) -> dict:
@@ -266,30 +249,42 @@ async def show_slide(request: Request, song_id: str, slide: int):
     """Show one slide of a song (also used by program rows). Unblanks."""
     service: SongService = request.app.state.songs
     async with service.lock:
-        song = service.songs.get(song_id)
-        if song is None:
-            reason = "song library not loaded" if not service.songs else "unknown song"
-            return JSONResponse({"ok": False, "reason": reason, "song_id": song_id}, 409 if not service.songs else 404)
-        count = len(service.slides(song_id))
-        if not 0 <= slide < count:
-            return JSONResponse({"ok": False, "reason": "no such slide", "song_id": song_id}, 400)
-        result, status = await _call_agent(request, "/song", service.slide_payload(song_id, slide))
-        if status == 200 and result.get("ok") is not False:
-            service.live = {"song_id": song_id, "slide": slide, "blank": False}
-            log.info("SONG show %r slide %s/%s", song_id, slide + 1, count)
-            return {"ok": True, **_live_view(service)}
-        return _respond(result, status)
+        return await _show_locked(request, song_id, slide)
+
+
+async def _show_locked(request: Request, song_id: str, slide: int):
+    """The caller holds ``service.lock``."""
+    service: SongService = request.app.state.songs
+    song = service.songs.get(song_id)
+    if song is None:
+        reason = "song library not loaded" if not service.songs else "unknown song"
+        return JSONResponse({"ok": False, "reason": reason, "song_id": song_id}, 409 if not service.songs else 404)
+    count = len(service.slides(song_id))
+    if not 0 <= slide < count:
+        return JSONResponse({"ok": False, "reason": "no such slide", "song_id": song_id}, 400)
+    result, status = await _call_agent(request, "/song", service.slide_payload(song_id, slide))
+    if status == 200 and result.get("ok") is not False:
+        service.live = {"song_id": song_id, "slide": slide, "blank": False}
+        log.info("SONG show %r slide %s/%s", song_id, slide + 1, count)
+        return {"ok": True, **_live_view(service)}
+    return reply(result, status)
 
 
 async def _blank(request: Request):
     service: SongService = request.app.state.songs
     async with service.lock:
-        result, status = await _call_agent(request, "/song", service.blank_payload())
-        if status == 200 and result.get("ok") is not False:
-            service.live = {**service.live, "blank": True}
-            log.info("SONG blank")
-            return {"ok": True, **_live_view(service)}
-        return _respond(result, status)
+        return await _blank_locked(request)
+
+
+async def _blank_locked(request: Request):
+    """The caller holds ``service.lock``."""
+    service: SongService = request.app.state.songs
+    result, status = await _call_agent(request, "/song", service.blank_payload())
+    if status == 200 and result.get("ok") is not False:
+        service.live = {**service.live, "blank": True}
+        log.info("SONG blank")
+        return {"ok": True, **_live_view(service)}
+    return reply(result, status)
 
 
 @router.get("/songs/settings")
@@ -320,9 +315,10 @@ async def reload_song_library(request: Request):
     result, status = await _call_agent(
         request, "/songs/library", {"path": service.settings.library_path}, timeout=30)
     if status != 200 or result.get("ok") is False or not isinstance(result.get("files"), list):
-        return _respond(result if result.get("ok") is False else {"ok": False, "reason": "invalid library answer"}, status)
+        return reply(result if result.get("ok") is False else {"ok": False, "reason": "invalid library answer"}, status)
+    songs, errors = await asyncio.to_thread(SongService.parse_library, result["files"])
     async with service.lock:
-        summary = service.replace_library(result["files"])
+        summary = service.set_library(songs, errors)
     log.info("Song library loaded: %s songs, %s unreadable", summary["count"], len(summary["errors"]))
     return {**summary, "truncated": bool(result.get("truncated"))}
 
@@ -351,29 +347,34 @@ async def song_show(request: Request, body: dict = Body(...)):
     return await show_slide(request, song_id, slide)
 
 
+# Next/back read the current slide under the lock: two quick presses step
+# two slides instead of both showing the same one.
+
 @router.post("/songs/next")
 async def song_next(request: Request):
     service: SongService = request.app.state.songs
-    live = service.live
-    if live["song_id"] not in service.songs:
-        return JSONResponse({"ok": False, "reason": "no song selected"}, 409)
-    last = len(service.slides(live["song_id"])) - 1
-    if live["blank"] and live["slide"] >= last:
-        return {"ok": True, **_live_view(service)}  # already dark after the end
-    if live["slide"] >= last:
-        return await _blank(request)
-    return await show_slide(request, live["song_id"], live["slide"] + (0 if live["blank"] else 1))
+    async with service.lock:
+        live = service.live
+        if live["song_id"] not in service.songs:
+            return JSONResponse({"ok": False, "reason": "no song selected"}, 409)
+        last = len(service.slides(live["song_id"])) - 1
+        if live["blank"] and live["slide"] >= last:
+            return {"ok": True, **_live_view(service)}  # already dark after the end
+        if live["slide"] >= last:
+            return await _blank_locked(request)
+        return await _show_locked(request, live["song_id"], live["slide"] + (0 if live["blank"] else 1))
 
 
 @router.post("/songs/prev")
 async def song_prev(request: Request):
     service: SongService = request.app.state.songs
-    live = service.live
-    if live["song_id"] not in service.songs:
-        return JSONResponse({"ok": False, "reason": "no song selected"}, 409)
-    # Dark after the last slide: "back" shows the last slide again.
-    target = live["slide"] if live["blank"] else max(0, live["slide"] - 1)
-    return await show_slide(request, live["song_id"], target)
+    async with service.lock:
+        live = service.live
+        if live["song_id"] not in service.songs:
+            return JSONResponse({"ok": False, "reason": "no song selected"}, 409)
+        # Dark after the last slide: "back" shows the last slide again.
+        target = live["slide"] if live["blank"] else max(0, live["slide"] - 1)
+        return await _show_locked(request, live["song_id"], target)
 
 
 @router.post("/songs/blank")
@@ -390,7 +391,7 @@ async def song_hide(request: Request):
             service.live = {"song_id": None, "slide": 0, "blank": False}
             log.info("SONG hide")
             return {"ok": True, **_live_view(service)}
-        return _respond(result, status)
+        return reply(result, status)
 
 
 def _new_song_fields(body: dict) -> Tuple[str, str, list, list]:

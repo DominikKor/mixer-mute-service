@@ -21,6 +21,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 import app.songs as songs  # noqa: E402
 from app.foil import FoilError, build_foil, parse_foil, song_file_name  # noqa: E402
+import app.display_agent as display_agent  # noqa: E402
 from app.main import app  # noqa: E402
 
 PASS = 0
@@ -75,7 +76,7 @@ def main():
           and song_file_name("Wer/was? <neu>") == "Wer_was_ _neu_.foil")
 
     agent = FakeAgent()
-    songs._agent_post = agent
+    display_agent._post = agent
     with TestClient(app) as client:
         print("== create ==")
         r = client.post("/songs/create", json=SONG)

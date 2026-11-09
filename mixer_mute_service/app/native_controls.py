@@ -10,6 +10,7 @@ import logging
 import os
 import socket
 import struct
+import time
 import uuid
 from pathlib import Path
 from typing import Callable, Optional
@@ -56,7 +57,16 @@ _LEVEL_BOUNDS = {
 
 
 class NativeControlError(RuntimeError):
-    pass
+    """A device command that failed. ``maybe_sent``: it may still have
+    reached the device (no answer in time), so its state is unknown."""
+
+    def __init__(self, message: str, maybe_sent: bool = False) -> None:
+        super().__init__(message)
+        self.maybe_sent = maybe_sent
+
+
+# OBS answers in milliseconds; a request that takes longer is stuck.
+OBS_TIMEOUT_SECONDS = 3.0
 
 
 def _post_beamer_form(field: str, value: str) -> None:
@@ -73,6 +83,10 @@ def _post_beamer_form(field: str, value: str) -> None:
     except NativeControlError:
         raise
     except (URLError, TimeoutError, OSError, ValueError) as exc:
+        reason = getattr(exc, "reason", exc)
+        timed_out = isinstance(exc, TimeoutError) or isinstance(reason, TimeoutError)
+        if timed_out:
+            raise NativeControlError("Beamer did not answer in time", maybe_sent=True) from exc
         raise NativeControlError("Beamer HTTP control unavailable") from exc
 
 
@@ -123,12 +137,22 @@ def _visca_tcp(host: str, port: int, payload: bytes) -> None:
 
 
 def _obs_request(host: str, port: int, request_type: str, request_data: Optional[dict] = None) -> dict:
+    """One request on a fresh OBS WebSocket connection. Every wait is bounded:
+    a stuck OBS must not block a worker thread for good."""
     try:
         from websockets.sync.client import connect
 
         password = os.environ.get("OBS_WEBSOCKET_PASSWORD", "")
-        with connect(f"ws://{host}:{port}", open_timeout=3, close_timeout=1) as ws:
-            hello = json.loads(ws.recv())
+        deadline = time.monotonic() + OBS_TIMEOUT_SECONDS
+
+        def recv():
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("OBS did not answer in time")
+            return json.loads(ws.recv(timeout=remaining))
+
+        with connect(f"ws://{host}:{port}", open_timeout=OBS_TIMEOUT_SECONDS, close_timeout=1) as ws:
+            hello = recv()
             authentication = hello.get("d", {}).get("authentication")
             identify = {"op": 1, "d": {"rpcVersion": 1}}
             if authentication:
@@ -139,7 +163,7 @@ def _obs_request(host: str, port: int, request_type: str, request_data: Optional
                     hashlib.sha256((secret + authentication["challenge"]).encode()).digest()
                 ).decode()
             ws.send(json.dumps(identify))
-            if json.loads(ws.recv()).get("op") != 2:
+            if recv().get("op") != 2:
                 raise NativeControlError("OBS WebSocket identification failed")
             request_id = uuid.uuid4().hex
             ws.send(json.dumps({
@@ -147,7 +171,7 @@ def _obs_request(host: str, port: int, request_type: str, request_data: Optional
                 "d": {"requestType": request_type, "requestId": request_id, "requestData": request_data or {}},
             }))
             while True:
-                response = json.loads(ws.recv())
+                response = recv()
                 if response.get("op") != 7 or response.get("d", {}).get("requestId") != request_id:
                     continue
                 status = response["d"].get("requestStatus", {})
@@ -163,7 +187,10 @@ def _obs_request(host: str, port: int, request_type: str, request_data: Optional
 class NativeControlService:
     def __init__(self, state_path: Path) -> None:
         self._state_path = state_path
+        # Lights and beamer have their own locks: a long light fade must not
+        # hold up a beamer hide (and the other way round).
         self._lock = asyncio.Lock()
+        self._beamer_lock = asyncio.Lock()
         self._dmx = [0] * 512
         self._levels = {"warm": 255, "cold": 50, "start": 255, "steps": 50, "fade_ms": 1000}
         self._beamer_hidden: Optional[bool] = None
@@ -198,13 +225,13 @@ class NativeControlService:
             log.warning("Could not save light state to %s: %s", self._state_path, exc)
 
     async def get_beamer_state(self) -> Optional[bool]:
-        async with self._lock:
+        async with self._beamer_lock:
             return self._beamer_hidden
 
     async def set_beamer_state(self, hidden: bool) -> dict:
         if not isinstance(hidden, bool):
             raise NativeControlError("invalid Beamer state")
-        async with self._lock:
+        async with self._beamer_lock:
             self._beamer_hidden = hidden
             self._persist_state()
             return {"ok": True, "hidden": hidden}
@@ -216,19 +243,40 @@ class NativeControlService:
         form = BEAMER_COMMAND_FORMS.get(command)
         if form is None:
             raise NativeControlError("unknown Beamer command")
+        if command == "avmute":
+            # A raw toggle: keep the known hide state in step with it.
+            async with self._beamer_lock:
+                if self._beamer_hidden is None:
+                    await asyncio.to_thread(_post_beamer_form, *form)
+                else:
+                    await self._set_beamer_mode_locked(not self._beamer_hidden)
+            return {"ok": True, "command": command}
         await asyncio.to_thread(_post_beamer_form, *form)
         return {"ok": True, "command": command}
 
     async def _set_beamer_mode(self, hidden: bool) -> dict:
-        async with self._lock:
-            if self._beamer_hidden is None:
-                raise NativeControlError("Beamer state is unknown; set its current state first")
-            if self._beamer_hidden == hidden:
-                return {"ok": True, "hidden": hidden, "changed": False}
+        async with self._beamer_lock:
+            return await self._set_beamer_mode_locked(hidden)
+
+    async def _set_beamer_mode_locked(self, hidden: bool) -> dict:
+        """The caller holds ``self._beamer_lock``."""
+        if self._beamer_hidden is None:
+            raise NativeControlError("Beamer state is unknown; set its current state first")
+        if self._beamer_hidden == hidden:
+            return {"ok": True, "hidden": hidden, "changed": False}
+        try:
+            # AV mute is a toggle: the state is only known while every
+            # toggle is known to have arrived (or known not to have).
             await self._toggle_beamer()
-            self._beamer_hidden = hidden
-            self._persist_state()
-            return {"ok": True, "hidden": hidden, "changed": True}
+        except NativeControlError as exc:
+            if exc.maybe_sent:
+                self._beamer_hidden = None
+                self._persist_state()
+                log.warning("Beamer AV mute may or may not have switched; state is now unknown")
+            raise
+        self._beamer_hidden = hidden
+        self._persist_state()
+        return {"ok": True, "hidden": hidden, "changed": True}
 
     async def _update_dmx(self, compute: Callable[[list[int]], list[int]]) -> list[int]:
         """Fade from the current DMX frame to ``compute(current)``.

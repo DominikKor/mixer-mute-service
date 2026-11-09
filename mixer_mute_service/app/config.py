@@ -129,6 +129,9 @@ class GroupConfig(BaseModel):
 class ServerConfig(BaseModel):
     host: str = "0.0.0.0"
     port: int = 8765
+    # Host names (with dots) the page may be opened under besides IP
+    # addresses and local names; see app/request_guard.py.
+    allowed_hosts: List[str] = Field(default_factory=list)
 
 
 class DesktopProfileConfig(BaseModel):

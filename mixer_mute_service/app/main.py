@@ -16,16 +16,15 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from .agent_download import router as agent_download_router
 from .buses import BusRegistry
 from .channel_settings import ChannelSettingsCache, ChannelSettingsStore
-from .camera_hls import router as camera_hls_router
 from .camera_ptz import PanTiltControl
-from .camera_webrtc import router as camera_webrtc_router
 from .camera_streams import CameraStreamStore, MediaMTXRelay
-from .channel_colors import router as channel_colors_router
 from .channel_preferences import ChannelPreferences
 from .companion_buttons import COMPANION_BUTTONS, CompanionButtonStore
 from .config import default_config_path, load_config
@@ -35,12 +34,11 @@ from .mixer_client import MixerClient
 from .native_controls import NativeControlService
 from .power_control import PowerControlStore
 from .proxy import ProxyServer
+from .request_guard import refusal
 from .program_items import ProgramItemStore
-from .program_templates import ProgramTemplateStore, router as program_templates_router
-from .file_actions import router as file_actions_router
-from .routes import router
-from .songs import SongService, router as songs_router
-from .updater import router as updater_router
+from .program_templates import ProgramTemplateStore
+from .api import router
+from .songs import SongService
 from .state import StateStore
 
 if getattr(sys, "frozen", False):
@@ -162,6 +160,8 @@ async def lifespan(app: FastAPI):
         except Exception as exc:  # noqa: BLE001 - cameras must never stop the mixer
             log.exception("camera relay could not start; the service runs without it")
             app.state.feature_errors["camera relay"] = f"{type(exc).__name__}: {exc}"
+        else:
+            camera_relay.start_supervision()
     app.state.camera_streams = camera_streams
     app.state.camera_relay = camera_relay
 
@@ -194,15 +194,30 @@ async def lifespan(app: FastAPI):
 _configure_logging()
 app = FastAPI(title="Mixer Mute Service", version="0.1.0", lifespan=lifespan)
 app.include_router(router)
-app.include_router(updater_router)
-app.include_router(agent_download_router)
-app.include_router(channel_colors_router)
-app.include_router(songs_router)
-app.include_router(program_templates_router)
-app.include_router(file_actions_router)
-app.include_router(camera_hls_router)
-app.include_router(camera_webrtc_router)
 app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="ui")
+
+
+@app.exception_handler(RequestValidationError)
+async def _invalid_request(request, exc: RequestValidationError):
+    """Invalid bodies get the same answer shape as every other refusal (the
+    page shows "reason"); FastAPI's "detail" list stays for API clients."""
+    errors = exc.errors()
+    first = errors[0] if errors else {}
+    where = ".".join(str(part) for part in first.get("loc", ()) if part != "body")
+    reason = f"{where}: {first.get('msg', 'invalid request')}" if where else first.get("msg", "invalid request")
+    return JSONResponse({"ok": False, "reason": reason, "detail": jsonable_encoder(errors)}, status_code=422)
+
+
+@app.middleware("http")
+async def _guard(request, call_next):
+    """No requests from other web sites (app/request_guard.py)."""
+    cfg = getattr(request.app.state, "cfg", None)
+    extra = cfg.server.allowed_hosts if cfg is not None else ()
+    reason = refusal(request.method, request.headers, extra)
+    if reason is not None:
+        log.warning("Refused %s %s: %s", request.method, request.url.path, reason)
+        return JSONResponse({"ok": False, "reason": reason}, status_code=403)
+    return await call_next(request)
 
 
 @app.middleware("http")

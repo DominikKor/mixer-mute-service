@@ -73,7 +73,7 @@ class PowerControlStoreTests(unittest.TestCase):
                     })
                     self.assertEqual(configured.status_code, 200)
                     native_controls = client.app.state.native_controls
-                    with patch("app.routes._forward_display_request", return_value={
+                    with patch("app.display_agent._post", return_value={
                         "ok": True, "shutdown_scheduled": True,
                     }) as forward, patch.object(native_controls, "press", new_callable=AsyncMock,
                                                 return_value={"ok": True, "command": "power-off"}) as press:
@@ -87,7 +87,7 @@ class PowerControlStoreTests(unittest.TestCase):
                         ])
                         press.assert_awaited_once_with({"type": "beamer-command", "command": "power-off"})
                         forward.assert_called_with(
-                            "http://192.168.188.11:8766/power", "test-agent-token", {"action": "shutdown"}
+                            "http://192.168.188.11:8766/power", "test-agent-token", {"action": "shutdown"}, 3.0
                         )
                         single = client.post("/power/agents/192.168.188.11/shutdown")
                         self.assertEqual(single.status_code, 202)

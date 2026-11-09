@@ -16,7 +16,7 @@ from urllib.parse import quote, urlsplit, urlunsplit
 
 import yaml
 
-from .jsonstore import read_json, write_json_atomic
+from .jsonstore import backup_corrupt, read_json, write_json_atomic
 
 log = logging.getLogger("mixer.camera_streams")
 HLS_PORT = 8888  # MediaMTX HLS, bound to 127.0.0.1 only
@@ -77,7 +77,15 @@ def _relay_config(cameras: list[dict], additional_host: str = "") -> dict:
         }
     config = {
         "logLevel": "warn",
+        # Only what the service passes on itself; MediaMTX would otherwise
+        # also offer every camera (and publishing) to the whole LAN via
+        # RTSP, RTMP and SRT.
         "rtsp": False,
+        "rtmp": False,
+        "srt": False,
+        "api": False,
+        "metrics": False,
+        "pprof": False,
         # WebRTC for every device (lowest delay). The signalling (WHEP) stays
         # on localhost; the service passes it on through its own port
         # (app/camera_webrtc.py). Only the media port must be reachable from
@@ -110,7 +118,32 @@ class CameraStreamStore:
         self._lock = asyncio.Lock()
         data = read_json(path, dict, default={})
         cameras = data.get("cameras", [])
-        self._cameras = cameras if isinstance(cameras, list) else []
+        self._cameras = self._valid_entries(cameras if isinstance(cameras, list) else [])
+
+    def _valid_entries(self, cameras: list) -> list[dict]:
+        """Drop entries the relay could not use (one broken entry would
+        otherwise keep every camera from starting). The file is kept as
+        <name>.corrupt before the next save overwrites it."""
+        valid = []
+        for camera in cameras:
+            try:
+                if not isinstance(camera, dict) or not isinstance(camera.get("id"), str) or not camera["id"]:
+                    raise CameraStreamError("missing id")
+                if any(not isinstance(camera.get(key, ""), str) for key in ("username", "password")):
+                    raise CameraStreamError("credentials must be text")
+                self._validate_name(camera.get("name"))
+                _validate_source(camera.get("rtsp_url"), camera.get("username", ""), camera.get("password", ""))
+            except CameraStreamError as exc:
+                log.error("Ignoring camera entry %r in %s: %s",
+                          camera.get("id") if isinstance(camera, dict) else camera, self._path, exc)
+                continue
+            valid.append(camera)
+        if len(valid) != len(cameras):
+            try:
+                backup_corrupt(self._path)
+            except OSError as exc:
+                log.error("Could not keep a copy of %s: %s", self._path, exc)
+        return valid
 
     async def public_snapshot(self) -> list[dict]:
         async with self._lock:
@@ -187,6 +220,8 @@ class MediaMTXRelay:
         self._lock = asyncio.Lock()
         self._error: Optional[str] = None
         self._has_cameras = False
+        self._cameras: list[dict] = []
+        self._supervisor: Optional[asyncio.Task] = None
 
     @staticmethod
     def _binary() -> Optional[str]:
@@ -215,6 +250,7 @@ class MediaMTXRelay:
 
     def _configure(self, cameras: list[dict]) -> dict:
         self._has_cameras = bool(cameras)
+        self._cameras = [dict(camera) for camera in cameras]
         if not cameras:
             self._stop_process()
             self._config_path.unlink(missing_ok=True)
@@ -254,7 +290,36 @@ class MediaMTXRelay:
         self._error = None
         return {"ready": True, "reason": None}
 
+    def start_supervision(self, interval: float = 10.0) -> None:
+        """Restart MediaMTX when it exits on its own (crash, killed)."""
+        if self._supervisor is None:
+            self._supervisor = asyncio.create_task(self._supervise(interval))
+
+    async def _supervise(self, interval: float) -> None:
+        while True:
+            await asyncio.sleep(interval)
+            try:
+                await self.restart_if_dead()
+            except Exception:  # noqa: BLE001 - keep supervising
+                log.exception("MediaMTX supervision failed")
+
+    async def restart_if_dead(self) -> bool:
+        async with self._lock:
+            process = self._process
+            if not self._has_cameras or (process is not None and process.poll() is None):
+                return False
+            if self._binary() is None:
+                return False  # not installed: nothing to restart
+            log.warning("MediaMTX is not running; starting it again")
+            status = await asyncio.to_thread(self._configure, self._cameras)
+            if not status["ready"]:
+                log.warning("MediaMTX restart failed: %s", status["reason"])
+            return True
+
     async def stop(self) -> None:
+        if self._supervisor is not None:
+            self._supervisor.cancel()
+            self._supervisor = None
         async with self._lock:
             await asyncio.to_thread(self._stop_process)
 

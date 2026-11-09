@@ -35,6 +35,8 @@ class StagePreferenceRouteTests(unittest.TestCase):
 
                     self.assertEqual(client.post("/ui/stage", json={"on": "maybe"}).status_code, 422)
                     self.assertEqual(client.post("/ui/stage", json={}).status_code, 422)
+                    invalid = client.post("/ui/stage", json={"on": "maybe"}).json()
+                    self.assertEqual((invalid["ok"], invalid["reason"].split(":")[0]), (False, "on"))
 
 
 if __name__ == "__main__":

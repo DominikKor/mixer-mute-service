@@ -288,7 +288,7 @@ with TestClient(app) as client:
     token_name = client.app.state.cfg.desktop_display.token_env
     previous_token = os.environ.get(token_name)
     os.environ[token_name] = "test-audio-token"
-    with patch("app.routes._forward_display_request", side_effect=lambda _url, _token, payload: {
+    with patch("app.display_agent._post", side_effect=lambda _url, _token, payload, _timeout: {
         "ok": True, "action": payload["action"]
     }) as forward:
         r = client.post("/desktop/audio/audio/play")
@@ -309,7 +309,7 @@ with TestClient(app) as client:
     check("fade settings are listed", (listed["faded"]["fade"], listed["faded"]["fade_db"],
                                        listed["faded"]["fade_seconds"]) == (True, -20.0, 4.0)
           and listed["audio"]["fade"] is False and listed["audio"]["fade_db"] == -30.0)
-    with patch("app.routes._forward_display_request", side_effect=lambda _url, _token, payload: {
+    with patch("app.display_agent._post", side_effect=lambda _url, _token, payload, _timeout: {
         "ok": True, "action": payload.get("action")
     }) as forward:
         client.post("/desktop/faded/audio/play")
@@ -324,7 +324,7 @@ with TestClient(app) as client:
             "id", "title", "kind", "path", "args", "fullscreen", "monitor", "position"})
     import urllib.error  # noqa: E402
     old_agent = urllib.error.HTTPError("http://x/audio", 400, "Bad Request", {}, None)
-    with patch("app.routes._forward_display_request", side_effect=old_agent):
+    with patch("app.display_agent._post", side_effect=old_agent):
         r = client.post("/desktop/faded/audio/play")
         check("old agent: reason says to update it", r.status_code == 400 and "update the desktop agent" in r.json()["reason"])
     if previous_token is None:

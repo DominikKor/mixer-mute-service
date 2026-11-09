@@ -102,6 +102,71 @@ class NativeControlTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(result["hidden"])
         self.assertFalse(NativeControlService(self.state_path)._beamer_hidden)
 
+    async def test_unanswered_beamer_toggle_makes_state_unknown(self):
+        await self.controls.set_beamer_state(True)
+        with patch.object(self.controls, "_toggle_beamer", new_callable=AsyncMock,
+                          side_effect=NativeControlError("no answer", maybe_sent=True)):
+            with self.assertRaises(NativeControlError):
+                await self.controls.press({"type": "beamer-set", "hidden": False})
+        self.assertIsNone(await self.controls.get_beamer_state())
+        self.assertIsNone(NativeControlService(self.state_path)._beamer_hidden)
+
+    async def test_beamer_timeout_counts_as_maybe_sent(self):
+        import urllib.error
+        from app.native_controls import _post_beamer_form
+        with patch("app.native_controls.urlopen", side_effect=urllib.error.URLError(TimeoutError("timed out"))):
+            with self.assertRaises(NativeControlError) as caught:
+                _post_beamer_form("avmute", "AV Mute")
+        self.assertTrue(caught.exception.maybe_sent)
+        with patch("app.native_controls.urlopen", side_effect=urllib.error.URLError(ConnectionRefusedError())):
+            with self.assertRaises(NativeControlError) as caught:
+                _post_beamer_form("avmute", "AV Mute")
+        self.assertFalse(caught.exception.maybe_sent)
+
+    async def test_raw_avmute_keeps_state_in_step(self):
+        await self.controls.set_beamer_state(False)
+        with patch("app.native_controls._post_beamer_form") as post:
+            await self.controls.press({"type": "beamer-command", "command": "avmute"})
+        post.assert_called_once()
+        self.assertTrue(await self.controls.get_beamer_state())
+
+    async def test_light_fade_does_not_hold_up_the_beamer(self):
+        await self.controls.set_beamer_state(True)
+        release = asyncio.Event()
+
+        async def slow_fade(target):
+            await release.wait()
+
+        with patch.object(self.controls, "_fade_to", side_effect=slow_fade), \
+                patch.object(self.controls, "_toggle_beamer", new_callable=AsyncMock):
+            fade = asyncio.create_task(self.controls.press({"type": "artnet-zone-toggle", "zone": "left"}))
+            await asyncio.sleep(0)
+            result = await asyncio.wait_for(self.controls.press({"type": "beamer-set", "hidden": False}), 1)
+            release.set()
+            await fade
+        self.assertTrue(result["changed"])
+
+    def test_obs_waits_are_bounded(self):
+        from app import native_controls
+
+        waits = []
+
+        class SilentObs:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def recv(self, timeout=None):
+                waits.append(timeout)
+                raise TimeoutError()
+
+        with patch("websockets.sync.client.connect", return_value=SilentObs()):
+            with self.assertRaisesRegex(NativeControlError, "OBS WebSocket unavailable"):
+                native_controls._obs_request("127.0.0.1", 4455, "GetVersion")
+        self.assertTrue(waits and all(w is not None and 0 < w <= native_controls.OBS_TIMEOUT_SECONDS for w in waits))
+
     async def test_failed_beamer_toggle_does_not_change_state(self):
         await self.controls.set_beamer_state(True)
         with patch.object(self.controls, "_toggle_beamer", new_callable=AsyncMock,

@@ -251,6 +251,8 @@ curl -X POST http://localhost:8765/groups/drums/toggle
 curl -X POST http://localhost:8765/channels/2/mute
 curl -X POST http://localhost:8765/channels/2/unmute
 curl -X POST http://localhost:8765/program/next     # Programm: "Weiter"
+curl -X POST http://localhost:8765/program/next -H 'Content-Type: application/json' \
+     -d '{"expected_next_id": "<id>"}'                # only if that row is still next
 ```
 
 PowerShell (Windows):
@@ -627,6 +629,13 @@ Programm und setzt den Ablauf zurück.
 - `safety.allow_partial_groups`: keep `false`
 - `safety.group_send_delay_ms`: delay between per-channel sends in a group
 - `groups`: named channel lists (only the seed for `groups.json`)
+- `server.allowed_hosts`: host names with a dot under which the page may be
+  opened (for example `mixer.gemeinde.de`). IP addresses, `localhost`, names
+  without a dot and `.local`/`.lan`/`.fritz.box`/... always work; any other
+  name gets 403, so a web page elsewhere cannot reach the service through
+  its own domain (DNS rebinding). Changing requests from a browser must also
+  come from this page itself (same Origin); curl, Stream Deck and Companion
+  send no Origin and are not affected.
 
 ## Connection modes
 
@@ -753,7 +762,17 @@ Stream Deck --HTTP--> Local Service --TCP command--> Mixer
   kept as `<name>.corrupt` instead of being overwritten.
 - `app/native_controls.py` / `app/companion_buttons.py` — Steuerung keys (lights,
   cameras, OBS, beamer) and their catalog.
-- `app/routes.py` / `app/main.py` — FastAPI endpoints, group CRUD, static UI, background link.
+- `app/api/` — the HTTP routes, one module per area (`mixer`, `groups`,
+  `program`, `controls`, `desktop`, `power`, `cameras`); handlers stay thin.
+- `app/actions.py` — runs a key, desktop profile or file by its ID; Steuerung,
+  the camera section and Programm rows all use it.
+- `app/display_agent.py` — the one client for the display agents (port 8766);
+  the agent token is only ever sent to LAN addresses.
+- `app/responses.py` — answer shapes: every refusal is `{"ok": false, "reason": ...}`
+  with 400/404/409/502/503.
+- `app/request_guard.py` — refuses requests from other web sites (Origin) and
+  foreign host names (DNS rebinding); extra names via `server.allowed_hosts`.
+- `app/main.py` — app setup, start order of the features, static UI.
 - `app/static/index.html` — self-contained web control panel (no build step).
 - `tools/probe.py`, `tools/analyze.py` — read-only capture/decode helpers used to
   reverse-engineer the protocol.

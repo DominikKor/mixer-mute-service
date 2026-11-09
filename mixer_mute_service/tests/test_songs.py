@@ -23,6 +23,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 import app.songs as songs  # noqa: E402
 from app.foil import FoilError, parse_foil  # noqa: E402
+import app.display_agent as display_agent  # noqa: E402
 from app.main import app  # noqa: E402
 
 PASS = 0
@@ -103,7 +104,7 @@ def main():
             check(name, True)
 
     agent = FakeAgent()
-    songs._agent_post = agent
+    display_agent._post = agent
     with TestClient(app) as client:
         print("== settings ==")
         s = client.get("/songs/settings").json()

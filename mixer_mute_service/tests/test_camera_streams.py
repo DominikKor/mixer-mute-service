@@ -114,6 +114,46 @@ class CameraStreamTests(unittest.TestCase):
 
         asyncio.run(run())
 
+    def test_relay_offers_nothing_else_to_the_lan(self):
+        config = _relay_config([{"id": "cam-1", "rtsp_url": "rtsp://192.168.5.21:554/live"}])
+        for protocol in ("rtsp", "rtmp", "srt", "api", "metrics", "pprof"):
+            self.assertIs(config[protocol], False, protocol)
+        self.assertTrue(config["webrtcAddress"].startswith("127.0.0.1:"))
+        self.assertTrue(config["hlsAddress"].startswith("127.0.0.1:"))
+
+    def test_broken_camera_entries_are_dropped_on_load(self):
+        import json
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "camera_streams.json"
+            good = {"id": "cam-1", "name": "Cam 1", "rtsp_url": "rtsp://192.168.5.21:554/live"}
+            path.write_text(json.dumps({"cameras": [
+                good, {"id": "cam-2", "name": "Bad", "rtsp_url": "rtsp://8.8.8.8/live"},
+                {"name": "no id", "rtsp_url": "rtsp://192.168.5.22/live"}, "junk",
+            ]}), encoding="utf-8")
+            store = CameraStreamStore(path)
+            self.assertEqual([c["id"] for c in asyncio.run(store.relay_snapshot())], ["cam-1"])
+            self.assertTrue(path.with_name(path.name + ".corrupt").exists())
+
+    def test_relay_is_restarted_when_it_dies(self):
+        async def run():
+            with tempfile.TemporaryDirectory() as directory:
+                relay = MediaMTXRelay(Path(directory))
+                first, second = FakeProcess(), FakeProcess()
+                camera = {"id": "cam-1", "name": "Cam", "rtsp_url": "rtsp://192.168.5.21:554/live"}
+                with patch.object(MediaMTXRelay, "_binary", return_value="mediamtx"), \
+                        patch("app.camera_streams.subprocess.Popen", side_effect=[first, second]) as popen:
+                    await relay.configure([camera])
+                    self.assertFalse(await relay.restart_if_dead())
+                    first.returncode = 1  # crashed
+                    self.assertFalse(relay.ready)
+                    self.assertTrue(await relay.restart_if_dead())
+                    self.assertEqual(popen.call_count, 2)
+                    self.assertTrue(relay.ready)
+                    await relay.configure([])
+                    self.assertFalse(await relay.restart_if_dead())  # no cameras: nothing to run
+
+        asyncio.run(run())
+
     def test_camera_http_crud_keeps_credentials_private(self):
         with tempfile.TemporaryDirectory() as directory:
             config_path = Path(directory) / "config.yaml"

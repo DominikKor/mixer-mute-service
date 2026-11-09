@@ -261,7 +261,7 @@ with TestClient(app) as client:
     app.state.cfg.desktop_display.enabled = True
     app.state.cfg.desktop_display.profiles["sample"].position = "top-right"
     with patch.dict(os.environ, {"DESKTOP_AGENT_TOKEN": "selftest-token"}), \
-            patch("app.routes._forward_display_request", return_value={"ok": True}) as forward:
+            patch("app.display_agent._post", return_value={"ok": True}) as forward:
         check("desktop profile open", client.post("/desktop/sample/open").status_code == 200)
         check("desktop profile routed to configured IP",
               forward.call_args.args[0] == "http://192.168.188.42:8766/display")
@@ -405,21 +405,21 @@ with TestClient(app) as client:
           and updated_program.json()["item"]["person"] == "Anna M.")
     with patch.object(app.state.controller, "group_set", AsyncMock(
         return_value={"ok": True, "group": "drums"}
-    )) as activate_group, patch("app.routes.open_desktop_profile", new=AsyncMock(
-        return_value={"ok": True}
-    )) as play_desktop, patch("app.routes.companion_button_press", new=AsyncMock(
-        return_value={"ok": True}
+    )) as activate_group, patch("app.actions.run_profile", new=AsyncMock(
+        return_value=({"ok": True}, 200)
+    )) as play_desktop, patch("app.actions.press_button", new=AsyncMock(
+        return_value=({"ok": True}, 200)
     )) as play_linked:
         successful_program_play = client.post(f"/program/items/{program_id}/play")
         check("program play succeeds with safe group/action stubs",
               successful_program_play.status_code == 200 and successful_program_play.json()["ok"] is True)
         check("program play activates group before linked actions",
               activate_group.await_count == 1
-              and play_desktop.await_args.args[0] == "sample"
-              and [call.args[0] for call in play_linked.await_args_list]
+              and play_desktop.await_args.args[1] == "sample"
+              and [call.args[1] for call in play_linked.await_args_list]
               == ["cam1-live", "cam2-live-bottom"])
     with patch.object(app.state.native_controls, "press", AsyncMock(return_value={"ok": True})) as program_native, \
-            patch("app.routes.open_desktop_profile", new=AsyncMock(return_value={"ok": True})) as program_desktop:
+            patch("app.actions.run_profile", new=AsyncMock(return_value=({"ok": True}, 200))) as program_desktop:
         blocked_program_play = client.post(f"/program/items/{program_id}/play")
         check("program play blocked while mixer offline", blocked_program_play.status_code == 409)
         check("program play does not trigger linked buttons when group is blocked",
@@ -448,8 +448,8 @@ with TestClient(app) as client:
     check("status: started row is current, duplicate is next",
           status["current_id"] == program_id and status["next_id"] == dup_id)
     with patch.object(app.state.controller, "group_set", AsyncMock(return_value={"ok": True})), \
-            patch("app.routes.open_desktop_profile", new=AsyncMock(return_value={"ok": True})), \
-            patch("app.routes.companion_button_press", new=AsyncMock(return_value={"ok": True})):
+            patch("app.actions.run_profile", new=AsyncMock(return_value=({"ok": True}, 200))), \
+            patch("app.actions.press_button", new=AsyncMock(return_value=({"ok": True}, 200))):
         nxt = client.post("/program/next")
         check("Weiter starts the next row", nxt.status_code == 200 and nxt.json()["program_item_id"] == dup_id)
         finished = client.post("/program/next")
@@ -470,7 +470,7 @@ with TestClient(app) as client:
     })
     check("row without group can be saved", no_group.status_code == 200 and no_group.json()["item"]["group"] == "")
     with patch.object(app.state.controller, "group_set", AsyncMock(return_value={"ok": True})) as ng_group, \
-            patch("app.routes.companion_button_press", new=AsyncMock(return_value={"ok": True})) as ng_press:
+            patch("app.actions.press_button", new=AsyncMock(return_value=({"ok": True}, 200))) as ng_press:
         ng_play = client.post(f"/program/items/{no_group.json()['item']['id']}/play")
         check("row without group plays its actions without touching mutes",
               ng_play.status_code == 200 and ng_group.await_count == 0 and ng_press.await_count == 1)

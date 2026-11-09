@@ -19,15 +19,14 @@ import logging
 import os
 import re
 import string
-import urllib.error
-from ipaddress import IPv4Address
 from pathlib import Path, PureWindowsPath
 from typing import Optional, Tuple
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
-from .songs import AGENT_PORT, _agent_post
+from . import display_agent
+from .display_agent import AgentError
 
 router = APIRouter()
 log = logging.getLogger("mixer.file_actions")
@@ -52,9 +51,14 @@ def parse_file_action(value: str) -> Tuple[str, str]:
     target, sep, path = value[len(FILE_PREFIX):].partition("|")
     if not sep:
         raise ValueError("file action needs a target and a path")
-    IPv4Address(target)
+    if not display_agent.allowed_target(target):
+        raise ValueError("target must be a LAN address")
     if not path or len(path) > MAX_PATH or not _ABSOLUTE_RE.match(path) or any(ord(c) < 32 for c in path):
         raise ValueError("file path must be a full path on the target PC")
+    if path.startswith("\\\\") and PureWindowsPath(path).suffix.lower() == ".exe":
+        # Never start a program from a network share (anyone who can write
+        # there could swap it).
+        raise ValueError("programs must be on the target PC, not on a network share")
     return target, path
 
 
@@ -77,27 +81,21 @@ async def run_file_action(request: Request, value: str) -> Tuple[dict, int]:
     """Have the target PC's display agent play, start or open the file."""
     target, path = parse_file_action(value)
     cfg = request.app.state.cfg.desktop_display
-    token = os.environ.get(cfg.token_env, "")
-    if not cfg.enabled or not token:
-        return {"ok": False, "reason": "desktop display is not configured"}, 503
     kind = file_kind(path)
     name = PureWindowsPath(path).name
     if kind == "audio":
-        url, payload = f"http://{target}:{AGENT_PORT}/audio", {"id": "program-file", "action": "play", "path": path}
+        route, payload = "/audio", {"id": "program-file", "action": "play", "path": path}
     else:
-        url, payload = f"http://{target}:{AGENT_PORT}/display", {
+        route, payload = "/display", {
             "id": "program-file", "title": name, "kind": kind, "path": path,
             "args": [], "fullscreen": False, "monitor": 1, "position": "top-left",
         }
     try:
-        result = await asyncio.to_thread(_agent_post, url, token, payload, 5)
-    except urllib.error.HTTPError as exc:
-        log.warning("Display agent on %s refused %s (%s): HTTP %s", target, name, kind, exc.code)
-        reason = "file not found on the target PC" if exc.code == 503 else "display agent rejected the request"
-        return {"ok": False, "reason": reason, "file": name}, 502
-    except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
-        log.warning("Display agent on %s unavailable for %s: %s", target, name, exc)
-        return {"ok": False, "reason": "display agent unavailable", "file": name}, 502
+        result = await display_agent.call(cfg, target, route, payload, timeout=5)
+    except AgentError as exc:
+        if exc.agent_status == 503:
+            return {"ok": False, "reason": "file not found on the target PC", "file": name}, 502
+        return {**exc.answer(), "file": name}, exc.status
     log.info("FILE %s %s on %s", "play" if kind == "audio" else "open", path, target)
     return {"ok": result.get("ok", True) is not False, "file": name, "kind": kind, "target": target}, 200
 
