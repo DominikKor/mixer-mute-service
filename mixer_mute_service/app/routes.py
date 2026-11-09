@@ -57,7 +57,8 @@ log = logging.getLogger("mixer.routes")
 # One config.yaml edit at a time.
 _profile_lock = asyncio.Lock()
 # Profile fields the display agent's /display endpoint does not take.
-_AGENT_EXCLUDED_FIELDS = {"target_ip", "fade", "fade_db", "fade_seconds"}
+_AGENT_EXCLUDED_FIELDS = {"target_ip", "fade", "fade_seconds"}
+AUDIO_FADE_FULL_DB = 0.0  # audio fades always go up to full player volume
 
 
 def _ctx(request: Request):
@@ -523,7 +524,6 @@ async def desktop_profiles(request: Request):
                 "monitor": profile.monitor,
                 "position": profile.position,
                 "fade": profile.fade,
-                "fade_db": profile.fade_db,
                 "fade_seconds": profile.fade_seconds,
             }
             for profile_id, profile in cfg.profiles.items()
@@ -649,8 +649,10 @@ async def control_desktop_audio(profile_id: str, action: str, request: Request):
         "path": profile.path if action == "play" else None,
     }
     if profile.fade:
-        # Play fades in from silence to fade_db, stop fades out again.
-        payload["fade"] = {"db": profile.fade_db, "seconds": profile.fade_seconds}
+        # Play fades in from silence to full volume (0 dB = mpv 100 %), stop
+        # fades out again. The agent's protocol still names the level; it is
+        # always full volume now, so every agent version accepts it.
+        payload["fade"] = {"db": AUDIO_FADE_FULL_DB, "seconds": profile.fade_seconds}
     try:
         return await asyncio.to_thread(
             _forward_display_request,

@@ -140,10 +140,11 @@ class DesktopProfileConfig(BaseModel):
     fullscreen: bool = True
     monitor: int = Field(default=1, ge=1)
     position: Literal["top-left", "top-right", "bottom-left", "bottom-right", "center"] = "top-left"
-    # Audio only: fade in from silence to fade_db when playing and back out
-    # on stop, over fade_seconds (mpv volume, the mixer is not touched).
+    # Audio only: fade in from silence to full volume (mpv 100 %) when playing
+    # and back out on stop, over fade_seconds. Only the player's volume on the
+    # target PC is ramped; the mixer is not touched. There is no level setting:
+    # a leftover ``fade_db`` key in an old config.yaml is ignored.
     fade: bool = False
-    fade_db: float = Field(default=-30.0, ge=-60.0, le=0.0)
     fade_seconds: float = Field(default=5.0, ge=0.5, le=30.0)
 
     @field_validator("target_ip")

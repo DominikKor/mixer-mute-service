@@ -33,11 +33,11 @@ PROFILE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 # Order in which a new profile's keys are written.
 FIELD_ORDER = (
     "title", "kind", "path", "args", "target_ip", "fullscreen", "monitor", "position",
-    "fade", "fade_db", "fade_seconds",
+    "fade", "fade_seconds",
 )
 # Written for a new profile only when they differ from the default, so image,
 # program and file profiles stay as short as before.
-_OPTIONAL_FIELDS = {"fade", "fade_db", "fade_seconds"}
+_OPTIONAL_FIELDS = {"fade", "fade_seconds"}
 _CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
 _PRINTABLE_ASCII_RE = re.compile(r"^[\x20-\x7e]*$")
 _EMPTY_VALUE_RE = re.compile(r"^[ \t]*(\{[ \t]*\}|null|Null|NULL|~)?[ \t]*(#.*)?$")
