@@ -19,6 +19,7 @@ import yaml
 from .jsonstore import read_json, write_json_atomic
 
 log = logging.getLogger("mixer.camera_streams")
+HLS_PORT = 8888  # MediaMTX HLS, bound to 127.0.0.1 only
 _PRIVATE_NETWORKS = tuple(map(ipaddress.ip_network, ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")))
 
 
@@ -75,12 +76,17 @@ def _relay_config(cameras: list[dict], additional_host: str = "") -> dict:
     config = {
         "logLevel": "warn",
         "rtsp": False,
-        "hls": False,
         "webrtc": True,
         "webrtcAddress": ":8889",
         "webrtcLocalUDPAddress": ":8189",
         "webrtcIPsFromInterfaces": True,
         "webrtcAdditionalHosts": [additional_host] if additional_host else [],
+        # The same cameras as HLS, only on localhost: the service passes it on
+        # through its own port (app/camera_hls.py) to devices that cannot
+        # reach the WebRTC ports above (blocked by the streaming PC's firewall).
+        "hls": True,
+        "hlsAddress": f"127.0.0.1:{HLS_PORT}",
+        "hlsVariant": "lowLatency",
         "paths": paths,
     }
     return config

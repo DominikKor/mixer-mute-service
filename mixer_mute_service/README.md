@@ -254,7 +254,14 @@ entpacke `mediamtx.exe` und setze `MEDIAMTX_PATH` als Systemvariable, zum Beispi
 [Environment]::SetEnvironmentVariable("MEDIAMTX_PATH", "C:\Tools\mediamtx.exe", "Machine")
 ```
 
-Danach den Mixer-Service neu starten. Die WebRTC-Verbindung braucht TCP 8889
+Danach den Mixer-Service neu starten. Auf iPad und anderen PCs muss nichts
+installiert werden: Auf dem Service-PC selbst (`localhost`) zeigt die Seite den
+WebRTC-Player (geringste Verzoegerung), alle anderen Geraete bekommen dieselbe
+Kamera als HLS ueber den Service-Port 8765 (`/camera-hls/<kamera>/`, ca. 1-3 s
+Verzoegerung). MediaMTX stellt HLS dafuer nur auf `127.0.0.1:8888` bereit; der
+Service reicht nur Pfade eingerichteter Kameras durch. So funktionieren die Bilder
+auch, wenn die Windows-Firewall die WebRTC-Ports fuer andere Geraete blockiert.
+Die WebRTC-Verbindung braucht TCP 8889
 fuer den Player und UDP 8189 fuer das Videomedium. `install-service.ps1` legt
 dafuer Windows-Firewallregeln an, beschraenkt auf das private Profil und
 `LocalSubnet`. Bei mehreren Netzwerkkarten kann `CAMERA_WEBRTC_HOST` als
