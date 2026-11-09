@@ -792,7 +792,9 @@
   @media (max-width: 1300px), (max-height: 860px) { :root { --rail-w: 150px; } }
   .stage-rail, .stage-main { display: none; }
   body.stage-on { height: 100vh; height: 100dvh; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
-  body.stage-on header { position: relative; flex: 0 0 auto; }
+  /* The stage uses the full width, so the bar does too (one line on the iPad
+     even with the Update and download keys). */
+  body.stage-on header { position: relative; flex: 0 0 auto; padding-left: var(--page-pad); padding-right: var(--page-pad); }
   body.stage-on .page {
     flex: 1 1 auto; min-height: 0; width: 100%; max-width: none; margin: 0;
     display: grid; grid-template-columns: var(--rail-w) minmax(0, 1fr); gap: 20px; padding: 14px var(--page-pad) 16px;
@@ -802,7 +804,19 @@
     min-height: 0; overflow: hidden;
   }
   body.stage-on .stage-main { display: block; position: relative; min-width: 0; min-height: 0; overflow: hidden; scrollbar-gutter: stable; }
-  body.stage-on .stage-main.scroll { overflow-y: auto; }  /* only if a section is far too long */
+  body.stage-on .stage-main.scroll { overflow-y: auto; overscroll-behavior: contain; }
+  /* Sections that scroll (Programm, full-size faders) leave a free strip on
+     the right to swipe with the finger without touching a fader or field. */
+  body.stage-on .stage-main.gutter {
+    background:
+      linear-gradient(to right, transparent calc(50% - 1px), rgba(255,255,255,.10) calc(50% - 1px), rgba(255,255,255,.10) calc(50% + 1px), transparent calc(50% + 1px))
+        right 0 top 50% / var(--stage-gutter) 64px no-repeat,
+      linear-gradient(rgba(255,255,255,.035), rgba(255,255,255,.035)) right top / calc(var(--stage-gutter) - 10px) 100% no-repeat;
+  }
+  :root { --stage-gutter: 56px; }
+  /* Programm on stage: the cue bar with "Weiter" stays at the top while the
+     list scrolls under it. */
+  body.stage-on .stage-main .program-cue { position: sticky; top: 0; z-index: 3; box-shadow: var(--panel-shadow), 0 8px 14px rgba(0,0,0,.55); }
   body.stage-on .panel { margin: 0; width: var(--stage-w); transform-origin: 0 0; }
   body.stage-on .panel:not(.open) .panel-body { display: block; }
   body.stage-on .panel:not(.open) .panel-tools { display: flex; }
@@ -3378,6 +3392,15 @@ const STAGE = { on: false, current: null, order: [], thumbs: {}, raf: 0, anims: 
 const STAGE_MIN_FIT = window.matchMedia && matchMedia("(pointer: coarse)").matches ? 0.85 : 0.6;
 const STAGE_ANIM_MS = 440;
 const STAGE_FADER_MAX = 300, STAGE_FADER_MIN = 96;
+const STAGE_GUTTER = 56;          // free strip on the right of scrolling sections (matches --stage-gutter)
+
+// Programm and full-size channel strips keep their size and scroll on the
+// stage (shrinking made fields and faders too small); everything else is
+// fitted to the screen.
+function stageScrolls(panel) {
+  const section = panel.dataset.section;
+  return section === "program" || (section === "channels" && !$("channels").classList.contains("compact"));
+}
 
 function stageReducedMotion() {
   return window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -3487,6 +3510,7 @@ function stageShow(section) {
   if (!STAGE.on || section === STAGE.current || !stagePanel(section)) return;
   const firsts = stageRects();
   STAGE.current = section;
+  $("stage-main").scrollTop = 0;
   const p = loadUiPrefs();
   p.stageSection = section;
   saveUiPrefs(p);
@@ -3508,10 +3532,21 @@ function layoutStage() {
   if (!W || !H) return;
   document.querySelector(".page").style.setProperty("--stage-w", `${W}px`);
   for (const panel of STAGE.order) {
-    if (panel.dataset.section === "channels") layoutStageChannels(panel, H);
-    if (panel.dataset.section === "companion") layoutStageCompanion(W);
-    const ph = panel.offsetHeight;
-    panel._stageFit = Math.max(STAGE_MIN_FIT, Math.min(1, H / ph));
+    const section = panel.dataset.section;
+    const scrolls = stageScrolls(panel);
+    const lay = (w) => {
+      panel.style.width = `${w}px`;
+      if (section === "channels") layoutStageChannels(panel, w, H, scrolls);
+      if (section === "companion") layoutStageCompanion(w);
+      return panel.offsetHeight;
+    };
+    let ph = lay(W);
+    panel._stageGutter = false;
+    if (scrolls && ph > H) {   // it will scroll: make room for the finger strip
+      ph = lay(W - STAGE_GUTTER);
+      panel._stageGutter = true;
+    }
+    panel._stageFit = scrolls ? 1 : Math.max(STAGE_MIN_FIT, Math.min(1, H / ph));
     panel._stageHeight = ph;
   }
   // Miniatures keep the stage's proportions and share the rail's height.
@@ -3541,16 +3576,19 @@ function applyStageTransform(panel, W, H, tw) {
   // On stage a scaled section is centred and takes only its scaled height.
   panel.style.marginLeft = onStage && s < 1 ? `${((W - W * s) / 2).toFixed(1)}px` : "";
   panel.style.marginBottom = onStage && s < 1 ? `${(-(panel._stageHeight || 0) * (1 - s)).toFixed(1)}px` : "";
-  if (onStage) $("stage-main").classList.toggle("scroll", (panel._stageHeight || 0) * s > H + 1);
+  if (onStage) {
+    const main = $("stage-main");
+    main.classList.toggle("scroll", (panel._stageHeight || 0) * s > H + 1);
+    main.classList.toggle("gutter", !!panel._stageGutter);
+  }
 }
 
 // Channels: pick the column count and fader length that show every strip at
 // the largest fader without scrolling (compact strips: the widest tiles).
-function layoutStageChannels(panel, H) {
+function layoutStageChannels(panel, W, H, fullFaders) {
   const strips = $("channels");
   const cards = [...strips.children].filter(c => c.classList.contains("card"));
   if (!cards.length) return;
-  const W = parseFloat(getComputedStyle(document.querySelector(".page")).getPropertyValue("--stage-w")) || panel.offsetWidth;
   const compact = strips.classList.contains("compact");
   // Narrow gaps on stage: 12 strips (84 px: fader + padding) fit an iPad row.
   const gapX = 6, gapY = 10;
@@ -3564,6 +3602,18 @@ function layoutStageChannels(panel, H) {
   const fixed = Math.max(...cards.map(c => c.offsetHeight)) - faderH;
   const minW = compact ? 124 : 80;
   const n = cards.length;
+  if (fullFaders || compact) {
+    // Full-length faders (the stage scrolls) or compact tiles: as few rows as
+    // the width allows, spread evenly over them.
+    let most = 1;
+    while (most < n && (most + 1) * minW + most * gapX <= W) most++;
+    const rows = Math.ceil(n / most);
+    const cols = Math.ceil(n / rows);  // same rows, wider strips
+    strips.style.maxWidth = "none";
+    strips.style.gridTemplateColumns = `repeat(${cols}, minmax(0, 1fr))`;
+    if (fullFaders) strips.style.setProperty("--fader-h", `${STAGE_FADER_MAX}px`);
+    return;
+  }
   let best = null;
   for (let c = 1; c <= n; c++) {
     if (c > 1 && c * minW + (c - 1) * gapX > W) break;

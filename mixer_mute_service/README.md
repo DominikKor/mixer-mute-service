@@ -43,12 +43,13 @@ in and out; the choice is remembered per device.
   release only).
 - **Stage** switch (next to the title, remembered per device): like Stage
   Manager, one section fills the screen and the others sit as live miniatures
-  on the left; a tap on one flies it onto the stage. The page never scrolls:
-  each section is laid out for the screen (channels pick the number of strips
-  per row and the fader length so that all of them fit; Steuerung packs its
-  categories as tiles) and only scaled down a little when that is not enough
-  (to 85 % at most with a finger, 60 % with a mouse; beyond that the stage
-  itself would scroll).
+  on the left; a tap on one flies it onto the stage. The page itself never
+  scrolls. Programm and the full-size channel strips (300 px faders, as many
+  per row as fit) keep their size and scroll on the stage, with a free strip
+  on the right to swipe with the finger; Programm's "Weiter" bar stays at the
+  top. Everything else is laid out to fit the screen (compact channels as
+  tiles, Steuerung categories packed as tiles) and only scaled down a little
+  if that is not enough.
 - **Desktop**: one tile per profile from `desktop_display.profiles` (see
   below), plus tiles to add or edit profiles.
 - **Channels**: one strip per channel with the observed fader value, mute
