@@ -194,7 +194,8 @@ async def control_audio(request: Request, profile_id: str, action: str) -> Resul
         payload["fade"] = {"db": AUDIO_FADE_FULL_DB, "seconds": profile.fade_seconds}
     cfg = request.app.state.cfg.desktop_display
     try:
-        return await display_agent.call(cfg, profile.target_ip, "/audio", payload), 200
+        return await display_agent.call(cfg, profile.target_ip, "/audio", payload,
+                                        timeout=display_agent.AUDIO_TIMEOUT_SECONDS), 200
     except AgentError as exc:
         if exc.agent_status is None:
             return exc.answer(), exc.status

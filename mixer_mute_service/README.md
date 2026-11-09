@@ -502,6 +502,15 @@ Dafuer muss der Desktop-Agent auf dem Ziel-PC aktuell sein; ein aelterer Agent
 lehnt Play/Stop mit Fade ab (die Meldung sagt das), ohne Fade laeuft alles wie
 bisher. Dateien, die ein Programmpunkt direkt abspielt, werden nicht gefadet.
 
+**Wenn die Musik nicht startet:** Die Meldung nennt den Grund, z. B. „mpv ended
+at once (exit code 2): Could not open audio device“ (kein Audiogerät, etwa
+ein ausgeschalteter HDMI-Monitor) oder „mpv did not open its control channel
+within 10 s“. Beim Start mit Einblenden wartet der Agent bis zu 10 s auf mpv
+(vorher 2 s; ein kalter Start unter Windows mit Virenscanner oder Netzlaufwerk
+brauchte oft länger und scheiterte dann mit „audio player could not be
+started“). mpvs eigenes Protokoll des letzten Starts liegt auf dem Ziel-PC
+unter `%LOCALAPPDATA%\MixerMuteDisplayAgent\mpv-last.log`.
+
 Profile lassen sich auch in der Weboberflaeche anlegen (graue **+**-Kachel
 hinter den Profilen) und ueber das Drei-Punkte-Menue bearbeiten, duplizieren
 (die Kopie "… (Kopie)" steht direkt hinter dem Original) oder loeschen;

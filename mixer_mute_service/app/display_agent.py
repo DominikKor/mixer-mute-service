@@ -21,6 +21,9 @@ from typing import Any, Optional
 log = logging.getLogger("mixer.display_agent")
 
 AGENT_PORT = 8766
+# Starting music: the agent waits up to 10 s for mpv on a cold start
+# (desktop_agent IPC_CONNECT_SECONDS), so its answer may take that long.
+AUDIO_TIMEOUT_SECONDS = 15.0
 
 
 class AgentError(Exception):

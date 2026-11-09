@@ -7,6 +7,7 @@ refuses requests that do not come from the streaming PC itself.
 """
 
 import io
+import json
 import os
 import urllib.error
 
@@ -39,8 +40,12 @@ class FakeAgent:
 
     pick = None  # the /pick-file answer: a dict, or an exception to raise
 
+    player_error = None  # an agent JSON answer with 503, e.g. mpv did not start
+    timeouts = []
+
     def __call__(self, url, token, payload, timeout):
         self.calls.append((url, payload))
+        self.timeouts.append((url, timeout))
         if url.endswith("/pick-file"):
             self.pick_timeout = timeout
             if isinstance(self.pick, Exception):
@@ -48,6 +53,9 @@ class FakeAgent:
             return self.pick
         if self.missing:
             raise urllib.error.HTTPError(url, 503, "Configured target is not available", {}, io.BytesIO(b""))
+        if self.player_error and url.endswith("/audio"):
+            raise urllib.error.HTTPError(url, 503, "Service Unavailable", {},
+                                         io.BytesIO(json.dumps(self.player_error).encode()))
         return {"ok": True}
 
 
@@ -93,6 +101,16 @@ def main():
         actions = r.json().get("linked_actions", [])
         check("missing file reported", r.status_code == 502 and actions and actions[0]["reason"] == "file not found on the target PC")
         agent.missing = False
+        reason = "audio player could not be started: mpv ended at once (exit code 2): Could not open audio device"
+        agent.player_error = {"ok": False, "reason": reason}
+        r = client.post(f"/program/items/{item_id}/play")
+        actions = r.json().get("linked_actions", [])
+        check("player that did not start: the agent's reason is shown, not 'file not found'",
+              r.status_code == 502 and actions and actions[0]["reason"] == reason)
+        agent.player_error = None
+        audio_timeouts = [t for u, t in agent.timeouts if u.endswith("/audio")]
+        check("music start waits long enough for a cold mpv start (agent waits up to 10 s)",
+              audio_timeouts and min(audio_timeouts) >= 12)
 
         print("== folder browser ==")
         check("not offered to other devices", client.get("/files/browse-available").json()["available"] is False)

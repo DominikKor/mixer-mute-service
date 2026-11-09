@@ -296,7 +296,51 @@ def _find_mpv() -> str | None:
 # so dB = 60 * log10(v / 100).
 FADE_FLOOR_DB = -60.0
 FADE_STEP_SECONDS = 0.05
-IPC_CONNECT_SECONDS = 2.0
+# How long mpv may take to open its control channel. On Windows a cold start
+# (virus scanner, first start after a while, music on a network drive) often
+# takes several seconds; 2 s made playback fail now and then.
+IPC_CONNECT_SECONDS = 10.0
+# A player that ends within this time after starting did not start at all.
+START_CHECK_SECONDS = 0.4
+
+
+class AudioStartError(OSError):
+    """mpv did not start; the message says why (shown to the user)."""
+
+
+def agent_log_directory() -> Path:
+    return Path(os.environ.get("LOCALAPPDATA", Path.home())) / "MixerMuteDisplayAgent"
+
+
+def mpv_log_path() -> Path:
+    """mpv's own log of the last start (overwritten each time)."""
+    return agent_log_directory() / "mpv-last.log"
+
+
+def _mpv_error_line(log_path: Path) -> str:
+    """The last error mpv wrote to its log, without the time stamp."""
+    try:
+        with open(log_path, "rb") as log_file:
+            log_file.seek(0, os.SEEK_END)
+            log_file.seek(max(0, log_file.tell() - 8192))
+            lines = log_file.read().decode("utf-8", "replace").splitlines()
+    except OSError:
+        return ""
+    for line in reversed(lines):
+        match = re.match(r"^\[\s*[\d.]+\]\[[ef]\]\[([^\]]*)\]\s*(.+)$", line.strip())
+        if match:
+            return match.group(2).strip()[:160]
+    return ""
+
+
+def _start_failure(process: subprocess.Popen, what: str) -> AudioStartError:
+    code = process.poll()
+    detail = _mpv_error_line(mpv_log_path())
+    if code is not None:
+        message = f"audio player could not be started: mpv ended at once (exit code {code})"
+    else:
+        message = f"audio player could not be started: {what}"
+    return AudioStartError(message + (f": {detail}" if detail else ""))
 
 
 def db_to_mpv_volume(db: float) -> float:
@@ -502,6 +546,9 @@ def _play_audio(profile_id: str, path: str, fade: dict | None = None) -> None:
         "--force-window=no",
         "--no-terminal",
         "--really-quiet",
+        # mpv's own reasons (no audio device, unreadable file, ...) for the
+        # error message and agent support.
+        f"--log-file={mpv_log_path()}",
     ]
     address = _ipc_address() if fade else None
     if fade:
@@ -522,10 +569,18 @@ def _play_audio(profile_id: str, path: str, fade: dict | None = None) -> None:
                 playback.ipc.connect(process, IPC_CONNECT_SECONDS)
             except OSError:
                 # Silent and not controllable: better not to play at all.
+                failure = _start_failure(
+                    process, f"mpv did not open its control channel within {IPC_CONNECT_SECONDS:g} s")
                 playback.terminate()
-                raise
+                raise failure from None
             playback.fade_thread = threading.Thread(target=_fade_in, args=(playback,), daemon=True)
             playback.fade_thread.start()
+        else:
+            # Without a fade nothing waits for mpv: catch a player that ends
+            # straight away (no audio device, unreadable file) here.
+            time.sleep(START_CHECK_SECONDS)
+            if process.poll() is not None:
+                raise _start_failure(process, "mpv ended at once")
         _playback = playback
     logger.info("Audio started profile=%s path=%s pid=%s fade=%s", profile_id, target, process.pid, fade)
 
@@ -1049,6 +1104,10 @@ class DisplayHandler(BaseHTTPRequestHandler):
         except (FileNotFoundError, ValueError) as exc:
             logger.warning("Audio %s rejected: %s", body["action"], exc)
             result = {"ok": False, "reason": str(exc)}
+        except AudioStartError as exc:
+            logger.warning("Audio %s failed for profile=%s: %s (mpv log: %s)",
+                           body["action"], body["id"], exc, mpv_log_path())
+            result = {"ok": False, "reason": str(exc)}
         except OSError:
             logger.exception("Audio %s failed for profile=%s", body["action"], body["id"])
             result = {"ok": False, "reason": "audio player could not be started"}
@@ -1247,7 +1306,7 @@ def drain_requests(root: tk.Tk, image_label: tk.Label, canvas: tk.Canvas) -> Non
 
 
 def main() -> None:
-    log_directory = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "MixerMuteDisplayAgent"
+    log_directory = agent_log_directory()
     log_directory.mkdir(parents=True, exist_ok=True)
     logging.basicConfig(
         level=logging.INFO,

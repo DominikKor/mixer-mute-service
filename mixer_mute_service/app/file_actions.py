@@ -113,9 +113,14 @@ async def run_file_action(request: Request, value: str) -> Tuple[dict, int]:
             "args": [], "fullscreen": False, "monitor": 1, "position": "top-left",
         }
     try:
-        result = await display_agent.call(cfg, target, route, payload, timeout=5)
+        result = await display_agent.call(cfg, target, route, payload, timeout=display_agent.AUDIO_TIMEOUT_SECONDS)
     except AgentError as exc:
         if exc.agent_status == 503:
+            # The agent says why the player did not start (no audio device, ...);
+            # anything else at 503 means the file is missing there.
+            agent_reason = (exc.body or {}).get("reason")
+            if isinstance(agent_reason, str) and agent_reason.startswith("audio player could not be started"):
+                return {"ok": False, "reason": agent_reason, "file": name}, 502
             return {"ok": False, "reason": "file not found on the target PC", "file": name}, 502
         return {**exc.answer(), "file": name}, exc.status
     log.info("FILE %s %s on %s", "play" if kind == "audio" else "open", path, target)

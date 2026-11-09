@@ -78,6 +78,46 @@ class AudioPlaybackTests(unittest.TestCase):
             self.assertIsNone(options["startupinfo"])
         self.assertIs(agent._playback.process, process)
 
+    def test_player_that_ends_at_once_is_reported(self):
+        ended = FakeProcess()
+        ended.returncode = 1
+        with tempfile.TemporaryDirectory() as directory:
+            audio_path = Path(directory) / "track.mp3"
+            audio_path.touch()
+            with patch.object(agent, "_find_mpv", return_value="mpv"), \
+                    patch.object(agent, "mpv_log_path", return_value=Path(directory) / "none.log"), \
+                    patch.object(agent.subprocess, "Popen", return_value=ended) as popen:
+                with self.assertRaises(agent.AudioStartError) as caught:
+                    agent._play_audio("track", str(audio_path))
+        self.assertIn("mpv ended at once (exit code 1)", str(caught.exception))
+        self.assertIn(f"--log-file={Path(directory) / 'none.log'}", popen.call_args.args[0])
+        self.assertIsNone(agent._playback)
+
+    def test_handler_returns_the_reason(self):
+        class FakeHandler:
+            def __init__(self):
+                self.wfile = io.BytesIO()
+                self.status = None
+
+            def send_response(self, status):
+                self.status = status
+
+            def send_header(self, *_args):
+                pass
+
+            def end_headers(self):
+                pass
+
+            def send_error(self, status, *_args):
+                self.status = status
+
+        handler = FakeHandler()
+        error = agent.AudioStartError("audio player could not be started: mpv ended at once (exit code 2)")
+        with patch.object(agent, "_play_audio", side_effect=error):
+            agent.DisplayHandler._handle_audio(handler, {"id": "music", "action": "play", "path": "C:\\a.mp3"})
+        self.assertEqual(handler.status, 503)
+        self.assertEqual(json.loads(handler.wfile.getvalue())["reason"], str(error))
+
     def test_play_replaces_and_stop_terminates_only_owned_process(self):
         first = FakeProcess()
         second = FakeProcess()
@@ -224,6 +264,34 @@ class AudioFadeTests(unittest.TestCase):
                 agent._play_audio("music", str(self.audio_path), {"db": -30, "seconds": 1})
         self.assertTrue(popen.return_value.terminated)
         self.assertIsNone(agent._playback)
+
+    def test_start_failure_names_the_reason(self):
+        """"audio player could not be started" alone did not say why."""
+        log = Path(self.socket_dir) / "mpv-last.log"
+        log.write_text(
+            "[   0.010][v][cplayer] mpv 0.39.0\n"
+            "[   0.420][e][ao/wasapi] Could not open audio device\n"
+            "[   0.421][i][cplayer] Exiting... (Errors when loading file)\n", encoding="utf-8")
+        ended = FakeProcess()
+        ended.returncode = 2
+        with patch.object(agent, "IPC_CONNECT_SECONDS", 0.1), patch.object(agent, "mpv_log_path", return_value=log), \
+                patch.object(agent, "_ipc_address", return_value=f"{self.socket_dir}/missing.sock"), \
+                patch.object(agent.subprocess, "Popen", return_value=ended):
+            with self.assertRaises(agent.AudioStartError) as caught:
+                agent._play_audio("music", str(self.audio_path), {"db": 0, "seconds": 1})
+        self.assertEqual(str(caught.exception), "audio player could not be started: mpv ended at once "
+                                                "(exit code 2): Could not open audio device")
+        log.unlink()
+        with patch.object(agent, "IPC_CONNECT_SECONDS", 0.1), patch.object(agent, "mpv_log_path", return_value=log), \
+                patch.object(agent, "_ipc_address", return_value=f"{self.socket_dir}/missing.sock"), \
+                patch.object(agent.subprocess, "Popen", return_value=FakeProcess()):
+            with self.assertRaises(agent.AudioStartError) as caught:
+                agent._play_audio("music", str(self.audio_path), {"db": 0, "seconds": 1})
+        self.assertIn("did not open its control channel within 0.1 s", str(caught.exception))
+
+    def test_cold_start_gets_time(self):
+        # mpv on Windows often needs several seconds on a cold start.
+        self.assertGreaterEqual(agent.IPC_CONNECT_SECONDS, 10)
 
     def test_fade_request_validation(self):
         self.assertTrue(agent._valid_fade({"db": -30, "seconds": 5}))

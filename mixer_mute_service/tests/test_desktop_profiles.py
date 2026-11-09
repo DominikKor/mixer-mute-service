@@ -345,6 +345,8 @@ with TestClient(app) as client:
         check("stop does not send a track path", forward.call_args.args[2] == {
             "id": "audio", "action": "stop", "path": None
         })
+        check("music waits long enough for a cold mpv start (agent waits up to 10 s)",
+              forward.call_args.args[3] >= 12)
     # fade_db from an old, cached page is ignored
     faded_body = {"id": "faded", **AUDIO.model_dump(), "fade": True, "fade_db": -20.0, "fade_seconds": 4.0}
     r = client.post("/desktop/profiles", json=faded_body)
