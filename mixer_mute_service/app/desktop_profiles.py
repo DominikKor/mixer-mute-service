@@ -66,7 +66,9 @@ def validate_profile(profile: DesktopProfileConfig) -> None:
     path = PureWindowsPath(profile.path)
     if not path.is_absolute():
         raise ProfileEditError(r"path must be an absolute Windows path, e.g. C:\Folder\file.png")
-    if profile.kind == "program" and path.suffix.lower() != ".exe":
+    # "*" stands for an unknown part of a name; the display agent fills it in
+    # (programs: only .exe files match).
+    if profile.kind == "program" and path.suffix.lower() != ".exe" and not path.name.endswith("*"):
         raise ProfileEditError("a program path must point to an .exe file")
     if profile.kind != "program" and profile.args:
         raise ProfileEditError("arguments are only used for programs")

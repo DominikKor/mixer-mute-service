@@ -21,6 +21,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
+import glob
 import re
 import tkinter as tk
 import tkinter.font as tkfont
@@ -215,6 +216,42 @@ def _place_process_window(
         x,
         y,
     )
+
+
+def resolve_path(path: str, folder: bool = False, suffixes: tuple = ()) -> Path:
+    """A configured path, where "*" stands for any part of a name that is not
+    known (any characters, within one folder level; Windows names never
+    contain "*"). With several matches the most recently changed one wins.
+    Raises FileNotFoundError when nothing matches."""
+    target = Path(path)
+    if "*" not in path:
+        return target
+    if not target.is_absolute():
+        raise FileNotFoundError(path)
+    # Only "*" is a wildcard: "?" and "[" in a name are meant literally.
+    pattern = re.sub(r"[?\[]", lambda m: f"[{m.group(0)}]", path)
+    matches = [Path(found) for found in glob.glob(pattern)]
+    matches = [p for p in matches if (p.is_dir() if folder else p.is_file())
+               and (not suffixes or p.suffix.lower() in suffixes)]
+    if not matches:
+        raise FileNotFoundError(path)
+    chosen = max(matches, key=lambda p: (p.stat().st_mtime, str(p)))
+    if len(matches) > 1:
+        logger.info("Path %s matches %s entries; using the newest: %s", path, len(matches), chosen)
+    return chosen
+
+
+# Starting these (directly or with "open with its default app") runs code.
+RUNNABLE_SUFFIXES = {".exe", ".com", ".bat", ".cmd", ".msi", ".scr", ".ps1", ".vbs", ".vbe",
+                     ".js", ".jse", ".wsf", ".wsh", ".lnk", ".url", ".hta", ".cpl", ".pif"}
+
+
+def runs_from_network_share(target: Path) -> bool:
+    """A runnable file on a network share: never started, whatever the
+    profile kind (anyone who can write to the share could swap it)."""
+    text = str(target)
+    on_share = text.startswith("\\\\") or text.startswith("//")
+    return on_share and target.suffix.lower() in RUNNABLE_SUFFIXES
 
 
 def _launch_profile(profile: dict) -> None:
@@ -440,7 +477,10 @@ def _fade_out(playback: _Playback, seconds: float) -> None:
 
 def _play_audio(profile_id: str, path: str, fade: dict | None = None) -> None:
     global _playback
-    target = Path(path)
+    try:
+        target = resolve_path(path)
+    except FileNotFoundError:
+        raise ValueError("Configured audio file is not available") from None
     if not target.is_absolute() or not target.is_file():
         raise ValueError("Configured audio file is not available")
     mpv = _find_mpv()
@@ -710,7 +750,7 @@ def _read_song_library(path: str) -> tuple[list[dict], bool]:
 
 
 def _songs_folder(path: str) -> Path:
-    folder = Path(path)
+    folder = resolve_path(path, folder=True)
     if not folder.is_absolute() or not folder.is_dir():
         raise FileNotFoundError(path)
     return folder / "Songs" if (folder / "Songs").is_dir() else folder
@@ -964,12 +1004,21 @@ class DisplayHandler(BaseHTTPRequestHandler):
         ):
             self.send_error(400)
             return
-        target = Path(body["path"])
-        if not target.is_file() or (body["kind"] == "program" and target.suffix.lower() != ".exe"):
+        program = body["kind"] == "program"
+        try:
+            target = resolve_path(body["path"], suffixes=(".exe",) if program else ())
+        except FileNotFoundError:
+            target = None
+        if target is None or not target.is_file() or (program and target.suffix.lower() != ".exe"):
             self.send_error(503, "Configured target is not available")
             return
+        if runs_from_network_share(target):
+            logger.warning("Refused to start %s: runnable file on a network share", target)
+            self.send_error(403, "Programs on a network share are not started")
+            return
 
-        requests.put(body)
+        # Profiles open the file the path resolved to ("*" filled in).
+        requests.put({**body, "path": str(target)})
         result = json.dumps({"ok": True, "profile": body["id"], "display": body["monitor"]}).encode()
         self.send_response(202)
         self.send_header("Content-Type", "application/json")

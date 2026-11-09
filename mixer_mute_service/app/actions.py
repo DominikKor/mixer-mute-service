@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import logging
 from copy import deepcopy
-from pathlib import PureWindowsPath
 from typing import Optional
 
 from fastapi import Request
@@ -23,7 +22,7 @@ from fastapi import Request
 from . import display_agent
 from .companion_buttons import CAMERA_BUTTON_IDS, CATALOG_ONLY_IDS, COMPANION_BUTTONS_BY_ID
 from .display_agent import AgentError
-from .file_actions import is_file_action, run_file_action
+from .file_actions import is_file_action, run_file_action, runs_from_network_share
 from .native_controls import NativeControlError
 from .responses import Result, controller_result
 
@@ -156,8 +155,9 @@ def _profile(request: Request, profile_id: str):
 def network_program(kind: str, path: str) -> bool:
     """A program on a network share: never started (anyone who can write
     there could swap it)."""
-    return kind == "program" and (path.startswith("\\\\") or path.startswith("//")) \
-        and PureWindowsPath(path).suffix.lower() == ".exe"
+    # A name ending in "*" may resolve to an .exe on the target PC, too; a
+    # "file" profile opening an .exe or .bat would run it just the same.
+    return runs_from_network_share(path, may_be_program=kind == "program")
 
 
 async def show_profile(request: Request, profile_id: str) -> Result:

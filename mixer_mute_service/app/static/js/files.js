@@ -29,10 +29,12 @@ function fileActionLabel(value) { return `Datei · ${fileBaseName(parseFileActio
 
 function fileKindText(path) {
   if (!path) return "";
-  if (!/^(?:[A-Za-z]:\\|\\\\[^\\]+\\[^\\]+|\/)/.test(path)) return "Bitte den vollständigen Pfad angeben, z. B. I:\\Musik\\Intro.mp3";
-  if (AUDIO_EXT.test(path)) return "Spielt ohne Fenster mit mpv";
-  if (/\.exe$/i.test(path)) return "Startet das Programm";
-  return "Öffnet mit der Standard-App von Windows";
+  if (!/^(?:[A-Za-z]:\\|\\\\[^\\]+\\[^\\]+|\/)/.test(path)) return "Bitte den vollständigen Pfad angeben, z. B. I:\\Musik\\Intro.mp3 (* für einen unbekannten Namensteil)";
+  // "*" stands for an unknown part of a name; the newest matching file is used.
+  const wild = path.includes("*") ? " · * = unbekannter Namensteil, neueste passende Datei" : "";
+  if (AUDIO_EXT.test(path)) return "Spielt ohne Fenster mit mpv" + wild;
+  if (/\.exe$/i.test(path)) return "Startet das Programm" + wild;
+  return "Öffnet mit der Standard-App von Windows" + wild;
 }
 
 function fileTargetOptions() {

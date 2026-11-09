@@ -49,6 +49,19 @@ THIS_PC = "127.0.0.1"
 _ABSOLUTE_RE = re.compile(r"^(?:[A-Za-z]:\\|\\\\[^\\]+\\[^\\]+|/)")
 _SKIP_NAMES = {"$recycle.bin", "system volume information", "$windows.~bt", "$windows.~ws"}
 MAX_ENTRIES = 1000
+# Starting these (directly or with "open with its default app") runs code;
+# never from a network share. The display agent checks the same after "*"
+# is filled in.
+RUNNABLE_SUFFIXES = {".exe", ".com", ".bat", ".cmd", ".msi", ".scr", ".ps1", ".vbs", ".vbe",
+                     ".js", ".jse", ".wsf", ".wsh", ".lnk", ".url", ".hta", ".cpl", ".pif"}
+
+
+def runs_from_network_share(path: str, may_be_program: bool = False) -> bool:
+    """A runnable file on a network share (or, for programs, a "*" name that
+    may resolve to one)."""
+    if not (path.startswith("\\\\") or path.startswith("//")):
+        return False
+    return PureWindowsPath(path).suffix.lower() in RUNNABLE_SUFFIXES or (may_be_program and path.endswith("*"))
 
 
 def is_file_action(value) -> bool:
@@ -64,7 +77,7 @@ def parse_file_action(value: str) -> Tuple[str, str]:
         raise ValueError("target must be a LAN address")
     if not path or len(path) > MAX_PATH or not _ABSOLUTE_RE.match(path) or any(ord(c) < 32 for c in path):
         raise ValueError("file path must be a full path on the target PC")
-    if path.startswith("\\\\") and PureWindowsPath(path).suffix.lower() == ".exe":
+    if runs_from_network_share(path, may_be_program=True):
         # Never start a program from a network share (anyone who can write
         # there could swap it).
         raise ValueError("programs must be on the target PC, not on a network share")
