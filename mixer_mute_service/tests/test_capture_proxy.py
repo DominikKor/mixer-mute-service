@@ -6,13 +6,9 @@ writes), the proxy sends nothing of its own, and frames are decoded into the log
 
 import asyncio
 import sys
-import tempfile
-from pathlib import Path
 
+from tests.helpers import temp_dir, wait_for
 from tools.capture_proxy import Capture, FrameDecoder
-
-PROXY_PORT = 16410
-MIXER_PORT = 16411
 
 HANDSHAKE = "5a5a5a5a5a5a0000000100000000"
 APP_MUTE_CH2 = "5a5a5a5a5a5a0000006e0000000909080120012d1f14b643"
@@ -30,13 +26,6 @@ def check(name, cond):
     print(f"  {'ok  ' if cond else 'FAIL'} {name}")
 
 
-async def wait_for(predicate, timeout=2.0):
-    end = asyncio.get_event_loop().time() + timeout
-    while asyncio.get_event_loop().time() < end:
-        if predicate():
-            return True
-        await asyncio.sleep(0.02)
-    return predicate()
 
 
 async def main():
@@ -73,12 +62,15 @@ async def main():
                 await writer.drain()
         writer.close()
 
-    mixer_srv = await asyncio.start_server(fake_mixer, "127.0.0.1", MIXER_PORT)
-    log_path = Path(tempfile.mkdtemp(prefix="capture_test_")) / "capture.log"
-    cap = Capture("127.0.0.1", MIXER_PORT, log_path)
-    proxy_srv = await asyncio.start_server(cap.handle, "127.0.0.1", PROXY_PORT)
+    # Free ports chosen by the OS, so parallel test runs never collide.
+    mixer_srv = await asyncio.start_server(fake_mixer, "127.0.0.1", 0)
+    mixer_port = mixer_srv.sockets[0].getsockname()[1]
+    log_path = temp_dir("capture_test_") / "capture.log"
+    cap = Capture("127.0.0.1", mixer_port, log_path)
+    proxy_srv = await asyncio.start_server(cap.handle, "127.0.0.1", 0)
+    proxy_port = proxy_srv.sockets[0].getsockname()[1]
 
-    reader, writer = await asyncio.open_connection("127.0.0.1", PROXY_PORT)
+    reader, writer = await asyncio.open_connection("127.0.0.1", proxy_port)
     sent = bytes.fromhex(HANDSHAKE + APP_MUTE_CH2 + APP_UNMUTE_CH1)
     writer.write(sent[:20])
     await writer.drain()

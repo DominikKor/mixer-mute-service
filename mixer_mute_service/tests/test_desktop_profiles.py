@@ -15,18 +15,18 @@ import pathlib
 import re
 import shutil
 import sys
-import tempfile
 
 import yaml
 from unittest.mock import patch
 
 from app.config import DesktopProfileConfig, load_config
 from app.desktop_profiles import ProfileEditError, add_profile, delete_profile, update_profile
+from tests.helpers import temp_dir
 
 PASS = 0
 FAIL = 0
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-_tmp = pathlib.Path(tempfile.mkdtemp(prefix="mixer_profiles_"))
+_tmp = temp_dir("mixer_profiles_")
 
 
 def check(name, cond):
@@ -218,8 +218,12 @@ check("numeric id is quoted", "123" in load_config(numeric).desktop_display.prof
 print("== HTTP ==")
 # Never reach the real mixer: point the copied config at a closed local port.
 http_text = (ROOT / "config.yaml").read_text()
-http_text = re.sub(r'(?m)^  ip: .*$', '  ip: "127.0.0.1"', http_text, count=1)
-http_text = re.sub(r'(?m)^  port: 6400$', '  port: 9', http_text, count=1)
+http_text, ip_subs = re.subn(r'(?m)^  ip: .*$', '  ip: "127.0.0.1"', http_text, count=1)
+http_text, port_subs = re.subn(r'(?m)^  port: \d+.*$', '  port: 9', http_text, count=1)
+if ip_subs != 1 or port_subs != 1:
+    # A changed config.yaml layout must stop the test, never let it reach the mixer.
+    raise SystemExit("could not point the copied config.yaml at a local port")
+original_comments = [line.strip() for line in http_text.splitlines() if line.strip().startswith("#")]
 http_cfg = cfg_file("http", http_text)
 os.environ["MIXER_CONFIG"] = str(http_cfg)
 from fastapi.testclient import TestClient  # noqa: E402
@@ -277,7 +281,8 @@ with TestClient(app) as client:
     check("audio profile cannot use display endpoint",
           client.post("/desktop/audio/open").status_code == 400)
     text = http_cfg.read_text()
-    check("manual comments still in the config", "# How a stored fader value is trusted" in text and "freshness_mode" in text)
+    check("manual comments still in the config",
+          original_comments and all(comment in text for comment in original_comments))
     delete_response = client.delete("/desktop/profiles/obs")
     check("DELETE profile 200", delete_response.status_code == 200 and delete_response.json()["deleted"] is True)
     check("deleted profile removed without restart",
