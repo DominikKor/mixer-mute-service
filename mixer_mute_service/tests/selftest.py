@@ -292,7 +292,7 @@ with TestClient(app) as client:
         companion_press = client.post("/companion/buttons/beamer-freeze/press")
         check("native Beamer button dispatched", companion_press.status_code == 200 and companion_press.json()["ok"] is True)
         check("Beamer allowlist action selected",
-              native_press.call_args.args[0]["script"] == "beamer-freeze")
+              native_press.call_args.args[0] == {"type": "beamer-command", "command": "freeze"})
     with patch.object(app.state.controller, "group_set", AsyncMock(return_value={"ok": True})) as macro_group, \
             patch.object(app.state.native_controls, "press", AsyncMock(return_value={"ok": True})) as macro_native:
         macro = client.post("/companion/buttons/native-overall-predigt/press")

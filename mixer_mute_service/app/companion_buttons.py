@@ -14,7 +14,7 @@ from .jsonstore import backup_corrupt, read_json, write_json_atomic
 log = logging.getLogger("mixer.companion_buttons")
 
 COMPANION_BUTTONS = [
-    {"id": "beamer-freeze", "label": "Beamer freeze", "kind": "native", "category_id": "beamer", "native_action": {"type": "beamer-script", "script": "beamer-freeze"}},
+    {"id": "beamer-freeze", "label": "Beamer freeze", "kind": "native", "category_id": "beamer", "native_action": {"type": "beamer-command", "command": "freeze"}},
     {"id": "cam2-live-top", "label": "Cam 2 Live", "kind": "native", "category_id": "obs", "native_action": {"type": "obs-live", "scene": "Cam 2", "source": "Cam2"}},
     {"id": "pc2-live-top-left", "label": "PC2 Live", "kind": "native", "category_id": "obs", "native_action": {"type": "obs-live", "scene": "PC2", "source": "Capture_PC2"}},
     {"id": "cam1-toggle", "label": "Cam1 ein/aus", "kind": "native", "category_id": "obs", "native_action": {"type": "obs-source-toggle", "scene": "Preview Scene", "source": "Cam1_klein", "hide_sources": ["Capture_PC2", "Beamer", "Cam2_klein"]}},
@@ -23,6 +23,8 @@ COMPANION_BUTTONS = [
     {"id": "ende", "label": "Ende", "kind": "native", "category_id": "obs", "native_action": {"type": "obs-scene", "scene": "Ende (neu)"}},
     {"id": "beamer-hide", "label": "Beamer hide", "kind": "native", "category_id": "beamer", "native_action": {"type": "beamer-set", "hidden": True}},
     {"id": "beamer-unhide", "label": "Beamer unhide", "kind": "native", "category_id": "beamer", "native_action": {"type": "beamer-set", "hidden": False}},
+    {"id": "beamer-power-off", "label": "Beamer off", "kind": "native", "category_id": "beamer", "native_action": {"type": "beamer-command", "command": "power-off"}},
+    {"id": "beamer-power-on", "label": "Beamer on", "kind": "native", "category_id": "beamer", "native_action": {"type": "beamer-command", "command": "power-on"}},
     {"id": "cam1-live", "label": "Cam 1 Live", "kind": "native", "category_id": "obs", "native_action": {"type": "obs-live", "scene": "Cam 1", "source": "Cam1"}},
     {"id": "cam2-live-bottom", "label": "Cam 2 Live", "kind": "native", "category_id": "obs", "native_action": {"type": "obs-live", "scene": "Cam 2", "source": "Cam2"}},
     {"id": "beamer-live", "label": "Beamer Live", "kind": "native", "category_id": "obs", "native_action": {"type": "obs-live", "scene": "BeamerVonVorne", "source": "Beamer"}},
@@ -140,8 +142,9 @@ COMPANION_BUTTONS = COMPANION_BUTTONS + NATIVE_BUTTONS
 COMPANION_BUTTONS_BY_ID = {button["id"]: button for button in COMPANION_BUTTONS}
 # Bump when catalog actions change; stored native keys then get the new action.
 # v3 added the keys below, v4 made the Overall macros switch the light on,
-# and v5 added state-aware Beamer hide/unhide actions.
-_NATIVE_CATALOG_VERSION = 5
+# v5 added state-aware Beamer hide/unhide actions and v6 adds direct projector
+# power and freeze commands.
+_NATIVE_CATALOG_VERSION = 6
 _NATIVE_CATALOG_V3_IDS = {
     "native-artnet-start-up", "native-artnet-start-down",
     "native-artnet-steps-up", "native-artnet-steps-down",
@@ -149,6 +152,7 @@ _NATIVE_CATALOG_V3_IDS = {
     "native-obs-cam1-toggle", "native-obs-cam2-toggle", "native-obs-pc2-toggle",
 }
 _NATIVE_CATALOG_V5_IDS = {"beamer-unhide"}
+_NATIVE_CATALOG_V6_IDS = {"beamer-power-off", "beamer-power-on"}
 
 DEFAULT_CATEGORIES = [
     {"id": "beamer", "name": "Beamer", "visible": True},
@@ -214,11 +218,13 @@ class CompanionButtonStore:
                 # must not come back with a newer catalog version.
                 add_v3 = self._catalog_version < 3
                 add_v5 = self._catalog_version < 5
+                add_v6 = self._catalog_version < 6
                 for seed_button in self._buttons:
                     current = button_map.get(seed_button["id"])
                     add_button = (
                         (add_v3 and seed_button["id"] in _NATIVE_CATALOG_V3_IDS)
                         or (add_v5 and seed_button["id"] in _NATIVE_CATALOG_V5_IDS)
+                        or (add_v6 and seed_button["id"] in _NATIVE_CATALOG_V6_IDS)
                     )
                     if current is None and add_button:
                         current = deepcopy(seed_button)

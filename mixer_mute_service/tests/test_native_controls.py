@@ -112,6 +112,21 @@ class NativeControlTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(await self.controls.get_beamer_state())
         self.assertTrue(NativeControlService(self.state_path)._beamer_hidden)
 
+    async def test_beamer_toggle_and_direct_commands_use_projector_form_endpoint(self):
+        with patch("app.native_controls._post_beamer_form") as post:
+            await self.controls.set_beamer_state(True)
+            await self.controls.press({"type": "beamer-set", "hidden": False})
+            await self.controls.press({"type": "beamer-command", "command": "power-off"})
+            await self.controls.press({"type": "beamer-command", "command": "power-on"})
+            await self.controls.press({"type": "beamer-command", "command": "freeze"})
+
+        self.assertEqual(post.call_args_list, [
+            unittest.mock.call("avmute", "AV Mute"),
+            unittest.mock.call("btn_powoff", "Power Off"),
+            unittest.mock.call("btn_powon", "Power On"),
+            unittest.mock.call("freeze", "Freeze"),
+        ])
+
     async def test_artnet_settings_are_bounded_and_persisted(self):
         await self.controls.press({"type": "artnet-start-adjust", "delta": 50})
         await self.controls.press({"type": "artnet-setting-adjust", "setting": "fade_ms", "delta": -5000})

@@ -54,7 +54,12 @@ class AudioPlaybackTests(unittest.TestCase):
 
         command = popen.call_args.args[0]
         options = popen.call_args.kwargs
-        self.assertEqual(command[:4], [r"C:\tools\mpv.exe", "--no-video", "--force-window=no", "--really-quiet"])
+        self.assertEqual(command[0], r"C:\tools\mpv.exe")
+        self.assertTrue({
+            "--no-config", "--no-video", "--vo=null", "--audio-display=no",
+            "--force-window=no", "--no-terminal",
+        }.issubset(command))
+        self.assertIn("--really-quiet", command)
         self.assertEqual(command[-2:], ["--", str(audio_path)])
         self.assertEqual(options["creationflags"], getattr(agent.subprocess, "CREATE_NO_WINDOW", 0))
         self.assertIs(agent._audio_process, process)

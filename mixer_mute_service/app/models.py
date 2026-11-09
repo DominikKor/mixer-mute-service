@@ -51,6 +51,11 @@ class CameraZoomRequest(BaseModel):
     direction: Literal["in", "out", "stop"]
 
 
+class PowerOffConfigRequest(BaseModel):
+    target_ips: List[str] = Field(default_factory=list)
+    beamer: bool = False
+
+
 class CameraStreamRequest(BaseModel):
     name: str = Field(max_length=64)
     rtsp_url: str = Field(max_length=1024)

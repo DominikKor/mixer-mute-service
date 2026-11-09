@@ -22,6 +22,7 @@ mixer_mute_service/camera_streams.json
 mixer_mute_service/mediamtx-cameras.yml
 mixer_mute_service/mediamtx.log
 mixer_mute_service/native_control_state.json
+mixer_mute_service/power_off_config.json
 mixer_mute_service/companion_buttons.json
 mixer_mute_service/song_display.json
 mixer_mute_service/song_library.json

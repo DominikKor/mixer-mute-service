@@ -14,6 +14,7 @@ import uuid
 from pathlib import Path
 from typing import Callable, Optional
 from urllib.error import URLError
+from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from .jsonstore import read_json, write_json_atomic
@@ -40,12 +41,13 @@ ARTNET_ZONES = {
 VISCA_CAMERAS = {"cam1": ("192.168.5.21", 5678), "cam2": ("192.168.5.22", 5678)}
 OBS_HOST = "192.168.188.20"
 OBS_PORT = 4455
-BEAMER_SCRIPTS = {
-    "beamer-freeze": Path(r"G:\Meine Ablage\Skripte\beamer_freeze.bat"),
-    "beamer-hide": Path(r"G:\Meine Ablage\Skripte\beamer_hide.bat"),
+BEAMER_CONTROL_URL = "http://192.168.6.40/form/control_cgi"
+BEAMER_COMMAND_FORMS = {
+    "avmute": ("avmute", "AV Mute"),
+    "power-off": ("btn_powoff", "Power Off"),
+    "power-on": ("btn_powon", "Power On"),
+    "freeze": ("freeze", "Freeze"),
 }
-
-
 # Allowed range of each stored light setting.
 _LEVEL_BOUNDS = {
     "warm": (0, 255), "cold": (0, 255), "start": (0, 255),
@@ -55,6 +57,23 @@ _LEVEL_BOUNDS = {
 
 class NativeControlError(RuntimeError):
     pass
+
+
+def _post_beamer_form(field: str, value: str) -> None:
+    request = Request(
+        BEAMER_CONTROL_URL,
+        data=urlencode({field: value}).encode("ascii"),
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=3) as response:
+            if not 200 <= response.status < 300:
+                raise NativeControlError(f"Beamer rejected {field}")
+    except NativeControlError:
+        raise
+    except (URLError, TimeoutError, OSError, ValueError) as exc:
+        raise NativeControlError("Beamer HTTP control unavailable") from exc
 
 
 def _shelly_rpc(host: str, method: str, params: dict) -> dict:
@@ -191,18 +210,14 @@ class NativeControlService:
             return {"ok": True, "hidden": hidden}
 
     async def _toggle_beamer(self) -> None:
-        script = BEAMER_SCRIPTS.get("beamer-hide")
-        if script is None or not script.is_file():
-            raise NativeControlError("Beamer toggle script is unavailable on the service PC")
-        process = await asyncio.create_subprocess_exec("cmd.exe", "/c", str(script))
-        try:
-            code = await asyncio.wait_for(process.wait(), timeout=10)
-        except asyncio.TimeoutError:
-            process.kill()
-            await process.wait()
-            raise NativeControlError("Beamer toggle script timed out")
-        if code:
-            raise NativeControlError(f"Beamer toggle script exited with status {code}")
+        await asyncio.to_thread(_post_beamer_form, *BEAMER_COMMAND_FORMS["avmute"])
+
+    async def _beamer_command(self, command: str) -> dict:
+        form = BEAMER_COMMAND_FORMS.get(command)
+        if form is None:
+            raise NativeControlError("unknown Beamer command")
+        await asyncio.to_thread(_post_beamer_form, *form)
+        return {"ok": True, "command": command}
 
     async def _set_beamer_mode(self, hidden: bool) -> dict:
         async with self._lock:
@@ -417,19 +432,7 @@ class NativeControlService:
                 raise NativeControlError("invalid Beamer target mode")
             return await self._set_beamer_mode(hidden)
 
-        if action_type == "beamer-script":
-            script = BEAMER_SCRIPTS.get(action.get("script"))
-            if script is None or not script.is_file():
-                raise NativeControlError("Beamer script is unavailable on the service PC")
-            process = await asyncio.create_subprocess_exec("cmd.exe", "/c", str(script))
-            try:
-                code = await asyncio.wait_for(process.wait(), timeout=10)
-            except asyncio.TimeoutError:
-                process.kill()
-                await process.wait()
-                raise NativeControlError("Beamer script timed out")
-            if code:
-                raise NativeControlError(f"Beamer script exited with status {code}")
-            return {"ok": True}
+        if action_type == "beamer-command":
+            return await self._beamer_command(action.get("command"))
 
         raise NativeControlError("unsupported native action")
