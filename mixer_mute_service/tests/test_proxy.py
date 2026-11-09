@@ -112,12 +112,16 @@ async def main():
     from app.controller import Controller
     cfg2 = _C(mixer={"ip": "127.0.0.1", "port": MIXER_PORT, "max_channels": 8})
     from app.groups import GroupStore
-    gs = GroupStore(Path(tempfile.mkdtemp()) / "groups.json", 8, {})
+    gs = GroupStore(Path(tempfile.mkdtemp()) / "groups.json", set(range(1, 9)), {})
     ctrl = Controller(cfg2, store, proxy, gs)
+    before_muted = (await store.get_channel(2)).muted
     r1 = await ctrl.channel_toggle(2)
     r2 = await ctrl.channel_toggle(2)
-    check("toggle #1 succeeds", r1.get("ok") is True)
-    check("toggle alternates target", r1.get("target_muted") != r2.get("target_muted"))
+    check("toggle #1 succeeds and flips the observed state",
+          r1.get("ok") is True and r1.get("target_muted") is (not before_muted))
+    check("toggle #2 succeeds and flips back",
+          r2.get("ok") is True and r2.get("target_muted") is before_muted)
+    check("store follows the toggles", (await store.get_channel(2)).muted is before_muted)
 
     ipad_writer.close()
     await proxy.stop()

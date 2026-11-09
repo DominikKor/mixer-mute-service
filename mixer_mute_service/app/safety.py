@@ -122,8 +122,3 @@ def check_channel_mute_state(
         return blocked
     return SafetyResult(True, age_seconds=time.monotonic() - cs.muted_updated_at)
 
-
-def is_channel_safe(
-    channel: int, cs: Optional[ChannelState], cfg: Config, session_epoch: Optional[float] = None
-) -> bool:
-    return check_channel_send(channel, cs, cfg, session_epoch=session_epoch).ok

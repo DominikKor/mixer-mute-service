@@ -33,13 +33,16 @@ class FakeLink:
         self.session_epoch = time.monotonic()
         self.sent = []
 
+    def link_stale(self):
+        return False
+
     async def send(self, payload):
         self.sent.append(payload.hex())
 
 
 async def observe(store, ch, muted, fader_hex):
     await store.apply_event(FrameEvent(channel=ch, muted=muted, fader_hex=fader_hex,
-                                       raw_match="", end_hex_index=0))
+                                       raw_match="", end_hex_index=0, solo=False))
 
 
 async def main():
@@ -111,11 +114,11 @@ async def main():
     applied = await store2.apply_event(events[0])  # the stale dump arrives right after
     cs = await store2.get_channel(8)
     check("stale dump ignored right after our command", applied is False and cs.fader_hex == "00803b44")
-    live = FrameEvent(channel=8, muted=True, fader_hex="0000c843", raw_match="", end_hex_index=0)
+    live = FrameEvent(channel=8, muted=True, fader_hex="0000c843", raw_match="", end_hex_index=0, solo=False)
     check("live status frame still applied", await store2.apply_event(live) is True
           and (await store2.get_channel(8)).fader_hex == "0000c843")
     check("other channels' dump values still applied",
-          await store2.apply_event(FrameEvent(9, True, "00806544", "", 0, from_dump=True)) is True)
+          await store2.apply_event(FrameEvent(9, True, "00806544", "", 0, from_dump=True, solo=False)) is True)
     await asyncio.sleep(0.35)
     check("next dump after the guard is applied again", await store2.apply_event(events[0]) is True
           and (await store2.get_channel(8)).fader_hex == "00000000")

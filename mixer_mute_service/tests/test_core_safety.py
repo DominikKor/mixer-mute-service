@@ -66,6 +66,9 @@ class FakeLink:
         self.sent = []
         self.fail_on = fail_on  # payload hex fragment that makes send() fail
 
+    def link_stale(self):
+        return False
+
     async def send(self, payload):
         if self.fail_on and self.fail_on in payload.hex():
             raise ConnectionError("simulated write failure")
@@ -159,7 +162,7 @@ async def same_channel_race():
     store = StateStore()
     link = SlowLink()
     ctl = Controller(cfg, store, link, groups_store(cfg, "race.json"))
-    await store.apply_event(FrameEvent(2, False, fader_value_to_hex(750.0)))
+    await store.apply_event(FrameEvent(2, False, fader_value_to_hex(750.0), solo=False))
     await link.lock.acquire()  # e.g. a keepalive is draining
     a = asyncio.create_task(ctl.channel_set(2, True))           # Stream Deck mute
     b = asyncio.create_task(ctl.channel_set_fader(2, 500.0))    # UI fader drag
@@ -197,9 +200,9 @@ async def link_liveness():
     stale = MixerClient(ctl_cfg, StateStore())
     stale.connected = True
     stale.session_epoch = time.monotonic() - 100
-    stale.last_rx_at = time.monotonic() - 30
+    stale.last_dump_ok_at = time.monotonic() - 30
     store = StateStore()
-    await store.apply_event(FrameEvent(2, False, "1f14b643"))
+    await store.apply_event(FrameEvent(2, False, "1f14b643", solo=False))
     ctl = Controller(ctl_cfg, store, stale, groups_store(ctl_cfg, "stale.json"))
     res = await ctl.channel_set(2, True)
     check("sends refused while the link is stale",
@@ -323,7 +326,7 @@ def bus_persistence():
     seen = []
     reg.on_new_bus(seen.append)
     try:
-        reg._on_dump([(128, "Hall 1")])
+        reg.discover([(128, "Hall 1")])
         raised = False
     except Exception:  # noqa: BLE001
         raised = True
@@ -379,9 +382,9 @@ async def solo_after_failure():
     link = FakeLink(fail_on="070708012d")
     ctl = Controller(cfg, store, link, groups_store(cfg, "solo.json", {"g": [1, 2]}))
     for ch in (1, 2):
-        await store.apply_event(FrameEvent(ch, True, "1f14b643"))
+        await store.apply_event(FrameEvent(ch, True, "1f14b643", solo=False))
     for ch in (3, 4):
-        await store.apply_event(FrameEvent(ch, False, "1f14b643"))
+        await store.apply_event(FrameEvent(ch, False, "1f14b643", solo=False))
     res = await ctl.group_set("g", False)
     check("group result not ok", res["ok"] is False)
     check("no other channel muted", "muted_others" not in res
