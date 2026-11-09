@@ -5547,8 +5547,12 @@ async function presenterBeamerToggle() {
 
 document.addEventListener("keydown", event => {
   if (event.altKey || event.ctrlKey || event.metaKey || event.repeat) return;
+  // A control that used the key itself (a channel fader takes Page Up/Down and
+  // the arrows) must not also start the next program row.
+  if (event.defaultPrevented) return;
   const t = event.target;
   if (t.closest && t.closest("input, textarea, select, dialog, [contenteditable]")) return;
+  if (t.closest && t.closest("[role=slider], [role=radio], [role=radiogroup], [role=menu], .fader")) return;
   if (document.querySelector("dialog[open]")) return;
   // Space on a focused key would also press that key.
   if (event.key === " " && t.closest && t.closest("button")) return;
