@@ -34,19 +34,29 @@
   header {
     display: flex; align-items: center; gap: 10px 20px; flex-wrap: wrap; min-height: var(--header-h);
     /* Bar spans the window; its content lines up with the page column. */
-    padding: 10px max(var(--page-pad), calc((100% - var(--strips-max)) / 2)); position: sticky; top: 0; z-index: 10;
+    padding: 8px max(var(--page-pad), calc((100% - var(--strips-max)) / 2)); position: sticky; top: 0; z-index: 10;
     background: linear-gradient(to bottom, #2a2e35, #1c1f24);
     border-bottom: 1px solid #000; box-shadow: inset 0 1px 0 rgba(255,255,255,.07), 0 4px 14px rgba(0,0,0,.45);
   }
-  header h1 {
-    margin: 0; font-size: 13px; font-weight: 800; letter-spacing: .18em; text-transform: uppercase;
-    color: #d9dde3; text-shadow: 0 1px 0 #000;
+  /* Logo: a bold "M" on a dark console key, far left */
+  header h1 { margin: 0; line-height: 0; }
+  .brand-m {
+    display: grid; place-items: center; width: 44px; height: 44px; border-radius: 10px;
+    font: 900 27px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; letter-spacing: -.02em;
+    color: #f2f5f8; text-shadow: 0 0 10px rgba(79,156,255,.55), 0 1px 0 #000;
+    background: linear-gradient(to bottom, #31363f, #1a1d22); border: 1px solid #000;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.12), inset 0 -2px 0 rgba(0,0,0,.35), 0 2px 5px rgba(0,0,0,.55);
+    user-select: none;
+  }
+  .sr-only {
+    position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap;
   }
   .status { display: flex; gap: 12px; align-items: center; margin-left: auto; flex-wrap: wrap; }
-  .status-display { /* recessed status LCD */
-    display: flex; gap: 6px 16px; align-items: center; flex-wrap: wrap; padding: 8px 12px; border-radius: 5px;
+  .status-display { /* recessed status LCD: connection, sending, then update age and version */
+    display: grid; gap: 4px; align-content: center; padding: 6px 12px; border-radius: 5px;
     background: var(--lcd-bg); border: 1px solid #000; box-shadow: var(--lcd-shadow);
   }
+  .status-meta { gap: 10px; padding-left: 15px; }  /* lines up with the text after the dots */
   .pill { display: inline-flex; align-items: center; gap: 7px; font: 600 11px/1 var(--mono); color: var(--lcd-text); }
   .pill .muted-text { color: var(--lcd-dim); }
   .dot { width: 8px; height: 8px; border-radius: 50%; background: #3a3f47; box-shadow: inset 0 1px 1px rgba(0,0,0,.6); }
@@ -938,7 +948,7 @@
 </head>
 <body>
 <header>
-  <h1>Mixer Mute Service</h1>
+  <h1 title="Mixer Mute Service"><span class="brand-m" aria-hidden="true">M</span><span class="sr-only">Mixer Mute Service</span></h1>
   <label class="compact-switch stage-switch" title="Stage: ein Bereich bildschirmfüllend, die anderen als Vorschau links">
     <input id="stage-toggle" type="checkbox" /><span class="track"></span>Stage
   </label>
@@ -949,8 +959,7 @@
     <div class="status-display">
       <span class="pill"><span id="dot-conn" class="dot"></span><span id="txt-conn">mixer ...</span></span>
       <span class="pill"><span id="dot-en" class="dot"></span><span id="txt-en">...</span></span>
-      <span class="pill opt"><span id="txt-age" class="muted-text">updates: —</span></span>
-      <span class="pill opt"><span id="txt-build" class="muted-text">build: dev</span></span>
+      <span class="pill opt status-meta"><span id="txt-age" class="muted-text">updates: —</span><span id="txt-build" class="muted-text">Stand: —</span></span>
     </div>
     <span class="panic-guard"><button id="panic-btn" class="danger">Panic</button></span>
   </div>
@@ -1237,6 +1246,25 @@ let PERSONS_BOOTSTRAPPED = false;
 
 function resolvedBuildId() {
   return UI_BUILD_ID && UI_BUILD_ID !== "__BUILD_ID__" ? UI_BUILD_ID : "dev";
+}
+
+// Which version runs: a release carries "yyyyMMdd-HHmmss-<commit>" (written
+// by build-release.ps1); "dev" means the service runs straight from the
+// source code (tests), not from an installed release.
+function showBuildId() {
+  const id = resolvedBuildId();
+  const el = $("txt-build");
+  const m = /^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})\d{2}-(\w+)$/.exec(id);
+  if (m) {
+    el.textContent = `Stand ${m[3]}.${m[2]}. ${m[4]}:${m[5]}`;
+    el.title = `Installiertes Release vom ${m[3]}.${m[2]}.${m[1]} ${m[4]}:${m[5]}, Commit ${m[6]}`;
+  } else if (id === "dev") {
+    el.textContent = "Teststand";
+    el.title = "Läuft direkt aus dem Quellcode, nicht aus einem installierten Release";
+  } else {
+    el.textContent = `Stand ${id}`;
+    el.title = `Build ${id}`;
+  }
 }
 
 function applyBuildMigrations() {
@@ -4545,7 +4573,7 @@ $("program-items").addEventListener("click", event => {
 loadProgramItems();
 setInterval(refreshProgramState, 5000);
 setInterval(updateProgramCue, 1000);
-$("txt-build").textContent = "build: " + resolvedBuildId();
+showBuildId();
 normalizeCollapsedGroups();
 migrateFaderPresets();
 refreshLoop();
