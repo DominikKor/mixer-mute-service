@@ -37,6 +37,22 @@ class SongNextTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(shown), 2)
 
 
+class SongLiveTests(unittest.IsolatedAsyncioTestCase):
+    async def test_song_left_out_when_the_page_has_it(self):
+        service = SongService(Path(tempfile.mkdtemp()))
+        service.songs = {"a.foil": {"title": "A", "copyright": "", "books": [],
+                                    "slides": [{"key": "1", "text": "Zeile"}]}}
+        service.live = {"song_id": "a.foil", "slide": 0, "blank": False}
+        request = fake_request(service)
+        full = await songs.song_live(request)
+        self.assertEqual(full["song"]["title"], "A")
+        slim = await songs.song_live(request, have="a.foil")
+        self.assertIsNone(slim["song"])
+        self.assertTrue(slim["song_unchanged"])
+        other = await songs.song_live(request, have="b.foil")
+        self.assertEqual(other["song"]["title"], "A")
+
+
 class LibraryParseTests(unittest.IsolatedAsyncioTestCase):
     async def test_library_is_parsed_in_a_worker_thread(self):
         service = SongService(Path(tempfile.mkdtemp()))

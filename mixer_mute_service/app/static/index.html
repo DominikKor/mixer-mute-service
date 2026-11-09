@@ -286,6 +286,15 @@
   .update-actions { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
   .update-actions button { min-height: 44px; min-width: 110px; }
   /* Toasts read like a message on the console display */
+  .reload-banner {
+    position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 51;
+    display: flex; align-items: center; gap: 12px; max-width: calc(100vw - 32px);
+    padding: 8px 8px 8px 16px; border-radius: 8px;
+    background: var(--panel2); border: 1px solid var(--accent); color: var(--text);
+    box-shadow: 0 6px 24px rgba(0, 0, 0, .45);
+  }
+  .reload-banner[hidden] { display: none; }
+  .reload-banner button { min-height: 44px; min-width: 44px; }
   .toast-wrap {
     position: fixed; right: 16px; bottom: 16px; z-index: 50;
     display: flex; flex-direction: column; align-items: flex-end; gap: 8px; max-width: calc(100vw - 32px);
@@ -1728,6 +1737,10 @@
 </div>
 
 <div id="toasts" class="toast-wrap"></div>
+<div id="reload-banner" class="reload-banner" role="status" hidden>
+  <span>Eine neue Version ist installiert.</span>
+  <button type="button" class="primary" onclick="location.reload()">Neu laden</button>
+</div>
 
 <script>
 const $ = (id) => document.getElementById(id);
@@ -1766,23 +1779,35 @@ function showBuildId() {
   }
 }
 
+// localStorage may be unavailable (private mode, storage full, blocked): the
+// page then works without it. Everything per device goes through these.
+function storeGet(key) {
+  try { return localStorage.getItem(key); } catch (_) { return null; }
+}
+function storeSet(key, value) {
+  try { localStorage.setItem(key, value); } catch (_) {}
+}
+function storeRemove(key) {
+  try { localStorage.removeItem(key); } catch (_) {}
+}
+
 function applyBuildMigrations() {
   const key = "mixer_ui_build_id";
   const cur = resolvedBuildId();
-  const prev = localStorage.getItem(key);
+  const prev = storeGet(key);
   if (prev === cur) return;
   // Channel names are local-only overrides; clear stale values after updates
   // so server-configured names are visible on every device by default.
-  localStorage.removeItem("mixer_channel_names");
-  localStorage.setItem(key, cur);
+  storeRemove("mixer_channel_names");
+  storeSet(key, cur);
 }
 
 // ---- Channel custom names (localStorage) --------------------------------
 
 function loadChannelNames() {
-  try { return JSON.parse(localStorage.getItem("mixer_channel_names") || "{}"); } catch { return {}; }
+  try { return JSON.parse(storeGet("mixer_channel_names") || "{}"); } catch { return {}; }
 }
-function saveChannelNames(names) { localStorage.setItem("mixer_channel_names", JSON.stringify(names)); }
+function saveChannelNames(names) { storeSet("mixer_channel_names", JSON.stringify(names)); }
 
 function getChannelDisplayName(ch, serverName) {
   const names = loadChannelNames();
@@ -2006,7 +2031,7 @@ function migrateFaderPresets() {
   // Presets saved before the fader encoding was fixed hold bytes from the old
   // percent/calibration mapping, which are not real fader positions.
   const key = "mixer_fader_presets_float";
-  if (localStorage.getItem(key)) return;
+  if (storeGet(key)) return;
   const list = loadPersons();
   let cleared = 0;
   for (const p of list) {
@@ -2015,8 +2040,8 @@ function migrateFaderPresets() {
     }
   }
   savePersons(list);
-  localStorage.removeItem("mixer_fader_calibration");
-  localStorage.setItem(key, "1");
+  storeRemove("mixer_fader_calibration");
+  storeSet(key, "1");
   if (cleared) {
     setTimeout(() => toast(`${cleared} gespeicherte Fader-Werte zurückgesetzt (altes Format). Bitte neu mit „Set“ speichern.`, false), 500);
   }
@@ -2168,11 +2193,12 @@ function startRenamePerson(personId, currentName) {
 }
 
 // ---- Mute groups ------------------------------------------------------------
-// The service (groups.json) is the source of truth for which channels belong
-// to a group. This page keeps per-device extras next to it in localStorage:
-// saved fader values, descriptions and the open/closed state. Changes made
-// here are pushed through one serialized queue; changes made on another
-// device are pulled in every few seconds.
+// The service is the source of truth for which channels belong to a group
+// (groups.json) and for their saved fader values and descriptions
+// (group_presets.json). This page keeps a working copy in localStorage plus
+// the open/closed state, which is per device. Group changes made here are
+// pushed through one serialized queue, saved values right away; changes made
+// on another device are pulled in every few seconds.
 
 const GROUP_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9 _-]{0,63}$/;
 const GROUP_NAME_HINT = "Name: Buchstaben, Ziffern, Leerzeichen, - und _ (max. 64), beginnt mit Buchstabe oder Ziffer";
@@ -2253,6 +2279,62 @@ function applyBackendGroups(backend) {
   renderProgramItems();
 }
 
+// ---- Saved fader values and descriptions on the service -----------------------
+// Safari deletes the localStorage of a site unused for 7 days; the service
+// runs weekly. So every saved value goes to the service at once, and the
+// service's values win when the page pulls.
+let PRESET_PUTS = 0;
+
+async function putPreset(groupName, ch, fields) {
+  PRESET_PUTS++;
+  try {
+    const r = await api("PUT", `/group-presets/${encodeURIComponent(groupName)}/${ch}`, fields);
+    if (!r.ok || r.data.ok === false) {
+      toast(`${groupName}: Kanal ${ch} nicht auf dem Dienst gespeichert (${r.data.reason || "HTTP " + r.status})`, false);
+      return false;
+    }
+    return true;
+  } finally {
+    PRESET_PUTS--;
+  }
+}
+
+// Take over the service's values. Values only this device has (saved before
+// they moved to the service, or a duplicated group) are sent once. Returns
+// whether the local list changed.
+async function syncPresetsFromBackend() {
+  if (PRESET_PUTS) return false;
+  const r = await api("GET", "/group-presets");
+  if (!r.ok || !r.data || typeof r.data !== "object" || Array.isArray(r.data) || PRESET_PUTS) return false;
+  const server = r.data;
+  const backend = PROGRAM_GROUPS || {};
+  const list = loadPersons();
+  const uploads = [];
+  let changed = false;
+  for (const p of list) {
+    const remote = server[p.name] || {};
+    const members = new Set((backend[p.name] || []).map(String));
+    for (const [ch, entry] of Object.entries(p.channels || {})) {
+      const saved = remote[ch];
+      if (saved) {
+        const merged = { ...entry, fader_hex: saved.fader_hex, set_at: saved.set_at, description: saved.description || "" };
+        if (JSON.stringify(merged) !== JSON.stringify(entry)) { p.channels[ch] = merged; changed = true; }
+      } else if (members.has(ch) && (isValidFaderHex(entry.fader_hex) || entry.description)) {
+        const fields = {};
+        if (isValidFaderHex(entry.fader_hex)) fields.fader_hex = entry.fader_hex;
+        if (entry.description) fields.description = entry.description;
+        uploads.push([p.name, ch, fields]);
+      }
+    }
+  }
+  if (changed) savePersons(list);
+  for (const [name, ch, fields] of uploads) {
+    const u = await api("PUT", `/group-presets/${encodeURIComponent(name)}/${ch}`, fields);
+    if (!u.ok) console.warn(`preset upload ${name}/${ch}:`, u.data.reason || u.status);
+  }
+  return changed;
+}
+
 async function bootstrapPersonsFromBackend() {
   if (PERSONS_BOOTSTRAPPED) return;
   const r = await api("GET", "/groups");
@@ -2277,6 +2359,7 @@ async function bootstrapPersonsFromBackend() {
   }
   mergeBackendGroups(backend);
   applyBackendGroups(backend);
+  await syncPresetsFromBackend();
   normalizeCollapsedGroups();
   renderPersons();
 }
@@ -2286,8 +2369,10 @@ async function pullGroupsFromBackend() {
   if (!PERSONS_BOOTSTRAPPED || GROUP_SYNC_PENDING) return;
   const r = await api("GET", "/groups");
   if (!r.ok || !r.data || typeof r.data !== "object" || GROUP_SYNC_PENDING) return;
-  if (mergeBackendGroups(r.data)) renderPersons();
+  const groupsChanged = mergeBackendGroups(r.data);
   applyBackendGroups(r.data);
+  const presetsChanged = await syncPresetsFromBackend();
+  if (groupsChanged || presetsChanged) renderPersons();
 }
 
 function loadCollapsedGroups() {
@@ -2389,6 +2474,7 @@ async function runGroupSync() {
   }
   const after = await api("GET", "/groups");
   if (after.ok && after.data && typeof after.data === "object") applyBackendGroups(after.data);
+  await syncPresetsFromBackend();   // values of new (e.g. duplicated) groups
 }
 
 // The service renames the group together with its Programm rows, Steuerung
@@ -2573,7 +2659,9 @@ function setPersonChannelFader(personId, ch) {
   p.channels[key] = { ...(p.channels[key] || {}), fader_hex: c.fader_hex, set_at: Date.now() };
   savePersons(list);
   renderPersons(true);
-  toast(`Kanal ${ch}: ${formatDb(c.fader_value)} gespeichert`, true);
+  putPreset(p.name, ch, { fader_hex: c.fader_hex }).then(ok => {
+    if (ok) toast(`Kanal ${ch}: ${formatDb(c.fader_value)} gespeichert`, true);
+  });
 }
 
 // ---- Group actions: all or nothing ---------------------------------------
@@ -2704,6 +2792,7 @@ async function setPersonChannelFaderValue(personId, ch, value) {
   p.channels[key] = { ...(p.channels[key] || {}), fader_hex, set_at: Date.now() };
   savePersons(list);
   renderPersons(true);
+  putPreset(p.name, ch, { fader_hex });
 
   const r = await api("POST", `/channels/${ch}/fader`, { value });
   if (r.ok && r.data.ok !== false) {
@@ -2829,7 +2918,7 @@ function buildPersonsHtml() {
         </div>`
       : "";
 
-    html += `<div class="person-card">
+    html += `<div class="person-card" data-card="${escapeAttr(person.id)}">
       <div class="person-head">
         <div class="person-name-wrap">
           <button class="collapse-btn" data-action="person-toggle-collapse" data-pid="${escapeAttr(person.id)}" title="${collapsed ? "Ausklappen" : "Einklappen"}" aria-expanded="${!collapsed}"><span class="collapse-chip" aria-hidden="true">${collapsed ? "▸" : "▾"}</span></button>
@@ -2862,10 +2951,19 @@ function buildPersonsHtml() {
 // swapped every button under the user's finger, so a tap that spanned a
 // refresh was lost. The DOM is now only replaced when the markup changed.
 let PERSONS_HTML = null;
+// Only the cards whose markup changed are swapped: a live change in one group
+// (an LED, a fader) leaves the buttons of the other groups under the finger.
 function setPersonsHtml(wrap, html) {
   if (html === PERSONS_HTML) return;
   PERSONS_HTML = html;
-  wrap.innerHTML = html;
+  const next = document.createElement("template");
+  next.innerHTML = html;
+  const fresh = [...next.content.children];
+  const old = [...wrap.children];
+  const sameCards = fresh.length === old.length
+    && fresh.every((el, i) => el.dataset.card && el.dataset.card === old[i].dataset.card);
+  if (!sameCards) { wrap.replaceChildren(...fresh); return; }
+  fresh.forEach((el, i) => { if (el.outerHTML !== old[i].outerHTML) old[i].replaceWith(el); });
 }
 
 
@@ -2958,20 +3056,45 @@ function confirmDelete(anchor, question, okLabel = "Löschen") {
 
 // Never throws: a network error comes back like a failed request
 // (status 0), so every caller handles both the same way. data is always an
-// object or an array.
-async function api(method, path, body) {
-  const opt = { method, headers: {} };
-  if (body !== undefined) { opt.headers["Content-Type"] = "application/json"; opt.body = JSON.stringify(body); }
-  let res;
-  try {
-    res = await fetch(path, opt);
-  } catch (_) {
-    return { ok: false, status: 0, data: { reason: "service unreachable" } };
+// object or an array. A request that gets no answer within ``timeout`` ms is
+// given up (a hanging request would otherwise freeze whatever waits for it).
+// Two GETs of the same path at the same time share one request.
+const API_TIMEOUT_MS = 10000;
+const API_GETS = new Map();
+
+function api(method, path, body, { timeout = API_TIMEOUT_MS } = {}) {
+  if (method !== "GET" || body !== undefined) return apiRequest(method, path, body, timeout);
+  if (!API_GETS.has(path)) {
+    API_GETS.set(path, apiRequest(method, path, body, timeout).finally(() => API_GETS.delete(path)));
   }
-  let data = {};
-  try { data = await res.json(); } catch (_) {}
-  if (data === null || typeof data !== "object") data = {};
-  return { ok: res.ok, status: res.status, data };
+  // Each caller gets its own copy: some edit the data they receive.
+  return API_GETS.get(path).then(r => ({ ...r, data: structuredCloneSafe(r.data) }));
+}
+
+function structuredCloneSafe(data) {
+  try { return structuredClone(data); } catch (_) { return JSON.parse(JSON.stringify(data)); }
+}
+
+async function apiRequest(method, path, body, timeout) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeout);
+  const opt = { method, headers: {}, signal: ctrl.signal };
+  if (body !== undefined) { opt.headers["Content-Type"] = "application/json"; opt.body = JSON.stringify(body); }
+  try {
+    let res;
+    try {
+      res = await fetch(path, opt);
+    } catch (_) {
+      const reason = ctrl.signal.aborted ? "service did not answer in time" : "service unreachable";
+      return { ok: false, status: 0, data: { reason } };
+    }
+    let data = {};
+    try { data = await res.json(); } catch (_) {}
+    if (data === null || typeof data !== "object") data = {};
+    return { ok: res.ok, status: res.status, data };
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 // Report the outcome of a control/CRUD action, then refresh. Returns whether
@@ -4163,11 +4286,22 @@ function renderPanic() {
 }
 
 let refreshSeq = 0;
-async function refresh() {
+// The 1 s poll only asks for the mixer state; profiles, cameras, beamer and
+// power settings change rarely and are read every 5 s (and after every click).
+const REFRESH_SLOW_MS = 5000;
+let REFRESH_SLOW_AT = 0;
+const SKIPPED = Promise.resolve({ ok: false, skipped: true, status: 0, data: {} });
+
+async function refresh({ light = false } = {}) {
   const seq = ++refreshSeq;
+  const slow = !light || Date.now() - REFRESH_SLOW_AT >= REFRESH_SLOW_MS;
+  if (slow) REFRESH_SLOW_AT = Date.now();
   const [health, state, desktop, cameras, beamer, power] = await Promise.all([
-    api("GET", "/health"), api("GET", "/state"), api("GET", "/desktop/profiles"),
-    api("GET", "/camera-streams"), api("GET", "/beamer/state"), api("GET", "/power/off-config"),
+    api("GET", "/health"), api("GET", "/state"),
+    slow ? api("GET", "/desktop/profiles") : SKIPPED,
+    slow ? api("GET", "/camera-streams") : SKIPPED,
+    slow ? api("GET", "/beamer/state") : SKIPPED,
+    slow ? api("GET", "/power/off-config") : SKIPPED,
   ]);
   // Drop a stale response if a newer refresh has since started (e.g. the
   // per-second poll resolving after a click's own refresh) -- otherwise it
@@ -4200,21 +4334,58 @@ async function refresh() {
   }
   $("txt-age").textContent = "updates: " + fmtAge(h.last_update_age_seconds);
   renderPanic();
-  if (health.ok) $("agent-update-link").hidden = !h.desktop_display_enabled;
+  if (health.ok) {
+    $("agent-update-link").hidden = !h.desktop_display_enabled;
+    noticeNewBuild(h.build_id);
+  }
   if (desktop.ok) renderDesktopProfiles(desktop.data);
   if (cameras.ok) renderCameraStreams(cameras.data);
-  renderBeamerState(beamer.ok ? beamer.data : null);
-  renderPowerOffConfig(power.ok ? power.data : null);
+  if (!beamer.skipped) renderBeamerState(beamer.ok ? beamer.data : null);
+  if (!power.skipped) renderPowerOffConfig(power.ok ? power.data : null);
   if (stateOk) await bootstrapPersonsFromBackend();
   renderChannels(LAST_STATE);
   renderPersons();
 }
 
-// Each poll starts one second after the previous one finished, so slow
-// answers (Wi-Fi, a busy service) never pile up.
-async function refreshLoop() {
-  await refresh();
-  setTimeout(refreshLoop, 1000);
+// ---- Polling ------------------------------------------------------------------
+// Each poll starts its interval after the previous run finished, so slow
+// answers (Wi-Fi, a busy service) never pile up, and an error in one run
+// does not end the polling. While the page is hidden (other tab, iPad locked)
+// nothing is polled; when it shows again every poll runs at once.
+const POLLS = [];
+
+function poll(fn, ms) {
+  const job = { fn, ms, timer: 0, running: false };
+  const run = async () => {
+    clearTimeout(job.timer);
+    if (job.running) return;
+    job.running = true;
+    try {
+      if (!document.hidden) await job.fn();
+    } catch (err) {
+      console.error(err);
+    } finally {
+      job.running = false;
+      job.timer = setTimeout(run, job.ms);
+    }
+  };
+  job.run = run;
+  POLLS.push(job);
+  run();
+}
+
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) for (const job of POLLS) job.run();
+});
+
+// ---- A new version on the service ---------------------------------------------
+// After an update the service runs a new build while this page is still the
+// old one. Reloading by itself could interrupt someone mid-edit, so the page
+// offers it instead.
+function noticeNewBuild(serviceBuild) {
+  const mine = resolvedBuildId();
+  if (mine === "dev" || !serviceBuild || serviceBuild === "dev" || serviceBuild === mine) return;
+  $("reload-banner").hidden = false;
 }
 
 // ---- Collapsible sections and channel view --------------------------------
@@ -4500,6 +4671,7 @@ function savePersonChannelDescription(input) {
   if (!channel) return;
   channel.description = input.value.trim();
   savePersons(list);
+  putPreset(person.name, input.dataset.ch, { description: channel.description });
   // The field already shows the new text. Only remember the new markup instead
   // of redrawing: a redraw now would swap the key the user is tapping (the tap
   // that took the focus away is what fired this change).
@@ -5573,6 +5745,10 @@ function programPlayToast(result) {
     // Name the action that failed and why (e.g. a file missing on the target PC).
     const failed = ((result.data && result.data.linked_actions) || []).find(action => action.ok === false);
     const detail = failed && failed.reason ? ` – ${failed.file ? failed.file + ": " : ""}${failed.reason}` : "";
+    if (result.data && result.data.reason === "program moved on") {
+      toast("Schon weiter: der nächste Punkt wurde gerade gestartet (anderes Gerät oder doppelt getippt)", false);
+      return;
+    }
     toast(`${title}: ${(result.data && result.data.reason) || "HTTP " + result.status}${detail}`, false);
   } else {
     toast(`${title} gestartet · Verzögerung ${formatProgramDelay(result.data.delay_seconds)}`, true);
@@ -5585,7 +5761,10 @@ async function startProgram(key, path, button) {
   button.disabled = true;
   updateProgramCue();
   try {
-    programPlayToast(await api("POST", path));
+    // "Weiter" names the row it means: if another device (or a double tap)
+    // already started it, the service refuses instead of skipping a row.
+    const body = key === "next" && PROGRAM_STATUS.next_id ? { expected_next_id: PROGRAM_STATUS.next_id } : undefined;
+    programPlayToast(await api("POST", path, body, { timeout: 30000 }));
     await loadProgramItems();
     await refreshSongLive();
   } finally {
@@ -5821,6 +6000,7 @@ const SONG_INDEX = new Map();
 let SONG_SETTINGS = null;
 let SONG_LIBRARY = { loaded_at: null, errors: [] };
 let SONG_LIVE = { song_id: null, slide: 0, blank: false, song: null };
+let SONG_LIVE_FULL = true;   // next poll fetches the song itself (library reloaded)
 let SONG_BUSY = false;
 
 async function loadSongs() {
@@ -5831,6 +6011,7 @@ async function loadSongs() {
     SONG_LIBRARY = { loaded_at: list.data.loaded_at, errors: list.data.errors || [] };
     SONG_INDEX.clear();
     for (const song of SONG_LIST) SONG_INDEX.set(song.id, song);
+    SONG_LIVE_FULL = true;
   }
   document.querySelectorAll(".song-picker").forEach(syncSongPicker);
   renderSongLive();
@@ -6014,9 +6195,15 @@ function renderSongLive() {
 
 async function refreshSongLive() {
   if (!STAGE.on && !$("program-items").closest(".panel").classList.contains("open")) return;
-  const result = await api("GET", "/songs/live");
+  // The song itself (all slides) only comes along when it changed.
+  const have = SONG_LIVE.song && !SONG_LIVE_FULL ? `?have=${encodeURIComponent(SONG_LIVE.song_id)}` : "";
+  const result = await api("GET", "/songs/live" + have);
   if (result.ok && result.data && !SONG_BUSY) {
-    SONG_LIVE = result.data;
+    const data = result.data;
+    if (data.song_unchanged && data.song_id === SONG_LIVE.song_id) data.song = SONG_LIVE.song;
+    if (data.song_unchanged && !data.song) return;   // changed meanwhile: next poll fetches it
+    SONG_LIVE = data;
+    SONG_LIVE_FULL = false;
     renderSongLive();
   }
 }
@@ -6264,7 +6451,7 @@ $("new-song-form").addEventListener("submit", async event => {
     const result = await api("POST", "/songs/create", {
       title: $("ns-title").value.trim(), copyright: $("ns-copyright").value.trim(),
       slides, refrain: NEW_SONG.refrain, order: parsed.order,
-    });
+    }, { timeout: 15000 });
     if (!result.ok || result.data.ok === false) {
       $("ns-error").hidden = false;
       $("ns-error").textContent = result.data.reason || `HTTP ${result.status}`;
@@ -6880,7 +7067,8 @@ $("sg-reload").addEventListener("click", async event => {
   $("sg-library-status").textContent = "Lade Bibliothek vom Anzeige-PC…";
   try {
     if (!(await saveSongSettings())) return;
-    const result = await api("POST", "/songs/library/reload");
+    // The display PC reads every song file first: allow it up to 30 s.
+    const result = await api("POST", "/songs/library/reload", undefined, { timeout: 40000 });
     if (!result.ok || result.data.ok === false) { songFormError(result.data.reason || `HTTP ${result.status}`); return; }
     await loadSongs();
     toast(`${result.data.count} Lieder geladen`, true);
@@ -6924,20 +7112,17 @@ $("program-items").addEventListener("click", event => {
 });
 
 loadProgramItems();
-setInterval(refreshProgramState, 5000);
-loadSongs().then(refreshSongLive);
+poll(refreshProgramState, 5000);
+loadSongs().then(() => poll(refreshSongLive, 1500));
 loadFileBrowseAvailable();
-setInterval(refreshSongLive, 1500);
 setInterval(updateProgramCue, 1000);
 showBuildId();
 normalizeCollapsedGroups();
 migrateFaderPresets();
-refreshLoop();
-setInterval(pullGroupsFromBackend, 5000);
-refreshUpdateButton();
-setInterval(refreshUpdateButton, 30000);
-loadChannelColors();
-setInterval(loadChannelColors, 5000);
+poll(() => refresh({ light: true }), 1000);
+poll(pullGroupsFromBackend, 5000);
+poll(refreshUpdateButton, 30000);
+poll(loadChannelColors, 5000);
 </script>
 </body>
 </html>

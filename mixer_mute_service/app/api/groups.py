@@ -6,15 +6,23 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Body, Request
+
 
 from ..channel_settings import SettingsError
+from ..group_presets import PresetError
 from ..groups import GroupError
 from ..models import GroupCreate, GroupRename, GroupUpdate
 from ..responses import fail
 
 router = APIRouter()
 log = logging.getLogger("mixer.api.groups")
+
+
+def _stores(state, *names):
+    """The optional stores that are running (a feature that failed to start
+    is None and simply skipped)."""
+    return [store for store in (getattr(state, name, None) for name in names) if store is not None]
 
 
 def _group_error(group: str, exc: GroupError):
@@ -61,7 +69,8 @@ async def delete_group(group: str, request: Request):
         await request.app.state.groups.delete(group)
     except GroupError as exc:
         return fail(str(exc), 404, group=group)
-    await request.app.state.channel_settings.delete_group(group)
+    for store in _stores(request.app.state, "channel_settings", "group_presets"):
+        await store.delete_group(group)
     return {"ok": True, "group": group, "deleted": True}
 
 
@@ -75,9 +84,13 @@ async def rename_group(group: str, body: GroupRename, request: Request):
     except GroupError as exc:
         return _group_error(group, exc)
     new_name = body.name.strip()
-    await state.channel_settings.rename_group(group, new_name)
-    program_rows = await state.program_items.rename_group(group, new_name)
-    keys = await state.companion_button_store.rename_group(group, new_name)
+    for store in _stores(state, "channel_settings", "group_presets"):
+        await store.rename_group(group, new_name)
+    program_rows = keys = 0
+    if state.program_items is not None:
+        program_rows = await state.program_items.rename_group(group, new_name)
+    if state.companion_button_store is not None:
+        keys = await state.companion_button_store.rename_group(group, new_name)
     log.info("Group %r renamed to %r (%d program rows, %d keys)", group, new_name, program_rows, keys)
     return {
         "ok": True, "group": new_name, "old_name": group, "channels": channels,
@@ -119,3 +132,35 @@ async def capture_group_settings(group: str, request: Request):
     log.info("Saved channel settings of group %r (%d channels)", group, len(snapshot["channels"]))
     _label_channels(request, snapshot)
     return {"ok": True, **snapshot}
+
+
+# -- saved fader values and descriptions (app/group_presets.py) ----------------
+# Not under /groups/... so that no group name can shadow these paths.
+
+@router.get("/group-presets")
+async def group_presets(request: Request):
+    state = request.app.state
+    if state.group_presets is None:
+        return fail("group presets are not available", 503)
+    return await state.group_presets.view(await state.groups.list())
+
+
+@router.put("/group-presets/{group}/{channel}")
+async def set_group_preset(group: str, channel: int, request: Request, body: dict = Body(...)):
+    """{"fader_hex": "..." | null, "description": "..."}; fields left out stay."""
+    state = request.app.state
+    if state.group_presets is None:
+        return fail("group presets are not available", 503)
+    channels = await state.groups.get(group)
+    if channels is None:
+        return fail("unknown group", 404, group=group)
+    if channel not in channels:
+        return fail("channel is not in this group", 400, group=group, channel=channel)
+    if not isinstance(body, dict) or not set(body) <= {"fader_hex", "description"}:
+        return fail("only fader_hex and description can be saved", 400)
+    try:
+        entry = await state.group_presets.set(
+            group, channel, body.get("fader_hex", ...), body.get("description", ...))
+    except PresetError as exc:
+        return fail(str(exc), 400)
+    return {"ok": True, "group": group, "channel": channel, **entry}

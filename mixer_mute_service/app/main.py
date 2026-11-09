@@ -29,6 +29,7 @@ from .channel_preferences import ChannelPreferences
 from .companion_buttons import COMPANION_BUTTONS, CompanionButtonStore
 from .config import default_config_path, load_config
 from .controller import Controller
+from .group_presets import GroupPresetStore
 from .groups import GroupStore
 from .mixer_client import MixerClient
 from .native_controls import NativeControlService
@@ -132,6 +133,8 @@ async def lifespan(app: FastAPI):
     client.start()
 
     # -- optional features: each one may fail on its own -------------------
+    app.state.group_presets = _optional(
+        app, "group presets", lambda: GroupPresetStore(data_dir / "group_presets.json"))
     app.state.channel_settings = _optional(
         app, "channel settings", lambda: ChannelSettingsStore(data_dir / "channel_settings.json"))
     app.state.program_items = _optional(

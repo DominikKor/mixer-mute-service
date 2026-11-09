@@ -10,7 +10,8 @@ GET  /songs/settings              PUT|POST /songs/settings
 POST /songs/library/reload        read the library again from the display PC
 GET  /songs                       [{id, title, books, slide_count}]
 GET  /songs/{song_id}             one song with all its slides
-GET  /songs/live                  what the screen shows: {song_id, slide, blank, song, slide_count}
+GET  /songs/live[?have=<id>]      what the screen shows: {song_id, slide, blank, song, slide_count}
+                                  ("song" left out if the caller already has it)
                                   slide numbers count the slides as shown: with
                                   "title_slide" on, slide 0 is the title slide
 POST /songs/show {song_id, slide} show a slide (unblanks)
@@ -335,8 +336,15 @@ async def list_songs(request: Request):
 
 
 @router.get("/songs/live")
-async def song_live(request: Request):
-    return _live_view(request.app.state.songs)
+async def song_live(request: Request, have: Optional[str] = None):
+    """What the screen shows. With ?have=<song_id> (the page already has that
+    song) the song itself is left out while it is still the live one: the
+    page polls this every 1.5 s."""
+    view = _live_view(request.app.state.songs)
+    if have is not None and view["song_id"] == have and view["song"] is not None:
+        view["song"] = None
+        view["song_unchanged"] = True
+    return view
 
 
 @router.post("/songs/show")

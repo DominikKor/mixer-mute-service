@@ -126,7 +126,13 @@ async def group_toggle(group: str, request: Request):
 
 @router.post("/groups/from-current-status")
 async def create_group_from_current_status(body: GroupCaptureRequest, request: Request):
-    return respond(await request.app.state.controller.create_group_from_current_status(body.name))
+    """A new group of the unmuted channels; their fader values are saved as
+    the group's presets."""
+    state = request.app.state
+    result = await state.controller.create_group_from_current_status(body.name)
+    if result.get("ok") and state.group_presets is not None:
+        await state.group_presets.set_faders(result["group"], result.get("fader_hex", {}))
+    return respond(result)
 
 
 # Panic: logged at WARNING and saved by the controller (survives a restart).
