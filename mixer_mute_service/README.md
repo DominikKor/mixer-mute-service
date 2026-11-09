@@ -41,6 +41,14 @@ in and out; the choice is remembered per device.
 - **Status bar**: mixer connection, send-enabled state, last-update age, the
   **Panic** button (disable/re-enable all sends) and **UPDATE** (Windows
   release only).
+- **Stage** switch (next to the title, remembered per device): like Stage
+  Manager, one section fills the screen and the others sit as live miniatures
+  on the left; a tap on one flies it onto the stage. The page never scrolls:
+  each section is laid out for the screen (channels pick the number of strips
+  per row and the fader length so that all of them fit; Steuerung packs its
+  categories as tiles) and only scaled down a little when that is not enough
+  (to 85 % at most with a finger, 60 % with a mouse; beyond that the stage
+  itself would scroll).
 - **Desktop**: one tile per profile from `desktop_display.profiles` (see
   below), plus tiles to add or edit profiles.
 - **Channels**: one strip per channel with the observed fader value, mute

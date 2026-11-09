@@ -680,7 +680,7 @@
   .fader-strip { width: 70px; flex-shrink: 0; display: flex; flex-direction: column; align-items: center; gap: 6px; }
   .fader {
     --travel-pad: 14px; /* half the cap height: the cap centre runs from top to bottom pad */
-    position: relative; width: 70px; height: 300px; outline: none; touch-action: none; user-select: none;
+    position: relative; width: 70px; height: var(--fader-h, 300px); outline: none; touch-action: none; user-select: none;
   }
   .fader-scale { position: absolute; left: 0; top: var(--travel-pad); bottom: var(--travel-pad); width: 70px; pointer-events: none; }
   .fader-tick { position: absolute; left: 0; width: 70px; height: 0; }
@@ -781,11 +781,76 @@
     .companion-grid { grid-template-columns: repeat(auto-fill, minmax(124px, 1fr)); }
   }
 
+
+  /* ---- Stage (like Stage Manager) -------------------------------------
+     One section fills the screen; the others sit as live miniatures in a
+     rail on the left. A tap on a miniature flies it onto the stage and the
+     current one back into the rail. The page is exactly one screen high:
+     every section is laid out (channels: columns and fader length) or, if
+     need be, scaled to fit the stage, so nothing has to be scrolled. */
+  :root { --rail-w: 196px; }
+  @media (max-width: 1300px), (max-height: 860px) { :root { --rail-w: 150px; } }
+  .stage-rail, .stage-main { display: none; }
+  body.stage-on { height: 100vh; height: 100dvh; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
+  body.stage-on header { position: relative; flex: 0 0 auto; }
+  body.stage-on .page {
+    flex: 1 1 auto; min-height: 0; width: 100%; max-width: none; margin: 0;
+    display: grid; grid-template-columns: var(--rail-w) minmax(0, 1fr); gap: 20px; padding: 14px var(--page-pad) 16px;
+  }
+  body.stage-on .stage-rail {
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px;
+    min-height: 0; overflow: hidden;
+  }
+  body.stage-on .stage-main { display: block; position: relative; min-width: 0; min-height: 0; overflow: hidden; scrollbar-gutter: stable; }
+  body.stage-on .stage-main.scroll { overflow-y: auto; }  /* only if a section is far too long */
+  body.stage-on .panel { margin: 0; width: var(--stage-w); transform-origin: 0 0; }
+  body.stage-on .panel:not(.open) .panel-body { display: block; }
+  body.stage-on .panel:not(.open) .panel-tools { display: flex; }
+  body.stage-on .section-toggle { cursor: default; }
+  body.stage-on .section-toggle::before { display: none; }
+  .stage-thumb {
+    flex: 0 0 auto; display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 4px;
+    border-radius: 12px; cursor: pointer; outline: none; -webkit-tap-highlight-color: transparent; user-select: none;
+  }
+  .stage-thumb-screen {
+    position: relative; width: var(--thumb-w); height: var(--thumb-h); overflow: hidden; border-radius: 9px;
+    background: var(--bg); border: 1px solid #000;
+    box-shadow: 0 8px 18px rgba(0,0,0,.6), inset 0 0 0 1px rgba(255,255,255,.07);
+    transition: transform .18s ease, box-shadow .18s ease;
+  }
+  .stage-thumb-screen .panel { position: absolute; left: 0; top: 0; pointer-events: none; }
+  .stage-thumb:hover .stage-thumb-screen { transform: scale(1.04); }
+  .stage-thumb:focus-visible .stage-thumb-screen { box-shadow: 0 0 0 2px var(--accent), 0 8px 18px rgba(0,0,0,.6); }
+  .stage-thumb:active .stage-thumb-screen { transform: scale(.97); }
+  .stage-thumb-label {
+    font-size: 11px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; color: #9aa3b2;
+    text-shadow: 0 1px 0 #000; white-space: nowrap;
+  }
+  /* While sections fly between rail and stage nothing may clip them. */
+  body.stage-anim .stage-rail, body.stage-anim .stage-main, body.stage-anim .stage-thumb-screen { overflow: visible; }
+  body.stage-anim .panel.stage-flying { position: relative; z-index: 5; }
+  body.stage-anim .stage-thumb-screen .panel.stage-flying { position: absolute; }
+  .stage-switch { margin-left: 8px; }
+  /* Steuerung on stage: categories packed as tiles (big ones span several
+     lanes, see layoutStageCompanion), slimmer keys (50 px, at least 44 px
+     after fitting), so all keys fit one screen. */
+  body.stage-on .companion-categories { display: grid; column-gap: 12px; row-gap: 0; grid-auto-rows: 2px; grid-auto-flow: row dense; align-items: start; }
+  body.stage-on .companion-category { margin-bottom: 12px; }
+  /* Strips on stage: slimmer padding, so 12 fit next to each other. */
+  body.stage-on .strips .card { padding-left: 5px; padding-right: 5px; }
+  body.stage-on .companion-grid { grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 8px; }
+  body.stage-on button.companion-key {
+    min-height: 50px; padding: 7px 8px 7px 20px; font-size: 11px; letter-spacing: .04em;
+    overflow-wrap: break-word; -webkit-hyphens: auto; hyphens: auto;
+  }
 </style>
 </head>
 <body>
 <header>
   <h1>Mixer Mute Service</h1>
+  <label class="compact-switch stage-switch" title="Stage: ein Bereich bildschirmfüllend, die anderen als Vorschau links">
+    <input id="stage-toggle" type="checkbox" /><span class="track"></span>Stage
+  </label>
   <div class="status">
     <a id="agent-update-link" class="download-link" href="/desktop/agent/update.cmd" download hidden
        title="Update-Datei für den Display-Agent laden und auf dem Anzeige-PC ausführen">Display Service herunterladen</a>
@@ -1240,7 +1305,8 @@ function attachFader(ch, el, dbEl) {
   });
   f.cap.addEventListener("pointermove", (e) => {
     if (!f.dragging) return;
-    const travel = el.clientHeight - FADER_CAP_PX;
+    // On-screen travel: the stage view may show the strip scaled.
+    const travel = (el.clientHeight - FADER_CAP_PX) * (el.getBoundingClientRect().height / el.clientHeight || 1);
     const dy = e.clientY - f.lastY;
     f.lastY = e.clientY;
     const fine = e.shiftKey ? 0.25 : 1;  // Shift = fine adjustment
@@ -2882,6 +2948,7 @@ function initSections() {
   document.querySelectorAll(".panel[data-section]").forEach(panel => {
     setSectionOpen(panel, !closed[panel.dataset.section]);
     panel.querySelector(".section-toggle").addEventListener("click", () => {
+      if (STAGE.on) return;  // the stage shows every section whole
       const open = !panel.classList.contains("open");
       setSectionOpen(panel, open);
       const p = loadUiPrefs();
@@ -3301,8 +3368,307 @@ $("profile-form").addEventListener("keydown", (event) => {
   next.focus();
 });
 
+
+// ---- Stage (like Stage Manager) ---------------------------------------------
+// The sections stay the same live elements; only their place changes: the
+// stage (main) or a miniature in the rail. Moves are animated FLIP-style.
+const STAGE = { on: false, current: null, order: [], thumbs: {}, raf: 0, anims: [] };
+// Scaling limit: with a finger keys must stay big enough to tap; a mouse can
+// hit smaller ones. Beyond it the stage scrolls (very long sections only).
+const STAGE_MIN_FIT = window.matchMedia && matchMedia("(pointer: coarse)").matches ? 0.85 : 0.6;
+const STAGE_ANIM_MS = 440;
+const STAGE_FADER_MAX = 300, STAGE_FADER_MIN = 96;
+
+function stageReducedMotion() {
+  return window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
+
+function initStage() {
+  const page = document.querySelector(".page");
+  STAGE.order = [...page.querySelectorAll(":scope > .panel[data-section]")];
+  const rail = document.createElement("nav");
+  rail.id = "stage-rail";
+  rail.className = "stage-rail";
+  rail.setAttribute("aria-label", "Bereiche");
+  const main = document.createElement("main");
+  main.id = "stage-main";
+  main.className = "stage-main";
+  page.prepend(rail, main);
+  for (const panel of STAGE.order) {
+    const section = panel.dataset.section;
+    const thumb = document.createElement("div");
+    thumb.className = "stage-thumb";
+    thumb.tabIndex = 0;
+    thumb.setAttribute("role", "button");
+    const label = panel.querySelector(".section-toggle").textContent.trim();
+    thumb.setAttribute("aria-label", `${label} anzeigen`);
+    thumb.innerHTML = `<div class="stage-thumb-screen"></div><span class="stage-thumb-label">${escapeHtml(label)}</span>`;
+    thumb.addEventListener("click", () => stageShow(section));
+    thumb.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); stageShow(section); }
+    });
+    STAGE.thumbs[section] = thumb;
+  }
+  const observer = new ResizeObserver(scheduleStageLayout);
+  observer.observe(main);
+  observer.observe(rail);
+  STAGE.order.forEach(panel => observer.observe(panel));
+
+  const toggle = $("stage-toggle");
+  const prefs = loadUiPrefs();
+  toggle.checked = !!prefs.stage;
+  if (toggle.checked) setStage(true, false);
+  toggle.addEventListener("change", () => {
+    const p = loadUiPrefs();
+    p.stage = toggle.checked;
+    saveUiPrefs(p);
+    setStage(toggle.checked, true);
+  });
+}
+
+function stagePanel(section) {
+  return STAGE.order.find(panel => panel.dataset.section === section);
+}
+
+// Put every section where it belongs for the current state.
+function placeStagePanels() {
+  const page = document.querySelector(".page");
+  const main = $("stage-main"), rail = $("stage-rail");
+  if (!STAGE.on) {
+    rail.replaceChildren();
+    for (const panel of STAGE.order) {
+      panel.inert = false;
+      panel.classList.remove("stage-flying");
+      for (const prop of ["transform", "width", "marginLeft", "marginBottom"]) panel.style[prop] = "";
+      page.appendChild(panel);
+    }
+    resetStageChannels();
+    resetStageCompanion();
+    return;
+  }
+  const thumbs = [];
+  for (const panel of STAGE.order) {
+    const section = panel.dataset.section;
+    if (section === STAGE.current) {
+      panel.inert = false;
+      main.appendChild(panel);
+    } else {
+      panel.inert = true;  // a miniature is not clickable inside
+      const thumb = STAGE.thumbs[section];
+      thumb.firstElementChild.appendChild(panel);
+      thumbs.push(thumb);
+    }
+  }
+  rail.replaceChildren(...thumbs);
+}
+
+function setStage(on, animate) {
+  if (on === STAGE.on) return;
+  const firsts = animate ? stageRects() : null;
+  STAGE.on = on;
+  document.body.classList.toggle("stage-on", on);
+  if (on) {
+    const wanted = loadUiPrefs().stageSection;
+    STAGE.current = stagePanel(wanted) ? wanted : "channels";
+    window.scrollTo(0, 0);
+  }
+  const shown = STAGE.current && stagePanel(STAGE.current);
+  placeStagePanels();
+  if (on) layoutStage();
+  else if (shown) {
+    // Back in the long page, start at the section that was on stage.
+    const top = shown.getBoundingClientRect().top + scrollY - document.querySelector("header").offsetHeight - 8;
+    window.scrollTo(0, Math.max(0, top));
+  }
+  if (firsts) stageFlip(firsts);
+}
+
+function stageShow(section) {
+  if (!STAGE.on || section === STAGE.current || !stagePanel(section)) return;
+  const firsts = stageRects();
+  STAGE.current = section;
+  const p = loadUiPrefs();
+  p.stageSection = section;
+  saveUiPrefs(p);
+  placeStagePanels();
+  layoutStage();
+  stageFlip(firsts);
+}
+
+function scheduleStageLayout() {
+  if (!STAGE.on || STAGE.raf) return;
+  STAGE.raf = requestAnimationFrame(() => { STAGE.raf = 0; layoutStage(); });
+}
+
+// Size the stage, fit every section to it and draw the miniatures.
+function layoutStage() {
+  if (!STAGE.on) return;
+  const main = $("stage-main"), rail = $("stage-rail");
+  const W = main.clientWidth, H = main.clientHeight;
+  if (!W || !H) return;
+  document.querySelector(".page").style.setProperty("--stage-w", `${W}px`);
+  for (const panel of STAGE.order) {
+    if (panel.dataset.section === "channels") layoutStageChannels(panel, H);
+    if (panel.dataset.section === "companion") layoutStageCompanion(W);
+    const ph = panel.offsetHeight;
+    panel._stageFit = Math.max(STAGE_MIN_FIT, Math.min(1, H / ph));
+    panel._stageHeight = ph;
+  }
+  // Miniatures keep the stage's proportions and share the rail's height.
+  const n = STAGE.order.length - 1;
+  const labelH = 26, gap = 12;
+  let tw = rail.clientWidth - 8;
+  let th = tw * H / W;
+  const maxTh = (rail.clientHeight - n * labelH - (n - 1) * gap) / n;
+  if (th > maxTh) { th = Math.max(40, maxTh); tw = th * W / H; }
+  rail.style.setProperty("--thumb-w", `${Math.floor(tw)}px`);
+  rail.style.setProperty("--thumb-h", `${Math.floor(th)}px`);
+  for (const panel of STAGE.order) applyStageTransform(panel, W, H, tw);
+}
+
+// The transform a section has at rest in its current place.
+function stageTransformFor(panel, W, H, tw) {
+  const s = panel._stageFit || 1;
+  if (panel.parentElement === $("stage-main")) return s < 1 ? `scale(${s})` : "none";
+  const k = (tw / W) * s;
+  return `translate(${((tw - W * k) / 2).toFixed(2)}px, 0px) scale(${k.toFixed(5)})`;
+}
+
+function applyStageTransform(panel, W, H, tw) {
+  const onStage = panel.parentElement === $("stage-main");
+  const s = panel._stageFit || 1;
+  panel.style.transform = stageTransformFor(panel, W, H, tw);
+  // On stage a scaled section is centred and takes only its scaled height.
+  panel.style.marginLeft = onStage && s < 1 ? `${((W - W * s) / 2).toFixed(1)}px` : "";
+  panel.style.marginBottom = onStage && s < 1 ? `${(-(panel._stageHeight || 0) * (1 - s)).toFixed(1)}px` : "";
+  if (onStage) $("stage-main").classList.toggle("scroll", (panel._stageHeight || 0) * s > H + 1);
+}
+
+// Channels: pick the column count and fader length that show every strip at
+// the largest fader without scrolling (compact strips: the widest tiles).
+function layoutStageChannels(panel, H) {
+  const strips = $("channels");
+  const cards = [...strips.children].filter(c => c.classList.contains("card"));
+  if (!cards.length) return;
+  const W = parseFloat(getComputedStyle(document.querySelector(".page")).getPropertyValue("--stage-w")) || panel.offsetWidth;
+  const compact = strips.classList.contains("compact");
+  // Narrow gaps on stage: 12 strips (84 px: fader + padding) fit an iPad row.
+  const gapX = 6, gapY = 10;
+  strips.style.columnGap = `${gapX}px`;
+  strips.style.rowGap = `${gapY}px`;
+  const head = panel.querySelector(".panel-head").offsetHeight;
+  const bodyPad = parseFloat(getComputedStyle(strips.parentElement).paddingBottom) || 0;
+  const availH = H - head - bodyPad - 2;
+  const fader = !compact && cards[0].querySelector(".fader");
+  const faderH = fader ? fader.offsetHeight : 0;
+  const fixed = Math.max(...cards.map(c => c.offsetHeight)) - faderH;
+  const minW = compact ? 124 : 80;
+  const n = cards.length;
+  let best = null;
+  for (let c = 1; c <= n; c++) {
+    if (c > 1 && c * minW + (c - 1) * gapX > W) break;
+    const rows = Math.ceil(n / c);
+    const per = (availH - (rows - 1) * gapY) / rows;
+    const f = compact ? 0 : Math.min(STAGE_FADER_MAX, Math.floor(per - fixed));
+    const fits = compact ? per >= fixed : f >= STAGE_FADER_MIN;
+    const cand = { c, rows, f, fits };
+    if (!best
+        || (cand.fits && !best.fits)
+        || (cand.fits && best.fits && !compact && cand.f > best.f)
+        || (!cand.fits && !best.fits && cand.rows < best.rows)) best = cand;
+  }
+  strips.style.maxWidth = "none";
+  strips.style.gridTemplateColumns = `repeat(${best.c}, minmax(0, 1fr))`;
+  if (!compact) strips.style.setProperty("--fader-h", `${best.fits ? best.f : STAGE_FADER_MIN}px`);
+}
+
+// Steuerung: categories as tiles in lanes; a category with many keys spans
+// several lanes so it is not one long column. Row spans are measured
+// (masonry), dense packing fills the gaps.
+function layoutStageCompanion(W) {
+  const root = $("companion-categories");
+  const cats = [...root.children].filter(c => c.classList.contains("companion-category"));
+  if (!cats.length) return;
+  const gap = 12, laneMin = 230;
+  const keys = cats.map(c => c.querySelector(".companion-grid[hidden]") ? 0 : c.querySelectorAll(".companion-key").length);
+  const total = keys.reduce((a, b) => a + b, 0);
+  const apply = (lanes) => {
+    root.style.gridTemplateColumns = `repeat(${lanes}, minmax(0, 1fr))`;
+    const perLane = Math.max(1, total / lanes);
+    cats.forEach((cat, i) => {
+      const span = Math.min(lanes, Math.max(1, Math.ceil(keys[i] / perLane - 0.15)));
+      cat.style.gridColumn = `span ${span}`;
+    });
+    for (const cat of cats) cat.style.gridRowEnd = `span ${Math.ceil((cat.offsetHeight + gap) / 2)}`;
+    return root.offsetHeight;
+  };
+  // A few lane counts; the lowest result wins.
+  const most = Math.max(1, Math.floor((W + gap) / (laneMin + gap)));
+  let best = most, bestH = Infinity;
+  for (let lanes = most; lanes >= Math.max(1, most - 2); lanes--) {
+    const h = apply(lanes);
+    if (h < bestH - 1) { bestH = h; best = lanes; }
+  }
+  apply(best);
+}
+
+function resetStageCompanion() {
+  const root = $("companion-categories");
+  root.style.gridTemplateColumns = "";
+  for (const cat of root.children) { cat.style.gridColumn = ""; cat.style.gridRowEnd = ""; }
+}
+
+function resetStageChannels() {
+  const strips = $("channels");
+  strips.style.maxWidth = "";
+  strips.style.gridTemplateColumns = "";
+  strips.style.columnGap = "";
+  strips.style.rowGap = "";
+  strips.style.removeProperty("--fader-h");
+}
+
+function stageRects() {
+  const rects = new Map();
+  for (const panel of STAGE.order) rects.set(panel, panel.getBoundingClientRect());
+  return rects;
+}
+
+// FLIP: every section starts where it was on screen and glides to its new
+// place; the miniature's own scale is part of the end state.
+function stageFlip(firsts) {
+  STAGE.anims.forEach(a => a.cancel());
+  STAGE.anims = [];
+  if (stageReducedMotion()) return;
+  document.body.classList.add("stage-anim");
+  const pending = [];
+  for (const panel of STAGE.order) {
+    const first = firsts.get(panel);
+    const end = panel.style.transform && panel.style.transform !== "none" ? panel.style.transform : "";
+    panel.style.transform = "none";
+    const origin = panel.getBoundingClientRect();   // untransformed layout box
+    panel.style.transform = end;
+    const last = panel.getBoundingClientRect();
+    if (!first || !last.width || !first.width) continue;
+    const r = first.width / last.width;
+    const a = { x: last.left - origin.left, y: last.top - origin.top };
+    const dx = first.left - origin.left - a.x * r, dy = first.top - origin.top - a.y * r;
+    if (Math.abs(dx) < 1 && Math.abs(dy) < 1 && Math.abs(r - 1) < 0.002) continue;
+    panel.classList.add("stage-flying");
+    const anim = panel.animate([
+      { transform: `translate(${dx}px, ${dy}px) scale(${r}) ${end}` },
+      { transform: `translate(0px, 0px) scale(1) ${end}` },
+    ], { duration: STAGE_ANIM_MS, easing: "cubic-bezier(.2, .8, .2, 1)" });
+    STAGE.anims.push(anim);
+    pending.push(anim.finished.catch(() => {}).then(() => panel.classList.remove("stage-flying")));
+  }
+  Promise.all(pending).then(() => {
+    if (!STAGE.anims.some(a => a.playState === "running")) document.body.classList.remove("stage-anim");
+  });
+}
+
 loadCompanionButtons();
 initSections();
+initStage();
 initCompanionEditing();
 applyBuildMigrations();
 let PROGRAM_ITEMS = [];
@@ -3566,7 +3932,7 @@ async function loadProgramItems() {
 
 // Starts and the current/next row as other devices see them (every 5 s).
 async function refreshProgramState() {
-  if (!$("program-items").closest(".panel").classList.contains("open")) return;
+  if (!STAGE.on && !$("program-items").closest(".panel").classList.contains("open")) return;
   const [items, status] = await Promise.all([api("GET", "/program/items"), api("GET", "/program/status")]);
   if (!items.ok || !Array.isArray(items.data) || !status.ok) return;
   PROGRAM_ITEMS = items.data;
