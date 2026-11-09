@@ -8,11 +8,13 @@ reuses the same connection to inject commands. Reconnects with backoff. This is
 state independently. If no frames arrive, state stays unknown and every send is
 blocked by the safety layer -- the desired fail-safe behaviour.
 
-Link liveness: the mixer answers every keepalive handshake with a full dump, so
-with a keepalive configured a silent link is a dead one (pulled cable, switch
-outage, hung mixer). After LINK_TIMEOUT_FACTOR keepalive intervals without any
-data the link counts as stale (sends are refused) and the read times out,
-which forces a reconnect.
+Link liveness: the mixer answers every keepalive handshake with a full state
+dump. With a keepalive configured, the link counts as stale (sends refused)
+when no *readable* dump arrived for LINK_TIMEOUT_FACTOR keepalive intervals --
+any bytes are not enough, a dump the parser cannot read (e.g. after a firmware
+change) confirms nothing. A read that gets no bytes at all for that long ends
+the connection, which forces a reconnect. TCP keepalive notices a dead link
+even while nothing is sent.
 """
 
 from __future__ import annotations
@@ -20,55 +22,71 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from typing import Optional
+from typing import Callable, Iterable, Optional
 
 from .config import Config
-from .protocol import SUBSCRIBE_HANDSHAKE_HEX, BusMap, StreamBuffer
+from .link import (
+    SEND_TIMEOUT_SECONDS,
+    ParserHooks,
+    default_bus_map,
+    new_stream_buffer,
+    open_mixer_connection,
+)
+from .protocol import SUBSCRIBE_HANDSHAKE_HEX, BusMap, BusObjects, Dump, DumpListener
 from .state import StateStore
 
 log = logging.getLogger("mixer.client")
 
 # Reconnect backoff schedule (seconds), capped at the last value.
 _BACKOFF = [1, 2, 5, 10]
-# No data for this many keepalive intervals = the link is dead.
+# No readable dump (or no data at all) for this many keepalive intervals = the
+# link is dead.
 LINK_TIMEOUT_FACTOR = 2.5
-# A write the mixer does not take within this time means the link is broken.
-SEND_TIMEOUT_SECONDS = 2.0
 
 
 class MixerClient:
-    def __init__(self, cfg: Config, store: StateStore, bus_map: Optional[BusMap] = None) -> None:
+    def __init__(
+        self,
+        cfg: Config,
+        store: StateStore,
+        bus_map: Optional[BusMap] = None,
+        on_bus_objects: Optional[Callable[[BusObjects], None]] = None,
+        dump_listeners: Iterable[DumpListener] = (),
+    ) -> None:
         self._cfg = cfg
         self._store = store
         self._reader: Optional[asyncio.StreamReader] = None
         self._writer: Optional[asyncio.StreamWriter] = None
-        if bus_map is None:
-            bus_map = BusMap([(b.channel, b.id) for b in cfg.mixer.buses])
-        self._bus_map = bus_map
+        self._hooks = ParserHooks(bus_map or default_bus_map(cfg), on_bus_objects, list(dump_listeners))
         self._buffer = self._new_buffer()
         self._send_lock = asyncio.Lock()
         self._stop = asyncio.Event()
         self._task: Optional[asyncio.Task] = None
 
         self.connected: bool = False
-        # Monotonic time of the last bytes read (set to the connect time on
-        # connect, so a link that never answers also goes stale).
-        self.last_rx_at: Optional[float] = None
+        # Monotonic time of the last state dump that could be read (set to the
+        # connect time on connect, so a link that never answers goes stale too).
+        self.last_dump_ok_at: Optional[float] = None
         self.session_epoch: Optional[float] = None  # set on connect, cleared on drop
 
-    def _new_buffer(self) -> StreamBuffer:
-        return StreamBuffer(buses=self._bus_map, max_input=self._cfg.mixer.max_channels)
+    def _new_buffer(self):
+        return new_stream_buffer(self._cfg, self._hooks, (self._on_dump,))
+
+    def _on_dump(self, dump: Dump) -> None:
+        if dump.ok:
+            self.last_dump_ok_at = time.monotonic()
 
     def _link_timeout(self) -> Optional[float]:
         interval = self._cfg.mixer.keepalive_seconds
         return interval * LINK_TIMEOUT_FACTOR if interval and interval > 0 else None
 
     def link_stale(self) -> bool:
-        """True while connected but silent for longer than the link timeout."""
+        """True while connected but without a readable dump for longer than
+        the link timeout."""
         timeout = self._link_timeout()
-        if timeout is None or not self.connected or self.last_rx_at is None:
+        if timeout is None or not self.connected or self.last_dump_ok_at is None:
             return False
-        return time.monotonic() - self.last_rx_at > timeout
+        return time.monotonic() - self.last_dump_ok_at > timeout
 
     # -- lifecycle ---------------------------------------------------------
 
@@ -92,14 +110,12 @@ class MixerClient:
         while not self._stop.is_set():
             try:
                 log.info("connecting to mixer %s:%s", self._cfg.mixer.ip, self._cfg.mixer.port)
-                self._reader, self._writer = await asyncio.open_connection(
-                    self._cfg.mixer.ip, self._cfg.mixer.port
-                )
+                self._reader, self._writer = await open_mixer_connection(self._cfg)
                 # Leftover bytes of the previous connection would otherwise
                 # swallow the start of this one -- the state dump.
                 self._buffer = self._new_buffer()
                 self.connected = True
-                self.session_epoch = self.last_rx_at = time.monotonic()
+                self.session_epoch = self.last_dump_ok_at = time.monotonic()
                 attempt = 0
                 log.info("connected to mixer")
                 # Subscribe so the mixer streams its state dump + live updates.
@@ -111,6 +127,9 @@ class MixerClient:
                     keepalive.cancel()
             except asyncio.CancelledError:
                 raise
+            except asyncio.TimeoutError:
+                log.warning("mixer %s:%s did not answer the connection attempt",
+                            self._cfg.mixer.ip, self._cfg.mixer.port)
             except Exception as exc:  # noqa: BLE001 - reconnect on any error
                 log.warning("mixer connection error: %s", exc)
             finally:
@@ -141,7 +160,6 @@ class MixerClient:
             if data == b"":
                 log.info("mixer closed connection (EOF)")
                 return
-            self.last_rx_at = time.monotonic()
             await self._store.apply_events(self._buffer.feed(data))
 
     async def _keepalive(self) -> None:
@@ -180,9 +198,13 @@ class MixerClient:
     # -- sending -----------------------------------------------------------
 
     async def send(self, payload: bytes) -> None:
-        """Write raw bytes to the mixer. Callers MUST have passed safety checks.
+        """Hand raw bytes to the mixer connection. Callers MUST have passed
+        safety checks.
 
-        Raises if not connected or the write fails; never silently succeeds.
+        Raises if not connected, or if the bytes cannot be handed to the
+        operating system in time. Success means the kernel took them; a link
+        that died without telling us (pulled cable) is only noticed by the
+        stale-dump check, the read timeout or TCP keepalive.
         """
         async with self._send_lock:
             # Checked inside the lock: the link may have dropped while waiting.

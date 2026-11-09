@@ -16,6 +16,11 @@ would corrupt the app's fader value).
 Caveat (why "direct" is the default): the mixer does not echo commands back to
 the connection they came from, so the app never learns about injected
 commands; its next touch of that channel re-sends its stale mute flag.
+
+Liveness: an app may be idle for hours and the mixer then sends nothing, so
+silence cannot mean "dead" here. TCP keepalive on the upstream connection
+notices a pulled cable or a dead switch port; the session then ends and every
+send is refused until the app reconnects.
 """
 
 from __future__ import annotations
@@ -24,18 +29,23 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import Callable, Iterable, List, Optional
 
 from .config import Config
-from .protocol import BusMap, StreamBuffer
+from .link import (
+    SEND_TIMEOUT_SECONDS,
+    ParserHooks,
+    default_bus_map,
+    new_stream_buffer,
+    open_mixer_connection,
+)
+from .protocol import BusMap, BusObjects, DumpListener
 from .state import StateStore
 
 log = logging.getLogger("mixer.proxy")
 
 # How long an injection waits for the app's frame in progress to complete.
 INJECT_WAIT_SECONDS = 1.0
-# A write the peer does not take within this time means the link is broken.
-SEND_TIMEOUT_SECONDS = 2.0
 
 
 @dataclass(eq=False)
@@ -52,12 +62,19 @@ class _Session:
 
 
 class ProxyServer:
-    def __init__(self, cfg: Config, store: StateStore, bus_map: Optional[BusMap] = None) -> None:
+    def __init__(
+        self,
+        cfg: Config,
+        store: StateStore,
+        bus_map: Optional[BusMap] = None,
+        on_bus_objects: Optional[Callable[[BusObjects], None]] = None,
+        dump_listeners: Iterable[DumpListener] = (),
+    ) -> None:
         self._cfg = cfg
         self._store = store
         # Shared by both directions of every session, so a bus discovered from
         # a dump (mixer -> app) is also understood in app -> mixer commands.
-        self._bus_map = bus_map or BusMap([(b.channel, b.id) for b in cfg.mixer.buses])
+        self._hooks = ParserHooks(bus_map or default_bus_map(cfg), on_bus_objects, list(dump_listeners))
         self._server: Optional[asyncio.AbstractServer] = None
         self._task: Optional[asyncio.Task] = None
         self._sessions: List[_Session] = []
@@ -123,9 +140,7 @@ class ProxyServer:
         peer = client_writer.get_extra_info("peername")
         log.info("iPad connected from %s; opening upstream to mixer", peer)
         try:
-            mixer_reader, mixer_writer = await asyncio.open_connection(
-                self._cfg.mixer.ip, self._cfg.mixer.port
-            )
+            mixer_reader, mixer_writer = await open_mixer_connection(self._cfg)
         except Exception as exc:  # noqa: BLE001
             log.error("cannot reach mixer %s:%s: %s", self._cfg.mixer.ip, self._cfg.mixer.port, exc)
             client_writer.close()
@@ -153,8 +168,8 @@ class ProxyServer:
             self._update_link_state()
             log.info("session closed (iPad %s)", peer)
 
-    def _new_buffer(self) -> StreamBuffer:
-        return StreamBuffer(buses=self._bus_map, max_input=self._cfg.mixer.max_channels)
+    def _new_buffer(self):
+        return new_stream_buffer(self._cfg, self._hooks)
 
     async def _pump_up(self, reader: asyncio.StreamReader, session: _Session) -> None:
         """Relay app -> mixer, holding the upstream lock while mid-frame."""
@@ -200,16 +215,18 @@ class ProxyServer:
     # -- sending (injection) ----------------------------------------------
 
     def link_stale(self) -> bool:
-        """A proxied app may be idle for long stretches; a dead upstream ends
-        its session (EOF / failed write) instead."""
+        """Always False: a proxied app may be idle for hours, so silence proves
+        nothing. A dead upstream ends its session instead (EOF, a failed or
+        timed-out write, or TCP keepalive)."""
         return False
 
     async def send(self, payload: bytes) -> None:
         """Inject a command into the upstream (mixer) link of the newest live
         session, at a frame boundary of the app's stream.
 
-        Callers MUST have passed safety checks. Raises if no session is live
-        or the app's frame in progress does not complete in time.
+        Callers MUST have passed safety checks. Raises if no session is live,
+        the app's frame in progress does not complete in time, or the bytes are
+        not taken in time. Success means the kernel took the bytes.
         """
         live = [s for s in self._sessions if s.live()]
         if not live:

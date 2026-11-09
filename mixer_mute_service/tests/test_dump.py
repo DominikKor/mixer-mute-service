@@ -195,7 +195,7 @@ def main():
     reg = BusRegistry(cfg, tmp / "buses.json")
     new_channels = []
     reg.on_new_bus(new_channels.append)
-    all_buses = state(StreamBuffer(buses=reg.bus_map).feed(DUMP_FRAME))
+    all_buses = state(StreamBuffer(buses=reg.bus_map, on_bus_objects=reg.discover).feed(DUMP_FRAME))
     expected = {
         17: (True, 321.0),   # Hall 1 / Echo (pinned)
         18: (True, 669.0),   # Monitor (pinned)
@@ -214,7 +214,7 @@ def main():
           == {19: "Hall 2", 20: "EarMonitor", 21: "PC Input", 22: "Keller+Kinder", 23: "Bus 7", 24: "Bus 8"})
     check("listeners told about each new channel", new_channels == list(range(19, 25)))
     check("valid channels now 1..24", cfg.all_channels() == list(range(1, 25)))
-    StreamBuffer(buses=reg.bus_map).feed(DUMP_FRAME)
+    StreamBuffer(buses=reg.bus_map, on_bus_objects=reg.discover).feed(DUMP_FRAME)
     check("second dump adds nothing", len(cfg.mixer.buses) == 8 and new_channels == list(range(19, 25)))
 
     # After a restart the persisted numbers are used before any dump arrives.
@@ -222,7 +222,7 @@ def main():
     reg2 = BusRegistry(cfg2, tmp / "buses.json")
     check("restart: buses known before the first dump",
           [(b.channel, b.id) for b in cfg2.mixer.buses] == [(b.channel, b.id) for b in cfg.mixer.buses])
-    check("restart: same state from the dump", state(StreamBuffer(buses=reg2.bus_map).feed(DUMP_FRAME)) == all_buses)
+    check("restart: same state from the dump", state(StreamBuffer(buses=reg2.bus_map, on_bus_objects=reg2.discover).feed(DUMP_FRAME)) == all_buses)
 
     # Config always wins: pinning Hall 2 to 30 must not leave a second number.
     cfg3 = load_config(Path(__file__).resolve().parent.parent / "config.yaml")
@@ -236,14 +236,21 @@ def main():
     good = vfield(1, 128) + vfield(3, 1) + f32field(7, 321.0)
     check("synthetic bus dump parses",
           state(StreamBuffer(buses=BUSES).feed(dump_frame(bus_obj(128, good)))) == {17: (True, 321.0)})
+    # A known bus whose dump object cannot be trusted is made unknown (no
+    # sends until a clean frame), never left at its last value.
+    def unknown_17(events):
+        return [(e.channel, e.muted, e.fader_hex, e.solo) for e in events] == [(17, None, None, None)]
+
     wrong_id = vfield(1, 131) + f32field(7, 500.0)
-    check("section naming another bus is ignored",
-          StreamBuffer(buses=BUSES).feed(dump_frame(bus_obj(128, wrong_id))) == [])
-    check("object with two sections is ignored",
-          StreamBuffer(buses=BUSES).feed(dump_frame(bus_obj(128, good, good))) == [])
+    check("section naming another bus -> bus unknown",
+          unknown_17(StreamBuffer(buses=BUSES).feed(dump_frame(bus_obj(128, wrong_id)))))
+    check("object with two sections -> bus unknown",
+          unknown_17(StreamBuffer(buses=BUSES).feed(dump_frame(bus_obj(128, good, good)))))
     extra = good + vfield(9, 1)
-    check("section with unknown field is ignored",
-          StreamBuffer(buses=BUSES).feed(dump_frame(bus_obj(128, extra))) == [])
+    check("section with unknown field -> bus unknown",
+          unknown_17(StreamBuffer(buses=BUSES).feed(dump_frame(bus_obj(128, extra)))))
+    check("object without a section -> bus unknown",
+          unknown_17(StreamBuffer(buses=BUSES).feed(dump_frame(bus_obj(128)))))
     nan = vfield(1, 128) + varint(7 << 3 | 5) + bytes.fromhex("0000c07f")
     bad = StreamBuffer(buses=BUSES).feed(dump_frame(bus_obj(128, nan)))
     check("non-position fader -> bus unknown",

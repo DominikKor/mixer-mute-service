@@ -11,16 +11,20 @@ behind a fixed header (inferred from captures, not officially documented):
     5a5a5a5a5a5a | type u32 BE | length u32 BE | varint msg_len | message
 
 Status frames (6d/71) are zero padded to their length. Only messages whose
-fields are all understood update state; anything else is ignored.
+fields are all understood update state. A message that is recognisably about
+a channel's fader/mute/solo but carries a field we do not know does NOT keep
+the old state: it makes that channel unknown (sends blocked) until a clean
+report arrives, because the old values may no longer be true.
 """
 
 from __future__ import annotations
 
 import logging
 import math
+import re
 import struct
-from dataclasses import dataclass
-from typing import Dict, Iterable, Iterator, List, Optional, Tuple
+from dataclasses import dataclass, field
+from typing import Callable, Dict, Iterable, List, Optional, Tuple
 
 log = logging.getLogger("mixer.protocol")
 
@@ -59,17 +63,13 @@ MAGIC = "5a5a5a5a5a5a"
 FADER_MAX = 1000.0
 
 
+_FADER_HEX_RE = re.compile(r"[0-9a-fA-F]{8}")
+
+
 def is_valid_fader_hex(value: object) -> bool:
-    """A valid fader value is exactly 8 lowercase-or-uppercase hex chars (4 bytes)."""
-    if not isinstance(value, str):
-        return False
-    if len(value) != 8:
-        return False
-    try:
-        bytes.fromhex(value)
-    except ValueError:
-        return False
-    return True
+    """A valid fader value is exactly 8 hex digits (4 bytes), nothing else.
+    (bytes.fromhex would also accept spaces: "1f 14 b6" is 8 chars, 3 bytes.)"""
+    return isinstance(value, str) and _FADER_HEX_RE.fullmatch(value) is not None
 
 
 def fader_hex_to_value(fader_hex: object) -> Optional[float]:
@@ -111,7 +111,7 @@ def _fader_field(marker: str, fader_hex: str) -> str:
 
 
 def build_mute_command(
-    channel: int, muted: bool, fader_hex: str, max_channels: int = 16, solo: bool = False
+    channel: int, muted: bool, fader_hex: str, max_channels: int = 16, *, solo: bool = False
 ) -> bytes:
     """Build a full App -> Mixer frame.
 
@@ -145,7 +145,7 @@ def build_mute_command(
     return bytes.fromhex(COMMAND_PREFIX + payload)
 
 
-def build_bus_command(bus_id: str, muted: bool, fader_hex: str, solo: bool = False) -> bytes:
+def build_bus_command(bus_id: str, muted: bool, fader_hex: str, *, solo: bool = False) -> bytes:
     """Build a bus mute/unmute command (type 72).
 
     Mute:   72.. <LL LL> 08<bus_id> 18 01 3d <fader>
@@ -179,9 +179,11 @@ class FrameEvent:
     end_hex_index: int = 0  # index into the hex string just past this frame
     # True if this came from a full state dump (see StateStore.apply_event).
     from_dump: bool = False
-    # Console solo (headphone monitoring). Absent in the frame = not soloed;
-    # None together with muted/fader None for an untrusted section.
-    solo: Optional[bool] = False
+    # Console solo (headphone monitoring). False when the frame has no solo
+    # field (= not soloed), None with muted/fader None for an untrusted section.
+    # No default of False: an event built without saying it must not claim
+    # "not soloed" (the next command would switch the console's solo off).
+    solo: Optional[bool] = None
 
 
 _MAGIC = bytes.fromhex(MAGIC)
@@ -194,7 +196,8 @@ _BUS_TYPES = (0x72, 0x71)
 _DUMP_TYPE = 0x01
 
 # Protobuf wire types.
-_VARINT, _FIXED32, _BYTES = 0, 5, 2
+WIRE_VARINT, WIRE_FIXED32, WIRE_BYTES = 0, 5, 2
+_VARINT, _FIXED32, _BYTES = WIRE_VARINT, WIRE_FIXED32, WIRE_BYTES
 
 # Input fader section (also field 7 of every channel object in the dump):
 #   1 = channel index (omitted for index 0), 2 = extra fixed32 only seen on
@@ -239,7 +242,7 @@ def _read_varint(data: bytes, pos: int) -> Tuple[Optional[int], int]:
     return None, pos
 
 
-def _decode_fields(msg: bytes) -> Optional[List[Tuple[int, int, object]]]:
+def decode_fields(msg: bytes) -> Optional[List[Tuple[int, int, object]]]:
     """Decode a flat protobuf message into [(field, wire_type, value)].
 
     varint -> int, fixed32 -> 4 raw bytes, length-delimited -> bytes.
@@ -251,7 +254,7 @@ def _decode_fields(msg: bytes) -> Optional[List[Tuple[int, int, object]]]:
         key, pos = _read_varint(msg, pos)
         if key is None:
             return None
-        field, wire = key >> 3, key & 7
+        fld, wire = key >> 3, key & 7
         if wire == _VARINT:
             value, pos = _read_varint(msg, pos)
             if value is None:
@@ -267,36 +270,61 @@ def _decode_fields(msg: bytes) -> Optional[List[Tuple[int, int, object]]]:
             value, pos = msg[pos:pos + n], pos + n
         else:
             return None
-        fields.append((field, wire, value))
+        fields.append((fld, wire, value))
     return fields
 
 
 def _strict_fields(msg: bytes, schema: Dict[int, int]) -> Optional[Dict[int, object]]:
     """Fields of msg as {field: value}, only if every field is in schema with
     the expected wire type and appears once. Otherwise None (not this shape)."""
-    fields = _decode_fields(msg)
+    fields = decode_fields(msg)
     if fields is None:
         return None
     out: Dict[int, object] = {}
-    for field, wire, value in fields:
-        if schema.get(field) != wire or field in out:
+    for fld, wire, value in fields:
+        if schema.get(fld) != wire or fld in out:
             return None
-        out[field] = value
+        out[fld] = value
     return out
 
 
 Section = Tuple[int, Optional[bool], Optional[str], Optional[bool]]
 
 
+def _unknown(channel: int, what: str, msg: bytes) -> Section:
+    """A report about ``channel`` that cannot be trusted: the channel becomes
+    unknown (muted/fader/solo None), so every send to it is blocked until a
+    clean report arrives. Logged with its bytes, so a new field can be mapped."""
+    log.warning("untrusted %s for channel %s, channel now unknown: %s", what, channel, msg.hex())
+    return channel, None, None, None
+
+
+def _input_channel_of(fields: list) -> Optional[int]:
+    """Channel an input fader section (possibly with unknown fields) is about,
+    or None if it does not look like one. A fader section names its channel in
+    field 1 (index; omitted for channel 1) and carries solo/mute/fader (3/4/5)."""
+    index = [(w, v) for f, w, v in fields if f == 1]
+    if len(index) > 1 or (index and index[0][0] != _VARINT):
+        return None
+    if not any((f, w) in ((3, _VARINT), (4, _VARINT), (5, _FIXED32)) for f, w, _ in fields):
+        return None
+    value = index[0][1] if index else 0
+    return value + 1 if value <= 63 else None
+
+
 def _input_section(msg: bytes) -> Optional[Section]:
     """Interpret an input fader section -> (channel, muted, fader_hex, solo).
 
-    Returns None if the message is not a fader section. Returns muted/fader as
-    None (= make the channel unknown) if it is one but cannot be trusted.
+    Returns None if the message is not a fader section. Returns muted/fader/
+    solo as None (= make the channel unknown) if it is one but cannot be
+    trusted: an unknown or repeated field, a bad value, or an extra field 2
+    other than the one build_mute_command re-sends.
     """
     f = _strict_fields(msg, _INPUT_FIELDS)
     if f is None:
-        return None
+        fields = decode_fields(msg)
+        channel = _input_channel_of(fields) if fields is not None else None
+        return None if channel is None else _unknown(channel, "input section", msg)
     index = f.get(1, 0)
     if index > 63:
         return None
@@ -309,34 +337,34 @@ def _input_section(msg: bytes) -> Optional[Section]:
     extra = ("15" + f[2].hex()) if 2 in f else None
     if (mute not in (0, 1) or solo not in (0, 1) or extra != CHANNEL_ID_FIELDS.get(channel)
             or not is_safe_fader_hex(fader_hex)):
-        return channel, None, None, None
+        return _unknown(channel, "input section", msg)
     return channel, bool(mute), fader_hex, bool(solo)
 
 
 def _bus_section(msg: bytes, buses: Dict[int, int]) -> Optional[Section]:
     """Interpret a bus fader section -> (channel, muted, fader_hex, solo) for
-    a configured bus, or None."""
+    a configured bus, or None. An untrusted section of a known bus makes that
+    bus unknown (see _input_section)."""
     f = _strict_fields(msg, _BUS_FIELDS)
-    if f is None or 1 not in f or f[1] not in buses:
+    if f is None:
+        fields = decode_fields(msg) or []
+        ids = {v for fld, w, v in fields if fld == 1 and w == _VARINT}
+        looks_like_bus = any((fld, w) in ((2, _VARINT), (3, _VARINT), (7, _FIXED32))
+                             for fld, w, _ in fields)
+        if len(ids) == 1 and looks_like_bus:
+            ident = next(iter(ids))
+            if ident in buses:
+                return _unknown(buses[ident], "bus section", msg)
+        return None
+    if 1 not in f or f[1] not in buses:
         return None
     channel = buses[f[1]]
     mute = f.get(3, 0)
     solo = f.get(2, 0)
     fader_hex = f[7].hex() if 7 in f else _ZERO_FADER
     if mute not in (0, 1) or solo not in (0, 1) or not is_safe_fader_hex(fader_hex):
-        return channel, None, None, None
+        return _unknown(channel, "bus section", msg)
     return channel, bool(mute), fader_hex, bool(solo)
-
-
-def _dump_group_objects(msg: bytes, groups) -> Iterator[Tuple[int, list]]:
-    """(top-level field, decoded fields) of every object in the given
-    top-level dump groups."""
-    for field, wire, group in _decode_fields(msg) or ():
-        if field not in groups or wire != _BYTES:
-            continue
-        for _, cwire, obj in _decode_fields(group) or ():
-            if cwire == _BYTES:
-                yield field, _decode_fields(obj) or []
 
 
 def _object_section(obj_fields: list, section_field: int) -> Optional[bytes]:
@@ -349,48 +377,110 @@ def _object_id(obj_fields: list) -> Optional[int]:
     return next((v for f, w, v in obj_fields if f == 1 and w == _VARINT), None)
 
 
-def _dump_bus_sections(msg: bytes) -> Iterator[Tuple[int, list, bytes]]:
-    """(object id, decoded fields, fader section) of every bus object whose
-    single fader section names the same id as the object holding it."""
-    for _, obj_fields in _dump_group_objects(msg, (_DUMP_BUS_GROUP,)):
-        ident = _object_id(obj_fields)
-        section = _object_section(obj_fields, _DUMP_BUS_SECTION_FIELD)
-        if ident is None or section is None:
-            continue
-        if (_strict_fields(section, _BUS_FIELDS) or {}).get(1) != ident:
-            continue
-        yield ident, obj_fields, section
-
-
-def _dump_sections(
-    msg: bytes, buses: Optional[Dict[int, int]] = None, max_input: Optional[int] = None
-) -> List[Section]:
-    """Fader sections of all input channels (up to ``max_input``) and
-    configured buses in a full state dump. ``buses`` maps bus object id ->
-    channel (see _bus_map)."""
-    out = []
-    for _, obj_fields in _dump_group_objects(msg, _DUMP_INPUT_GROUPS):
-        # Channel 1's index is 0, which protobuf omits.
-        index = _object_id(obj_fields) or 0
-        section = _object_section(obj_fields, _DUMP_SECTION_FIELD)
-        parsed = _input_section(section) if section is not None else None
-        # The section must name the same channel as the object holding it.
-        if parsed is not None and parsed[0] == index + 1:
-            if max_input is None or parsed[0] <= max_input:
-                out.append(parsed)
-    for bus_id, _, section in _dump_bus_sections(msg):
-        if bus_id not in (buses or {}):
-            continue
-        parsed = _bus_section(section, buses)
-        if parsed is not None:
-            out.append(parsed)
-    return out
-
-
 # Input channel object in the dump: 3 = input (gain, HPF), 4 = EQ,
 # 5 = dynamics (gate, compressor). Mapped live on 2026-11-09, see
 # app/channel_settings.py.
 _SETTINGS_FIELDS = {3: "input", 4: "eq", 5: "dynamics"}
+
+BusObjects = List[Tuple[int, str]]
+
+
+@dataclass
+class Dump:
+    """Everything the service reads from one full state dump, decoded once."""
+
+    sections: List[Section] = field(default_factory=list)
+    # (object id, console name) of every bus with a well-formed fader section.
+    bus_objects: BusObjects = field(default_factory=list)
+    # {channel: {"input"|"eq"|"dynamics": raw bytes}} of every input channel.
+    settings: Dict[int, Dict[str, bytes]] = field(default_factory=dict)
+    input_objects: int = 0  # 0 = nothing could be read from this dump
+
+    @property
+    def ok(self) -> bool:
+        return self.input_objects > 0
+
+
+def _group_objects(top: list, groups) -> List[list]:
+    out = []
+    for fld, wire, group in top:
+        if fld not in groups or wire != _BYTES:
+            continue
+        for _, cwire, obj in decode_fields(group) or ():
+            if cwire == _BYTES:
+                out.append(decode_fields(obj) or [])
+    return out
+
+
+def parse_dump(
+    msg: bytes,
+    buses: "BusMap",
+    max_input: Optional[int] = None,
+    on_bus_objects: Optional[Callable[[BusObjects], None]] = None,
+) -> Dump:
+    """Decode a full state dump once.
+
+    ``on_bus_objects`` (bus discovery) runs before the sections are read, so a
+    bus it adds to ``buses`` gets its state from this same dump. Every input
+    object (up to ``max_input``) and every known bus yields a section; one
+    whose section is missing, repeated or untrusted yields an unknown section,
+    so a channel never keeps values the dump does not confirm.
+    """
+    dump = Dump()
+    top = decode_fields(msg)
+    if top is None:
+        log.warning("state dump could not be decoded (%d bytes); no state taken from it", len(msg))
+        return dump
+    input_objs = _group_objects(top, _DUMP_INPUT_GROUPS)
+    bus_objs = _group_objects(top, (_DUMP_BUS_GROUP,))
+    dump.input_objects = len(input_objs)
+    if not input_objs:
+        log.warning("state dump without input channels (%d bytes); link liveness not refreshed", len(msg))
+
+    bus_sections: Dict[int, Optional[bytes]] = {}
+    for obj in bus_objs:
+        ident = _object_id(obj)
+        if ident is None:
+            continue
+        section = _object_section(obj, _DUMP_BUS_SECTION_FIELD)
+        if section is not None and (_strict_fields(section, _BUS_FIELDS) or {}).get(1) == ident:
+            name = next((v for f, w, v in obj if f == 2 and w == _BYTES), b"")
+            dump.bus_objects.append((ident, name.decode("utf-8", errors="replace").strip()))
+            bus_sections[ident] = section
+        else:
+            bus_sections.setdefault(ident, section)
+    if on_bus_objects is not None:
+        try:
+            on_bus_objects(list(dump.bus_objects))
+        except Exception:  # noqa: BLE001 - never let a callback kill the link
+            log.exception("bus discovery failed; dump parsed with known buses")
+
+    for obj in input_objs:
+        channel = (_object_id(obj) or 0) + 1  # channel 1's index 0 is omitted
+        if max_input is not None and channel > max_input:
+            continue
+        section = _object_section(obj, _DUMP_SECTION_FIELD)
+        parsed = _input_section(section) if section is not None else None
+        # The section must name the same channel as the object holding it.
+        if parsed is None or parsed[0] != channel:
+            parsed = _unknown(channel, "dump input object", section or b"")
+        dump.sections.append(parsed)
+        sections = {}
+        for fld, wire, value in obj:
+            name = _SETTINGS_FIELDS.get(fld)
+            if name and wire == _BYTES and name not in sections:
+                sections[name] = value
+        if sections:
+            dump.settings[channel] = sections
+
+    for ident, section in bus_sections.items():
+        if ident not in buses.ids:
+            continue
+        parsed = _bus_section(section, buses.ids) if section is not None else None
+        if parsed is None or parsed[0] != buses.ids[ident]:
+            parsed = _unknown(buses.ids[ident], "dump bus object", section or b"")
+        dump.sections.append(parsed)
+    return dump
 
 
 def dump_channel_settings(
@@ -399,29 +489,13 @@ def dump_channel_settings(
     """Raw processing sections of every input channel in a full state dump:
     {channel: {"input": bytes, "eq": bytes, "dynamics": bytes}}. Read-only
     information; nothing here is ever sent back to the mixer."""
-    out: Dict[int, Dict[str, bytes]] = {}
-    for _, obj_fields in _dump_group_objects(msg, _DUMP_INPUT_GROUPS):
-        channel = (_object_id(obj_fields) or 0) + 1
-        if max_input is not None and channel > max_input:
-            continue
-        sections = {}
-        for field, wire, value in obj_fields:
-            name = _SETTINGS_FIELDS.get(field)
-            if name and wire == _BYTES and name not in sections:
-                sections[name] = value
-        if sections:
-            out[channel] = sections
-    return out
+    return parse_dump(msg, BusMap(), max_input).settings
 
 
-def dump_bus_objects(msg: bytes) -> List[Tuple[int, str]]:
+def dump_bus_objects(msg: bytes) -> BusObjects:
     """(object id, console name) of every bus in a full state dump that has a
     well-formed fader section naming the same id. Used to discover buses."""
-    out = []
-    for ident, obj_fields, _ in _dump_bus_sections(msg):
-        name = next((v for f, w, v in obj_fields if f == 2 and w == _BYTES), b"")
-        out.append((ident, name.decode("utf-8", errors="replace").strip()))
-    return out
+    return parse_dump(msg, BusMap()).bus_objects
 
 
 def varint_hex(value: int) -> str:
@@ -447,30 +521,26 @@ def _bus_map(buses: Iterable) -> Dict[int, int]:
 
 
 class BusMap:
-    """Bus object id -> channel, shared by every parser of a link.
+    """Bus object id -> channel, shared by every parser of a link (a bus
+    discovered at runtime is added with add())."""
 
-    ``on_dump`` (optional) is called with dump_bus_objects() of every full state
-    dump *before* its sections are interpreted, so a bus it adds via add() gets
-    its state from that same dump.
-    """
-
-    def __init__(self, pairs: Iterable = (), on_dump=None, on_settings=None) -> None:
+    def __init__(self, pairs: Iterable = ()) -> None:
         self.ids: Dict[int, int] = _bus_map(pairs)
-        self.on_dump = on_dump
-        # Optional: called with dump_channel_settings() of every full dump
-        # (channel processing: input/gain, EQ, dynamics; see channel_settings).
-        self.on_settings = on_settings
 
     def add(self, channel: int, object_id: int) -> None:
         self.ids[object_id] = channel
 
 
-def _as_bus_map(buses) -> BusMap:
-    return buses if isinstance(buses, BusMap) else BusMap(buses)
+DumpListener = Callable[[Dump], None]
 
 
 def _scan(
-    buf: bytes, buses: BusMap, max_msg: int, max_input: Optional[int] = None
+    buf: bytes,
+    buses: BusMap,
+    max_msg: int,
+    max_input: Optional[int] = None,
+    on_bus_objects: Optional[Callable[[BusObjects], None]] = None,
+    dump_listeners: Iterable[DumpListener] = (),
 ) -> Tuple[List[FrameEvent], int]:
     """Parse every complete frame in buf.
 
@@ -513,17 +583,13 @@ def _scan(
         elif ftype in _BUS_TYPES:
             parsed = [_bus_section(msg, buses.ids)]
         elif ftype == _DUMP_TYPE:
-            if buses.on_dump is not None:
+            dump = parse_dump(msg, buses, max_input, on_bus_objects)
+            for listener in dump_listeners:
                 try:
-                    buses.on_dump(dump_bus_objects(msg))
-                except Exception:  # noqa: BLE001 - never let a callback kill the link
-                    log.exception("bus discovery failed; dump parsed with known buses")
-            if buses.on_settings is not None:
-                try:
-                    buses.on_settings(dump_channel_settings(msg, max_input))
-                except Exception:  # noqa: BLE001 - settings are informational only
-                    log.exception("reading channel settings from the dump failed")
-            parsed = _dump_sections(msg, buses.ids, max_input)
+                    listener(dump)
+                except Exception:  # noqa: BLE001 - a listener must not kill the link
+                    log.exception("state dump listener failed")
+            parsed = dump.sections
         else:
             parsed = []
         is_dump = ftype == _DUMP_TYPE
@@ -546,16 +612,25 @@ class StreamBuffer:
     total size so garbage cannot grow it without bound.
 
     ``buses`` is a BusMap (shared, may grow at runtime) or (channel, id) pairs
-    so bus frames are also parsed.
+    so bus frames are also parsed. ``on_bus_objects`` discovers buses from each
+    dump before its sections are read; ``dump_listeners`` get every decoded
+    Dump (channel settings, link liveness).
     """
 
     def __init__(
-        self, buses=(), max_bytes: int = 1 << 20, max_input: Optional[int] = None
+        self,
+        buses=(),
+        max_bytes: int = 1 << 20,
+        max_input: Optional[int] = None,
+        on_bus_objects: Optional[Callable[[BusObjects], None]] = None,
+        dump_listeners: Iterable[DumpListener] = (),
     ) -> None:
         self._buf = bytearray()
-        self._buses = _as_bus_map(buses)
+        self._buses = buses if isinstance(buses, BusMap) else BusMap(buses)
         self._max = max_bytes
         self._max_input = max_input
+        self._on_bus_objects = on_bus_objects
+        self._dump_listeners = list(dump_listeners)
 
     @property
     def at_frame_boundary(self) -> bool:
@@ -569,7 +644,8 @@ class StreamBuffer:
 
     def feed(self, data: bytes) -> List["FrameEvent"]:
         self._buf.extend(data)
-        events, consumed = _scan(bytes(self._buf), self._buses, self._max, self._max_input)
+        events, consumed = _scan(bytes(self._buf), self._buses, self._max, self._max_input,
+                                 self._on_bus_objects, self._dump_listeners)
         del self._buf[:consumed]
         if len(self._buf) > self._max:
             # a frame claims more than we buffer: drop it, resync on next magic
@@ -583,5 +659,6 @@ def parse_hex_stream(hex_data: str, buses=(), max_input: Optional[int] = None) -
     Returns events in ascending position order. ``buses`` is an iterable of
     (channel, id) for bus (type 71/72) frames.
     """
-    events, _ = _scan(bytes.fromhex(hex_data.lower()), _as_bus_map(buses), 1 << 24, max_input)
+    bus_map = buses if isinstance(buses, BusMap) else BusMap(buses)
+    events, _ = _scan(bytes.fromhex(hex_data.lower()), bus_map, 1 << 24, max_input)
     return events

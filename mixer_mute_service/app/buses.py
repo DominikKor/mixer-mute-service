@@ -36,9 +36,8 @@ class BusRegistry:
         self._path = path
         self._listeners: List[Callable[[int], None]] = []
         self._merge_persisted()
-        self.bus_map = BusMap(
-            [(b.channel, b.id) for b in cfg.mixer.buses], on_dump=self._on_dump
-        )
+        # Shared with the link's parsers; discover() adds to it at runtime.
+        self.bus_map = BusMap([(b.channel, b.id) for b in cfg.mixer.buses])
 
     def on_new_bus(self, callback: Callable[[int], None]) -> None:
         """Call ``callback(channel)`` whenever a bus is added at runtime."""
@@ -81,7 +80,9 @@ class BusRegistry:
 
     # -- discovery ---------------------------------------------------------
 
-    def _on_dump(self, objects: List[Tuple[int, str]]) -> None:
+    def discover(self, objects: List[Tuple[int, str]]) -> None:
+        """Take over buses listed in a state dump (called by the link's parser
+        for every dump, before its sections are read)."""
         added = []
         for object_id, name in sorted(objects):
             if object_id in self.bus_map.ids or object_id not in AUTO_BUS_IDS:
