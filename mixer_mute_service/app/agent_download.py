@@ -7,8 +7,9 @@ desktop_agent/update-agent.ps1 with those files: replace the installed agent's
 files, restart it, check that port 8766 answers; or the first install via
 install-agent.ps1 when no agent is installed yet.
 
-So updating the agent no longer means downloading and unpacking the release:
-open the web UI on the display PC, click "Agent-Update", run the file.
+Normally the Update key does this by itself (app/agent_update.py: the agent's
+self-update). The file stays for the first install and for agents from before
+the self-update: the Update dialog offers it when the agent cannot do it.
 """
 
 from __future__ import annotations
@@ -52,9 +53,11 @@ def agent_dir() -> Path:
 
 
 def _agent_files(directory: Path) -> list:
+    # version.txt belongs to an installed agent, never to the files we hand out.
     return sorted(
         p for p in directory.iterdir()
         if p.is_file() and p.suffix in AGENT_SUFFIXES and not p.name.startswith(".")
+        and p.name != "version.txt"
     )
 
 

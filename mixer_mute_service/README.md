@@ -39,8 +39,14 @@ head (Desktop, Channels, Mute Gruppen, Programm, Steuerung) folds its section
 in and out; the choice is remembered per device.
 
 - **Status bar**: mixer connection, send-enabled state, last-update age, the
-  **Panic** button (disable/re-enable all sends) and **UPDATE** (Windows
-  release only).
+  **Panic** button (disable/re-enable all sends) and **UPDATE**. Update does
+  both: first the service from GitHub (Windows release only), then the Display
+  Service (desktop agent) of the PC whose browser pressed it, which the service
+  replaces with the agent files of its own release and restarts. So: Update on
+  the streaming PC updates the service and its agent; Update on the display PC
+  then finds the service current and only brings that PC's agent up to date.
+  Agents from before this self-update need the one-time download the dialog
+  offers (`update.cmd`); the key also shows when only the agent is behind.
 - **Stage** switch (next to the title, remembered per device): like Stage
   Manager, one section fills the screen and the others sit as live miniatures
   on the left; a tap on one flies it onto the stage. The page itself never
@@ -201,9 +207,11 @@ linked light/camera/OBS keys in order.
 | PUT  | `/desktop/profiles/{id}` | change a profile (also `POST .../update`) |
 | DELETE | `/desktop/profiles/{id}` | delete a profile |
 | POST | `/desktop/{id}/open` | show/open the profile on its target PC |
-| GET  | `/desktop/agent/update.cmd` | one-click agent update for the target PCs |
+| GET  | `/desktop/agent/update.cmd` | one-click agent update (first install, agents without self-update) |
 | GET  | `/update/status` | installed release, update progress and log tail |
 | POST | `/update/start` | start the GitHub update (Windows release only) |
+| GET  | `/update/agent` | the display agent of the requesting PC: present, version, current |
+| POST | `/update/agent` | push this release's agent files to it; waits until it is back |
 | POST | `/panic/disable` | block all sends (tracking continues) |
 | POST | `/panic/enable` | re-enable sends |
 
@@ -559,8 +567,8 @@ Text Platz bleibt, stehen dort in Grau (Textfarbe in den Hintergrund gemischt)
 die ersten Zeilen der nächsten Folie, höchstens halb so groß. Der Text selbst
 bleibt dabei unverändert groß und an seiner Stelle; nach der letzten Folie gibt
 es keine Vorschau. Ein Anzeige-PC mit älterem Display-Agent bekommt die Folie
-ohne Vorschau und Ausrichtung, bis der Agent aktualisiert ist („Display Service
-herunterladen“).
+ohne Vorschau und Ausrichtung, bis der Agent aktualisiert ist (Update-Taste an
+diesem PC).
 **Titelfolie** (Standard: an): Jedes Lied beginnt mit einer eigenen Folie, auf
 der der Titel in der Mitte steht und das Copyright darunter (mit dem Schalter
 *Copyright*). Sie ist Folie 0, die Liedfolien zählen ab 1; ein Programmpunkt
@@ -596,8 +604,8 @@ wird als FoilPresenter-`.foil`-Datei in der Bibliothek auf dem Anzeige-PC
 (Dateiname wie in FoilPresenter, z. B. `Gott_ du bist da.foil`); eine vorhandene
 Datei wird nie überschrieben.
 
-Der Agent braucht dafür die neue Version (Weboberfläche: *Display Service
-herunterladen*, auf dem Anzeige-PC ausführen). Endpunkte, z. B. für Companion:
+Der Agent braucht dafür die neue Version (Weboberfläche auf dem Anzeige-PC:
+*Update*). Endpunkte, z. B. für Companion:
 
 | Methode | Pfad | |
 |---|---|---|

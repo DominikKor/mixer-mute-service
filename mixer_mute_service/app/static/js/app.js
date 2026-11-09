@@ -68,10 +68,7 @@ async function refresh({ light = false } = {}) {
   }
   $("txt-age").textContent = "updates: " + fmtAge(h.last_update_age_seconds);
   renderPanic();
-  if (health.ok) {
-    $("agent-update-link").hidden = !h.desktop_display_enabled;
-    noticeNewBuild(h.build_id);
-  }
+  if (health.ok) noticeNewBuild(h.build_id);
   if (desktop.ok) renderDesktopProfiles(desktop.data);
   if (cameras.ok) renderCameraStreams(cameras.data);
   if (!beamer.skipped) renderBeamerState(beamer.ok ? beamer.data : null);
@@ -204,7 +201,7 @@ function initChannelView(prefs) {
 const UPDATE_POLL_MS = 1500;
 const UPDATE_TIMEOUT_MS = 10 * 60 * 1000;
 const UPDATE_CLOSE_MS = 5000;
-const UPDATE = { runId: null, timer: null, startedAt: 0, running: false, sawRestart: false };
+const UPDATE = { runId: null, timer: null, startedAt: 0, running: false, sawRestart: false, program: false };
 
 async function fetchUpdateStatus() {
   const ctrl = new AbortController();
@@ -233,14 +230,38 @@ function showUpdateLog(lines) {
   el.scrollTop = el.scrollHeight;
 }
 
+// Second step of the Update key: the display agent (Display Service) of the PC
+// this page runs on. After a program update the page reloads first; this flag
+// makes the new page carry on with the agent.
+const AGENT_STEP_KEY = "mixer_update_agent_step";
+
+async function fetchAgentStatus() {
+  const r = await api("GET", "/update/agent");
+  return r.ok && r.data && r.data.ok !== false ? r.data : null;
+}
+
+function agentNeedsUpdate(agent) {
+  return !!(agent && agent.present && (!agent.self_update || !agent.current));
+}
+
+function agentLine(agent) {
+  if (!agent) return "Display Service: Status unbekannt";
+  if (!agent.present) return "Display Service: keiner auf diesem Gerät";
+  if (!agent.self_update) return "Display Service: zu alt für das automatische Update";
+  return agent.current ? `Display Service: ${escapeHtml(agent.version)} (aktuell)`
+    : `Display Service: ${escapeHtml(agent.version)} → ${escapeHtml(agent.latest)}`;
+}
+
 async function refreshUpdateButton() {
-  const data = await fetchUpdateStatus();
+  const [data, agent] = await Promise.all([fetchUpdateStatus(), fetchAgentStatus()]);
   const btn = $("update-btn");
   if (!data) return;
-  btn.hidden = !data.available;
+  const agentDue = agentNeedsUpdate(agent);
+  btn.hidden = !data.available && !agentDue;
   btn.classList.toggle("running", !!data.active);
   btn.textContent = data.active ? "Update läuft" : "Update";
-  btn.title = data.installed ? `Installiert: ${data.installed} — von GitHub aktualisieren` : "Von GitHub aktualisieren";
+  btn.title = [data.installed ? `Installiert: ${data.installed}` : "", agentDue ? "Display Service dieses PCs ist veraltet" : ""]
+    .filter(Boolean).join(" — ") || "Mixer Service und Display Service dieses PCs aktualisieren";
 }
 
 async function openUpdateDialog() {
@@ -249,23 +270,29 @@ async function openUpdateDialog() {
   $("update-start").disabled = true;
   $("update-cancel").textContent = "Abbrechen";
   $("update-warn").hidden = false;
+  $("update-agent-manual").hidden = true;
   showUpdateLog([]);
   setUpdateLcd('<span class="dim">Status wird geladen…</span>');
   if (!dlg.open) dlg.showModal();
-  const data = await fetchUpdateStatus();
+  const [data, agent] = await Promise.all([fetchUpdateStatus(), fetchAgentStatus()]);
   if (!data) { setUpdateLcd("Service nicht erreichbar.", "err"); return; }
   if (data.active && data.status) {
     UPDATE.runId = data.status.run_id;  // join a run that is already going
     beginUpdatePolling();
     return;
   }
-  if (!data.available) { setUpdateLcd(escapeHtml(data.reason || "Update nicht verfügbar."), "err"); return; }
-  setUpdateLcd(`Installiert: ${escapeHtml(data.installed || "unbekannt")}<br><span class="dim">Es wird die neueste Version von GitHub geladen, geprüft und installiert.</span>`);
-  $("update-start").disabled = false;
+  UPDATE.program = !!data.available;
+  const program = data.available
+    ? `Programm: ${escapeHtml(data.installed || "unbekannt")}<br><span class="dim">Die neueste Version wird von GitHub geladen, geprüft und installiert.</span>`
+    : `Programm: ${escapeHtml(data.reason || "Update nicht verfügbar.")}`;
+  setUpdateLcd(`${program}<br>${agentLine(agent)}`);
+  $("update-agent-manual").hidden = !(agent && agent.present && !agent.self_update);
+  $("update-start").disabled = !data.available && !agentNeedsUpdate(agent);
 }
 
 async function startUpdate() {
   $("update-start").disabled = true;
+  if (!UPDATE.program) return runAgentStep("");
   const r = await api("POST", "/update/start");
   if (!(r.ok && r.data.ok)) {
     setUpdateLcd(`Update nicht gestartet: ${escapeHtml(r.data.reason || "HTTP " + r.status)}`, "err");
@@ -303,8 +330,15 @@ async function pollUpdate() {
     const st = data.status;
     showUpdateLog(data.log);
     if (st && st.run_id === UPDATE.runId) {
-      if (st.state === "up_to_date") return finishUpdate(true, escapeHtml(st.message || "Bereits aktuell."), false);
-      if (st.state === "updated") return finishUpdate(true, escapeHtml(st.message || "Aktualisiert."), true);
+      if (st.state === "up_to_date") {
+        UPDATE.running = false;
+        return runAgentStep(`Programm: ${escapeHtml(st.message || "bereits aktuell.")}`);
+      }
+      if (st.state === "updated") {
+        // The new page goes on with the Display Service of this PC.
+        try { sessionStorage.setItem(AGENT_STEP_KEY, st.message || "Programm aktualisiert."); } catch (_) {}
+        return finishUpdate(true, escapeHtml(st.message || "Aktualisiert."), true);
+      }
       if (st.state === "failed") return finishUpdate(false, "Update fehlgeschlagen: " + escapeHtml(st.message || ""));
       setUpdateLcd(escapeHtml(st.message || "Update läuft…") + (st.to ? `<br><span class="dim">${escapeHtml(st.from || "?")} → ${escapeHtml(st.to)}</span>` : ""));
     }
@@ -331,6 +365,44 @@ function finishUpdate(ok, message, reload) {
   tick();
 }
 
+// Update the Display Service of this PC if it is behind. programLine says how
+// the program step ended ("" when there was none).
+async function runAgentStep(programLine) {
+  const head = programLine ? `${programLine}<br>` : "";
+  $("update-start").hidden = true;
+  $("update-warn").hidden = true;
+  setUpdateLcd(`${head}<span class="dim">Display Service dieses PCs wird geprüft…</span>`);
+  const agent = await fetchAgentStatus();
+  if (!agent || !agent.present) return finishUpdate(true, `${head}${agentLine(agent)}`, false);
+  if (!agent.self_update) {
+    $("update-agent-manual").hidden = false;
+    return finishUpdate(false, `${head}${agentLine(agent)}`);
+  }
+  if (agent.current) return finishUpdate(true, `${head}${agentLine(agent)}`, false);
+  setUpdateLcd(`${head}Display Service wird aktualisiert und neu gestartet…<br><span class="dim">${escapeHtml(agent.version)} → ${escapeHtml(agent.latest)}</span>`);
+  const r = await api("POST", "/update/agent");
+  if (!r.ok || r.data.ok === false) {
+    if (r.status === 409) $("update-agent-manual").hidden = false;
+    return finishUpdate(false, `${head}Display Service nicht aktualisiert: ${escapeHtml(r.data.reason || "HTTP " + r.status)}`);
+  }
+  finishUpdate(true, `${head}Display Service: ${escapeHtml(r.data.version)} (neu gestartet)`, false);
+}
+
+// After the reload that follows a program update: carry on with the agent.
+function resumeAgentStep() {
+  let programLine = null;
+  try {
+    programLine = sessionStorage.getItem(AGENT_STEP_KEY);
+    sessionStorage.removeItem(AGENT_STEP_KEY);
+  } catch (_) {}
+  if (programLine === null) return;
+  $("update-cancel").textContent = "Schließen";
+  showUpdateLog([]);
+  $("update-agent-manual").hidden = true;
+  $("update-dialog").showModal();
+  runAgentStep(`Programm: ${escapeHtml(programLine)}`);
+}
+
 function closeUpdateDialog() {
   // While an update runs, closing only hides the dialog; the run continues.
   clearTimeout(UPDATE.timer);
@@ -340,6 +412,7 @@ function closeUpdateDialog() {
 }
 
 $("update-btn").addEventListener("click", openUpdateDialog);
+resumeAgentStep();
 $("update-start").addEventListener("click", startUpdate);
 $("update-cancel").addEventListener("click", closeUpdateDialog);
 $("update-dialog").addEventListener("cancel", (e) => { e.preventDefault(); closeUpdateDialog(); });

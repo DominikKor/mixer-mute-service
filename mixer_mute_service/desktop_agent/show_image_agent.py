@@ -3,12 +3,14 @@ and shows FoilPresenter songs slide by slide (read from the local library)."""
 
 from __future__ import annotations
 
+import base64
 import hmac
 import json
 import logging
 import os
 import queue
 import getpass
+import sys
 import shutil
 import socket
 import subprocess
@@ -28,6 +30,15 @@ from PIL import Image, ImageOps, ImageTk
 HOST = "0.0.0.0"
 PORT = 8766
 requests: queue.Queue[dict] = queue.Queue()
+
+# Self-update: the service sends the agent files of its own release (POST
+# /update); they replace ours, version.txt records the version (POST /info
+# reports it), and the agent starts again through its scheduled task.
+AGENT_DIR = Path(__file__).resolve().parent
+VERSION_FILE = AGENT_DIR / "version.txt"
+MAX_UPDATE_BYTES = 4 * 1024 * 1024
+_UPDATE_FILE_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}\.(?:py|txt|ps1)$")
+_VERSION_RE = re.compile(r"^[A-Za-z0-9._+-]{1,80}$")
 MAX_SONG_FILES = 5000
 MAX_SONG_FILE_BYTES = 512 * 1024
 _COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
@@ -496,6 +507,73 @@ def _stop_audio(fade: dict | None = None) -> bool:
     return stopped
 
 
+def agent_version() -> str:
+    try:
+        return VERSION_FILE.read_text(encoding="utf-8").strip() or "unknown"
+    except OSError:
+        return "unknown"
+
+
+def _valid_update_request(body) -> bool:
+    if not isinstance(body, dict) or set(body) != {"version", "files"}:
+        return False
+    files = body["files"]
+    return (
+        isinstance(body["version"], str) and bool(_VERSION_RE.match(body["version"]))
+        and isinstance(files, dict) and "show_image_agent.py" in files
+        and all(isinstance(name, str) and _UPDATE_FILE_RE.match(name) and isinstance(data, str)
+                for name, data in files.items())
+    )
+
+
+def _install_update(body: dict) -> None:
+    """Replace the agent files. Everything is decoded and the Python files are
+    compiled first, so a broken upload leaves the installed agent untouched."""
+    decoded = {name: base64.b64decode(data, validate=True) for name, data in body["files"].items()}
+    for name, data in decoded.items():
+        if name.endswith(".py"):
+            compile(data, name, "exec")
+    for name, data in decoded.items():
+        partial = AGENT_DIR / f".{name}.new"
+        partial.write_bytes(data)
+        os.replace(partial, AGENT_DIR / name)
+    VERSION_FILE.write_text(body["version"], encoding="utf-8")
+    logger.info("Agent files updated to %s (%s files)", body["version"], len(decoded))
+
+
+def _restart_agent() -> None:
+    """Start the agent again (now with the new files) and end this process."""
+    script = str(Path(__file__).resolve())
+    started = False
+    if os.name == "nt":
+        # restart-agent.ps1 waits until this process is gone, then starts the
+        # scheduled task again. WMI creates it outside this process (and its
+        # Task Scheduler job), so it survives our exit.
+        helper = AGENT_DIR / "restart-agent.ps1"
+        inner = (f'powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "{helper}" '
+                 f'-Python "{sys.executable}" -Script "{script}"')
+        try:
+            result = subprocess.run(
+                ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command",
+                 "$r = Invoke-CimMethod -ClassName Win32_Process -MethodName Create "
+                 "-Arguments @{CommandLine = $env:MIXER_AGENT_RESTART}; exit $r.ReturnValue"],
+                env={**os.environ, "MIXER_AGENT_RESTART": inner},
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                timeout=30, check=False,
+            )
+            started = result.returncode == 0
+        except (OSError, subprocess.SubprocessError):
+            logger.exception("Restart helper could not be started")
+    if not started:
+        flags = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+        subprocess.Popen([sys.executable, script], creationflags=flags, start_new_session=os.name != "nt",
+                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    logger.info("Agent restarts with version %s", agent_version())
+    logging.shutdown()
+    os._exit(0)
+
+
 def _schedule_shutdown() -> None:
     timer = threading.Timer(2, _shutdown_agent_pc)
     timer.daemon = True
@@ -815,7 +893,8 @@ def _show_song(root: tk.Tk, canvas: tk.Canvas, body: dict) -> None:
 
 class DisplayHandler(BaseHTTPRequestHandler):
     def do_POST(self):
-        if self.path not in ("/display", "/audio", "/song", "/songs/library", "/songs/save", "/power"):
+        if self.path not in ("/display", "/audio", "/song", "/songs/library", "/songs/save", "/power",
+                             "/info", "/update"):
             self.send_error(404)
             return
 
@@ -827,12 +906,19 @@ class DisplayHandler(BaseHTTPRequestHandler):
 
         try:
             length = int(self.headers.get("Content-Length", "0"))
-            limit = {"/song": 32768, "/songs/save": MAX_SONG_FILE_BYTES + 8192}.get(self.path, 8192)
+            limit = {"/song": 32768, "/songs/save": MAX_SONG_FILE_BYTES + 8192,
+                     "/update": MAX_UPDATE_BYTES}.get(self.path, 8192)
             if not 0 < length <= limit:
                 raise ValueError("invalid request size")
             body = json.loads(self.rfile.read(length))
         except (ValueError, json.JSONDecodeError):
             self.send_error(400)
+            return
+        if self.path == "/info":
+            self._send_json(200, {"ok": True, "version": agent_version()})
+            return
+        if self.path == "/update":
+            self._handle_update(body)
             return
         if self.path == "/audio":
             self._handle_audio(body)
@@ -970,6 +1056,21 @@ class DisplayHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(encoded)
 
+    def _handle_update(self, body: dict) -> None:
+        if not _valid_update_request(body):
+            self.send_error(400)
+            return
+        try:
+            _install_update(body)
+        except (ValueError, SyntaxError, OSError):
+            logger.exception("Agent update could not be installed")
+            self._send_json(500, {"ok": False, "reason": "agent update could not be installed"})
+            return
+        self._send_json(202, {"ok": True, "version": body["version"], "restarting": True})
+        timer = threading.Timer(0.5, _restart_agent)
+        timer.daemon = True
+        timer.start()
+
     def _handle_power(self, body: dict) -> None:
         if not isinstance(body, dict) or body != {"action": "shutdown"}:
             self.send_error(400)
@@ -1030,10 +1131,18 @@ def main() -> None:
     canvas = tk.Canvas(root, background="black", highlightthickness=0, borderwidth=0)
     root.after(100, drain_requests, root, label, canvas)
 
-    server = ThreadingHTTPServer((HOST, PORT), DisplayHandler)
+    # After a self-update the old agent may still hold the port for a moment.
+    for attempt in range(40):
+        try:
+            server = ThreadingHTTPServer((HOST, PORT), DisplayHandler)
+            break
+        except OSError:
+            if attempt == 39:
+                raise
+            time.sleep(0.5)
     server.daemon_threads = True
     threading.Thread(target=server.serve_forever, daemon=True).start()
-    logger.info("Display agent listening on %s:%s", HOST, PORT)
+    logger.info("Display agent %s listening on %s:%s", agent_version(), HOST, PORT)
     root.mainloop()
 
 
