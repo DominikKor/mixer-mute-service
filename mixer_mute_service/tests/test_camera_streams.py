@@ -46,8 +46,10 @@ class CameraStreamTests(unittest.TestCase):
             "rtsp://cam%20user:p%40ss%2Fword@192.168.5.21:554/live/main?channel=1",
         )
         self.assertTrue(config["paths"][camera["id"]]["sourceOnDemand"])
-        self.assertEqual(config["webrtcAddress"], ":8889")
+        # signalling only on localhost (passed on by the service), media from the LAN
+        self.assertEqual(config["webrtcAddress"], "127.0.0.1:8889")
         self.assertEqual(config["webrtcLocalUDPAddress"], ":8189")
+        self.assertEqual(config["webrtcLocalTCPAddress"], ":8189")
 
     def test_public_snapshot_never_includes_credentials(self):
         async def run():

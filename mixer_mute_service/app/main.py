@@ -23,6 +23,7 @@ from .buses import BusRegistry
 from .channel_settings import ChannelSettingsCache, ChannelSettingsStore
 from .camera_hls import router as camera_hls_router
 from .camera_ptz import PanTiltControl
+from .camera_webrtc import router as camera_webrtc_router
 from .camera_streams import CameraStreamStore, MediaMTXRelay
 from .channel_colors import router as channel_colors_router
 from .channel_preferences import ChannelPreferences
@@ -165,6 +166,7 @@ app.include_router(songs_router)
 app.include_router(program_templates_router)
 app.include_router(file_actions_router)
 app.include_router(camera_hls_router)
+app.include_router(camera_webrtc_router)
 app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="ui")
 
 

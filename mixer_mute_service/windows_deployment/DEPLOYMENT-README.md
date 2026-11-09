@@ -40,7 +40,11 @@ after an unexpected failure. No user needs to be logged in.
 Open <http://127.0.0.1:8765/> on the streaming PC to use the web interface.
 From other devices in the same private LAN, open <http://PC-IP:8765/>.
 The install/update scripts create a Windows Firewall allow-rule for TCP 8765 on
-the Private profile.
+the Private profile, and allow-rules for the camera pictures (WebRTC media,
+UDP and TCP 8189) on all profiles, limited to private source addresses. They
+also remove inbound block rules for `mediamtx.exe` and report each network's
+profile; if a network shows as Public, set it to Private (see the main
+README, "Kamerabild mit geringer Verzoegerung").
 
 ## Configuration
 

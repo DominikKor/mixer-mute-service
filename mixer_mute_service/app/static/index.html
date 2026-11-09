@@ -2964,14 +2964,11 @@ function fmtAge(a) { return a === null || a === undefined ? "—" : a.toFixed(2)
 let CAMERA_STREAMS_SIGNATURE = "";
 let CAMERA_STREAMS = [];
 
-// On the streaming PC itself the WebRTC player (port 8889, lowest delay).
-// Other devices may not reach that port through the PC's firewall, so they
-// get the same camera as HLS through the service's own port (app/camera_hls.py).
+// Every device gets the WebRTC player (lowest delay), signalled through the
+// service's own port; it falls back to HLS by itself when the WebRTC media
+// port of the streaming PC cannot be reached (static/camera-player.html).
 function cameraPlayerUrl(cameraId) {
-  const id = encodeURIComponent(cameraId);
-  return ["localhost", "127.0.0.1", "[::1]"].includes(location.hostname)
-    ? `http://${location.hostname}:8889/${id}`
-    : `/camera-hls/${id}/`;
+  return `/camera-player.html?cam=${encodeURIComponent(cameraId)}`;
 }
 
 function renderCameraStreams(data) {

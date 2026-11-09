@@ -75,7 +75,8 @@ def main():
     print("== relay config ==")
     config = camera_streams._relay_config([{"id": CAM, "rtsp_url": "rtsp://192.168.188.51:554/stream1"}])
     check("HLS on localhost only", config["hls"] is True and config["hlsAddress"].startswith("127.0.0.1:"))
-    check("WebRTC unchanged", config["webrtc"] is True and config["webrtcAddress"] == ":8889")
+    check("WebRTC still on, signalling on localhost", config["webrtc"] is True and config["webrtcAddress"] == "127.0.0.1:8889")
+    check("HLS parts of 200 ms in 1 s segments", config["hlsPartDuration"] == "200ms" and config["hlsSegmentDuration"] == "1s")
 
     with TestClient(app) as client:
         relay = app.state.camera_relay

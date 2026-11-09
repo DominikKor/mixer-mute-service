@@ -1,11 +1,12 @@
-"""Camera pictures for devices that cannot reach the WebRTC ports.
+"""Camera pictures for devices that cannot reach the WebRTC media port.
 
-The web UI shows the cameras through MediaMTX. Its WebRTC player needs TCP
-8889 and UDP 8189 on the streaming PC, which that PC's firewall may block for
-everyone but itself. MediaMTX therefore also serves the cameras as HLS, bound
-to 127.0.0.1 only (see _relay_config), and GET /camera-hls/<camera id>/...
-passes those requests through the service's own port, which every device on
-the LAN reaches. Only paths of configured cameras are passed on.
+The web UI shows the cameras through MediaMTX, by WebRTC (app/camera_webrtc.py,
+static/camera-player.html). Its media needs port 8189 on the streaming PC,
+which a firewall may still block. The player then falls back to HLS: MediaMTX
+also serves the cameras as HLS, bound to 127.0.0.1 only (see _relay_config),
+and GET /camera-hls/<camera id>/... passes those requests through the
+service's own port, which every device on the LAN reaches. Only paths of
+configured cameras are passed on.
 
 MediaMTX answers a first playlist request with a redirect to
 "?cookieCheck=1" (and a cookie it does not insist on). Redirects are passed

@@ -264,8 +264,8 @@ Invoke-WebRequest -Method POST http://localhost:8765/groups/drums/toggle
 Das Kamerapanel nimmt RTSP-Adressen ueber **Kamera** auf. Adressen muessen auf
 eine private IPv4-Kamera zeigen und duerfen keine Zugangsdaten enthalten;
 Benutzername und Passwort kommen in die separaten Felder. Die Weboberflaeche
-spielt RTSP nicht direkt ab: Der Dienst startet MediaMTX und zeigt dessen
-WebRTC-Player in einer responsiven Kachel. Quellen werden nur abgerufen,
+spielt RTSP nicht direkt ab: Der Dienst startet MediaMTX und zeigt das Bild
+per WebRTC in einer responsiven Kachel (siehe unten). Quellen werden nur abgerufen,
 waehrend ein Viewer verbunden ist.
 
 MediaMTX muss zusaetzlich auf dem Service-PC installiert sein. Lade die
@@ -277,18 +277,81 @@ entpacke `mediamtx.exe` und setze `MEDIAMTX_PATH` als Systemvariable, zum Beispi
 ```
 
 Danach den Mixer-Service neu starten. Auf iPad und anderen PCs muss nichts
-installiert werden: Auf dem Service-PC selbst (`localhost`) zeigt die Seite den
-WebRTC-Player (geringste Verzoegerung), alle anderen Geraete bekommen dieselbe
-Kamera als HLS ueber den Service-Port 8765 (`/camera-hls/<kamera>/`, ca. 1-3 s
-Verzoegerung). MediaMTX stellt HLS dafuer nur auf `127.0.0.1:8888` bereit; der
-Service reicht nur Pfade eingerichteter Kameras durch. So funktionieren die Bilder
-auch, wenn die Windows-Firewall die WebRTC-Ports fuer andere Geraete blockiert.
-Die WebRTC-Verbindung braucht TCP 8889
-fuer den Player und UDP 8189 fuer das Videomedium. `install-service.ps1` legt
-dafuer Windows-Firewallregeln an, beschraenkt auf das private Profil und
-`LocalSubnet`. Bei mehreren Netzwerkkarten kann `CAMERA_WEBRTC_HOST` als
-Systemvariable auf die LAN-Adresse gesetzt werden, unter der iPad und PCs den
-Service erreichen koennen.
+installiert werden.
+
+### Kamerabild mit geringer Verzoegerung (WebRTC fuer alle Geraete)
+
+Jede Kachel laedt `camera-player.html?cam=<kamera>` vom Dienst. Der Player
+verbindet sich per WebRTC, auf jedem Geraet (iPad, andere PCs, Streaming-PC):
+
+- **Signalisierung** (WHEP: ein HTTP-POST mit dem Angebot des Browsers) geht
+  ueber den Service-Port 8765 (`/camera-webrtc/<kamera>/whep`,
+  `app/camera_webrtc.py`). MediaMTX lauscht dafuer nur noch auf
+  `127.0.0.1:8889`; Port 8889 muss nicht mehr freigegeben sein.
+- **Bild** kommt direkt von MediaMTX ueber Port **8189**, per UDP oder, wo UDP
+  verworfen wird, per TCP. Gemessen auf einem Mac (Python-Testsender anstelle
+  von MediaMTX, Player im Browser, Signalisierung ueber den Dienst): ca. 40 ms
+  vom Senden bis zum fertigen Bild. Kamera-Encoder und WLAN kommen dazu
+  (typisch 100-300 ms), HLS liegt dagegen mehrere Sekunden zurueck.
+- **Rueckfall:** Kommt die WebRTC-Verbindung binnen 6 s nicht zustande (Port
+  8189 gesperrt), zeigt die Kachel dasselbe Bild als HLS ueber Port 8765
+  (`/camera-hls/<kamera>/`, MediaMTX nur auf `127.0.0.1:8888`) und oben links
+  ein kleines **HLS**. Das Bild ist dann mehrere Sekunden verzoegert. Siehst du
+  „HLS“, ist die Firewall am Streaming-PC noch nicht richtig eingerichtet.
+  Bricht ein laufendes WebRTC-Bild ab (Kamera weg, Dienst-Neustart), verbindet
+  der Player neu und bleibt bei WebRTC.
+
+`install-service.ps1` (laeuft auch bei jedem Update) richtet die Firewall dafuer ein:
+
+- Regeln fuer **UDP und TCP 8189**, fuer **alle Netzwerkprofile**
+  (Domaene, Privat, Oeffentlich), aber nur fuer private Absender
+  (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`). Bisher galt die Regel nur
+  im Profil „Privat“ und nur fuer `LocalSubnet`; ist das Netz des PCs als
+  „Oeffentlich“ eingestuft, griff sie nicht, und das iPad bekam kein
+  WebRTC-Bild. Der Port selbst liefert nichts ohne eine ueber den Dienst
+  ausgehandelte Sitzung.
+- Die alte Regel fuer TCP 8889 wird entfernt.
+- **Blockier-Regeln fuer `mediamtx.exe`** werden entfernt. Windows legt sie an,
+  wenn die Rueckfrage „Zugriff zulassen“ einmal abgebrochen wurde (z. B. nach
+  einem manuellen Start von `mediamtx.exe`); eine Blockier-Regel schlaegt jede
+  Zulassen-Regel.
+- Das Skript zeigt, wie jedes Netzwerk eingestuft ist, und warnt bei
+  „Oeffentlich“ (die Regel fuer die Weboberflaeche, TCP 8765, gilt nur fuer
+  „Privat“) und bei „Alle eingehenden Verbindungen blocken“.
+
+**Einmalig am Streaming-PC nach dem Update:**
+
+1. Update wie gewohnt einspielen (UPDATE-Taste bzw. `update-from-github.ps1`);
+   das fuehrt `install-service.ps1` als Administrator aus und setzt die Regeln.
+   Alternativ `install-service.ps1` direkt in einer Administrator-PowerShell
+   starten.
+2. Die Ausgabe des Skripts lesen: Steht dort bei einem Netzwerk „Public“, das
+   Netz auf „Privat“ stellen (Einstellungen > Netzwerk und Internet >
+   Ethernet > Netzwerkprofiltyp: Privat, oder
+   `Set-NetConnectionProfile -InterfaceAlias "<Name>" -NetworkCategory Private`).
+3. Auf dem iPad die Seite neu laden. Erscheint in der Kachel kein „HLS“, laeuft
+   WebRTC. Den TCP-Weg pruefst du von einem anderen Windows-PC aus mit
+   `Test-NetConnection 192.168.188.20 -Port 8189`.
+
+Laeuft zusaetzlich eine andere Firewall (Virenscanner-Suite), braucht sie
+dieselbe Freigabe fuer UDP und TCP 8189. Bei mehreren Netzwerkkarten (z. B.
+eigene Karte fuer das Kameranetz 192.168.5.x) meldet MediaMTX alle Adressen;
+der Browser waehlt die erreichbare. Klappt das nicht, `CAMERA_WEBRTC_HOST` als
+Systemvariable auf die LAN-Adresse setzen, unter der iPad und PCs den Dienst
+erreichen (z. B. `192.168.188.20`).
+
+**Kamera-Einstellungen fuer wenig Verzoegerung** (an der Kamera selbst, nicht
+im Dienst einstellbar):
+
+- Codec **H.264** ohne B-Frames (Profil Baseline oder Main). H.265 koennen
+  nicht alle Browser per WebRTC abspielen.
+- **Keyframe-Abstand (GOP/I-Frame-Intervall) ca. 1 s**, also gleich der
+  Bildrate (z. B. 25 bei 25 fps, 30 bei 30 fps). Ein neuer Betrachter sieht
+  erst ab dem naechsten Keyframe ein Bild, und der HLS-Rueckfall kann ein
+  Segment nur an einem Keyframe beginnen: Bei 4 s Abstand liegt HLS deutlich
+  weiter zurueck.
+- Konstante Bitrate passend zum WLAN (fuer 1080p etwa 4-6 Mbit/s); das iPad
+  im 5-GHz-WLAN betreiben.
 
 Kameraliste und Relay-Konfiguration liegen in `camera_streams.json` und
 `mediamtx-cameras.yml` neben `config.yaml`; beide koennen Zugangsdaten
