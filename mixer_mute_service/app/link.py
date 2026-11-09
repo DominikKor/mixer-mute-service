@@ -79,15 +79,21 @@ def new_stream_buffer(
 
 
 def enable_tcp_keepalive(writer: asyncio.StreamWriter) -> bool:
-    """Turn on TCP keepalive with short timers (best effort, per platform)."""
+    """Turn on TCP keepalive with short timers (best effort, per platform).
+
+    Never raises: the keepalive is an extra, a failure here must not cost the
+    connection. asyncio hands out a TransportSocket wrapper, which has no
+    ioctl() (Windows' way to set the timers), hence the real socket below.
+    """
     sock = writer.get_extra_info("socket")
     if sock is None:
         return False
     try:
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
         if sys.platform == "win32" and hasattr(socket, "SIO_KEEPALIVE_VALS"):
-            sock.ioctl(socket.SIO_KEEPALIVE_VALS,
-                       (1, KEEPALIVE_IDLE_SECONDS * 1000, KEEPALIVE_INTERVAL_SECONDS * 1000))
+            raw = getattr(sock, "_sock", sock)
+            raw.ioctl(socket.SIO_KEEPALIVE_VALS,
+                      (1, KEEPALIVE_IDLE_SECONDS * 1000, KEEPALIVE_INTERVAL_SECONDS * 1000))
         else:
             idle = getattr(socket, "TCP_KEEPIDLE", None) or getattr(socket, "TCP_KEEPALIVE", None)
             if idle is not None:
@@ -97,7 +103,7 @@ def enable_tcp_keepalive(writer: asyncio.StreamWriter) -> bool:
             if hasattr(socket, "TCP_KEEPCNT"):
                 sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, KEEPALIVE_PROBES)
         return True
-    except OSError as exc:
+    except Exception as exc:  # noqa: BLE001 - best effort, see above
         log.warning("could not enable TCP keepalive: %s", exc)
         return False
 
@@ -107,5 +113,10 @@ async def open_mixer_connection(cfg: Config) -> Tuple[asyncio.StreamReader, asyn
     reader, writer = await asyncio.wait_for(
         asyncio.open_connection(cfg.mixer.ip, cfg.mixer.port), timeout=CONNECT_TIMEOUT_SECONDS
     )
-    enable_tcp_keepalive(writer)
+    try:
+        enable_tcp_keepalive(writer)
+    except BaseException:
+        # Never leave a half-set-up connection open on the mixer.
+        writer.close()
+        raise
     return reader, writer
