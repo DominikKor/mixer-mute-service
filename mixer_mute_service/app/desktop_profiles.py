@@ -22,7 +22,7 @@ import os
 import re
 from copy import deepcopy
 from pathlib import Path, PureWindowsPath
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 import yaml
 from pydantic import ValidationError
@@ -197,7 +197,7 @@ def _insert_after(text: str, node, block: str) -> str:
     return text[:pos] + block + text[pos:]
 
 
-def _add_text(text: str, profile_id: str, values: dict, nl: str) -> str:
+def _add_text(text: str, profile_id: str, values: dict, nl: str, after: Optional[str] = None) -> str:
     root = yaml.compose(text) if text.strip() else None
     if root is None:
         lines = [(0, "desktop_display:"), (2, "profiles:")] + _profile_lines(profile_id, values, 4, 6)
@@ -234,7 +234,10 @@ def _add_text(text: str, profile_id: str, values: dict, nl: str) -> str:
     indent = _child_indent(profiles, pr_key.start_mark.column + step)
     first = profiles.value[0][1]
     field_indent = _child_indent(first, indent + step) if _is_block_mapping(first) else indent + step
-    return _insert_after(text, profiles, _block(_profile_lines(profile_id, values, indent, field_indent), nl))
+    # A copy goes right after its original (the buttons keep the file order).
+    anchor = _mapping_get(profiles, after) if after else None
+    target = anchor[1] if anchor else profiles
+    return _insert_after(text, target, _block(_profile_lines(profile_id, values, indent, field_indent), nl))
 
 
 def _profile_node(text: str, profile_id: str):
@@ -346,7 +349,8 @@ def _write(path: Path, raw_before: bytes, text: str) -> None:
     os.replace(tmp, path)
 
 
-def _apply(path: Path, profile_id: str, profile: DesktopProfileConfig, create: bool) -> Config:
+def _apply(path: Path, profile_id: str, profile: DesktopProfileConfig, create: bool,
+           after: Optional[str] = None) -> Config:
     if not PROFILE_ID_RE.match(profile_id or ""):
         raise ProfileEditError("invalid profile id (letters, digits, - and _; max 64)")
     validate_profile(profile)
@@ -361,7 +365,7 @@ def _apply(path: Path, profile_id: str, profile: DesktopProfileConfig, create: b
     if create:
         if profile_id in existing:
             raise ProfileEditError(f"desktop profile already exists: {profile_id!r}", 409)
-        new_text = _add_text(text, profile_id, values, nl)
+        new_text = _add_text(text, profile_id, values, nl, after)
     else:
         if not isinstance(existing.get(profile_id), dict):
             raise ProfileEditError("unknown desktop profile", 404)
@@ -378,6 +382,52 @@ def _apply(path: Path, profile_id: str, profile: DesktopProfileConfig, create: b
 def add_profile(path: Path, profile_id: str, profile: DesktopProfileConfig) -> Config:
     """Append a new profile to config.yaml. Returns the newly loaded Config."""
     return _apply(path, profile_id, profile, create=True)
+
+
+_COPY_SUFFIX_RE = re.compile(r" \(Kopie(?: \d+)?\)$")
+
+
+def _copy_title(title: str, taken: set) -> str:
+    """"Lied (Kopie)", then "Lied (Kopie 2)" ...; a copy of a copy counts on."""
+    base = _COPY_SUFFIX_RE.sub("", title.strip())
+    for number in range(1, 1000):
+        suffix = " (Kopie)" if number == 1 else f" (Kopie {number})"
+        candidate = base[:80 - len(suffix)].rstrip() + suffix
+        if candidate not in taken:
+            return candidate
+    raise ProfileEditError("too many copies of this profile", 409)
+
+
+def _copy_id(profile_id: str, taken: set) -> str:
+    base = re.sub(r"-kopie(?:-\d+)?$", "", profile_id)[:52] + "-kopie"
+    for number in range(1, 1000):
+        candidate = base if number == 1 else f"{base}-{number}"
+        if candidate not in taken:
+            return candidate
+    raise ProfileEditError("too many copies of this profile", 409)
+
+
+def duplicate_profile(path: Path, profile_id: str) -> Tuple[Config, str]:
+    """Copy a profile (title "… (Kopie)", a free id) and insert it right after
+    the original. Returns the new Config and the copy's id."""
+    if not PROFILE_ID_RE.match(profile_id or ""):
+        raise ProfileEditError("invalid profile id (letters, digits, - and _; max 64)")
+    _, text = _read(path)
+    try:
+        existing = _profiles_of(_load(text))
+    except yaml.YAMLError:
+        raise ProfileEditError("config.yaml cannot be parsed; fix it by hand first", 409)
+    source = existing.get(profile_id)
+    if not isinstance(source, dict):
+        raise ProfileEditError("unknown desktop profile", 404)
+    try:
+        profile = DesktopProfileConfig(**source)
+    except (ValidationError, TypeError):
+        raise ProfileEditError("this profile is not valid in config.yaml; fix it first", 409)
+    titles = {str(item.get("title", "")) for item in existing.values() if isinstance(item, dict)}
+    copy = profile.model_copy(update={"title": _copy_title(profile.title, titles)})
+    new_id = _copy_id(profile_id, set(existing))
+    return _apply(path, new_id, copy, create=True, after=profile_id), new_id
 
 
 def update_profile(path: Path, profile_id: str, profile: DesktopProfileConfig) -> Config:

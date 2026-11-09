@@ -190,6 +190,7 @@ $("tile-menu").addEventListener("click", (event) => {
   const trigger = document.querySelector('[data-profile-menu][aria-expanded="true"]');
   closeTileMenu();
   if (item.dataset.menuAction === "edit") openProfileDialog(profileId);
+  else if (item.dataset.menuAction === "duplicate") duplicateDesktopProfile(profileId);
   else if (item.dataset.menuAction === "delete") deleteDesktopProfile(profileId, trigger);
 });
 $("tile-menu").addEventListener("keydown", (event) => {
