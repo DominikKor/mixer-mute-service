@@ -14,9 +14,7 @@
     <input id="stage-toggle" type="checkbox" /><span class="track"></span>Stage
   </label>
   <div class="status">
-    <a id="agent-update-link" class="download-link" href="/desktop/agent/update.cmd" download hidden
-       title="Update-Datei für den Display-Agent laden und auf dem Anzeige-PC ausführen">Display Service herunterladen</a>
-    <button id="update-btn" class="update-key" hidden title="Mixer Service von GitHub aktualisieren">Update</button>
+    <button id="update-btn" class="update-key" hidden title="Mixer Service und Display Service dieses PCs aktualisieren">Update</button>
     <div class="status-display">
       <span class="pill"><span id="dot-conn" class="dot"></span><span id="txt-conn">mixer ...</span></span>
       <span class="pill"><span id="dot-en" class="dot"></span><span id="txt-en">...</span></span>
@@ -239,8 +237,11 @@
   <div class="update-body">
     <h3 id="update-title">Update</h3>
     <div id="update-lcd" class="update-lcd">—</div>
-    <p id="update-warn" class="update-warn">Während des Updates ist der Mixer-Service etwa eine Minute nicht
-      erreichbar. Bitte nicht während einer laufenden Veranstaltung starten.</p>
+    <p id="update-warn" class="update-warn">Aktualisiert erst den Mixer-Service (dabei etwa eine Minute nicht
+      erreichbar), dann den Display Service dieses PCs. Bitte nicht während einer laufenden Veranstaltung starten.</p>
+    <p id="update-agent-manual" class="update-warn" hidden>Der Display Service auf diesem PC ist zu alt für das
+      automatische Update. Einmalig <a href="/desktop/agent/update.cmd" download>Display Service herunterladen</a>
+      und die Datei ausführen; danach erledigt die Update-Taste auch ihn.</p>
     <pre id="update-log" class="update-log" hidden></pre>
     <div class="update-actions">
       <button id="update-cancel">Abbrechen</button>

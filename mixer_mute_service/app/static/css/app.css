@@ -272,6 +272,8 @@ dialog.settings-dialog { width: min(1180px, calc(100vw - 32px)); }
 .update-lcd .dim { color: var(--lcd-dim); }
 .update-lcd.ok { color: #7ff0a8; } .update-lcd.err { color: #ff8576; }
 .update-warn { margin: 0; font-size: 13px; color: #c9ced6; }
+.update-warn[hidden] { display: none; }
+.update-warn a { color: #8fd3e6; font-weight: 700; }
 .update-log {
   max-height: 220px; overflow: auto; margin: 0; padding: 8px 10px; border-radius: 5px; border: 1px solid #000;
   background: #07090b; color: #8fb3bd; font: 11px/1.4 var(--mono); white-space: pre-wrap;

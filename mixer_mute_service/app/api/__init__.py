@@ -6,6 +6,7 @@ never a silent success."""
 from fastapi import APIRouter
 
 from ..agent_download import router as agent_download_router
+from ..agent_update import router as agent_update_router
 from ..camera_hls import router as camera_hls_router
 from ..camera_webrtc import router as camera_webrtc_router
 from ..channel_colors import router as channel_colors_router
@@ -26,6 +27,7 @@ for _sub in (
     cameras.router,
     updater_router,
     agent_download_router,
+    agent_update_router,
     channel_colors_router,
     songs_router,
     program_templates_router,

@@ -82,6 +82,8 @@ try {
     foreach ($Name in $AgentFiles.Keys) {
         [IO.File]::WriteAllBytes((Join-Path $AgentDirectory $Name), [Convert]::FromBase64String($AgentFiles[$Name]))
     }
+    # The agent reports this version, so the Update key knows it is current.
+    [IO.File]::WriteAllText((Join-Path $AgentDirectory "version.txt"), $AgentVersion)
     Write-Host "$($AgentFiles.Count) Dateien geschrieben."
 
     if (-not $Task) {
