@@ -20,6 +20,7 @@ import logging
 import re
 import urllib.error
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from typing import Tuple
 
 from fastapi import APIRouter, Request
@@ -42,6 +43,11 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 _opener = urllib.request.build_opener(_NoRedirect)
+# Low-latency HLS keeps playlist requests open; several devices and cameras
+# (plus the live miniatures of the Stage view) can hold many at once. They get
+# their own threads, so they can never delay the lights, cameras or OBS keys,
+# which use asyncio's shared default pool.
+_POOL = ThreadPoolExecutor(max_workers=24, thread_name_prefix="camera-hls")
 
 
 def _fetch(url: str, cookie: str) -> Tuple[int, list, bytes]:
@@ -72,7 +78,9 @@ async def camera_hls(path: str, request: Request):
     query = request.url.query
     url = f"http://127.0.0.1:{camera_streams.HLS_PORT}/{path}" + (f"?{query}" if query else "")
     try:
-        status, headers, body = await asyncio.to_thread(_fetch, url, request.headers.get("cookie", ""))
+        status, headers, body = await asyncio.get_running_loop().run_in_executor(
+            _POOL, _fetch, url, request.headers.get("cookie", "")
+        )
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
         log.warning("Camera HLS relay unavailable: %s", exc)
         return JSONResponse({"ok": False, "reason": "camera relay unavailable"}, 502)

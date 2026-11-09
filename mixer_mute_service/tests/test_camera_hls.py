@@ -96,6 +96,15 @@ def main():
         r = client.get(f"/camera-hls/{CAM}/missing.mp4")
         check("upstream 404 passed through", r.status_code == 404 and r.text == "not found")
 
+        import app.camera_hls as camera_hls
+        threads = []
+        real_fetch = camera_hls._fetch
+        camera_hls._fetch = lambda *args: (threads.append(threading.current_thread().name), real_fetch(*args))[1]
+        client.get(f"/camera-hls/{CAM}/index.m3u8?_HLS_msn=1")
+        camera_hls._fetch = real_fetch
+        check("runs on its own threads (never blocks the lights/OBS pool)",
+              bool(threads) and threads[0].startswith("camera-hls"))
+
         print("== refused ==")
         before = len(SEEN)
         check("unknown camera", client.get("/camera-hls/cam-ffffffffffff/").status_code == 404)
