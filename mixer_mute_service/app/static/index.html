@@ -3691,7 +3691,8 @@ function layoutStageChannels(panel, W, H, fullFaders) {
   const fader = !compact && cards[0].querySelector(".fader");
   const faderH = fader ? fader.offsetHeight : 0;
   const fixed = Math.max(...cards.map(c => c.offsetHeight)) - faderH;
-  const minW = compact ? 124 : 80;
+  // Ultra rows need a little more width than compact tiles for name + mute key.
+  const minW = strips.classList.contains("ultra") ? 128 : compact ? 124 : 80;
   const n = cards.length;
   if (fullFaders || compact) {
     // Full-length faders (the stage scrolls) or compact tiles: as few rows as
