@@ -4296,14 +4296,28 @@ function initStage() {
 
   const toggle = $("stage-toggle");
   const prefs = loadUiPrefs();
-  toggle.checked = !!prefs.stage;
+  // The switch is kept in localStorage and in a cookie the server sets (Safari
+  // wipes localStorage of a site unused for 7 days, but not that cookie).
+  const cookie = readStageCookie();
+  toggle.checked = cookie !== null ? cookie : !!prefs.stage;
+  if (cookie === null && typeof prefs.stage === "boolean") rememberStage(prefs.stage);
   if (toggle.checked) setStage(true, false);
   toggle.addEventListener("change", () => {
     const p = loadUiPrefs();
     p.stage = toggle.checked;
     saveUiPrefs(p);
+    rememberStage(toggle.checked);
     setStage(toggle.checked, true);
   });
+}
+
+function readStageCookie() {
+  const match = document.cookie.match(/(?:^|;\s*)mixer_stage=([01])(?:;|$)/);
+  return match ? match[1] === "1" : null;
+}
+
+function rememberStage(on) {
+  api("POST", "/ui/stage", { on }).catch(() => {});
 }
 
 function stagePanel(section) {

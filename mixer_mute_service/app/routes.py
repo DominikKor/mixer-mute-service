@@ -43,6 +43,7 @@ from .models import (
     GroupUpdate,
     ProgramItemRequest,
     RecallFaderRequest,
+    StagePreferenceRequest,
 )
 from .protocol import fader_hex_to_value
 from .safety import is_channel_safe
@@ -298,6 +299,24 @@ async def beamer_state(request: Request):
 @router.post("/beamer/state")
 async def set_beamer_state(body: BeamerStateRequest, request: Request):
     return await request.app.state.native_controls.set_beamer_state(body.hidden)
+
+
+# The Stage switch is kept per browser. The page stores it in localStorage, but
+# Safari wipes script-written storage of a site unused for 7 days (a weekly
+# service). A cookie set by the server is not subject to that, so it is kept
+# here as well, for 10 years; the page reads it back on load.
+STAGE_COOKIE = "mixer_stage"
+STAGE_COOKIE_MAX_AGE = 10 * 365 * 24 * 3600
+
+
+@router.post("/ui/stage")
+async def remember_stage(body: StagePreferenceRequest):
+    response = JSONResponse({"ok": True, "on": body.on})
+    response.set_cookie(
+        STAGE_COOKIE, "1" if body.on else "0",
+        max_age=STAGE_COOKIE_MAX_AGE, path="/", samesite="lax",
+    )
+    return response
 
 
 @router.get("/camera-streams")

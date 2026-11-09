@@ -42,6 +42,10 @@ class BeamerStateRequest(BaseModel):
     hidden: bool
 
 
+class StagePreferenceRequest(BaseModel):
+    on: bool
+
+
 class CameraZoomRequest(BaseModel):
     # Hold-to-zoom: "in"/"out" start zooming, "stop" ends it.
     direction: Literal["in", "out", "stop"]
