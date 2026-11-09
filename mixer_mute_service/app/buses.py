@@ -9,10 +9,11 @@ number: a bus must never silently move to another number.
 Buses listed in ``config.yaml`` (``mixer.buses``) always win: they keep their
 channel number and name, so an existing installation keeps its numbering.
 
-Only object ids in AUTO_BUS_IDS are taken over automatically. The main L/R
-output (id 255) has the same frame format but was never verified live, and the
-master is the one fader where a mistake hurts most -- it stays out unless it is
-configured explicitly.
+Object ids in AUTO_BUS_IDS are taken over automatically, the main L/R output
+(id 255, "Saal L/R MIX OUTPUT") included: it has the same frame format and
+becomes a channel with its own fader and mute. Because a mistake on the master
+silences the whole room, groups and the solo-on-unmute never touch it (see
+is_main_output and the controller); only its own channel controls do.
 """
 
 from __future__ import annotations
@@ -27,7 +28,17 @@ from .protocol import BusMap, varint_hex
 
 log = logging.getLogger("mixer.buses")
 
-AUTO_BUS_IDS = range(128, 255)  # the console's buses; 255 = main L/R excluded
+MAIN_LR_ID = 255  # the console's main L/R output
+AUTO_BUS_IDS = range(128, MAIN_LR_ID + 1)  # the console's buses plus main L/R
+
+
+def is_main_output(bus: BusConfig) -> bool:
+    return bus.id.lower() == varint_hex(MAIN_LR_ID)
+
+
+def main_output_channels(cfg: Config) -> set:
+    """Channel numbers of the main L/R output (normally none or one)."""
+    return {bus.channel for bus in cfg.mixer.buses if is_main_output(bus)}
 
 
 class BusRegistry:

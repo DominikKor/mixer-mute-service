@@ -36,7 +36,8 @@ mixer:
   # list a bus here to pin its channel number/name. Echo and Monitor are pinned
   # to 17/18 because existing groups use those numbers; with them, the others
   # come out as 19 Hall 2, 20 EarMonitor, 21 PC Input, 22 Keller+Kinder,
-  # 23 Bus 7, 24 Bus 8. The main L/R output (id 255) is never added automatically.
+  # 23 Bus 7, 24 Bus 8, 25 Saal L/R MIX OUTPUT. The main L/R output (id 255) has
+  # its own fader and mute, but groups and the solo never switch it.
   buses:
     - {channel: 17, name: "Echo", id: "8001"}
     - {channel: 18, name: "Monitor", id: "8301"}

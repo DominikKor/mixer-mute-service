@@ -27,6 +27,7 @@ import logging
 from pathlib import Path
 from typing import List, Optional, Tuple
 
+from .buses import main_output_channels
 from .channel_preferences import ChannelPreferences
 from .config import Config
 from .groups import GroupError, GroupStore
@@ -333,7 +334,10 @@ class Controller:
 
     async def _group_set_locked(self, group: str, channels: List[int], target_muted: bool) -> dict:
         always_on = await self.always_on_channels()
-        protected = sorted(set(channels) & always_on) if target_muted else []
+        main = main_output_channels(self._cfg)
+        # Groups never switch the main L/R output, in either direction; always-on
+        # channels are only kept from being muted.
+        protected = sorted(set(channels) & ((always_on if target_muted else set()) | main))
         action_channels = [ch for ch in channels if ch not in protected]
         if not action_channels:
             return {
@@ -391,8 +395,10 @@ class Controller:
             else:
                 members = set(channels)
                 other_channels = self._cfg.valid_channels() - members
-                protected_others = sorted(other_channels & always_on)
-                for ch in sorted(other_channels - always_on):
+                # never the main L/R output: that would silence the whole room
+                keep = always_on | main
+                protected_others = sorted(other_channels & keep)
+                for ch in sorted(other_channels - keep):
                     cs = await self._store.get_channel(ch)
                     if cs is not None and cs.muted is True:
                         continue  # already muted, nothing to do
@@ -433,8 +439,10 @@ class Controller:
 
             # Toggle semantics: a group counts as "active" only when ALL channels
             # are muted -> then unmute; otherwise mute. Requires all mute states.
+            # Always-on channels and the main L/R output never take part.
             always_on = await self.always_on_channels()
-            toggle_channels = [ch for ch in channels if ch not in always_on]
+            main = main_output_channels(self._cfg)
+            toggle_channels = [ch for ch in channels if ch not in always_on and ch not in main]
             if not toggle_channels:
                 return {
                     "ok": True, "group": group, "results": [], "skipped": [],
@@ -462,7 +470,10 @@ class Controller:
         channels = []
         fader_hex = {}
         unsafe = []
+        main = main_output_channels(self._cfg)
         for channel in self._cfg.all_channels():
+            if channel in main:
+                continue  # a group never switches the main L/R output
             state = await self._store.get_channel(channel)
             mute_safety = check_channel_mute_state(
                 channel, state, self._cfg,

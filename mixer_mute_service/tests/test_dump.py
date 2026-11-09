@@ -205,17 +205,22 @@ def main():
         22: (False, 512.0),  # Keller+Kinder
         23: (True, 0.0),     # Bus 7
         24: (True, 0.0),     # Bus 8
+        25: (False, 723.0),  # Saal L/R MIX OUTPUT (main L/R, id 255)
     }
-    check("8 buses are channels 17..24", sorted(b.channel for b in cfg.mixer.buses) == list(range(17, 25)))
+    check("8 buses + main L/R are channels 17..25", sorted(b.channel for b in cfg.mixer.buses) == list(range(17, 26)))
     check("discovered buses get state from the same dump", {c: all_buses.get(c) for c in expected} == expected)
-    check("main L/R (id 255) not added", sorted(all_buses) == list(range(1, 25)))
+    check("main L/R (id 255) added last, as 25", sorted(all_buses) == list(range(1, 26))
+          and [b.id for b in cfg.mixer.buses if b.channel == 25] == ["ff01"])
     check("names come from the console",
           {b.channel: b.name for b in cfg.mixer.buses if b.channel > 18}
-          == {19: "Hall 2", 20: "EarMonitor", 21: "PC Input", 22: "Keller+Kinder", 23: "Bus 7", 24: "Bus 8"})
-    check("listeners told about each new channel", new_channels == list(range(19, 25)))
-    check("valid channels now 1..24", cfg.all_channels() == list(range(1, 25)))
+          == {19: "Hall 2", 20: "EarMonitor", 21: "PC Input", 22: "Keller+Kinder", 23: "Bus 7", 24: "Bus 8",
+              25: "Saal L/R MIX OUTPUT"})
+    check("listeners told about each new channel", new_channels == list(range(19, 26)))
+    check("valid channels now 1..25", cfg.all_channels() == list(range(1, 26)))
+    from app.buses import main_output_channels
+    check("main output recognised", main_output_channels(cfg) == {25})
     StreamBuffer(buses=reg.bus_map, on_bus_objects=reg.discover).feed(DUMP_FRAME)
-    check("second dump adds nothing", len(cfg.mixer.buses) == 8 and new_channels == list(range(19, 25)))
+    check("second dump adds nothing", len(cfg.mixer.buses) == 9 and new_channels == list(range(19, 26)))
 
     # After a restart the persisted numbers are used before any dump arrives.
     cfg2 = load_config(Path(__file__).resolve().parent.parent / "config.yaml")

@@ -234,6 +234,7 @@
   .always-on-control input:focus-visible + .track { outline: 2px solid var(--accent); outline-offset: 2px; }
   .always-on-control input:disabled + .track { opacity: .6; }
   .always-on-control:has(input:disabled) { cursor: progress; }
+  .always-on-control.fixed, .always-on-control.fixed:has(input:disabled) { cursor: default; }
   .strips.compact .always-on-control { display: none; }
   /* The service did not answer: keep the last strips, dimmed and locked */
   .strips.stale { opacity: .55; }
@@ -2640,9 +2641,11 @@ async function mutePersonChannels(personId) {
   if (!p) return;
   const chs = personChannelList(p);
   if (!chs.length) { toast("Keine Kanäle zugewiesen", false); return; }
-  // Channels already observed muted need no command.
+  // Channels already observed muted need no command; the main L/R output is
+  // never switched by a group.
   await runGroupAction(`${p.name} Mute`, (state) => chs
-    .filter(ch => !(state.channels[ch] && (state.channels[ch].muted === true || state.channels[ch].always_on)))
+    .filter(ch => !(state.channels[ch] && (state.channels[ch].muted === true || state.channels[ch].always_on
+      || state.channels[ch].main_output)))
     .map(ch => ({ ch, path: `/channels/${ch}/mute` })));
 }
 
@@ -2652,14 +2655,17 @@ async function soloPersonChannels(personId) {
   const groupChs = personChannelList(p);
   if (!groupChs.length) { toast("Keine Kanäle zugewiesen", false); return; }
   // Mute the others first: if the action is cut short, more stays muted
-  // rather than less.
+  // rather than less. The main L/R output is never switched by a group
+  // (muting it would silence the whole room).
   await runGroupAction(`${p.name} Solo`, (state) => {
     const chans = state.channels || {};
     const inGroup = new Set(groupChs);
     const others = Object.keys(chans).map(Number).sort((a, b) => a - b).filter(ch => !inGroup.has(ch));
     return [
-      ...others.filter(ch => chans[ch].muted !== true && !chans[ch].always_on).map(ch => ({ ch, path: `/channels/${ch}/mute` })),
-      ...groupChs.filter(ch => !(chans[ch] && chans[ch].muted === false)).map(ch => ({ ch, path: `/channels/${ch}/unmute` })),
+      ...others.filter(ch => chans[ch].muted !== true && !chans[ch].always_on && !chans[ch].main_output)
+        .map(ch => ({ ch, path: `/channels/${ch}/mute` })),
+      ...groupChs.filter(ch => !(chans[ch] && (chans[ch].muted === false || chans[ch].main_output)))
+        .map(ch => ({ ch, path: `/channels/${ch}/unmute` })),
     ];
   });
 }
@@ -2761,7 +2767,7 @@ function buildPersonsHtml() {
     const assignedChs = Object.keys(person.channels || {}).map(Number).sort((a, b) => a - b);
     // The LED lights when every channel of the group is observed muted.
     // "Immer an" channels are left out, as the service does for group toggle.
-    const ledChs = assignedChs.filter(ch => !(chans[ch] && chans[ch].always_on));
+    const ledChs = assignedChs.filter(ch => !(chans[ch] && (chans[ch].always_on || chans[ch].main_output)));
     const allMuted = ledChs.length > 0 && ledChs.every(ch => chans[ch] && chans[ch].muted === true);
     const availableChs = allChNums.filter(ch => !assignedChs.includes(ch));
 
@@ -3658,8 +3664,17 @@ function updateChannelCard(ch, c) {
     : !known ? "Mute-Status unbekannt – gesperrt"
     : c.muted ? "Gemutet – klicken zum Unmuten" : "Live – klicken zum Muten";
   const alwaysOn = card.querySelector("[data-always-on-channel]");
-  if (document.activeElement !== alwaysOn) alwaysOn.checked = Boolean(c.always_on);
-  alwaysOn.disabled = ALWAYS_ON_BUSY.has(String(ch)) || STATE_STALE;
+  if (c.main_output) {
+    // The main L/R output is always left alone by groups and solo.
+    alwaysOn.checked = true;
+    alwaysOn.disabled = true;
+    const control = alwaysOn.closest(".always-on-control");
+    control.classList.add("fixed");
+    control.title = "Hauptausgang: Gruppen und Solo schalten ihn nie";
+  } else {
+    if (document.activeElement !== alwaysOn) alwaysOn.checked = Boolean(c.always_on);
+    alwaysOn.disabled = ALWAYS_ON_BUSY.has(String(ch)) || STATE_STALE;
+  }
   applyStripColor(ch);
   syncFader(ch, c);
 }

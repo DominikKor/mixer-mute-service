@@ -17,6 +17,7 @@ from fastapi import APIRouter, Body, Request
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
+from .buses import main_output_channels
 from .camera_streams import CameraStreamError
 from .config import DesktopProfileConfig, default_config_path
 from .companion_buttons import CAMERA_BUTTON_IDS, COMPANION_BUTTONS, COMPANION_BUTTONS_BY_ID
@@ -692,6 +693,8 @@ def _channel_view(
         # Same checks as the send path, incl. a stale link (no current dump).
         "safe": controller.is_send_safe(channel, cs),
         "always_on": channel in always_on,
+        # the main L/R output: groups and solo never switch it (controller)
+        "main_output": channel in main_output_channels(cfg),
     }
 
 

@@ -269,6 +269,14 @@ with TestClient(app) as client:
     s = client.get("/state").json()
     check("/state has 8 channels", len(s["channels"]) == 8)
     check("/state channels unsafe (no data)", all(not c["safe"] for c in s["channels"].values()))
+    check("/state: no main output configured", not any(c["main_output"] for c in s["channels"].values()))
+    from app.config import BusConfig
+    main_bus = BusConfig(channel=9, name="Saal L/R MIX OUTPUT", id="ff01")
+    client.app.state.cfg.mixer.buses.append(main_bus)
+    s_main = client.get("/state").json()["channels"]
+    client.app.state.cfg.mixer.buses.remove(main_bus)
+    check("/state marks the main L/R output", s_main["9"]["main_output"] is True
+          and s_main["9"]["name"] == "Saal L/R MIX OUTPUT" and s_main["1"]["main_output"] is False)
     always_on = client.post("/channels/2/always-on", json={"enabled": True})
     check("set channel always-on", always_on.status_code == 200 and always_on.json()["always_on"] is True)
     state_with_preference = client.get("/state").json()

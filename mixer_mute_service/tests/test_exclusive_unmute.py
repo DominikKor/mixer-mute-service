@@ -143,6 +143,56 @@ async def main():
           not incomplete_group["ok"] and incomplete_group["reason"] == "cannot capture current channel state"
           and await gs.get("incomplete") is None)
 
+    print("== main L/R output (id 255) ==")
+    from app.protocol import build_bus_command
+    main_cfg = Config(
+        mixer={"max_channels": 4, "buses": [{"channel": 5, "name": "Saal L/R MIX OUTPUT", "id": "ff01"}]},
+        safety={"freshness_mode": "latest", "exclusive_group_unmute": True, "group_send_delay_ms": 0},
+    )
+    main_groups = GroupStore(Path(tempfile.mkdtemp()) / "groups.json", main_cfg.valid_channels(),
+                             {"g": [1, 2], "with_main": [1, 5]})
+    store8 = StateStore()
+    link8 = FakeLink()
+    ctrl8 = Controller(main_cfg, store8, link8, main_groups)
+    for ch in (1, 2, 3, 4, 5):
+        await set_state(store8, ch, False)
+    solo = await ctrl8.group_set("g", False)
+    muted = await muted_map(store8, (3, 4, 5))
+    check("solo mutes the other inputs but never the main output",
+          muted[3] is True and muted[4] is True and muted[5] is False)
+    check("solo reports the main output as protected", solo.get("protected_others") == [5])
+
+    link8.sent.clear()
+    result = await ctrl8.group_set("with_main", True)
+    muted = await muted_map(store8, (1, 5))
+    check("group mute leaves a main-output member alone", muted[1] is True and muted[5] is False)
+    check("group mute reports it protected", result.get("protected") == [5] and len(link8.sent) == 1)
+    await set_state(store8, 5, True)
+    result = await ctrl8.group_set("with_main", False)
+    muted = await muted_map(store8, (1, 5))
+    check("group unmute leaves it alone too", muted[1] is False and muted[5] is True
+          and result.get("protected") == [5])
+    await set_state(store8, 5, False)
+    result = await ctrl8.group_toggle("with_main")
+    muted = await muted_map(store8, (1, 5))
+    check("group toggle decides and switches without the main output",
+          result.get("target_muted") is True and muted[1] is True and muted[5] is False)
+
+    for ch in (1, 2, 3, 4, 5):
+        await set_state(store8, ch, False)
+    captured = await ctrl8.create_group_from_current_status(f"main-{time.monotonic_ns()}")
+    check("group from current status leaves out the main output",
+          captured["ok"] and captured["channels"] == [1, 2, 3, 4])
+
+    link8.sent.clear()
+    direct = await ctrl8.channel_set(5, True)
+    muted = await muted_map(store8, (5,))
+    check("main output mutes through its own channel", direct["ok"] and muted[5] is True)
+    check("as a bus command with the observed fader",
+          link8.sent == [build_bus_command("ff01", True, "1f14b643")])
+    direct = await ctrl8.channel_set(5, False)
+    check("and unmutes again", direct["ok"] and link8.sent[-1] == build_bus_command("ff01", False, "1f14b643"))
+
     print(f"\n{PASS} passed, {FAIL} failed")
     sys.exit(1 if FAIL else 0)
 
