@@ -20,6 +20,8 @@ from .jsonstore import read_json, write_json_atomic
 
 log = logging.getLogger("mixer.camera_streams")
 HLS_PORT = 8888  # MediaMTX HLS, bound to 127.0.0.1 only
+WEBRTC_PORT = 8889  # MediaMTX WebRTC signalling (WHEP), bound to 127.0.0.1 only
+WEBRTC_MEDIA_PORT = 8189  # WebRTC media, UDP and TCP, reachable from the LAN
 _PRIVATE_NETWORKS = tuple(map(ipaddress.ip_network, ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")))
 
 
@@ -76,17 +78,27 @@ def _relay_config(cameras: list[dict], additional_host: str = "") -> dict:
     config = {
         "logLevel": "warn",
         "rtsp": False,
+        # WebRTC for every device (lowest delay). The signalling (WHEP) stays
+        # on localhost; the service passes it on through its own port
+        # (app/camera_webrtc.py). Only the media port must be reachable from
+        # the LAN: UDP, or TCP where UDP is dropped (install-service.ps1 opens
+        # both in the Windows firewall).
         "webrtc": True,
-        "webrtcAddress": ":8889",
-        "webrtcLocalUDPAddress": ":8189",
+        "webrtcAddress": f"127.0.0.1:{WEBRTC_PORT}",
+        "webrtcLocalUDPAddress": f":{WEBRTC_MEDIA_PORT}",
+        "webrtcLocalTCPAddress": f":{WEBRTC_MEDIA_PORT}",
         "webrtcIPsFromInterfaces": True,
         "webrtcAdditionalHosts": [additional_host] if additional_host else [],
-        # The same cameras as HLS, only on localhost: the service passes it on
-        # through its own port (app/camera_hls.py) to devices that cannot
-        # reach the WebRTC ports above (blocked by the streaming PC's firewall).
+        # The same cameras as low-latency HLS, also only on localhost and
+        # passed on by the service (app/camera_hls.py): the player falls back
+        # to it when the WebRTC media port cannot be reached. Parts of 200 ms;
+        # how far HLS lags behind depends mostly on the cameras' keyframe
+        # interval (a segment can only start at a keyframe), see README.
         "hls": True,
         "hlsAddress": f"127.0.0.1:{HLS_PORT}",
         "hlsVariant": "lowLatency",
+        "hlsSegmentDuration": "1s",
+        "hlsPartDuration": "200ms",
         "paths": paths,
     }
     return config

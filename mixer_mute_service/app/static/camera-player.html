@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kamera</title>
+<!--
+  Live camera player shown in the camera tiles of index.html (one iframe per
+  camera, "camera-player.html?cam=<id>").
+
+  WebRTC first, on every device: the browser sends its offer to
+  /camera-webrtc/<id>/whep on the service port (app/camera_webrtc.py passes
+  it to MediaMTX); the picture then comes straight from MediaMTX's media port
+  8189 (UDP, or TCP where UDP is dropped). That is the low-delay path.
+
+  If the connection to that port never comes up (firewall), the tile switches
+  to HLS through the service port (/camera-hls/<id>/, seconds behind) and
+  shows a small "HLS" mark, so a blocked port is visible instead of a black
+  tile. A WebRTC picture that drops later is reconnected, not switched to HLS.
+-->
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #000; }
+  video, iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background: #000; object-fit: contain; }
+  #message { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    padding: 12px; color: #9aa3ad; font: 14px/1.3 -apple-system, system-ui, sans-serif; text-align: center; pointer-events: none; }
+  #badge { position: absolute; left: 8px; top: 8px; padding: 3px 6px; border-radius: 4px; background: rgba(0, 0, 0, .6);
+    color: #ffd27a; font: 600 11px/1 -apple-system, system-ui, sans-serif; letter-spacing: .04em; pointer-events: none; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<video id="video" muted autoplay playsinline controls disablepictureinpicture></video>
+<div id="message">Verbinde…</div>
+<div id="badge" hidden>HLS</div>
+<script>
+"use strict";
+(function () {
+  const camera = new URLSearchParams(location.search).get("cam") || "";
+  const video = document.getElementById("video");
+  const message = document.getElementById("message");
+  const badge = document.getElementById("badge");
+
+  // How long the WebRTC media connection may take to come up after MediaMTX
+  // answered. On the LAN it takes well under a second; if it is not up by
+  // then, the media port is blocked and HLS is the only way to a picture.
+  const CONNECT_TIMEOUT_MS = 6000;
+  // MediaMTX answers once the camera's RTSP source runs (started on demand).
+  const OFFER_TIMEOUT_MS = 20000;
+  // A connected picture that stops moving this long is reconnected.
+  const STALL_MS = 6000;
+  const RETRY_DELAYS_MS = [1000, 2000, 5000, 10000];
+
+  let peer = null;
+  let session = null;
+  let timer = null;
+  let retries = 0;
+  let everConnected = false;
+  let playing = false;
+  let usingHls = false;
+  let lastTime = -1;
+  let lastProgress = 0;
+
+  function show(text) {
+    message.textContent = text;
+    message.hidden = !text;
+  }
+
+  function closePeer() {
+    clearTimeout(timer);
+    timer = null;
+    if (peer) {
+      peer.ontrack = null;
+      peer.onconnectionstatechange = null;
+      peer.close();
+      peer = null;
+    }
+    if (session) {
+      // Lets MediaMTX free the session at once instead of after its timeout.
+      fetch(session, { method: "DELETE", keepalive: true }).catch(() => {});
+      session = null;
+    }
+    playing = false;
+  }
+
+  function useHls(reason) {
+    if (usingHls) return;
+    usingHls = true;
+    closePeer();
+    console.warn("Kamera " + camera + ": WebRTC-Medienport nicht erreichbar (" + reason + "), Rueckfall auf HLS");
+    video.remove();
+    const frame = document.createElement("iframe");
+    frame.src = "/camera-hls/" + encodeURIComponent(camera) + "/";
+    frame.title = "Kamera (HLS)";
+    frame.allow = "autoplay; fullscreen";
+    frame.allowFullscreen = true;
+    document.body.prepend(frame);
+    show("");
+    badge.title = "WebRTC nicht erreichbar (Port 8189 am Streaming-PC), Bild per HLS mit Verzoegerung";
+    badge.hidden = false;
+  }
+
+  function retry(reason) {
+    if (usingHls) return;
+    closePeer();
+    const delay = RETRY_DELAYS_MS[Math.min(retries, RETRY_DELAYS_MS.length - 1)];
+    retries += 1;
+    console.info("Kamera " + camera + ": " + reason + ", neuer Versuch in " + delay / 1000 + " s");
+    show("Kamera nicht erreichbar, neuer Versuch…");
+    timer = setTimeout(connect, delay);
+  }
+
+  function waitForCandidates(pc, ms) {
+    return new Promise(resolve => {
+      if (pc.iceGatheringState === "complete") return resolve();
+      const done = setTimeout(resolve, ms);
+      pc.addEventListener("icegatheringstatechange", () => {
+        if (pc.iceGatheringState === "complete") {
+          clearTimeout(done);
+          resolve();
+        }
+      });
+    });
+  }
+
+  async function connect() {
+    if (usingHls || document.hidden) return;
+    closePeer();
+    const pc = new RTCPeerConnection({ iceServers: [] });
+    peer = pc;
+    // Same receive-only offer as MediaMTX's own player: video plus audio.
+    pc.addTransceiver("video", { direction: "recvonly" });
+    pc.addTransceiver("audio", { direction: "recvonly" });
+    const stream = new MediaStream();
+    pc.ontrack = event => {
+      stream.addTrack(event.track);
+      if (video.srcObject !== stream) video.srcObject = stream;
+      video.play().catch(() => {});
+    };
+    pc.onconnectionstatechange = () => {
+      if (peer !== pc) return;
+      const state = pc.connectionState;
+      if (state === "connected") {
+        everConnected = true;
+        retries = 0;
+        clearTimeout(timer);
+        timer = null;
+      } else if (state === "failed" || state === "closed") {
+        if (everConnected) retry("Verbindung " + state);
+        else useHls("Verbindung " + state);
+      }
+    };
+
+    let response;
+    try {
+      await pc.setLocalDescription(await pc.createOffer());
+      await waitForCandidates(pc, 1000);
+      if (peer !== pc) return;
+      const abort = new AbortController();
+      const abortTimer = setTimeout(() => abort.abort(), OFFER_TIMEOUT_MS);
+      try {
+        response = await fetch("/camera-webrtc/" + encodeURIComponent(camera) + "/whep", {
+          method: "POST",
+          headers: { "Content-Type": "application/sdp" },
+          body: pc.localDescription.sdp,
+          signal: abort.signal,
+        });
+      } finally {
+        clearTimeout(abortTimer);
+      }
+      if (peer !== pc) return;
+      if (response.status !== 201) {
+        // Camera offline, relay restarting, ...: HLS would not help either.
+        return retry("Antwort " + response.status);
+      }
+      const location = response.headers.get("Location");
+      if (location && location.startsWith("/camera-webrtc/")) session = location;
+      const answer = await response.text();
+      if (peer !== pc) return;
+      await pc.setRemoteDescription({ type: "answer", sdp: answer });
+    } catch (error) {
+      if (peer === pc) retry("Signalisierung: " + (error && error.message || error));
+      return;
+    }
+    timer = setTimeout(() => {
+      if (peer !== pc || pc.connectionState === "connected") return;
+      if (everConnected) retry("keine Verbindung");
+      else useHls("keine Verbindung nach " + CONNECT_TIMEOUT_MS / 1000 + " s");
+    }, CONNECT_TIMEOUT_MS);
+  }
+
+  video.addEventListener("playing", () => {
+    playing = true;
+    lastProgress = Date.now();
+    show("");
+  });
+
+  // Live pictures must not pause; reconnect one that stops moving.
+  setInterval(() => {
+    if (usingHls || !peer || !everConnected) return;
+    if (video.paused && peer.connectionState === "connected") video.play().catch(() => {});
+    if (video.currentTime !== lastTime) {
+      lastTime = video.currentTime;
+      lastProgress = Date.now();
+    } else if (playing && Date.now() - lastProgress > STALL_MS) {
+      retry("Bild steht");
+    }
+  }, 1000);
+
+  // Hidden tabs (iPad in the background) release the camera; back -> reconnect.
+  document.addEventListener("visibilitychange", () => {
+    if (usingHls) return;
+    if (document.hidden) closePeer();
+    else if (!peer) connect();
+  });
+  window.addEventListener("pagehide", closePeer);
+
+  if (!/^cam-[0-9a-f]{12}$/.test(camera)) {
+    video.remove();
+    show("Unbekannte Kamera");
+  } else if (typeof RTCPeerConnection !== "function") {
+    useHls("Browser ohne WebRTC");
+  } else {
+    connect();
+  }
+})();
+</script>
+</body>
+</html>
