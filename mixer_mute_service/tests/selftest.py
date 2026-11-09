@@ -330,7 +330,9 @@ with TestClient(app) as client:
         check("normal group capture passes name",
               capture_group.call_args.args == ("Captured",))
     category_names = {category["name"] for category in companion_buttons.json()["categories"]}
-    check("native categories loaded", {"Licht", "Kameras", "OBS", "Overall"} <= category_names)
+    check("native categories loaded", {"Licht", "OBS", "Overall"} <= category_names)
+    check("camera keys are not in Steuerung", "Kameras" not in category_names
+          and not any(b["id"].startswith(("native-cam1-", "native-cam2-")) for b in companion_buttons.json()["buttons"]))
     new_category = client.post("/companion/categories", json={"name": "Streaming"})
     check("Companion category created", new_category.status_code == 200)
     category_id = new_category.json()["category"]["id"]

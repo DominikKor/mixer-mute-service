@@ -83,7 +83,8 @@ in and out; the choice is remembered per device.
   right below its original, **Ablauf zurücksetzen** forgets all start times.
   Times can be typed as `930`, `9:30` or `9.30`.
 - **Steuerung**: the keys imported from the former Companion setup (lights,
-  cameras, OBS, beamer, "Overall" scene macros), grouped in categories. With
+  OBS, beamer, "Overall" scene macros), grouped in categories; the camera
+  keys live in the Kameras section. With
   **Bearbeiten** switched on, keys can be renamed, moved, created and deleted.
 
 The page polls `/state`, `/health` and `/groups` about once per second.
@@ -300,11 +301,22 @@ sollte die Kamera H.264 ohne B-Frames liefern.
 
 Heisst eine Kamera **Cam1** oder **Cam2** (Gross-/Kleinschreibung und
 Leerzeichen egal), zeigt ihre Kachel unter dem Bild die VISCA-Steuerung dieser
-Kamera: alle Preset-Tasten der Kategorie Kameras aus der Steuerung (mit deren
-Beschriftung, das zuletzt aufgerufene Preset leuchtet) und zwei Zoom-Tasten
-**Weit**/**Nah**. Zoom laeuft nur, solange die Taste gedrueckt ist; Loslassen,
-Fensterwechsel oder spaetestens 15 s stoppen ihn
-(`POST /cameras/{cam1|cam2}/zoom` mit `{"direction": "in"|"out"|"stop"}`).
+Kamera: ihre Preset-Tasten (das zuletzt aufgerufene Preset leuchtet), vier
+Pfeiltasten zum Schwenken/Neigen und zwei Zoom-Tasten **Weit**/**Nah**.
+Pfeile und Zoom bewegen die Kamera nur, solange die Taste gedrueckt ist;
+Loslassen (auch neben der Taste), Fensterwechsel oder spaetestens 30 s
+(Schwenken) bzw. 15 s (Zoom) stoppen sie
+(`POST /cameras/{cam1|cam2}/pan-tilt` mit
+`{"direction": "left"|"right"|"up"|"down"|"stop"}`,
+`POST /cameras/{cam1|cam2}/zoom` mit `{"direction": "in"|"out"|"stop"}`).
+Eine gehaltene Pfeiltaste wiederholt ihre Richtung jede Sekunde; kommt 3 s
+lang weder Wiederholung noch Stop an (z. B. WLAN weg), stoppt der Dienst die
+Kamera selbst.
+
+Die Kamera-Tasten (Presets, Zoom) stehen seit Katalog-Version 7 nicht mehr in
+der Steuerung; eine bestehende `companion_buttons.json` wird beim Start
+umgestellt (umbenannte Presets behalten ihre Beschriftung im Kamera-Bereich).
+Die Overall-Makros und Programmpunkte rufen die Presets weiter per ID auf.
 
 ## Dateien und Programme auf Netzwerk-PCs oeffnen
 

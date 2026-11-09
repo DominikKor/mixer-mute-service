@@ -22,6 +22,7 @@ from .agent_download import router as agent_download_router
 from .buses import BusRegistry
 from .channel_settings import ChannelSettingsCache, ChannelSettingsStore
 from .camera_hls import router as camera_hls_router
+from .camera_ptz import PanTiltControl
 from .camera_streams import CameraStreamStore, MediaMTXRelay
 from .channel_colors import router as channel_colors_router
 from .channel_preferences import ChannelPreferences
@@ -102,6 +103,7 @@ async def lifespan(app: FastAPI):
     program_items = ProgramItemStore(data_dir / "program_items.json")
     songs = SongService(data_dir)
     native_controls = NativeControlService(data_dir / "native_control_state.json")
+    camera_ptz = PanTiltControl()
     power_control = PowerControlStore(data_dir / "power_off_config.json")
     companion_button_store = CompanionButtonStore(
         data_dir / "companion_buttons.json", COMPANION_BUTTONS
@@ -117,6 +119,7 @@ async def lifespan(app: FastAPI):
     app.state.program_items = program_items
     app.state.songs = songs
     app.state.native_controls = native_controls
+    app.state.camera_ptz = camera_ptz
     app.state.power_control = power_control
     app.state.companion_button_store = companion_button_store
     app.state.channel_preferences = channel_preferences
@@ -143,7 +146,10 @@ async def lifespan(app: FastAPI):
         try:
             await client.stop()
         finally:
-            await camera_relay.stop()
+            try:
+                await camera_ptz.close()
+            finally:
+                await camera_relay.stop()
 
 
 _configure_logging()

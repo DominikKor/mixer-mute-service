@@ -19,7 +19,7 @@ from pydantic import ValidationError
 
 from .camera_streams import CameraStreamError
 from .config import DesktopProfileConfig, default_config_path
-from .companion_buttons import COMPANION_BUTTONS, COMPANION_BUTTONS_BY_ID
+from .companion_buttons import CAMERA_BUTTON_IDS, COMPANION_BUTTONS, COMPANION_BUTTONS_BY_ID
 from .desktop_profiles import ProfileEditError, add_profile, delete_profile, update_profile
 from .groups import GroupError
 from .native_controls import VISCA_CAMERAS, NativeControlError
@@ -31,6 +31,7 @@ from .songs import show_slide
 from .models import (
     AlwaysOnRequest,
     BeamerStateRequest,
+    CameraPanTiltRequest,
     CameraStreamRequest,
     CameraZoomRequest,
     GroupCaptureRequest,
@@ -98,14 +99,27 @@ def _unwrap(response: Any) -> Tuple[dict, int]:
     return response, 200
 
 
+async def _pressable_button(button_id: str, request: Request):
+    """A key of Steuerung, or a catalog camera key (presets, zoom): those are
+    not in Steuerung any more but the camera section and program rows still
+    run them by ID."""
+    store = request.app.state.companion_button_store
+    button = await store.get_button(button_id)
+    if button is None and button_id in CAMERA_BUTTON_IDS:
+        button = next(item for item in await store.camera_buttons() if item["id"] == button_id)
+    return button
+
+
 @router.get("/companion/buttons")
 async def companion_buttons(request: Request):
-    data = await request.app.state.companion_button_store.snapshot()
+    store = request.app.state.companion_button_store
+    data = await store.snapshot()
     present = {button["id"] for button in data["buttons"]}
     data["companion_targets"] = [
         button for button in COMPANION_BUTTONS
         if button["kind"] != "channel" and button["id"] in present
     ]
+    data["camera_buttons"] = await store.camera_buttons()
     return data
 
 
@@ -231,7 +245,7 @@ async def _press_native(button_id: str, action: dict, request: Request):
 
 @router.post("/companion/buttons/{button_id}/press")
 async def companion_button_press(button_id: str, request: Request):
-    button = await request.app.state.companion_button_store.get_button(button_id)
+    button = await _pressable_button(button_id, request)
     if button is None:
         return JSONResponse({"ok": False, "reason": "unknown Companion button"}, 404)
 
@@ -470,6 +484,21 @@ async def camera_zoom(camera: str, body: CameraZoomRequest, request: Request):
         result = await request.app.state.native_controls.press(action)
     except NativeControlError as exc:
         log.warning("Camera zoom failed camera=%s direction=%s reason=%s", camera, body.direction, exc)
+        return JSONResponse({"ok": False, "camera": camera, "reason": str(exc)}, 503)
+    return {**result, "camera": camera, "direction": body.direction}
+
+
+@router.post("/cameras/{camera}/pan-tilt")
+async def camera_pan_tilt(camera: str, body: CameraPanTiltRequest, request: Request):
+    """Hold-to-move for the arrow keys of the camera section. The UI repeats
+    the direction as a keep-alive and sends "stop" on release; without either
+    the service stops the camera after a few seconds (app/camera_ptz.py)."""
+    if camera not in VISCA_CAMERAS:
+        return JSONResponse({"ok": False, "reason": "unknown camera"}, 404)
+    try:
+        result = await request.app.state.camera_ptz.drive(camera, body.direction)
+    except NativeControlError as exc:
+        log.warning("Camera pan-tilt failed camera=%s direction=%s reason=%s", camera, body.direction, exc)
         return JSONResponse({"ok": False, "camera": camera, "reason": str(exc)}, 503)
     return {**result, "camera": camera, "direction": body.direction}
 
@@ -757,7 +786,7 @@ async def _program_reference_error(item: dict, request: Request):
             profile_id = button_id.removeprefix("desktop:")
             if not profile_id or profile_id not in request.app.state.cfg.desktop_display.profiles:
                 return f"unknown {field} desktop profile"
-        elif await request.app.state.companion_button_store.get_button(button_id) is None:
+        elif await _pressable_button(button_id, request) is None:
             return f"unknown {field} button"
     # Only checked once the library has been read (it lives on the display PC).
     songs = request.app.state.songs.songs
