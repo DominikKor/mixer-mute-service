@@ -20,6 +20,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .agent_download import router as agent_download_router
 from .buses import BusRegistry
+from .camera_streams import CameraStreamStore, MediaMTXRelay
 from .channel_colors import router as channel_colors_router
 from .channel_preferences import ChannelPreferences
 from .companion_buttons import COMPANION_BUTTONS, CompanionButtonStore
@@ -73,6 +74,13 @@ async def lifespan(app: FastAPI):
     cfg = load_config()
     store = StateStore()
     data_dir = default_config_path().parent
+    camera_streams = CameraStreamStore(data_dir / "camera_streams.json")
+    camera_relay = MediaMTXRelay(data_dir)
+    relay_status = await camera_relay.configure(await camera_streams.relay_snapshot())
+    if not relay_status["ready"]:
+        logging.getLogger("mixer.camera_streams").warning(
+            "Camera relay unavailable: %s", relay_status["reason"]
+        )
     # Buses come from config plus those discovered from earlier dumps; new ones
     # are added from every dump (see app/buses.py).
     buses = BusRegistry(cfg, data_dir / "buses.json")
@@ -99,6 +107,8 @@ async def lifespan(app: FastAPI):
     app.state.native_controls = native_controls
     app.state.companion_button_store = companion_button_store
     app.state.channel_preferences = channel_preferences
+    app.state.camera_streams = camera_streams
+    app.state.camera_relay = camera_relay
     app.state.controller = controller
     app.state.build_id = _build_id()
 
@@ -115,7 +125,10 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
-        await client.stop()
+        try:
+            await client.stop()
+        finally:
+            await camera_relay.stop()
 
 
 _configure_logging()

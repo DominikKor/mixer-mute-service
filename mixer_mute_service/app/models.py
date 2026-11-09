@@ -38,6 +38,13 @@ class AlwaysOnRequest(BaseModel):
     enabled: bool
 
 
+class CameraStreamRequest(BaseModel):
+    name: str = Field(max_length=64)
+    rtsp_url: str = Field(max_length=1024)
+    username: str = Field(default="", max_length=128)
+    password: str = Field(default="", max_length=256)
+
+
 class CompanionCategoryCreate(BaseModel):
     name: str
 

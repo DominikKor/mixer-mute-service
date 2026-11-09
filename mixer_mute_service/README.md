@@ -48,8 +48,11 @@ in and out; the choice is remembered per device.
   per row as fit) keep their size and scroll on the stage, with a free strip
   on the right to swipe with the finger; Programm's "Weiter" bar stays at the
   top. Everything else is laid out to fit the screen (compact channels as
-  tiles, Steuerung categories packed as tiles) and only scaled down a little
-  if that is not enough.
+  tiles, Steuerung categories packed as tiles, Kameras as large as the stage
+  allows) and only scaled down a little if that is not enough. Camera videos
+  are not restarted when other sections switch; in Chrome/Edge they keep
+  playing even when the Kameras section itself moves, in Safari they
+  reconnect once when it moves onto or off the stage.
 - **Desktop**: one tile per profile from `desktop_display.profiles` (see
   below), plus tiles to add or edit profiles.
 - **Channels**: one strip per channel with the observed fader value, mute
@@ -200,6 +203,39 @@ PowerShell (Windows):
 ```powershell
 Invoke-WebRequest -Method POST http://localhost:8765/groups/drums/toggle
 ```
+
+## RTSP-Kameras im Web
+
+Das Kamerapanel nimmt RTSP-Adressen ueber **Kamera** auf. Adressen muessen auf
+eine private IPv4-Kamera zeigen und duerfen keine Zugangsdaten enthalten;
+Benutzername und Passwort kommen in die separaten Felder. Die Weboberflaeche
+spielt RTSP nicht direkt ab: Der Dienst startet MediaMTX und zeigt dessen
+WebRTC-Player in einer responsiven Kachel. Quellen werden nur abgerufen,
+waehrend ein Viewer verbunden ist.
+
+MediaMTX muss zusaetzlich auf dem Service-PC installiert sein. Lade die
+passende Windows-Version von den [offiziellen Releases](https://github.com/bluenviron/mediamtx/releases),
+entpacke `mediamtx.exe` und setze `MEDIAMTX_PATH` als Systemvariable, zum Beispiel:
+
+```powershell
+[Environment]::SetEnvironmentVariable("MEDIAMTX_PATH", "C:\Tools\mediamtx.exe", "Machine")
+```
+
+Danach den Mixer-Service neu starten. Die WebRTC-Verbindung braucht TCP 8889
+fuer den Player und UDP 8189 fuer das Videomedium. `install-service.ps1` legt
+dafuer Windows-Firewallregeln an, beschraenkt auf das private Profil und
+`LocalSubnet`. Bei mehreren Netzwerkkarten kann `CAMERA_WEBRTC_HOST` als
+Systemvariable auf die LAN-Adresse gesetzt werden, unter der iPad und PCs den
+Service erreichen koennen.
+
+Kameraliste und Relay-Konfiguration liegen in `camera_streams.json` und
+`mediamtx-cameras.yml` neben `config.yaml`; beide koennen Zugangsdaten
+enthalten. `mediamtx.log` kann ebenfalls Quelladressen protokollieren. Diese
+Dateien sind vom Git ausgeschlossen und sollten wie Zugangsdaten behandelt
+werden. Der Dienst hat keine Web-Anmeldung: nur in einem vertrauenswuerdigen
+LAN verwenden und Kamera-Zugangsdaten nicht ueber ein untrusted WLAN eingeben.
+MediaMTX leitet Codecs unveraendert weiter; fuer breite Browser-Kompatibilitaet
+sollte die Kamera H.264 ohne B-Frames liefern.
 
 ## Dateien und Programme auf Netzwerk-PCs oeffnen
 

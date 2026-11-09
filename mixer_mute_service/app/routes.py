@@ -17,6 +17,7 @@ from fastapi import APIRouter, Body, Request
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
+from .camera_streams import CameraStreamError
 from .config import DesktopProfileConfig, default_config_path
 from .companion_buttons import COMPANION_BUTTONS, COMPANION_BUTTONS_BY_ID
 from .desktop_profiles import ProfileEditError, add_profile, delete_profile, update_profile
@@ -25,6 +26,7 @@ from .native_controls import NativeControlError
 from .program_items import ProgramItemError
 from .models import (
     AlwaysOnRequest,
+    CameraStreamRequest,
     GroupCaptureRequest,
     CompanionButtonCreate,
     CompanionButtonUpdate,
@@ -276,6 +278,56 @@ async def health(request: Request):
 
 def _display_ready(display_cfg) -> bool:
     return display_cfg.enabled and bool(os.environ.get(display_cfg.token_env, ""))
+
+
+@router.get("/camera-streams")
+async def camera_streams(request: Request):
+    store = request.app.state.camera_streams
+    relay = request.app.state.camera_relay
+    return {
+        "ok": True,
+        "relay_ready": relay.ready,
+        "reason": relay.reason,
+        "cameras": await store.public_snapshot(),
+    }
+
+
+@router.post("/camera-streams")
+async def camera_stream_create(body: CameraStreamRequest, request: Request):
+    store = request.app.state.camera_streams
+    try:
+        camera = await store.add(body.name, body.rtsp_url, body.username, body.password)
+    except CameraStreamError as exc:
+        return JSONResponse({"ok": False, "reason": str(exc)}, 400)
+    relay = request.app.state.camera_relay
+    status = await relay.configure(await store.relay_snapshot())
+    return {"ok": True, "camera": camera, "relay_ready": status["ready"], "reason": status["reason"]}
+
+
+@router.put("/camera-streams/{camera_id}")
+async def camera_stream_update(camera_id: str, body: CameraStreamRequest, request: Request):
+    store = request.app.state.camera_streams
+    try:
+        camera = await store.update(camera_id, body.name, body.rtsp_url, body.username, body.password)
+    except KeyError:
+        return JSONResponse({"ok": False, "reason": "unknown camera"}, 404)
+    except CameraStreamError as exc:
+        return JSONResponse({"ok": False, "reason": str(exc)}, 400)
+    relay = request.app.state.camera_relay
+    status = await relay.configure(await store.relay_snapshot())
+    return {"ok": True, "camera": camera, "relay_ready": status["ready"], "reason": status["reason"]}
+
+
+@router.delete("/camera-streams/{camera_id}")
+async def camera_stream_delete(camera_id: str, request: Request):
+    store = request.app.state.camera_streams
+    try:
+        await store.delete(camera_id)
+    except KeyError:
+        return JSONResponse({"ok": False, "reason": "unknown camera"}, 404)
+    relay = request.app.state.camera_relay
+    status = await relay.configure(await store.relay_snapshot())
+    return {"ok": True, "deleted": True, "relay_ready": status["ready"], "reason": status["reason"]}
 
 
 @router.get("/desktop/profiles")

@@ -271,6 +271,20 @@
   /* Desktop display keys: two-line keys with a readiness LED */
   .desktop-launch-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
   .desktop-launch-status { font: 600 11px/1 var(--mono); color: var(--lcd-dim); }
+  .camera-stream-status { min-height: 18px; margin: 0 0 8px; color: var(--lcd-dim); font: 600 11px/1.4 var(--mono); }
+  .camera-stream-status.bad { color: #ff8576; }
+  .camera-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+  .camera-card { min-width: 0; overflow: hidden; border: 1px solid #08090b; border-radius: 6px; background: var(--panel-bg); box-shadow: var(--panel-shadow); }
+  .camera-card-head { display: flex; align-items: center; gap: 8px; min-height: 52px; padding: 4px 8px 4px 12px; }
+  .camera-card-title { flex: 1; min-width: 0; overflow: hidden; margin: 0; color: var(--text); font-size: 13px; font-weight: 800; text-overflow: ellipsis; white-space: nowrap; }
+  .camera-card-tools { display: flex; gap: 4px; }
+  .camera-card-tools button { display: grid; place-items: center; width: 44px; height: 44px; padding: 0; }
+  .camera-card-tools svg { width: 18px; height: 18px; }
+  .camera-view { position: relative; width: 100%; aspect-ratio: 16 / 9; background: #07090b; }
+  .camera-view iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+  .camera-unavailable, .camera-empty { display: grid; place-items: center; min-height: 100%; padding: 20px; color: var(--lcd-dim); font: 600 12px/1.5 var(--mono); text-align: center; }
+  .camera-empty { min-height: 64px; place-items: start; padding: 10px 0; }
+  @media (max-width: 760px) { .camera-grid { grid-template-columns: minmax(0, 1fr); } }
   button.display-key {
     display: inline-grid; grid-template-columns: auto 1fr; align-items: center; gap: 4px 10px;
     min-width: 200px; max-width: 100%; min-height: 48px; padding: 8px 14px 9px 12px; text-align: left;
@@ -888,6 +902,7 @@
     flex: 0 0 auto; display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 4px;
     border-radius: 12px; cursor: pointer; outline: none; -webkit-tap-highlight-color: transparent; user-select: none;
   }
+  .stage-thumb[hidden] { display: none; }
   .stage-thumb-screen {
     position: relative; width: var(--thumb-w); height: var(--thumb-h); overflow: hidden; border-radius: 9px;
     background: var(--bg); border: 1px solid #000;
@@ -951,6 +966,18 @@
       <button id="new-profile-btn" class="display-add" title="Neues Profil" aria-label="Neues Profil"><svg class="plus-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 4v16M4 12h16"/></svg></button>
       <span id="desktop-launch-status" class="desktop-launch-status">Profile werden geladen</span>
     </div>
+  </div>
+</section>
+
+<section class="panel" data-section="cameras">
+  <div class="panel-head">
+    <button class="section-toggle" aria-expanded="true" aria-controls="cameras-body">Kameras</button>
+    <div class="panel-tools"><button id="camera-add-btn" class="add-key"><svg class="plus-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 4v16M4 12h16"/></svg>Kamera</button></div>
+  </div>
+  <div id="cameras-body" class="panel-body">
+    <div id="camera-stream-status" class="camera-stream-status" role="status" aria-live="polite"></div>
+    <div id="camera-grid" class="camera-grid"></div>
+    <div id="camera-empty" class="camera-empty" hidden>Keine Kameras konfiguriert.</div>
   </div>
 </section>
 
@@ -1164,6 +1191,28 @@
     <div class="update-actions">
       <button type="button" id="pf-cancel">Abbrechen</button>
       <button type="submit" id="pf-save" class="primary">Speichern</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="camera-dialog" class="update-dialog profile-dialog camera-dialog" aria-labelledby="camera-dialog-title">
+  <form id="camera-form" class="update-body" novalidate>
+    <h3 id="camera-dialog-title">Kamera hinzufügen</h3>
+    <label class="pf-field"><span>Name</span>
+      <input id="camera-name" class="pf-input" type="text" maxlength="64" autocomplete="off" /></label>
+    <label class="pf-field"><span>RTSP-Adresse ohne Zugangsdaten</span>
+      <input id="camera-url" class="pf-input mono" type="text" maxlength="1024" autocomplete="off" spellcheck="false" placeholder="rtsp://192.168.5.21:554/stream1" /></label>
+    <div class="pf-grid">
+      <label class="pf-field"><span>Benutzername (optional)</span>
+        <input id="camera-username" class="pf-input" type="text" maxlength="128" autocomplete="off" /></label>
+      <label class="pf-field"><span>Passwort (optional)</span>
+        <input id="camera-password" class="pf-input" type="password" maxlength="256" autocomplete="new-password" /></label>
+    </div>
+    <div id="camera-auth-hint" class="pf-hint">Zugangsdaten werden lokal gespeichert und nicht in der Kameraliste angezeigt.</div>
+    <div id="camera-form-error" class="update-lcd err" hidden></div>
+    <div class="update-actions">
+      <button id="camera-cancel" type="button">Abbrechen</button>
+      <button id="camera-save" type="submit" class="primary">Speichern</button>
     </div>
   </form>
 </dialog>
@@ -2327,6 +2376,64 @@ async function act(method, path, body, label) {
 
 function fmtAge(a) { return a === null || a === undefined ? "—" : a.toFixed(2) + "s"; }
 
+let CAMERA_STREAMS_SIGNATURE = "";
+let CAMERA_STREAMS = [];
+function renderCameraStreams(data) {
+  const grid = $("camera-grid");
+  const cameras = data.cameras || [];
+  const signature = JSON.stringify({ relay_ready: data.relay_ready, reason: data.reason, cameras });
+  if (signature === CAMERA_STREAMS_SIGNATURE) return;
+  CAMERA_STREAMS_SIGNATURE = signature;
+  CAMERA_STREAMS = cameras;
+  const status = $("camera-stream-status");
+  status.textContent = data.relay_ready ? (cameras.length ? "MediaMTX bereit" : "") : (data.reason || "MediaMTX-Relay nicht bereit");
+  status.classList.toggle("bad", !data.relay_ready);
+  grid.replaceChildren();
+  $("camera-empty").hidden = cameras.length > 0;
+  for (const camera of cameras) {
+    const card = document.createElement("article");
+    card.className = "camera-card";
+    const head = document.createElement("div");
+    head.className = "camera-card-head";
+    const title = document.createElement("h3");
+    title.className = "camera-card-title";
+    title.textContent = camera.name;
+    const tools = document.createElement("div");
+    tools.className = "camera-card-tools";
+    const edit = document.createElement("button");
+    edit.type = "button";
+    edit.dataset.cameraEdit = camera.id;
+    edit.title = `${camera.name} bearbeiten`;
+    edit.setAttribute("aria-label", edit.title);
+    edit.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/></svg>';
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.dataset.cameraDelete = camera.id;
+    remove.title = `${camera.name} entfernen`;
+    remove.setAttribute("aria-label", remove.title);
+    remove.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6"/></svg>';
+    tools.append(edit, remove);
+    head.append(title, tools);
+    const view = document.createElement("div");
+    view.className = "camera-view";
+    if (data.relay_ready) {
+      const frame = document.createElement("iframe");
+      frame.src = `http://${location.hostname}:8889/${encodeURIComponent(camera.id)}`;
+      frame.title = `${camera.name} live`;
+      frame.allow = "autoplay; fullscreen";
+      frame.allowFullscreen = true;
+      view.append(frame);
+    } else {
+      const message = document.createElement("div");
+      message.className = "camera-unavailable";
+      message.textContent = data.reason || "MediaMTX-Relay nicht bereit";
+      view.append(message);
+    }
+    card.append(head, view);
+    grid.append(card);
+  }
+}
+
 let DESKTOP_PROFILES_SIGNATURE = "";
 function renderDesktopProfiles(data) {
   const wrap = $("desktop-profiles");
@@ -2392,6 +2499,102 @@ function renderDesktopProfiles(data) {
   closeTileMenu();
   status.textContent = !DESKTOP_PROFILES.length ? "Noch keine Profile – mit + anlegen"
     : data.ready ? "Profile bereit" : "Desktop-Agent nicht eingerichtet";
+}
+
+let CAMERA_FORM_ID = null;
+function cameraFormError(message, field) {
+  document.querySelectorAll("#camera-form .invalid").forEach(el => el.classList.remove("invalid"));
+  const error = $("camera-form-error");
+  error.hidden = !message;
+  error.textContent = message || "";
+  if (field) { field.classList.add("invalid"); field.focus(); }
+}
+
+function openCameraDialog(cameraId = null) {
+  const camera = cameraId ? CAMERA_STREAMS.find(item => item.id === cameraId) : null;
+  if (cameraId && !camera) return toast("Kamera nicht gefunden", false);
+  CAMERA_FORM_ID = camera ? camera.id : null;
+  $("camera-dialog-title").textContent = camera ? "Kamera bearbeiten" : "Kamera hinzufügen";
+  $("camera-name").value = camera ? camera.name : "";
+  $("camera-url").value = "";
+  $("camera-url").placeholder = camera ? "Leer lassen, um die Adresse beizubehalten" : "rtsp://192.168.5.21:554/stream1";
+  $("camera-username").value = "";
+  $("camera-password").value = "";
+  $("camera-auth-hint").textContent = camera && camera.has_credentials
+    ? "Adresse und Zugangsdaten gespeichert. Leere Felder behalten die bisherigen Werte bei."
+    : "Zugangsdaten werden lokal gespeichert und nicht in der Kameraliste angezeigt. Eine leere Adresse behält den bisherigen Pfad bei.";
+  cameraFormError(null);
+  $("camera-save").disabled = false;
+  $("camera-dialog").showModal();
+  $("camera-name").focus();
+}
+
+function readCameraForm() {
+  const name = $("camera-name").value.trim();
+  const rtspUrl = $("camera-url").value.trim();
+  if (!name) { cameraFormError("Bitte einen Namen eingeben.", $("camera-name")); return null; }
+  if (!rtspUrl && !CAMERA_FORM_ID) {
+    cameraFormError("Bitte eine RTSP-Adresse eingeben.", $("camera-url"));
+    return null;
+  }
+  if (rtspUrl) {
+    try {
+      const parsed = new URL(rtspUrl);
+      if (!["rtsp:", "rtsps:"].includes(parsed.protocol) || parsed.username || parsed.password) throw new Error();
+    } catch (_) {
+      cameraFormError("RTSP-Adresse ohne Benutzername/Passwort eingeben, z. B. rtsp://192.168.5.21:554/stream1", $("camera-url"));
+      return null;
+    }
+  }
+  return {
+    name,
+    rtsp_url: rtspUrl,
+    username: $("camera-username").value,
+    password: $("camera-password").value,
+  };
+}
+
+async function saveCamera(event) {
+  event.preventDefault();
+  const body = readCameraForm();
+  if (!body) return;
+  cameraFormError(null);
+  $("camera-save").disabled = true;
+  const result = CAMERA_FORM_ID
+    ? await api("PUT", `/camera-streams/${encodeURIComponent(CAMERA_FORM_ID)}`, body)
+    : await api("POST", "/camera-streams", body);
+  $("camera-save").disabled = false;
+  if (!result.ok || result.data.ok === false) {
+    cameraFormError(result.data.reason || `HTTP ${result.status}`);
+    return;
+  }
+  $("camera-dialog").close();
+  CAMERA_STREAMS_SIGNATURE = "";
+  await loadCameraStreams();
+  toast(result.data.relay_ready ? `${body.name}: gespeichert` : (result.data.reason || "Kamera gespeichert; MediaMTX fehlt"), !!result.data.relay_ready);
+}
+
+async function deleteCamera(cameraId, button) {
+  const camera = CAMERA_STREAMS.find(item => item.id === cameraId);
+  if (!camera || !(await confirmDelete(button, `Kamera „${camera.name}“ entfernen?`))) return;
+  const result = await api("DELETE", `/camera-streams/${encodeURIComponent(cameraId)}`);
+  if (!result.ok || result.data.ok === false) {
+    toast(result.data.reason || `HTTP ${result.status}`, false);
+    return;
+  }
+  CAMERA_STREAMS_SIGNATURE = "";
+  await loadCameraStreams();
+  toast(`${camera.name}: entfernt`, true);
+}
+
+async function loadCameraStreams() {
+  const result = await api("GET", "/camera-streams");
+  if (result.ok) renderCameraStreams(result.data);
+  else {
+    const status = $("camera-stream-status");
+    status.textContent = result.data.reason || "Kamera-Status nicht erreichbar";
+    status.classList.add("bad");
+  }
 }
 
 // ---- tile menu ("⋮") ------------------------------------------------------
@@ -2950,8 +3153,9 @@ function renderPanic() {
 let refreshSeq = 0;
 async function refresh() {
   const seq = ++refreshSeq;
-  const [health, state, desktop] = await Promise.all([
+  const [health, state, desktop, cameras] = await Promise.all([
     api("GET", "/health"), api("GET", "/state"), api("GET", "/desktop/profiles"),
+    api("GET", "/camera-streams"),
   ]);
   // Drop a stale response if a newer refresh has since started (e.g. the
   // per-second poll resolving after a click's own refresh) -- otherwise it
@@ -2986,6 +3190,7 @@ async function refresh() {
   renderPanic();
   if (health.ok) $("agent-update-link").hidden = !h.desktop_display_enabled;
   if (desktop.ok) renderDesktopProfiles(desktop.data);
+  if (cameras.ok) renderCameraStreams(cameras.data);
   if (stateOk) await bootstrapPersonsFromBackend();
   renderChannels(LAST_STATE);
   renderPersons();
@@ -3418,6 +3623,15 @@ $("desktop-profiles").addEventListener("click", (event) => {
     `${label} ${action === "play" ? "Play" : "Stop"}`,
   );
 });
+$("camera-add-btn").addEventListener("click", () => openCameraDialog());
+$("camera-form").addEventListener("submit", saveCamera);
+$("camera-cancel").addEventListener("click", () => $("camera-dialog").close());
+$("camera-grid").addEventListener("click", async (event) => {
+  const edit = event.target.closest("button[data-camera-edit]");
+  if (edit) return openCameraDialog(edit.dataset.cameraEdit);
+  const remove = event.target.closest("button[data-camera-delete]");
+  if (remove) await deleteCamera(remove.dataset.cameraDelete, remove);
+});
 $("tile-menu").addEventListener("click", (event) => {
   const item = event.target.closest("button[data-menu-action]");
   if (!item) return;
@@ -3544,36 +3758,47 @@ function stagePanel(section) {
   return STAGE.order.find(panel => panel.dataset.section === section);
 }
 
+// Move a node only when it is not already there. Moving an element reloads
+// any iframe inside it (the camera videos), so nothing is moved needlessly;
+// where the browser can move without reloading (moveBefore), that is used.
+function stagePlace(parent, node, before = null) {
+  if (node.parentNode === parent && node.nextSibling === before) return;
+  if (typeof parent.moveBefore === "function" && node.isConnected && parent.isConnected) {
+    try { parent.moveBefore(node, before); return; } catch (_) { /* fall back below */ }
+  }
+  parent.insertBefore(node, before);
+}
+
 // Put every section where it belongs for the current state.
 function placeStagePanels() {
   const page = document.querySelector(".page");
   const main = $("stage-main"), rail = $("stage-rail");
   if (!STAGE.on) {
-    rail.replaceChildren();
     for (const panel of STAGE.order) {
       panel.inert = false;
       panel.classList.remove("stage-flying");
       for (const prop of ["transform", "width", "marginLeft", "marginBottom"]) panel.style[prop] = "";
-      page.appendChild(panel);
+      stagePlace(page, panel);
     }
     resetStageChannels();
     resetStageCompanion();
+    resetStageCameras();
     return;
   }
-  const thumbs = [];
+  // Every section keeps its own thumb in the rail (in page order); the one
+  // on stage is just hidden, so only that section ever changes parent.
+  for (const panel of STAGE.order) {
+    const thumb = STAGE.thumbs[panel.dataset.section];
+    if (thumb.parentNode !== rail) rail.appendChild(thumb);
+  }
   for (const panel of STAGE.order) {
     const section = panel.dataset.section;
-    if (section === STAGE.current) {
-      panel.inert = false;
-      main.appendChild(panel);
-    } else {
-      panel.inert = true;  // a miniature is not clickable inside
-      const thumb = STAGE.thumbs[section];
-      thumb.firstElementChild.appendChild(panel);
-      thumbs.push(thumb);
-    }
+    const thumb = STAGE.thumbs[section];
+    const onStage = section === STAGE.current;
+    thumb.hidden = onStage;
+    panel.inert = !onStage;  // a miniature is not clickable inside
+    stagePlace(onStage ? main : thumb.firstElementChild, panel);
   }
-  rail.replaceChildren(...thumbs);
 }
 
 function setStage(on, animate) {
@@ -3629,6 +3854,7 @@ function layoutStage() {
       panel.style.width = `${w}px`;
       if (section === "channels") layoutStageChannels(panel, w, H, scrolls);
       if (section === "companion") layoutStageCompanion(w);
+      if (section === "cameras") layoutStageCameras(panel, w, H);
       return panel.offsetHeight;
     };
     let ph = lay(W);
@@ -3752,6 +3978,39 @@ function layoutStageCompanion(W) {
     if (h < bestH - 1) { bestH = h; best = lanes; }
   }
   apply(best);
+}
+
+// Kameras: as many videos per row as give the biggest picture, sized so
+// that every camera fits the stage without scrolling.
+function layoutStageCameras(panel, W, H) {
+  const grid = $("camera-grid");
+  const cards = [...grid.children].filter(c => c.classList.contains("camera-card"));
+  grid.style.gridTemplateColumns = "";
+  grid.style.justifyContent = "";
+  if (!cards.length) return;
+  const gap = 12;
+  const head = cards[0].querySelector(".camera-card-head")?.offsetHeight || 52;
+  const other = panel.offsetHeight - grid.offsetHeight;   // section head, status line, padding
+  const availH = H - other - 2;
+  const n = cards.length;
+  let best = { c: 1, w: 0 };
+  for (let c = 1; c <= n; c++) {
+    const rows = Math.ceil(n / c);
+    const byWidth = (W - (c - 1) * gap) / c;
+    const byHeight = ((availH - (rows - 1) * gap) / rows - head) * 16 / 9;
+    const w = Math.min(byWidth, byHeight);
+    if (w > best.w + 0.5) best = { c, w };
+  }
+  const w = Math.max(160, Math.floor(best.w));
+  grid.style.gridTemplateColumns = `repeat(${best.c}, ${w}px)`;
+  grid.style.justifyContent = "center";
+}
+
+function resetStageCameras() {
+  const grid = $("camera-grid");
+  if (!grid) return;
+  grid.style.gridTemplateColumns = "";
+  grid.style.justifyContent = "";
 }
 
 function resetStageCompanion() {
