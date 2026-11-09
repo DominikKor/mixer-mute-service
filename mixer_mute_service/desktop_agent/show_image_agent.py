@@ -1,4 +1,5 @@
-"""Authenticated LAN agent that displays configured images or launches profiles."""
+"""Authenticated LAN agent that displays configured images or launches profiles,
+and shows FoilPresenter songs slide by slide (read from the local library)."""
 
 from __future__ import annotations
 
@@ -15,13 +16,18 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
+import re
 import tkinter as tk
+import tkinter.font as tkfont
 from PIL import Image, ImageOps, ImageTk
 
 
 HOST = "0.0.0.0"
 PORT = 8766
 requests: queue.Queue[dict] = queue.Queue()
+MAX_SONG_FILES = 5000
+MAX_SONG_FILE_BYTES = 512 * 1024
+_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 logger = logging.getLogger("display-agent")
 _audio_lock = threading.Lock()
 _audio_process: subprocess.Popen | None = None
@@ -368,9 +374,140 @@ def _show_image(root: tk.Tk, image_label: tk.Label, profile: dict) -> None:
     )
 
 
+def _read_song_library(path: str) -> tuple[list[dict], bool]:
+    """All .foil files of a FoilPresenter library (its "Songs" folder, or the
+    folder itself). Raises FileNotFoundError when the folder is missing."""
+    folder = Path(path)
+    if not folder.is_absolute() or not folder.is_dir():
+        raise FileNotFoundError(path)
+    if (folder / "Songs").is_dir():
+        folder = folder / "Songs"
+    files, truncated = [], False
+    for entry in sorted(folder.iterdir(), key=lambda p: p.name.casefold()):
+        if entry.suffix.lower() != ".foil" or not entry.is_file():
+            continue
+        if len(files) >= MAX_SONG_FILES:
+            truncated = True
+            break
+        if entry.stat().st_size > MAX_SONG_FILE_BYTES:
+            continue
+        files.append({"name": entry.name, "xml": entry.read_bytes().decode("utf-8", errors="replace")})
+    return files, truncated
+
+
+def _valid_song_request(body) -> bool:
+    if not isinstance(body, dict) or body.get("action") not in ("show", "blank", "hide"):
+        return False
+    if body["action"] == "hide":
+        return set(body) == {"action"}
+    style = body.get("style")
+    return (
+        set(body) == {"action", "monitor", "fullscreen", "style", "text", "title", "copyright"}
+        and isinstance(body["monitor"], int) and not isinstance(body["monitor"], bool) and body["monitor"] >= 1
+        and isinstance(body["fullscreen"], bool)
+        and all(isinstance(body[k], str) and len(body[k]) <= 8000 for k in ("text", "title", "copyright"))
+        and isinstance(style, dict)
+        and set(style) == {"font", "font_size", "text_color", "background_color"}
+        and isinstance(style["font"], str) and 0 < len(style["font"]) <= 60
+        and isinstance(style["font_size"], int) and 12 <= style["font_size"] <= 240
+        and all(isinstance(style[k], str) and _COLOR_RE.match(style[k]) for k in ("text_color", "background_color"))
+    )
+
+
+# Slide layout. Keep in sync with songSlideLayout() in app/static/index.html,
+# which draws the 16:9 preview the same way.
+SLIDE_PAD_X, SLIDE_PAD_Y = 0.06, 0.07
+SLIDE_TITLE_H, SLIDE_COPY_H = 0.12, 0.08
+SLIDE_LINE = 1.25
+
+
+def _draw_slide(canvas: tk.Canvas, width: int, height: int, body: dict) -> None:
+    style = body["style"]
+    canvas.delete("all")
+    canvas.configure(background=style["background_color"])
+    if body["action"] == "blank":
+        return
+    pad_x, pad_y = SLIDE_PAD_X * width, SLIDE_PAD_Y * height
+    title_h = SLIDE_TITLE_H * height if body["title"] else 0
+    copy_h = SLIDE_COPY_H * height if body["copyright"] else 0
+    box_w = width - 2 * pad_x
+    box_h = height - 2 * pad_y - title_h - copy_h
+    lines = body["text"].split("\n")
+    px = style["font_size"] * height / 1080
+    while px > 8:
+        font = tkfont.Font(family=style["font"], size=-round(px))
+        if max(font.measure(line) for line in lines) <= box_w and len(lines) * px * SLIDE_LINE <= box_h:
+            break
+        px *= 0.94
+    font = tkfont.Font(family=style["font"], size=-max(8, round(px)))
+    top = pad_y + title_h + (box_h - len(lines) * px * SLIDE_LINE) / 2
+    for i, line in enumerate(lines):
+        canvas.create_text(width / 2, top + i * px * SLIDE_LINE, text=line, anchor="n",
+                           fill=style["text_color"], font=font)
+    if body["title"]:
+        title_font = tkfont.Font(family=style["font"], size=-round(0.05 * height), weight="bold")
+        canvas.create_text(width / 2, pad_y + title_h / 2, text=body["title"], anchor="center",
+                           fill=style["text_color"], font=title_font, width=box_w)
+    if body["copyright"]:
+        copy_font = tkfont.Font(family=style["font"], size=-round(0.026 * height))
+        canvas.create_text(width / 2, height - pad_y - copy_h / 2, text=body["copyright"], anchor="center",
+                           fill=style["text_color"], font=copy_font, width=box_w)
+
+
+def _show_widget(root: tk.Tk, widget: tk.Widget) -> None:
+    """The window shows either the image label or the song canvas."""
+    for child in root.pack_slaves():
+        if child is not widget:
+            child.pack_forget()
+    if not widget.winfo_ismapped():
+        widget.pack(fill="both", expand=True)
+
+
+def _show_song(root: tk.Tk, canvas: tk.Canvas, body: dict) -> None:
+    if body["action"] == "hide":
+        root.withdraw()
+        logger.info("Song window hidden")
+        return
+    left, top, right, bottom = monitor_bounds(body["monitor"])
+    if body["fullscreen"]:
+        width, height, x, y = right - left, bottom - top, left, top
+    else:
+        width, height = min(1280, right - left), min(720, bottom - top)
+        x, y = _window_position((left, top, right, bottom), width, height, "center")
+    _show_widget(root, canvas)
+    root.configure(background=body["style"]["background_color"])
+    root.withdraw()
+    root.overrideredirect(body["fullscreen"])
+    root.attributes("-topmost", body["fullscreen"])
+    root.geometry(f"{width}x{height}+{x}+{y}")
+    _draw_slide(canvas, width, height, body)
+    root.deiconify()
+    root.state("normal")
+    root.update_idletasks()
+    root.geometry(f"{width}x{height}+{x}+{y}")
+    root.lift()
+    if body["fullscreen"]:
+        import ctypes
+        from ctypes import wintypes
+
+        user32 = ctypes.windll.user32
+        user32.GetParent.argtypes = [wintypes.HWND]
+        user32.GetParent.restype = wintypes.HWND
+        user32.SetWindowPos.argtypes = [
+            wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, wintypes.UINT,
+        ]
+        hwnd = root.winfo_id()
+        hwnd = user32.GetParent(hwnd) or hwnd
+        # HWND_TOPMOST, SWP_SHOWWINDOW | SWP_FRAMECHANGED
+        if not user32.SetWindowPos(hwnd, -1, x, y, width, height, 0x0040 | 0x0020):
+            raise ctypes.WinError()
+    logger.info("Song %s monitor=%s fullscreen=%s size=%sx%s", body["action"], body["monitor"],
+                body["fullscreen"], width, height)
+
+
 class DisplayHandler(BaseHTTPRequestHandler):
     def do_POST(self):
-        if self.path not in ("/display", "/audio"):
+        if self.path not in ("/display", "/audio", "/song", "/songs/library"):
             self.send_error(404)
             return
 
@@ -382,7 +519,7 @@ class DisplayHandler(BaseHTTPRequestHandler):
 
         try:
             length = int(self.headers.get("Content-Length", "0"))
-            if not 0 < length <= 8192:
+            if not 0 < length <= (32768 if self.path == "/song" else 8192):
                 raise ValueError("invalid request size")
             body = json.loads(self.rfile.read(length))
         except (ValueError, json.JSONDecodeError):
@@ -390,6 +527,16 @@ class DisplayHandler(BaseHTTPRequestHandler):
             return
         if self.path == "/audio":
             self._handle_audio(body)
+            return
+        if self.path == "/songs/library":
+            self._handle_song_library(body)
+            return
+        if self.path == "/song":
+            if not _valid_song_request(body):
+                self.send_error(400)
+                return
+            requests.put({"kind": "song", "id": "song", **body})
+            self._send_json(202, {"ok": True, "action": body["action"]})
             return
         required = {
             "id", "title", "kind", "path", "args", "fullscreen", "monitor", "position"
@@ -459,16 +606,44 @@ class DisplayHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(encoded)
 
+    def _handle_song_library(self, body: dict) -> None:
+        if not isinstance(body, dict) or set(body) != {"path"} or not isinstance(body["path"], str):
+            self.send_error(400)
+            return
+        try:
+            files, truncated = _read_song_library(body["path"])
+        except FileNotFoundError:
+            logger.warning("Song library folder not found: %s", body["path"])
+            self.send_error(404, "Song library folder not found")
+            return
+        except OSError:
+            logger.exception("Song library could not be read: %s", body["path"])
+            self.send_error(503, "Song library could not be read")
+            return
+        logger.info("Song library read: %s files from %s", len(files), body["path"])
+        self._send_json(200, {"ok": True, "files": files, "truncated": truncated})
+
+    def _send_json(self, status: int, result: dict) -> None:
+        encoded = json.dumps(result, ensure_ascii=False).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(encoded)))
+        self.end_headers()
+        self.wfile.write(encoded)
+
     def log_message(self, fmt, *args):
         logger.info("%s - %s", self.client_address[0], fmt % args)
 
 
-def drain_requests(root: tk.Tk, image_label: tk.Label) -> None:
+def drain_requests(root: tk.Tk, image_label: tk.Label, canvas: tk.Canvas) -> None:
     try:
         while True:
             profile = requests.get_nowait()
             try:
-                if profile["kind"] == "image":
+                if profile["kind"] == "song":
+                    _show_song(root, canvas, profile)
+                elif profile["kind"] == "image":
+                    _show_widget(root, image_label)
                     _show_image(root, image_label, profile)
                 else:
                     threading.Thread(target=_launch_profile, args=(profile,), daemon=True).start()
@@ -476,7 +651,7 @@ def drain_requests(root: tk.Tk, image_label: tk.Label) -> None:
                 logger.exception("Profile %s failed: %s", profile["id"], exc)
     except queue.Empty:
         pass
-    root.after(100, drain_requests, root, image_label)
+    root.after(100, drain_requests, root, image_label, canvas)
 
 
 def main() -> None:
@@ -501,7 +676,8 @@ def main() -> None:
     root.bind("<Escape>", lambda _event: root.withdraw())
     label = tk.Label(root, background="black", borderwidth=0)
     label.pack(fill="both", expand=True)
-    root.after(100, drain_requests, root, label)
+    canvas = tk.Canvas(root, background="black", highlightthickness=0, borderwidth=0)
+    root.after(100, drain_requests, root, label, canvas)
 
     server = ThreadingHTTPServer((HOST, PORT), DisplayHandler)
     server.daemon_threads = True

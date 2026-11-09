@@ -663,6 +663,71 @@
   .program-next button.program-play { animation: program-next-glow 1.6s ease-in-out infinite; }
   @keyframes program-next-glow { 50% { box-shadow: 0 0 22px rgba(46,204,113,.75), inset 0 1px 0 rgba(255,255,255,.35); } }
   @media (prefers-reduced-motion: reduce) { .program-next button.program-play { animation: none; } }
+
+  /* Songs: a 16:9 slide drawn like the display PC draws it (songSlideLayout) */
+  .slide-box {
+    position: relative; width: 100%; aspect-ratio: 16 / 9; overflow: hidden; border-radius: 4px;
+    border: 1px solid #000; background: #000; color: #fff; box-shadow: 0 1px 0 rgba(255,255,255,.05);
+  }
+  .slide-line, .slide-title, .slide-copy {
+    position: absolute; left: 0; right: 0; text-align: center; white-space: pre; line-height: 1; pointer-events: none;
+  }
+  .slide-title, .slide-copy { white-space: normal; padding: 0 6%; transform: translateY(-50%); }
+  .slide-title { font-weight: 700; }
+  .slide-box .slide-tag {
+    position: absolute; right: 6px; bottom: 5px; font: 800 10px/1 var(--mono); letter-spacing: .1em;
+    color: #8d96a3; text-transform: uppercase;
+  }
+  .song-live {
+    display: grid; grid-template-columns: minmax(280px, 1fr) minmax(0, 1.15fr); gap: 14px; margin-top: 12px;
+    padding: 12px; border-radius: 8px; border: 1px solid #08090b; background: var(--panel-bg); box-shadow: var(--panel-shadow);
+  }
+  .song-live[hidden] { display: none; }
+  .song-live.idle { grid-template-columns: 1fr; }
+  .song-live.idle .song-stage, .song-live.idle .song-controls, .song-live.idle .song-slides { display: none; }
+  @media (max-width: 900px) { .song-live { grid-template-columns: 1fr; } }
+  .song-preview.blank::after {
+    content: "Schwarz"; position: absolute; inset: 0; display: grid; place-items: center;
+    font: 800 12px/1 var(--mono); letter-spacing: .2em; text-transform: uppercase; color: #4d5560;
+  }
+  .song-side { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+  .song-head { display: flex; align-items: center; gap: 10px; min-height: 44px; }
+  .song-head-label { font-size: 10px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; color: #7d8594; }
+  .song-live-title { flex: 1; min-width: 0; font-weight: 700; color: var(--lcd-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .song-live-pos { font: 700 12px/1 var(--mono); color: #8d96a3; }
+  .song-controls { display: grid; grid-template-columns: 1fr 1.6fr 1fr 0.8fr; gap: 8px; }
+  .song-controls button, .song-head button { min-height: 44px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; font-size: 12px; }
+  .song-controls button.on { color: #fff; border-color: #000; background: linear-gradient(to bottom, #4b5058, #2b2f36); box-shadow: inset 0 2px 4px rgba(0,0,0,.6); }
+  .song-slides { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px; }
+  button.song-thumb {
+    display: block; padding: 3px; min-height: 44px; border-radius: 6px; background: #121418; border: 1px solid #000; box-shadow: none;
+  }
+  button.song-thumb:active:not(:disabled) { transform: none; box-shadow: none; }
+  button.song-thumb.current { border-color: #3ee07f; box-shadow: 0 0 0 1px #3ee07f, 0 0 10px rgba(62,224,127,.35); }
+  .song-thumb .slide-box { border-radius: 3px; }
+  /* Song choice in a program row and its search popover */
+  button.song-pick-btn {
+    width: 100%; min-height: 44px; margin-bottom: 6px; padding: 4px 10px; text-align: left; font-size: 12px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  button.song-pick-btn.empty { color: #7d8594; font-weight: 600; }
+  .song-search {
+    position: absolute; z-index: 9; width: min(420px, calc(100vw - 16px)); padding: 10px; border-radius: 8px;
+    border: 1px solid #000; background: var(--panel-bg); box-shadow: var(--panel-shadow), 0 14px 32px rgba(0,0,0,.65);
+  }
+  .song-search input { width: 100%; min-height: 44px; }
+  .song-search-list { max-height: 320px; overflow-y: auto; margin-top: 8px; display: flex; flex-direction: column; gap: 2px; }
+  .song-search-list button {
+    display: flex; justify-content: space-between; gap: 10px; min-height: 44px; padding: 6px 10px; text-align: left;
+    background: none; border: none; box-shadow: none; border-radius: 5px; font-size: 13px;
+  }
+  .song-search-list button:hover, .song-search-list button.active { background: rgba(79,156,255,.14); filter: none; }
+  .song-search-list .books { flex-shrink: 0; font: 600 11px/1.3 var(--mono); color: #7d8594; }
+  .song-search-empty { padding: 10px; color: #8d96a3; font-size: 13px; }
+  .sg-switches { display: flex; gap: 18px; flex-wrap: wrap; }
+  input.pf-color { width: 100%; height: 44px; padding: 2px; border-radius: 5px; border: 1px solid #000; background: #0b1418; }
+  .sg-library { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  .sg-library button { min-height: 44px; }
   button.program-play {  /* backlit green start key */
     color: #fff; border-color: #0b3a1e;
     font-weight: 800; letter-spacing: .12em; text-transform: uppercase;
@@ -1019,6 +1084,7 @@
   <div class="panel-head">
     <button class="section-toggle" aria-expanded="true" aria-controls="program-body">Programm</button>
     <div class="panel-tools">
+      <button id="song-settings-btn" class="add-key" title="Liedanzeige: Bibliothek, Anzeige-PC und Aussehen für alle Lieder">Liedanzeige</button>
       <button id="program-reset-btn" class="add-key" title="Startzeiten und Verzögerungen vergessen (neuer Gottesdienst, Probe)">Ablauf zurücksetzen</button>
       <button id="program-add-btn" class="add-key"><svg class="plus-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 4v16M4 12h16"/></svg>Programmpunkt</button>
     </div>
@@ -1034,6 +1100,24 @@
         <span id="program-cue-count" class="program-cue-count"></span>
       </div>
       <button id="program-go-btn" class="program-play program-go" title="Nächsten Programmpunkt starten">Weiter</button>
+    </div>
+    <div id="song-live" class="song-live idle" hidden>
+      <div class="song-stage"><div id="song-preview" class="slide-box song-preview" role="img" aria-label="Aktuelle Folie"></div></div>
+      <div class="song-side">
+        <div class="song-head">
+          <span class="song-head-label">Lied</span>
+          <span id="song-live-title" class="song-live-title">Kein Lied auf dem Bildschirm</span>
+          <span id="song-live-pos" class="song-live-pos"></span>
+          <button id="song-choose-btn" type="button" title="Ein Lied direkt anzeigen">Lied zeigen…</button>
+        </div>
+        <div class="song-controls">
+          <button id="song-prev-btn" type="button" title="Vorherige Folie (Bild auf, ←)">◀ Zurück</button>
+          <button id="song-next-btn" type="button" class="program-play" title="Nächste Folie (Bild ab, →, Leertaste); nach der letzten: schwarz">Weiter ▶</button>
+          <button id="song-blank-btn" type="button" title="Bildschirm schwarz / wieder an (B)">Schwarz</button>
+          <button id="song-hide-btn" type="button" class="danger" title="Liedfenster schließen">Aus</button>
+        </div>
+        <div id="song-slides" class="song-slides"></div>
+      </div>
     </div>
     <div class="program-table-wrap">
       <table class="program-table">
@@ -1146,6 +1230,46 @@
       <button id="update-start" class="primary">Jetzt aktualisieren</button>
     </div>
   </div>
+</dialog>
+
+<dialog id="song-dialog" class="update-dialog profile-dialog" aria-labelledby="song-dialog-title">
+  <form id="song-form" class="update-body" novalidate>
+    <h3 id="song-dialog-title">Liedanzeige</h3>
+    <div class="pf-hint">Gilt für alle Lieder. Die Bibliothek bleibt im FoilPresenter-Ordner auf dem Anzeige-PC.</div>
+    <label class="pf-field"><span>Bibliothek auf dem Anzeige-PC</span>
+      <input id="sg-path" class="pf-input mono" type="text" autocomplete="off" spellcheck="false" placeholder="C:\Users\…\foilpresenter Bibliothek" /></label>
+    <div class="pf-grid">
+      <label class="pf-field"><span>Anzeige-PC (IP-Adresse)</span>
+        <input id="sg-ip" class="pf-input mono" type="text" inputmode="decimal" autocomplete="off" placeholder="192.168.188.11" /></label>
+      <div class="pf-field"><span class="pf-label" id="sg-monitor-label">Monitor</span>
+        <div id="sg-monitor" class="monitor-picker" role="radiogroup" aria-labelledby="sg-monitor-label"></div></div>
+    </div>
+    <div class="pf-grid">
+      <label class="pf-field"><span>Schrift</span>
+        <input id="sg-font" class="pf-input" type="text" maxlength="60" autocomplete="off" /></label>
+      <label class="pf-field"><span>Größte Schrift (px bei 1080p)</span>
+        <input id="sg-size" class="pf-input mono" type="number" min="12" max="240" step="1" /></label>
+    </div>
+    <div class="pf-grid">
+      <label class="pf-field"><span>Textfarbe</span><input id="sg-text-color" class="pf-color" type="color" /></label>
+      <label class="pf-field"><span>Hintergrund</span><input id="sg-bg-color" class="pf-color" type="color" /></label>
+    </div>
+    <div class="sg-switches">
+      <label class="compact-switch"><input id="sg-fullscreen" type="checkbox" /><span class="track"></span>Vollbild</label>
+      <label class="compact-switch"><input id="sg-show-title" type="checkbox" /><span class="track"></span>Titel</label>
+      <label class="compact-switch"><input id="sg-show-copyright" type="checkbox" /><span class="track"></span>Copyright</label>
+    </div>
+    <div id="sg-sample" class="slide-box" role="img" aria-label="Beispielfolie mit diesen Einstellungen"></div>
+    <div class="sg-library">
+      <span id="sg-library-status" class="pf-hint">—</span>
+      <button type="button" id="sg-reload">Speichern und Bibliothek laden</button>
+    </div>
+    <div id="sg-error" class="update-lcd err" hidden></div>
+    <div class="update-actions">
+      <button type="button" id="sg-cancel">Abbrechen</button>
+      <button type="submit" id="sg-save" class="primary">Speichern</button>
+    </div>
+  </form>
 </dialog>
 
 <dialog id="profile-dialog" class="update-dialog profile-dialog" aria-labelledby="profile-title">
@@ -4169,7 +4293,7 @@ const PROGRAM_SAVING = new Set();   // a save is in flight, per item
 const PROGRAM_RESAVE = new Set();   // another edit arrived meanwhile
 const PROGRAM_FIELDS = [
   "time", "title", "person", "group", "playback", "translation", "lyrics",
-  "playback_description", "translation_description", "lyrics_description",
+  "playback_description", "translation_description", "lyrics_description", "song",
 ];
 
 function formatProgramDelay(seconds) {
@@ -4282,6 +4406,7 @@ function buildProgramRow(item, draft = false) {
   for (const [field, label] of [["playback", "Playback"], ["translation", "Übersetzung"], ["lyrics", "Liedtext"]]) {
     const link = document.createElement("div");
     link.className = "program-action-link";
+    if (field === "lyrics") link.appendChild(buildSongPicker(item.song));
     link.appendChild(programSelect(field, label, item[field], actionOptions, "Keine Aktion"));
     const descriptionField = `${field}_description`;
     const description = programInput(descriptionField, `${label} Beschreibung`, item[descriptionField], "text", 160);
@@ -4341,6 +4466,8 @@ function updateProgramRow(row, item) {
       control.value = item[field] || "";
     }
   }
+  const picker = row.querySelector(".song-picker");
+  if (picker) syncSongPicker(picker);
   const delay = row.querySelector(".program-delay");
   const seconds = item.last_delay_seconds;
   delay.textContent = formatProgramDelay(seconds);
@@ -4493,7 +4620,7 @@ function readProgramRow(row) {
     if (control && field === "time") control.value = normalizeProgramTime(control.value);
     result[field] = control ? control.value.trim() : "";
   }
-  for (const field of ["playback", "translation", "lyrics"]) result[field] ||= null;
+  for (const field of ["playback", "translation", "lyrics", "song"]) result[field] ||= null;
   return result;
 }
 
@@ -4583,6 +4710,7 @@ async function startProgram(key, path, button) {
   try {
     programPlayToast(await api("POST", path));
     await loadProgramItems();
+    await refreshSongLive();
   } finally {
     PROGRAM_BUSY.delete(key);
     button.disabled = false;
@@ -4594,6 +4722,435 @@ async function startProgram(key, path, button) {
 function playProgramItem(itemId, button) {
   return startProgram(itemId, `/program/items/${encodeURIComponent(itemId)}/play`, button);
 }
+
+// ---- Songs (FoilPresenter library on the display PC) ----------------------
+// The service reads the library through the display agent; one slide at a
+// time is shown on the display PC. Here: the song choice in program rows, the
+// shared settings, and the live strip with a 16:9 preview of every slide.
+
+let SONG_LIST = [];                // [{id, title, books, slide_count}]
+const SONG_INDEX = new Map();
+let SONG_SETTINGS = null;
+let SONG_LIBRARY = { loaded_at: null, errors: [] };
+let SONG_LIVE = { song_id: null, slide: 0, blank: false, song: null };
+let SONG_BUSY = false;
+
+async function loadSongs() {
+  const [list, settings] = await Promise.all([api("GET", "/songs"), api("GET", "/songs/settings")]);
+  if (settings.ok) SONG_SETTINGS = settings.data;
+  if (list.ok && Array.isArray(list.data.songs)) {
+    SONG_LIST = list.data.songs;
+    SONG_LIBRARY = { loaded_at: list.data.loaded_at, errors: list.data.errors || [] };
+    SONG_INDEX.clear();
+    for (const song of SONG_LIST) SONG_INDEX.set(song.id, song);
+  }
+  document.querySelectorAll(".song-picker").forEach(syncSongPicker);
+  renderSongLive();
+}
+
+// Slide layout. Keep in sync with _draw_slide() in
+// desktop_agent/show_image_agent.py, which draws the real screen.
+const SLIDE = { padX: 0.06, padY: 0.07, titleH: 0.12, copyH: 0.08, line: 1.25 };
+let SLIDE_CTX = null;
+
+function songSlideFont(px, settings, bold = false) {
+  return `${bold ? "700 " : ""}${px}px "${settings.font}", Verdana, sans-serif`;
+}
+
+// slide: {text, title, copyright, blank}
+function renderSlide(box, slide, settings) {
+  const W = box.clientWidth, H = box.clientHeight;
+  box.replaceChildren();
+  box.style.background = settings.background_color;
+  box.style.color = settings.text_color;
+  if (!W || !H || slide.blank) return;
+  const ctx = SLIDE_CTX || (SLIDE_CTX = document.createElement("canvas").getContext("2d"));
+  const padX = SLIDE.padX * W, padY = SLIDE.padY * H;
+  const titleH = slide.title ? SLIDE.titleH * H : 0;
+  const copyH = slide.copyright ? SLIDE.copyH * H : 0;
+  const boxW = W - 2 * padX, boxH = H - 2 * padY - titleH - copyH;
+  const lines = slide.text.split("\n");
+  const minPx = 8 * H / 1080;
+  let px = settings.font_size * H / 1080;
+  while (px > minPx) {
+    ctx.font = songSlideFont(px, settings);
+    if (Math.max(...lines.map(l => ctx.measureText(l).width)) <= boxW && lines.length * px * SLIDE.line <= boxH) break;
+    px *= 0.94;
+  }
+  px = Math.max(minPx, px);
+  const top = padY + titleH + (boxH - lines.length * px * SLIDE.line) / 2;
+  lines.forEach((line, i) => {
+    const el = document.createElement("div");
+    el.className = "slide-line";
+    el.style.top = `${top + i * px * SLIDE.line}px`;
+    el.style.font = songSlideFont(px, settings);
+    el.textContent = line;
+    box.appendChild(el);
+  });
+  if (slide.title) {
+    const el = document.createElement("div");
+    el.className = "slide-title";
+    el.style.top = `${padY + titleH / 2}px`;
+    el.style.font = songSlideFont(0.05 * H, settings, true);
+    el.textContent = slide.title;
+    box.appendChild(el);
+  }
+  if (slide.copyright) {
+    const el = document.createElement("div");
+    el.className = "slide-copy";
+    el.style.top = `${H - padY - copyH / 2}px`;
+    el.style.font = songSlideFont(0.026 * H, settings);
+    el.textContent = slide.copyright;
+    box.appendChild(el);
+  }
+}
+
+// What the display PC shows for slide i (title and copyright on the first).
+function songSlide(song, index, settings) {
+  const first = index === 0;
+  return {
+    text: song.slides[index].text,
+    title: settings.show_title && first ? song.title : "",
+    copyright: settings.show_copyright && first ? song.copyright : "",
+  };
+}
+
+function songBooks(song) {
+  return (song.books || []).map(b => [b.name && b.name.split(" ").map(w => w[0]).join(""), b.number].filter(Boolean).join(" ")).join(" · ");
+}
+
+function renderSongLive() {
+  const wrap = $("song-live");
+  const loaded = SONG_LIST.length > 0;
+  wrap.hidden = !loaded && !SONG_LIVE.song;
+  const song = SONG_LIVE.song;
+  wrap.classList.toggle("idle", !song);
+  $("song-live-title").textContent = song ? song.title : "Kein Lied auf dem Bildschirm";
+  $("song-live-pos").textContent = song
+    ? (SONG_LIVE.blank ? "Schwarz" : `${SONG_LIVE.slide + 1} / ${song.slides.length}`) : "";
+  for (const id of ["song-prev-btn", "song-next-btn", "song-blank-btn", "song-hide-btn"]) $(id).disabled = !song || SONG_BUSY;
+  $("song-blank-btn").classList.toggle("on", !!SONG_LIVE.blank);
+  if (!song || !SONG_SETTINGS) return;
+  const preview = $("song-preview");
+  preview.classList.toggle("blank", !!SONG_LIVE.blank);
+  renderSlide(preview, SONG_LIVE.blank ? { blank: true } : songSlide(song, SONG_LIVE.slide, SONG_SETTINGS), SONG_SETTINGS);
+  const strip = $("song-slides");
+  const sig = JSON.stringify([song.id, song.slides.length, SONG_SETTINGS]);
+  if (strip.dataset.sig !== sig) {
+    strip.dataset.sig = sig;
+    strip.replaceChildren(...song.slides.map((slide, i) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "song-thumb";
+      button.dataset.songSlide = String(i);
+      button.title = `Folie ${i + 1}${slide.key ? " · " + slide.key : ""} anzeigen`;
+      const box = document.createElement("div");
+      box.className = "slide-box";
+      button.appendChild(box);
+      return button;
+    }));
+    // Thumbnails need their size before they can be drawn.
+    requestAnimationFrame(() => strip.querySelectorAll(".song-thumb").forEach((button, i) => {
+      const box = button.querySelector(".slide-box");
+      renderSlide(box, songSlide(song, i, SONG_SETTINGS), SONG_SETTINGS);
+      const tag = document.createElement("span");
+      tag.className = "slide-tag";
+      tag.textContent = song.slides[i].key || String(i + 1);
+      box.appendChild(tag);
+    }));
+  }
+  strip.querySelectorAll(".song-thumb").forEach((button, i) => {
+    button.classList.toggle("current", !SONG_LIVE.blank && i === SONG_LIVE.slide);
+    button.disabled = SONG_BUSY;
+  });
+}
+
+async function refreshSongLive() {
+  if (!STAGE.on && !$("program-items").closest(".panel").classList.contains("open")) return;
+  const result = await api("GET", "/songs/live");
+  if (result.ok && result.data && !SONG_BUSY) {
+    SONG_LIVE = result.data;
+    renderSongLive();
+  }
+}
+
+async function songAction(path, body) {
+  if (SONG_BUSY) return;
+  SONG_BUSY = true;
+  renderSongLive();
+  try {
+    const result = await api("POST", path, body);
+    if (!result.ok || result.data.ok === false) toast(`Lied: ${result.data.reason || "HTTP " + result.status}`, false);
+    else SONG_LIVE = result.data;
+  } finally {
+    SONG_BUSY = false;
+    renderSongLive();
+  }
+}
+
+function songNext() { if (SONG_LIVE.song) songAction("/songs/next"); }
+function songPrev() { if (SONG_LIVE.song) songAction("/songs/prev"); }
+function songBlankToggle() {
+  if (!SONG_LIVE.song) return;
+  if (SONG_LIVE.blank) songAction("/songs/show", { song_id: SONG_LIVE.song_id, slide: SONG_LIVE.slide });
+  else songAction("/songs/blank");
+}
+
+$("song-next-btn").addEventListener("click", songNext);
+$("song-prev-btn").addEventListener("click", songPrev);
+$("song-blank-btn").addEventListener("click", songBlankToggle);
+$("song-hide-btn").addEventListener("click", () => songAction("/songs/hide"));
+$("song-slides").addEventListener("click", event => {
+  const button = event.target.closest("[data-song-slide]");
+  if (button && SONG_LIVE.song) songAction("/songs/show", { song_id: SONG_LIVE.song_id, slide: Number(button.dataset.songSlide) });
+});
+$("song-choose-btn").addEventListener("click", event => openSongSearch(event.currentTarget, song => {
+  if (song) songAction("/songs/show", { song_id: song.id, slide: 0 });
+}, false));
+new ResizeObserver(() => { if (SONG_LIVE.song && SONG_SETTINGS) renderSongLive(); }).observe($("song-preview"));
+
+// Presenter clickers send Page Down / Page Up; arrows and space work too.
+document.addEventListener("keydown", event => {
+  if (!SONG_LIVE.song || event.altKey || event.ctrlKey || event.metaKey) return;
+  const t = event.target;
+  if (t.closest && t.closest("input, textarea, select, dialog, [contenteditable]")) return;
+  if (["PageDown", "ArrowRight", " "].includes(event.key)) { event.preventDefault(); songNext(); }
+  else if (["PageUp", "ArrowLeft"].includes(event.key)) { event.preventDefault(); songPrev(); }
+  else if (event.key === "b" || event.key === "B") { event.preventDefault(); songBlankToggle(); }
+});
+
+// ---- song choice: a button in the row, a search popover on <body> ----------
+
+function buildSongPicker(value) {
+  const wrap = document.createElement("div");
+  wrap.className = "song-picker";
+  const hidden = document.createElement("input");
+  hidden.type = "hidden";
+  hidden.dataset.programField = "song";
+  hidden.value = value || "";
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "song-pick-btn";
+  wrap.append(hidden, button);
+  syncSongPicker(wrap);
+  return wrap;
+}
+
+function syncSongPicker(wrap) {
+  const id = wrap.querySelector('[data-program-field="song"]').value;
+  const song = SONG_INDEX.get(id);
+  const button = wrap.querySelector(".song-pick-btn");
+  button.classList.toggle("empty", !id);
+  button.textContent = id ? `♪ ${song ? song.title : id.replace(/\.foil$/i, "")}` : "♪ Lied wählen";
+  button.title = id ? (song ? `${song.title} · ${song.slide_count} Folien` : "Lied nicht in der geladenen Bibliothek") : "Lied aus der FoilPresenter-Bibliothek";
+}
+
+let SONG_SEARCH = null;
+
+function closeSongSearch() {
+  if (!SONG_SEARCH) return;
+  document.removeEventListener("pointerdown", SONG_SEARCH.onOutside, true);
+  SONG_SEARCH.pop.remove();
+  SONG_SEARCH = null;
+}
+
+function songMatches(query) {
+  const q = query.trim().toLocaleLowerCase("de");
+  if (!q) return SONG_LIST.slice(0, 40);
+  const words = q.split(/\s+/);
+  return SONG_LIST.filter(song => {
+    const hay = `${song.title} ${(song.books || []).map(b => `${b.name} ${b.number}`).join(" ")}`.toLocaleLowerCase("de");
+    return words.every(w => hay.includes(w));
+  }).slice(0, 40);
+}
+
+// onPick(song or null); allowNone adds "Kein Lied".
+function openSongSearch(anchor, onPick, allowNone = true) {
+  closeSongSearch();
+  const pop = document.createElement("div");
+  pop.className = "song-search";
+  pop.innerHTML = '<input type="search" class="pf-input" placeholder="Titel oder Liederbuch-Nummer" aria-label="Lied suchen" autocomplete="off" /><div class="song-search-list" role="listbox"></div>';
+  document.body.appendChild(pop);
+  const r = anchor.getBoundingClientRect();
+  const width = pop.offsetWidth;
+  pop.style.left = `${Math.min(Math.max(8, r.left), innerWidth - width - 8) + scrollX}px`;
+  pop.style.top = `${r.bottom + 4 + scrollY}px`;
+  const input = pop.querySelector("input");
+  const list = pop.querySelector(".song-search-list");
+  const pick = song => { closeSongSearch(); onPick(song); };
+  const render = () => {
+    const matches = songMatches(input.value);
+    list.replaceChildren();
+    if (allowNone) {
+      const none = document.createElement("button");
+      none.type = "button";
+      none.textContent = "Kein Lied";
+      none.addEventListener("click", () => pick(null));
+      list.appendChild(none);
+    }
+    if (!SONG_LIST.length) {
+      const empty = document.createElement("div");
+      empty.className = "song-search-empty";
+      empty.textContent = "Bibliothek noch nicht geladen – unter „Liedanzeige“ laden.";
+      list.appendChild(empty);
+    }
+    matches.forEach((song, i) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.setAttribute("role", "option");
+      if (i === 0 && input.value.trim()) button.classList.add("active");
+      const title = document.createElement("span");
+      title.textContent = song.title;
+      const books = document.createElement("span");
+      books.className = "books";
+      books.textContent = songBooks(song);
+      button.append(title, books);
+      button.addEventListener("click", () => pick(song));
+      list.appendChild(button);
+    });
+  };
+  input.addEventListener("input", render);
+  input.addEventListener("keydown", event => {
+    if (event.key === "Escape") { event.preventDefault(); closeSongSearch(); anchor.focus(); }
+    if (event.key === "Enter") { event.preventDefault(); const first = songMatches(input.value)[0]; if (first) pick(first); }
+  });
+  const onOutside = event => { if (!pop.contains(event.target) && event.target !== anchor) closeSongSearch(); };
+  document.addEventListener("pointerdown", onOutside, true);
+  SONG_SEARCH = { pop, onOutside };
+  render();
+  input.focus();
+}
+
+$("program-items").addEventListener("click", event => {
+  const button = event.target.closest(".song-pick-btn");
+  if (!button) return;
+  const wrap = button.closest(".song-picker");
+  const row = button.closest("tr");
+  openSongSearch(button, song => {
+    const hidden = wrap.querySelector('[data-program-field="song"]');
+    hidden.value = song ? song.id : "";
+    syncSongPicker(wrap);
+    const title = row.querySelector('[data-program-field="title"]');
+    if (song && title && !title.value.trim()) title.value = song.title;
+    hidden.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+});
+
+// ---- shared song settings dialog -------------------------------------------
+
+const SONG_FORM = { monitor: 2 };
+
+function songFormSettings() {
+  return {
+    library_path: $("sg-path").value.trim(),
+    target_ip: $("sg-ip").value.trim(),
+    monitor: SONG_FORM.monitor,
+    fullscreen: $("sg-fullscreen").checked,
+    font: $("sg-font").value.trim(),
+    font_size: Number($("sg-size").value) || 72,
+    text_color: $("sg-text-color").value,
+    background_color: $("sg-bg-color").value,
+    show_title: $("sg-show-title").checked,
+    show_copyright: $("sg-show-copyright").checked,
+  };
+}
+
+function renderSongSample() {
+  const settings = songFormSettings();
+  // The song on screen, or a fixed example.
+  const sample = SONG_LIVE.song
+    ? songSlide(SONG_LIVE.song, 0, settings)
+    : { text: "Großer Gott, wir loben dich,\nHerr, wir preisen deine Stärke.\nVor dir neigt die Erde sich\nund bewundert deine Werke.",
+        title: settings.show_title ? "Großer Gott, wir loben dich" : "", copyright: settings.show_copyright ? "Text: Ignaz Franz 1771" : "" };
+  renderSlide($("sg-sample"), sample, settings);
+}
+
+function songLibraryStatus() {
+  if (!SONG_LIBRARY.loaded_at) return "Bibliothek noch nicht geladen.";
+  const when = new Date(SONG_LIBRARY.loaded_at * 1000).toLocaleString("de-DE", { dateStyle: "short", timeStyle: "short" });
+  const errors = SONG_LIBRARY.errors.length ? ` · ${SONG_LIBRARY.errors.length} nicht lesbar` : "";
+  return `${SONG_LIST.length} Lieder · geladen ${when}${errors}`;
+}
+
+function songFormError(message) {
+  $("sg-error").hidden = !message;
+  $("sg-error").textContent = message || "";
+}
+
+function setSongMonitor(n) {
+  SONG_FORM.monitor = n;
+  $("sg-monitor").querySelectorAll("[data-monitor]").forEach(b => b.setAttribute("aria-checked", String(Number(b.dataset.monitor) === n)));
+}
+
+async function openSongDialog() {
+  await loadSongs();
+  const s = SONG_SETTINGS || {};
+  $("sg-path").value = s.library_path || "";
+  $("sg-ip").value = s.target_ip || "";
+  $("sg-font").value = s.font || "Verdana";
+  $("sg-size").value = s.font_size || 72;
+  $("sg-text-color").value = s.text_color || "#ffffff";
+  $("sg-bg-color").value = s.background_color || "#000000";
+  $("sg-fullscreen").checked = s.fullscreen !== false;
+  $("sg-show-title").checked = s.show_title !== false;
+  $("sg-show-copyright").checked = s.show_copyright !== false;
+  $("sg-monitor").replaceChildren(...[1, 2, 3, 4].map(n => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "monitor-key";
+    b.setAttribute("role", "radio");
+    b.dataset.monitor = String(n);
+    b.textContent = String(n);
+    return b;
+  }));
+  setSongMonitor(s.monitor || 2);
+  $("sg-library-status").textContent = songLibraryStatus();
+  songFormError(null);
+  $("song-dialog").showModal();
+  renderSongSample();
+}
+
+async function saveSongSettings() {
+  const result = await api("PUT", "/songs/settings", songFormSettings());
+  if (!result.ok || result.data.ok === false) { songFormError(result.data.reason || `HTTP ${result.status}`); return false; }
+  SONG_SETTINGS = result.data.settings;
+  songFormError(null);
+  renderSongLive();
+  return true;
+}
+
+$("song-settings-btn").addEventListener("click", openSongDialog);
+$("sg-cancel").addEventListener("click", () => $("song-dialog").close());
+$("sg-monitor").addEventListener("click", event => {
+  const b = event.target.closest("[data-monitor]");
+  if (b) { setSongMonitor(Number(b.dataset.monitor)); }
+});
+$("song-form").addEventListener("input", renderSongSample);
+$("song-form").addEventListener("submit", async event => {
+  event.preventDefault();
+  $("sg-save").disabled = true;
+  try {
+    if (await saveSongSettings()) { $("song-dialog").close(); toast("Liedanzeige gespeichert", true); }
+  } finally {
+    $("sg-save").disabled = false;
+  }
+});
+$("sg-reload").addEventListener("click", async event => {
+  const button = event.currentTarget;
+  button.disabled = true;
+  $("sg-library-status").textContent = "Lade Bibliothek vom Anzeige-PC…";
+  try {
+    if (!(await saveSongSettings())) return;
+    const result = await api("POST", "/songs/library/reload");
+    if (!result.ok || result.data.ok === false) { songFormError(result.data.reason || `HTTP ${result.status}`); return; }
+    await loadSongs();
+    toast(`${result.data.count} Lieder geladen`, true);
+  } finally {
+    button.disabled = false;
+    $("sg-library-status").textContent = songLibraryStatus();
+    renderSongSample();
+  }
+});
 
 $("program-go-btn").addEventListener("click", event => startProgram("next", "/program/next", event.currentTarget));
 $("program-reset-btn").addEventListener("click", async event => {
@@ -4629,6 +5186,8 @@ $("program-items").addEventListener("click", event => {
 
 loadProgramItems();
 setInterval(refreshProgramState, 5000);
+loadSongs().then(refreshSongLive);
+setInterval(refreshSongLive, 1500);
 setInterval(updateProgramCue, 1000);
 showBuildId();
 normalizeCollapsedGroups();

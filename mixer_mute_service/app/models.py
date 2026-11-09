@@ -84,3 +84,4 @@ class ProgramItemRequest(BaseModel):
     playback_description: str = Field(default="", max_length=160)
     translation_description: str = Field(default="", max_length=160)
     lyrics_description: str = Field(default="", max_length=160)
+    song: Optional[str] = None  # FoilPresenter song (file name), shown when the row starts
