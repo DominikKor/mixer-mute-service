@@ -31,7 +31,13 @@ from .config import Config, DesktopProfileConfig
 
 PROFILE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 # Order in which a new profile's keys are written.
-FIELD_ORDER = ("title", "kind", "path", "args", "target_ip", "fullscreen", "monitor", "position")
+FIELD_ORDER = (
+    "title", "kind", "path", "args", "target_ip", "fullscreen", "monitor", "position",
+    "fade", "fade_db", "fade_seconds",
+)
+# Written for a new profile only when they differ from the default, so image,
+# program and file profiles stay as short as before.
+_OPTIONAL_FIELDS = {"fade", "fade_db", "fade_seconds"}
 _CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
 _PRINTABLE_ASCII_RE = re.compile(r"^[\x20-\x7e]*$")
 _EMPTY_VALUE_RE = re.compile(r"^[ \t]*(\{[ \t]*\}|null|Null|NULL|~)?[ \t]*(#.*)?$")
@@ -64,6 +70,8 @@ def validate_profile(profile: DesktopProfileConfig) -> None:
         raise ProfileEditError("a program path must point to an .exe file")
     if profile.kind != "program" and profile.args:
         raise ProfileEditError("arguments are only used for programs")
+    if profile.kind != "audio" and profile.fade:
+        raise ProfileEditError("fading is only used for audio profiles")
 
 
 # -- YAML rendering ----------------------------------------------------------
@@ -74,6 +82,8 @@ def _scalar(value) -> str:
         return "true" if value else "false"
     if isinstance(value, int):
         return str(value)
+    if isinstance(value, float):
+        return format(value, "g")
     if isinstance(value, list):
         return "[" + ", ".join(_scalar(v) for v in value) + "]"
     text = str(value)
@@ -158,8 +168,11 @@ def _profile_lines(profile_id: str, values: dict, indent: int, field_indent: int
     # An id like "123" or "true" would load as a number/bool: quote it then.
     key = profile_id if yaml.safe_load(f"{profile_id}: 0") == {profile_id: 0} else _scalar(profile_id)
     lines = [(indent, f"{key}:")]
+    defaults = DesktopProfileConfig.model_fields
     for key in FIELD_ORDER:
         if key == "args" and not values[key]:
+            continue
+        if key in _OPTIONAL_FIELDS and values[key] == defaults[key].default:
             continue
         lines.append((field_indent, f"{key}: {_scalar(values[key])}"))
     return lines

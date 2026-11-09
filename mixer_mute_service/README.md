@@ -436,6 +436,27 @@ Beispiel fuer eine Systemvariable auf dem Ziel-PC:
 Die Wiedergabesteuerung verwendet `POST /desktop/{profile_id}/audio/play` und
 `POST /desktop/{profile_id}/audio/stop`.
 
+**Ein-/Ausfaden:** Im Profil-Editor eines Audio-Profils schaltet
+**Ein-/Ausfaden** sanftes Ein- und Ausblenden ein. Play startet dann stumm und
+blendet ueber die eingestellte Dauer (Standard 5 s) bis zur eingestellten
+Lautstaerke ein (Standard **-30 dB**, erlaubt -60 bis 0 dB); Stop blendet von
+der aktuellen Lautstaerke aus und beendet erst dann den Player. Geregelt wird
+die mpv-Lautstaerke auf dem Ziel-PC (ueber mpvs IPC-Pipe), das Mischpult wird
+nicht angefasst. In `config.yaml`:
+
+```yaml
+    hintergrundmusik:
+      kind: "audio"
+      path: 'I:\Musik\Hintergrund.mp3'
+      fade: true
+      fade_db: -30
+      fade_seconds: 5
+```
+
+Dafuer muss der Desktop-Agent auf dem Ziel-PC aktuell sein; ein aelterer Agent
+lehnt Play/Stop mit Fade ab (die Meldung sagt das), ohne Fade laeuft alles wie
+bisher. Dateien, die ein Programmpunkt direkt abspielt, werden nicht gefadet.
+
 Profile lassen sich auch in der Weboberflaeche anlegen (graue **+**-Kachel
 hinter den Profilen) und ueber das Drei-Punkte-Menue bearbeiten oder loeschen;
 die Buttons erscheinen sofort, ohne Neustart. Fuer ein Audio-Profil **Audio**

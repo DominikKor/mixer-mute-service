@@ -10,7 +10,9 @@ import os
 import queue
 import getpass
 import shutil
+import socket
 import subprocess
+import tempfile
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -32,8 +34,6 @@ _COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 # A new song's file name, as the service makes it (no folders, no odd characters).
 _SONG_NAME_RE = re.compile(r"^[A-Za-z0-9 ._()!'+-]{1,120}\.foil$")
 logger = logging.getLogger("display-agent")
-_audio_lock = threading.Lock()
-_audio_process: subprocess.Popen | None = None
 
 
 def monitor_bounds(display_number: int) -> tuple[int, int, int, int]:
@@ -241,23 +241,194 @@ def _find_mpv() -> str | None:
     return next((str(path) for path in candidates if path.is_file()), None)
 
 
+# -- audio (mpv) -------------------------------------------------------------
+# With a fade, mpv starts silent and its volume is driven over mpv's JSON IPC
+# (a named pipe on Windows): up to the profile's dB level on play, down to
+# silence on stop, then mpv is ended. mpv's volume is cubic: gain = (v/100)^3,
+# so dB = 60 * log10(v / 100).
+FADE_FLOOR_DB = -60.0
+FADE_STEP_SECONDS = 0.05
+IPC_CONNECT_SECONDS = 2.0
+
+
+def db_to_mpv_volume(db: float) -> float:
+    return max(0.0, min(100.0, 100.0 * 10 ** (db / 60.0)))
+
+
+def _valid_fade(fade) -> bool:
+    def number(value, low, high):
+        return type(value) in (int, float) and low <= value <= high
+
+    return (
+        isinstance(fade, dict) and set(fade) == {"db", "seconds"}
+        and number(fade["db"], FADE_FLOOR_DB, 0.0) and number(fade["seconds"], 0.5, 30.0)
+    )
+
+
+class MpvIpc:
+    """Line-based JSON IPC to one mpv process; every command waits for its reply."""
+
+    def __init__(self, address: str) -> None:
+        self._address = address
+        self._stream = None
+        self._socket: socket.socket | None = None
+        self._request_id = 0
+
+    def connect(self, process: subprocess.Popen, timeout: float) -> None:
+        deadline = time.monotonic() + timeout
+        while True:
+            try:
+                if os.name == "nt":
+                    self._stream = open(self._address, "r+b", buffering=0)
+                else:  # mpv elsewhere uses a Unix socket (and the tests do)
+                    self._socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                    try:
+                        self._socket.connect(self._address)
+                    except OSError:
+                        self._socket.close()
+                        self._socket = None
+                        raise
+                    self._stream = self._socket.makefile("rwb", buffering=0)
+                break
+            except OSError:
+                if process.poll() is not None or time.monotonic() > deadline:
+                    raise OSError("mpv IPC not reachable")
+                time.sleep(0.05)
+        self.command("disable_event", "all")
+
+    def command(self, *args):
+        if self._stream is None:
+            raise OSError("mpv IPC closed")
+        self._request_id += 1
+        request_id = self._request_id
+        self._stream.write(json.dumps({"command": list(args), "request_id": request_id}).encode() + b"\n")
+        while True:
+            line = self._readline()
+            if not line:
+                raise OSError("mpv IPC closed")
+            try:
+                reply = json.loads(line)
+            except ValueError:
+                continue
+            if reply.get("request_id") == request_id:
+                if reply.get("error") != "success":
+                    raise OSError(f"mpv: {reply.get('error')}")
+                return reply.get("data")
+
+    def _readline(self) -> bytes:
+        # Byte-wise: unbuffered pipes and sockets have no reliable readline.
+        data = bytearray()
+        while True:
+            chunk = self._stream.read(1)
+            if not chunk:
+                return bytes(data)
+            data += chunk
+            if chunk == b"\n":
+                return bytes(data)
+
+    def close(self) -> None:
+        for handle in (self._stream, self._socket):
+            if handle is not None:
+                try:
+                    handle.close()
+                except OSError:
+                    pass
+        self._stream = self._socket = None
+
+
+def _ipc_address() -> str:
+    name = f"mixer-agent-mpv-{os.getpid()}-{time.monotonic_ns() % 10**9}"
+    if os.name == "nt":
+        return rf"\\.\pipe\{name}"
+    # Unix socket paths are limited to about 100 characters.
+    return str(Path(tempfile.gettempdir()) / f"{name}.sock")
+
+
+class _Playback:
+    def __init__(self, profile_id: str, process: subprocess.Popen, ipc: MpvIpc | None, fade: dict | None):
+        self.profile_id = profile_id
+        self.process = process
+        self.ipc = ipc
+        self.fade = fade
+        self.volume_db = FADE_FLOOR_DB if fade else 0.0
+        self.stop_fade = threading.Event()   # ends a running fade early
+        self.fade_thread: threading.Thread | None = None
+
+    def set_db(self, db: float) -> None:
+        self.ipc.command("set_property", "volume", db_to_mpv_volume(db))
+        self.volume_db = db
+
+    def ramp(self, target_db: float, seconds: float) -> bool:
+        """Volume from the current level to target_db, linear in dB. False if
+        stopped early or mpv is gone."""
+        start = self.volume_db
+        steps = max(1, round(seconds / FADE_STEP_SECONDS))
+        for step in range(1, steps + 1):
+            if self.stop_fade.wait(FADE_STEP_SECONDS):
+                return False
+            try:
+                self.set_db(start + (target_db - start) * step / steps)
+            except (OSError, ValueError):
+                return False
+        return True
+
+    def terminate(self) -> bool:
+        """End mpv at once. True if it was still playing."""
+        self.stop_fade.set()
+        playing = self.process.poll() is None
+        if playing:
+            # mpv first: a fade thread waiting for a reply then gets EOF
+            # instead of blocking the pipe's close.
+            self.process.terminate()
+            try:
+                self.process.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                self.process.kill()
+                self.process.wait(timeout=3)
+        if self.ipc is not None:
+            self.ipc.close()
+        return playing
+
+
+_audio_lock = threading.Lock()
+_playback: _Playback | None = None
+_fading_out: set[_Playback] = set()
+
+
 def _stop_audio_locked() -> bool:
-    global _audio_process
-    process = _audio_process
-    _audio_process = None
-    if process is None or process.poll() is not None:
-        return False
-    process.terminate()
-    try:
-        process.wait(timeout=3)
-    except subprocess.TimeoutExpired:
-        process.kill()
-        process.wait(timeout=3)
-    return True
+    """End the current playback and any still fading out, at once."""
+    global _playback
+    playing, _playback = _playback, None
+    for old in list(_fading_out):
+        old.terminate()
+    _fading_out.clear()
+    return playing.terminate() if playing is not None else False
 
 
-def _play_audio(profile_id: str, path: str) -> None:
-    global _audio_process
+def _fade_in(playback: _Playback) -> None:
+    if playback.ramp(playback.fade["db"], playback.fade["seconds"]):
+        logger.info("Audio faded in profile=%s to %.1f dB", playback.profile_id, playback.fade["db"])
+
+
+def _fade_out(playback: _Playback, seconds: float) -> None:
+    if playback.fade_thread is not None:
+        playback.stop_fade.set()
+        playback.fade_thread.join()
+        playback.stop_fade.clear()
+    # The full fade time from the profile's level; less if it is quieter.
+    span = max(playback.fade["db"] - FADE_FLOOR_DB, 1.0)
+    part = min(1.0, max(0.0, (playback.volume_db - FADE_FLOOR_DB) / span))
+    playback.ramp(FADE_FLOOR_DB, seconds * part)
+    with _audio_lock:
+        if playback not in _fading_out:
+            return  # a new track already ended it
+        _fading_out.discard(playback)
+        playback.terminate()
+    logger.info("Audio faded out profile=%s", playback.profile_id)
+
+
+def _play_audio(profile_id: str, path: str, fade: dict | None = None) -> None:
+    global _playback
     target = Path(path)
     if not target.is_absolute() or not target.is_file():
         raise ValueError("Configured audio file is not available")
@@ -271,33 +442,55 @@ def _play_audio(profile_id: str, path: str) -> None:
         startup_info.dwFlags |= subprocess.STARTF_USESHOWWINDOW
         startup_info.wShowWindow = subprocess.SW_HIDE
 
+    command = [
+        mpv,
+        "--no-config",
+        "--no-video",
+        "--vo=null",
+        "--audio-display=no",
+        "--force-window=no",
+        "--no-terminal",
+        "--really-quiet",
+    ]
+    address = _ipc_address() if fade else None
+    if fade:
+        command += ["--volume=0", f"--input-ipc-server={address}"]
     with _audio_lock:
         _stop_audio_locked()
         process = subprocess.Popen(
-            [
-                mpv,
-                "--no-config",
-                "--no-video",
-                "--vo=null",
-                "--audio-display=no",
-                "--force-window=no",
-                "--no-terminal",
-                "--really-quiet",
-                "--",
-                str(target),
-            ],
+            command + ["--", str(target)],
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             startupinfo=startup_info,
         )
-        _audio_process = process
-    logger.info("Audio started profile=%s path=%s pid=%s", profile_id, target, process.pid)
+        playback = _Playback(profile_id, process, MpvIpc(address) if fade else None, fade)
+        if fade:
+            try:
+                playback.ipc.connect(process, IPC_CONNECT_SECONDS)
+            except OSError:
+                # Silent and not controllable: better not to play at all.
+                playback.terminate()
+                raise
+            playback.fade_thread = threading.Thread(target=_fade_in, args=(playback,), daemon=True)
+            playback.fade_thread.start()
+        _playback = playback
+    logger.info("Audio started profile=%s path=%s pid=%s fade=%s", profile_id, target, process.pid, fade)
 
 
-def _stop_audio() -> bool:
+def _stop_audio(fade: dict | None = None) -> bool:
+    """Stop playback; with a fade (and a track started with one) it fades
+    out in the background and the call returns at once."""
+    global _playback
     with _audio_lock:
+        playback = _playback
+        if fade and playback is not None and playback.ipc is not None and playback.process.poll() is None:
+            _playback = None
+            _fading_out.add(playback)
+            threading.Thread(target=_fade_out, args=(playback, fade["seconds"]), daemon=True).start()
+            logger.info("Audio fading out profile=%s over %.1fs", playback.profile_id, fade["seconds"])
+            return True
         stopped = _stop_audio_locked()
     logger.info("Audio stopped active=%s", stopped)
     return stopped
@@ -698,7 +891,8 @@ class DisplayHandler(BaseHTTPRequestHandler):
     def _handle_audio(self, body: dict) -> None:
         if (
             not isinstance(body, dict)
-            or set(body) != {"id", "action", "path"}
+            or set(body) - {"fade"} != {"id", "action", "path"}
+            or ("fade" in body and not _valid_fade(body["fade"]))
             or not isinstance(body["id"], str)
             or not body["id"].replace("-", "").replace("_", "").isalnum()
             or body["action"] not in ("play", "stop")
@@ -709,10 +903,10 @@ class DisplayHandler(BaseHTTPRequestHandler):
             return
         try:
             if body["action"] == "play":
-                _play_audio(body["id"], body["path"])
+                _play_audio(body["id"], body["path"], body.get("fade"))
                 result = {"ok": True, "playing": True, "profile": body["id"]}
             else:
-                stopped = _stop_audio()
+                stopped = _stop_audio(body.get("fade"))
                 result = {"ok": True, "playing": False, "stopped": stopped}
         except (FileNotFoundError, ValueError) as exc:
             logger.warning("Audio %s rejected: %s", body["action"], exc)
