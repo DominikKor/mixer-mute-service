@@ -56,7 +56,8 @@ class ProgramItemStore:
     def _persist(self) -> None:
         write_json_atomic(self._path, self._items, ensure_ascii=False)
 
-    def _validated_fields(self, data: dict) -> dict:
+    @staticmethod
+    def _validated_fields(data: dict) -> dict:
         scheduled_time = str(data.get("time", "")).strip()
         if not _TIME_RE.fullmatch(scheduled_time):
             raise ProgramItemError("time must use HH:MM")
@@ -165,6 +166,17 @@ class ProgramItemStore:
             self._items.insert(index + 1, item)
             self._persist()
             return deepcopy(item)
+
+    async def replace_all(self, rows: List[dict]) -> List[dict]:
+        """Replace the whole program (a template applied); all or nothing."""
+        fields = [self._validated_fields(row) for row in rows]
+        async with self._lock:
+            self._items = [
+                {"id": uuid.uuid4().hex, **row, "last_delay_seconds": None, "last_played_at": None}
+                for row in fields
+            ]
+            self._persist()
+            return deepcopy(self._ordered())
 
     async def reset_played(self) -> int:
         """Forget all start times and delays (a new service or a rehearsal)."""

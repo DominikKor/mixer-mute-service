@@ -35,6 +35,7 @@ from .native_controls import NativeControlService
 from .power_control import PowerControlStore
 from .proxy import ProxyServer
 from .program_items import ProgramItemStore
+from .program_templates import ProgramTemplateStore, router as program_templates_router
 from .file_actions import router as file_actions_router
 from .routes import router
 from .songs import SongService, router as songs_router
@@ -101,6 +102,7 @@ async def lifespan(app: FastAPI):
     seed = {name: g.channels for name, g in cfg.groups.items()}
     groups = GroupStore(data_dir / "groups.json", cfg.valid_channels(), seed)
     program_items = ProgramItemStore(data_dir / "program_items.json")
+    program_templates = ProgramTemplateStore(data_dir / "program_templates.json")
     songs = SongService(data_dir)
     native_controls = NativeControlService(data_dir / "native_control_state.json")
     camera_ptz = PanTiltControl()
@@ -117,6 +119,7 @@ async def lifespan(app: FastAPI):
     app.state.client = client
     app.state.groups = groups
     app.state.program_items = program_items
+    app.state.program_templates = program_templates
     app.state.songs = songs
     app.state.native_controls = native_controls
     app.state.camera_ptz = camera_ptz
@@ -159,6 +162,7 @@ app.include_router(updater_router)
 app.include_router(agent_download_router)
 app.include_router(channel_colors_router)
 app.include_router(songs_router)
+app.include_router(program_templates_router)
 app.include_router(file_actions_router)
 app.include_router(camera_hls_router)
 app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="ui")
