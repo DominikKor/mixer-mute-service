@@ -418,8 +418,17 @@ Ein Programmpunkt bekommt sein Lied in der Spalte *Liedtext* („♪ Lied wähle
 Suche nach Titel oder Liederbuch-Nummer); beim Start zeigt er die erste Folie.
 Unter der Weiter-Leiste erscheinen dann eine 16:9-Vorschau, alle Folien als
 Miniaturen (antippen = anzeigen) und **Zurück / Weiter / Schwarz / Aus**. Nach
-der letzten Folie schaltet *Weiter* auf schwarz. Tastatur und Presenter:
-Bild ab, →, Leertaste = weiter; Bild auf, ← = zurück; B = schwarz.
+der letzten Folie schaltet *Weiter* auf schwarz.
+
+Tastatur und Presenter (immer, solange die Seite offen ist; nicht beim Tippen in
+einem Feld oder bei offenem Dialog):
+
+| Taste | Wirkung |
+|---|---|
+| Bild ab, →, Leertaste | nächste Folie des Lieds; ist das Lied durch (schwarz nach der letzten Folie) oder läuft keins: nächster Programmpunkt |
+| Bild auf, ← | vorige Folie (im Programm geht es nie zurück) |
+| B oder . | Bildschirm schwarz / wieder an (ohne Lied: Anzeige-PC schwarz / aus) |
+| H | Beamer hide / unhide (wie die Tasten „Beamer hide/unhide“; der Ist-Zustand muss einmal gesetzt sein) |
 
 Der Agent braucht dafür die neue Version (Weboberfläche: *Display Service
 herunterladen*, auf dem Anzeige-PC ausführen). Endpunkte, z. B. für Companion:
