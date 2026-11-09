@@ -22,6 +22,7 @@ from ..actions import (
 from ..models import ProgramItemRequest
 from ..program_items import ProgramItemError
 from ..responses import fail, respond, unwrap
+from ..lights import apply_scene
 from ..songs import show_slide
 
 router = APIRouter()
@@ -155,6 +156,14 @@ async def _play(item_id: str, request: Request):
         "group_result": group_result,
     }
 
+    light_result = None
+    if item.get("light"):
+        # The light first: it fades while the keys and the song run.
+        light_result, status_code = await apply_scene(request, item["light"])
+        if status_code != 200 or light_result.get("ok") is False:
+            reason = f"light scene could not be applied: {light_result.get('reason')}"
+            return fail(reason, status_code if status_code != 200 else 502, **summary, light_result=light_result)
+
     linked_actions = []
     for field in PROGRAM_ACTION_FIELDS:
         value = item.get(field)
@@ -189,5 +198,5 @@ async def _play(item_id: str, request: Request):
             return fail(camera_result.get("reason", "camera presets failed"), 502,
                         **summary, linked_actions=linked_actions, camera=camera_result)
 
-    return {"ok": True, "song": song_result, **summary, "linked_actions": linked_actions,
-            "camera": camera_result}
+    return {"ok": True, "song": song_result, "light": light_result, **summary,
+            "linked_actions": linked_actions, "camera": camera_result}

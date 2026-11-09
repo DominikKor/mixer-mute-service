@@ -115,6 +115,10 @@ class ProgramItemStore:
             raise ProgramItemError(
                 f"camera_wait_seconds must be {MIN_WAIT_SECONDS:g} to {MAX_WAIT_SECONDS:g} seconds")
         result["camera_wait_seconds"] = wait
+        light = data.get("light")
+        if light is not None and (not isinstance(light, str) or len(light) > 64):
+            raise ProgramItemError("light must be a light scene id or empty")
+        result["light"] = light or None
         return result
 
     def _ordered(self) -> List[dict]:

@@ -14,13 +14,14 @@ Values of a program action field:
 from __future__ import annotations
 
 import logging
+from copy import deepcopy
 from pathlib import PureWindowsPath
 from typing import Optional
 
 from fastapi import Request
 
 from . import display_agent
-from .companion_buttons import CAMERA_BUTTON_IDS, COMPANION_BUTTONS_BY_ID
+from .companion_buttons import CAMERA_BUTTON_IDS, CATALOG_ONLY_IDS, COMPANION_BUTTONS_BY_ID
 from .display_agent import AgentError
 from .file_actions import is_file_action, run_file_action
 from .native_controls import NativeControlError
@@ -40,13 +41,15 @@ AUDIO_FADE_FULL_DB = 0.0  # audio fades always go up to full player volume
 
 
 async def pressable_button(request: Request, button_id: str) -> Optional[dict]:
-    """A key of Steuerung, or a catalog camera key (presets, zoom): those are
+    """A key of Steuerung, or a catalog camera, light or mixer key: those are
     not in Steuerung any more but the camera section and program rows still
     run them by ID."""
     store = request.app.state.companion_button_store
     button = await store.get_button(button_id)
     if button is None and button_id in CAMERA_BUTTON_IDS:
         button = next(item for item in await store.camera_buttons() if item["id"] == button_id)
+    if button is None and button_id in CATALOG_ONLY_IDS:
+        button = deepcopy(COMPANION_BUTTONS_BY_ID[button_id])
     return button
 
 
@@ -244,6 +247,9 @@ async def program_reference_error(request: Request, item: dict) -> Optional[str]
     songs = state.songs.songs
     if item.get("song") and songs and item["song"] not in songs:
         return "unknown song"
+    scenes = getattr(state, "light_scenes", None)
+    if item.get("light") and (scenes is None or await scenes.get(item["light"]) is None):
+        return "unknown light scene"
     return None
 
 

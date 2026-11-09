@@ -108,3 +108,4 @@ class ProgramItemRequest(BaseModel):
     cam1_preset: Optional[int] = None
     cam2_preset: Optional[int] = None
     camera_wait_seconds: Optional[float] = None
+    light: Optional[str] = None  # light scene id (app/lights.py), applied when the row starts

@@ -3,10 +3,12 @@ state."""
 
 from __future__ import annotations
 
+from copy import deepcopy
+
 from fastapi import APIRouter, Request
 
 from ..actions import press_button
-from ..companion_buttons import COMPANION_BUTTONS, COMPANION_BUTTONS_BY_ID
+from ..companion_buttons import CATALOG_ONLY_BUTTONS, COMPANION_BUTTONS, COMPANION_BUTTONS_BY_ID
 from ..models import (
     BeamerStateRequest,
     CompanionButtonCreate,
@@ -29,6 +31,8 @@ async def companion_buttons(request: Request):
         if button["kind"] != "channel" and button["id"] in present
     ]
     data["camera_buttons"] = await store.camera_buttons()
+    # Light and mixer keys left Steuerung (v8); program rows may still use them.
+    data["catalog_buttons"] = deepcopy(CATALOG_ONLY_BUTTONS)
     return data
 
 

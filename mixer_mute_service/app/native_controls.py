@@ -39,6 +39,12 @@ ARTNET_ZONES = {
     "center-right": {"white": 9, "warm": 10, "cold": 11},
     "right": {"white": 13, "warm": 14, "cold": 15},
 }
+# Names in the Licht section.
+SHELLY_LABELS = {
+    "light-left": "Links", "light-center-left": "Mitte links", "light-center-right": "Mitte rechts",
+    "light-right": "Rechts", "light-front": "Vorne", "light-tech": "Technik", "light-stage": "Bühne",
+}
+ARTNET_ZONE_LABELS = {"left": "Links", "center-left": "Mitte links", "center-right": "Mitte rechts", "right": "Rechts"}
 VISCA_CAMERAS = {"cam1": ("192.168.5.21", 5678), "cam2": ("192.168.5.22", 5678)}
 OBS_HOST = "192.168.188.20"
 OBS_PORT = 4455
@@ -315,6 +321,83 @@ class NativeControlService:
             self._levels[key] = max(low, min(high, self._levels[key] + delta))
             self._persist_state()
             return self._levels[key]
+
+    # -- Licht section: absolute values and the room light's state ----------
+
+    def stage_state(self) -> dict:
+        """Stage zones (white 0..255) and the light settings as last sent.
+        Read without the lock: a fade in progress must not hold up a read."""
+        return {
+            "zones": {name: self._dmx[zone["white"] - 1] for name, zone in ARTNET_ZONES.items()},
+            **{key: self._levels[key] for key in _LEVEL_BOUNDS},
+        }
+
+    async def set_stage(self, zones: Optional[dict] = None, warm: Optional[int] = None,
+                        cold: Optional[int] = None) -> dict:
+        """Fade the stage to absolute values; zones not named keep theirs."""
+        zones = zones or {}
+        if any(name not in ARTNET_ZONES for name in zones):
+            raise NativeControlError("unknown Art-Net zone")
+        for value in [*zones.values(), warm, cold]:
+            if value is not None and (not isinstance(value, int) or isinstance(value, bool) or not 0 <= value <= 255):
+                raise NativeControlError("light values must be 0 to 255")
+
+        def compute(frame: list[int]) -> list[int]:
+            if warm is not None:
+                self._levels["warm"] = warm
+            if cold is not None:
+                self._levels["cold"] = cold
+            for name, zone in ARTNET_ZONES.items():
+                self._set_zone(frame, name, zones.get(name, frame[zone["white"] - 1]))
+            return frame
+
+        await self._update_dmx(compute)
+        return self.stage_state()
+
+    async def set_light_settings(self, values: dict) -> dict:
+        """Start brightness, dimming step and fade time (Steuerung keys and the
+        Licht section share them)."""
+        for key, value in values.items():
+            if key not in ("start", "steps", "fade_ms"):
+                raise NativeControlError(f"unknown light setting {key}")
+            low, high = _LEVEL_BOUNDS[key]
+            if not isinstance(value, int) or isinstance(value, bool) or not low <= value <= high:
+                raise NativeControlError(f"{key} must be {low} to {high}")
+        async with self._lock:
+            self._levels.update(values)
+            self._persist_state()
+        return self.stage_state()
+
+    async def circuit_states(self) -> dict:
+        """On/off of every room light circuit as the Shelly reports it; None
+        where it does not answer."""
+        async def one(host: str):
+            try:
+                data = await asyncio.to_thread(_shelly_rpc, host, "Switch.GetStatus", {"id": 0})
+            except NativeControlError:
+                return None
+            return data.get("output") if isinstance(data.get("output"), bool) else None
+
+        states = await asyncio.gather(*(one(host) for host in SHELLY_HOSTS.values()))
+        return dict(zip(SHELLY_HOSTS, states))
+
+    async def set_circuits(self, states: dict) -> dict:
+        """Switch room light circuits; every circuit is tried, failures are
+        listed (target -> reason)."""
+        if not states or any(target not in SHELLY_HOSTS for target in states):
+            raise NativeControlError("unknown Shelly target")
+        if any(not isinstance(on, bool) for on in states.values()):
+            raise NativeControlError("circuit state must be true or false")
+
+        async def one(target: str, on: bool):
+            try:
+                await asyncio.to_thread(_shelly_rpc, SHELLY_HOSTS[target], "Switch.Set", {"id": 0, "on": on})
+                return None
+            except NativeControlError as exc:
+                return str(exc)
+
+        errors = await asyncio.gather(*(one(target, on) for target, on in states.items()))
+        return {target: error for target, error in zip(states, errors) if error}
 
     async def press(self, action: dict) -> dict:
         try:

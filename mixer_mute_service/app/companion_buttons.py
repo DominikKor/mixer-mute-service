@@ -145,11 +145,18 @@ COMPANION_BUTTONS_BY_ID = {button["id"]: button for button in COMPANION_BUTTONS}
 # longer keys in Steuerung; the camera section shows them instead.
 CAMERA_BUTTONS = [button for button in COMPANION_BUTTONS if button.get("category_id") == "cameras"]
 CAMERA_BUTTON_IDS = {button["id"] for button in CAMERA_BUTTONS}
+# Since v8 the light keys (the Licht section controls the light) and the two
+# mixer keys are no longer in Steuerung either. Program rows and keys made
+# from them still run them by ID.
+CATALOG_ONLY_BUTTONS = [b for b in COMPANION_BUTTONS if b.get("category_id") in ("light", "mixer")]
+CATALOG_ONLY_IDS = {button["id"] for button in CATALOG_ONLY_BUTTONS}
+NOT_IN_STEUERUNG_IDS = CAMERA_BUTTON_IDS | CATALOG_ONLY_IDS
 # Bump when catalog actions change; stored native keys then get the new action.
 # v3 added the keys below, v4 made the Overall macros switch the light on,
 # v5 added state-aware Beamer hide/unhide actions, v6 adds direct projector
-# power and freeze commands and v7 removes the camera keys from Steuerung.
-_NATIVE_CATALOG_VERSION = 7
+# power and freeze commands, v7 removes the camera keys from Steuerung and v8
+# the light and mixer keys.
+_NATIVE_CATALOG_VERSION = 8
 _NATIVE_CATALOG_V3_IDS = {
     "native-artnet-start-up", "native-artnet-start-down",
     "native-artnet-steps-up", "native-artnet-steps-down",
@@ -161,10 +168,8 @@ _NATIVE_CATALOG_V6_IDS = {"beamer-power-off", "beamer-power-on"}
 
 DEFAULT_CATEGORIES = [
     {"id": "beamer", "name": "Beamer", "visible": True},
-    {"id": "light", "name": "Licht", "visible": True},
     {"id": "obs", "name": "OBS", "visible": True},
     {"id": "overall", "name": "Overall", "visible": True},
-    {"id": "mixer", "name": "Mixer", "visible": True},
 ]
 
 
@@ -195,12 +200,22 @@ def _remove_camera_keys(buttons: List[dict], categories: List[dict], camera_labe
     return buttons, categories
 
 
+def _remove_light_mixer_keys(buttons: List[dict], categories: List[dict]):
+    """v8: the catalog's light and mixer keys leave Steuerung, wherever the
+    user moved them. The Licht and Mixer categories go too, unless the user
+    put keys of their own in them."""
+    buttons = [button for button in buttons if button.get("id") not in CATALOG_ONLY_IDS]
+    used = {button.get("category_id") for button in buttons}
+    categories = [c for c in categories if c.get("id") not in ("light", "mixer") or c.get("id") in used]
+    return buttons, categories
+
+
 class CompanionButtonStore:
     def __init__(self, path: Path, seed: List[dict]) -> None:
         self._path = path
         self._lock = asyncio.Lock()
         self._categories = deepcopy(DEFAULT_CATEGORIES)
-        self._buttons = deepcopy([button for button in seed if button["id"] not in CAMERA_BUTTON_IDS])
+        self._buttons = deepcopy([button for button in seed if button["id"] not in NOT_IN_STEUERUNG_IDS])
         # Labels of the camera keys as they were stored in Steuerung before v7
         # (only those that differ from the catalog); the camera section uses them.
         self._camera_labels: dict = {}
@@ -262,6 +277,8 @@ class CompanionButtonStore:
                         current["native_action"] = _updated_action(current, seed_button)
                 if self._catalog_version < 7:
                     buttons, categories = _remove_camera_keys(buttons, categories, camera_labels)
+                if self._catalog_version < 8:
+                    buttons, categories = _remove_light_mixer_keys(buttons, categories)
                 self._catalog_version = _NATIVE_CATALOG_VERSION
                 migrated = True
             category_ids = {item["id"] for item in categories}
@@ -279,7 +296,7 @@ class CompanionButtonStore:
             backup = backup_corrupt(self._path)
             log.error("Invalid %s (%s); kept it as %s and restored the catalog", self._path, exc, backup)
             self._categories = deepcopy(DEFAULT_CATEGORIES)
-            self._buttons = deepcopy([b for b in COMPANION_BUTTONS if b["id"] not in CAMERA_BUTTON_IDS])
+            self._buttons = deepcopy([b for b in COMPANION_BUTTONS if b["id"] not in NOT_IN_STEUERUNG_IDS])
             self._camera_labels = {}
             self._persist()
 

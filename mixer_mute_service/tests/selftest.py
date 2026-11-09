@@ -6,7 +6,7 @@ import sys
 import time
 from unittest.mock import AsyncMock, patch
 
-from app.companion_buttons import CAMERA_BUTTONS, COMPANION_BUTTONS
+from app.companion_buttons import CAMERA_BUTTONS, CATALOG_ONLY_BUTTONS, CATALOG_ONLY_IDS, COMPANION_BUTTONS
 from app.protocol import build_mute_command, parse_hex_stream, is_valid_fader_hex
 from app.config import Config
 from app.state import ChannelState
@@ -289,8 +289,10 @@ with TestClient(app) as client:
     check("always-on rejects invalid channel", invalid_always_on.status_code == 400)
     companion_buttons = client.get("/companion/buttons")
     check("native and imported buttons listed", companion_buttons.status_code == 200
-          # every catalog key except the camera keys, which moved to the camera section
-          and len(companion_buttons.json()["buttons"]) == len(COMPANION_BUTTONS) - len(CAMERA_BUTTONS))
+          # every catalog key except the camera keys (camera section) and the
+          # light and mixer keys (Licht section; listed apart for program rows)
+          and len(companion_buttons.json()["buttons"]) == len(COMPANION_BUTTONS) - len(CAMERA_BUTTONS) - len(CATALOG_ONLY_BUTTONS)
+          and {b["id"] for b in companion_buttons.json()["catalog_buttons"]} == CATALOG_ONLY_IDS)
     with patch.object(app.state.native_controls, "press", AsyncMock(return_value={"ok": True})) as native_press:
         companion_press = client.post("/companion/buttons/beamer-freeze/press")
         check("native Beamer button dispatched", companion_press.status_code == 200 and companion_press.json()["ok"] is True)
@@ -333,7 +335,7 @@ with TestClient(app) as client:
         check("normal group capture passes name",
               capture_group.call_args.args == ("Captured",))
     category_names = {category["name"] for category in companion_buttons.json()["categories"]}
-    check("native categories loaded", {"Licht", "OBS", "Overall"} <= category_names)
+    check("native categories loaded", {"OBS", "Overall"} <= category_names and not {"Licht", "Mixer"} & category_names)
     check("camera keys are not in Steuerung", "Kameras" not in category_names
           and not any(b["id"].startswith(("native-cam1-", "native-cam2-")) for b in companion_buttons.json()["buttons"]))
     new_category = client.post("/companion/categories", json={"name": "Streaming"})
@@ -481,7 +483,7 @@ with TestClient(app) as client:
     client.post("/groups", json={"name": "Altname", "channels": [1, 2]})
     rename_row = client.post("/program/items", json={"time": "12:00", "title": "Umbenennen", "group": "Altname"}).json()["item"]
     rename_key = client.post("/companion/buttons", json={
-        "label": "Altname an", "category_id": "mixer", "kind": "group", "group": "Altname", "operation": "unmute",
+        "label": "Altname an", "category_id": "overall", "kind": "group", "group": "Altname", "operation": "unmute",
     }).json()["button"]
     renamed = client.post("/groups/Altname/rename", json={"name": "Neuname"})
     groups_now = client.get("/groups").json()

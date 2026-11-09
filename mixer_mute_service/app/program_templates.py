@@ -47,7 +47,7 @@ MAX_ROWS = 100
 MAX_SONGS = 40
 _ROW_FIELDS = (
     "time", "title", "person", "group", "playback", "translation", "lyrics",
-    "playback_description", "translation_description", "lyrics_description", "song",
+    "playback_description", "translation_description", "lyrics_description", "song", "light",
     "cam1_preset", "cam2_preset", "camera_wait_seconds",
 )
 
@@ -180,7 +180,8 @@ def fill_template(rows: List[dict], songs: List[dict]) -> List[dict]:
         else:
             model = {field: "" for field in _ROW_FIELDS}
             model.update({"time": rows[-1]["time"] if rows else "10:00", "group": "",
-                          "playback": None, "translation": None, "lyrics": None, "song": None})
+                          "playback": None, "translation": None, "lyrics": None, "song": None,
+                          "light": None})
             at = len(result)
         added = []
         for song in extra:
