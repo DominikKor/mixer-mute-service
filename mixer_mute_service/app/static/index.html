@@ -113,7 +113,13 @@
     width: 100%; padding: 5px 6px 6px; border-radius: 4px; text-align: center;
     background: var(--lcd-bg); border: 1px solid #000; box-shadow: var(--lcd-shadow);
   }
-  .scribble-top { display: flex; justify-content: space-between; align-items: center; font: 600 10px/1 var(--mono); color: var(--lcd-dim); }
+  .scribble-top { display: flex; justify-content: space-between; align-items: center; gap: 4px; font: 600 10px/1 var(--mono); color: var(--lcd-dim); }
+  /* Console solo (headphone monitoring): a small amber tag like the console's solo LED */
+  .solo-tag {
+    margin-left: auto; padding: 1px 4px; border-radius: 3px; font: 800 9px/1.2 var(--mono); letter-spacing: .06em;
+    color: #1a1400; background: #f1c40f; box-shadow: 0 0 6px rgba(241,196,15,.6);
+  }
+  .solo-tag[hidden] { display: none; }
   .led { width: 7px; height: 7px; border-radius: 50%; background: #3a3f47; box-shadow: inset 0 1px 1px rgba(0,0,0,.6); }
   .led.safe { background: #3ee07f; box-shadow: 0 0 5px rgba(46,204,113,.85); }
   .led.mute { background: #ff4b3a; box-shadow: 0 0 6px rgba(255,75,58,.85); }
@@ -2973,7 +2979,7 @@ function buildChannelCard(ch) {
   card.className = "card";
   card.innerHTML = `
     <div class="scribble">
-      <div class="scribble-top"><span>CH ${ch}</span><span class="led"></span></div>
+      <div class="scribble-top"><span>CH ${ch}</span><span class="solo-tag" hidden title="Am Pult auf Solo (Kopfhörer); bleibt bei Mute und Fader erhalten">SOLO</span><span class="led"></span></div>
       <div class="card-title-wrap"></div>
     </div>
     <div class="fader-strip">${faderStripHtml(ch)}</div>
@@ -3006,6 +3012,7 @@ function updateChannelCard(ch, c) {
       </button>`;
   }
 
+  card.querySelector(".solo-tag").hidden = c.solo !== true;
   const led = card.querySelector(".led");
   led.className = "led " + (c.safe ? "safe" : "unsafe");
   led.title = (c.safe ? "sicher" : "unsicher: " + (faderBlockReason(c) || "Kanal unsicher"))

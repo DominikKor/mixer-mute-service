@@ -109,16 +109,16 @@ class Controller:
         return cs, None
 
     async def _send(
-        self, channel: int, muted: bool, fader_hex: str, action: str
+        self, channel: int, muted: bool, fader_hex: str, action: str, solo: bool = False
     ) -> Tuple[Optional[str], Optional[dict]]:
         """Build and send one command -> (sent_hex, None) or (None, error result)."""
         try:
             bus = self._bus(channel)
             if bus is not None:
-                payload = build_bus_command(bus.id, muted, fader_hex)
+                payload = build_bus_command(bus.id, muted, fader_hex, solo=solo)
             else:
                 payload = build_mute_command(
-                    channel, muted, fader_hex, self._cfg.mixer.max_channels
+                    channel, muted, fader_hex, self._cfg.mixer.max_channels, solo=solo
                 )
         except ValueError as exc:
             return None, self._blocked(channel, action, str(exc))
@@ -142,7 +142,8 @@ class Controller:
             return blocked
         assert cs is not None and cs.fader_hex is not None
         fader_hex = cs.fader_hex
-        sent_hex, error = await self._send(channel, target_muted, fader_hex, action)
+        # The console's solo is sent back as observed, never changed by us.
+        sent_hex, error = await self._send(channel, target_muted, fader_hex, action, solo=bool(cs.solo))
         if error:
             return error
 
@@ -185,7 +186,7 @@ class Controller:
                 return blocked
             assert cs is not None and cs.muted is not None
             muted = cs.muted
-            sent_hex, error = await self._send(channel, muted, fader_hex, "fader")
+            sent_hex, error = await self._send(channel, muted, fader_hex, "fader", solo=bool(cs.solo))
             if error:
                 return error
             await self._store.set_fader(channel, fader_hex)

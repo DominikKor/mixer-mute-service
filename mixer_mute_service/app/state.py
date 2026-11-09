@@ -38,6 +38,9 @@ class ChannelState:
     muted: Optional[bool] = None
     muted_updated_at: Optional[float] = None
     last_seen_raw: Optional[str] = None
+    # Console solo (headphone monitoring), observed together with the mute
+    # state. Every command re-sends it; None = not observed, sends blocked.
+    solo: Optional[bool] = None
 
 
 class StateStore:
@@ -63,6 +66,7 @@ class StateStore:
             cs.fader_updated_at = now
             cs.muted = event.muted
             cs.muted_updated_at = now
+            cs.solo = event.solo
             cs.last_seen_raw = event.raw_match
             self._channels[event.channel] = cs
             self.last_update_at = now

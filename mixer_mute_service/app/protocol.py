@@ -110,14 +110,20 @@ def _fader_field(marker: str, fader_hex: str) -> str:
     return "" if value == 0.0 else f"{marker}{fader_hex.lower()}"
 
 
-def build_mute_command(channel: int, muted: bool, fader_hex: str, max_channels: int = 16) -> bytes:
+def build_mute_command(
+    channel: int, muted: bool, fader_hex: str, max_channels: int = 16, solo: bool = False
+) -> bytes:
     """Build a full App -> Mixer frame.
 
     Mute:   PREFIX + 090908 XX 20012d FFFFFFFF
     Unmute: PREFIX + 070708 XX     2d FFFFFFFF
+    Soloed: PREFIX + LL LL 08 XX 1801 [2001] 2d FFFFFFFF
 
     XX = channel - 1 (zero based), FFFFFFFF = current observed fader value.
     A fader at position 0 (-inf) omits the 2d field, as the app does.
+    Like mute and fader, the solo flag (field 3) is part of every command: a
+    command without it switches the console's solo off, so the observed solo
+    state must be sent back unchanged.
     """
     if not 1 <= channel <= max_channels:
         raise ValueError(f"Invalid channel: {channel} (1..{max_channels})")
@@ -129,8 +135,8 @@ def build_mute_command(channel: int, muted: bool, fader_hex: str, max_channels: 
     else:
         ident = f"08{channel - 1:02x}"
 
-    # Body without the leading length marker.
-    body = f"{ident}2001{fader}" if muted else f"{ident}{fader}"
+    # Body without the leading length marker, fields in the console's order.
+    body = f"{ident}{'1801' if solo else ''}{'2001' if muted else ''}{fader}"
     # The frame is prefixed by the payload length, repeated twice (LL LL),
     # e.g. channel 2 mute = 09 09 .., channel 1 unmute = 0a 0a ..
     length = len(body) // 2
@@ -139,15 +145,16 @@ def build_mute_command(channel: int, muted: bool, fader_hex: str, max_channels: 
     return bytes.fromhex(COMMAND_PREFIX + payload)
 
 
-def build_bus_command(bus_id: str, muted: bool, fader_hex: str) -> bytes:
+def build_bus_command(bus_id: str, muted: bool, fader_hex: str, solo: bool = False) -> bytes:
     """Build a bus mute/unmute command (type 72).
 
     Mute:   72.. <LL LL> 08<bus_id> 18 01 3d <fader>
     Unmute: 72.. <LL LL> 08<bus_id> 3d <fader>
+    Soloed: 72.. <LL LL> 08<bus_id> 10 01 [18 01] 3d <fader>  (solo = field 2)
     """
     fader = _fader_field("3d", fader_hex)
     ident = f"08{bus_id}"
-    body = f"{ident}1801{fader}" if muted else f"{ident}{fader}"
+    body = f"{ident}{'1001' if solo else ''}{'1801' if muted else ''}{fader}"
     length = len(body) // 2
     payload = f"{length:02x}{length:02x}{body}"
     return bytes.fromhex(BUS_COMMAND_PREFIX + payload)
@@ -172,6 +179,9 @@ class FrameEvent:
     end_hex_index: int = 0  # index into the hex string just past this frame
     # True if this came from a full state dump (see StateStore.apply_event).
     from_dump: bool = False
+    # Console solo (headphone monitoring). Absent in the frame = not soloed;
+    # None together with muted/fader None for an untrusted section.
+    solo: Optional[bool] = False
 
 
 _MAGIC = bytes.fromhex(MAGIC)
@@ -188,10 +198,13 @@ _VARINT, _FIXED32, _BYTES = 0, 5, 2
 
 # Input fader section (also field 7 of every channel object in the dump):
 #   1 = channel index (omitted for index 0), 2 = extra fixed32 only seen on
-#   channel 1, 4 = muted, 5 = fader. Omitted fields are 0 (protobuf defaults).
-_INPUT_FIELDS = {1: _VARINT, 2: _FIXED32, 4: _VARINT, 5: _FIXED32}
-# Bus fader section: 1 = bus object id, 3 = muted, 7 = fader.
-_BUS_FIELDS = {1: _VARINT, 3: _VARINT, 7: _FIXED32}
+#   channel 1, 3 = solo, 4 = muted, 5 = fader. Omitted fields are 0 (protobuf
+#   defaults). Solo verified live on 2026-11-09: solo on a muted channel 2 is
+#   08 01 18 01 20 01 2d <fader>.
+_INPUT_FIELDS = {1: _VARINT, 2: _FIXED32, 3: _VARINT, 4: _VARINT, 5: _FIXED32}
+# Bus fader section: 1 = bus object id, 2 = solo, 3 = muted, 7 = fader
+# (verified live: "PC Input" soloed = 08 8401 10 01 3d <fader>).
+_BUS_FIELDS = {1: _VARINT, 2: _VARINT, 3: _VARINT, 7: _FIXED32}
 # Dump: top-level fields 1 and 2 hold the input channel objects (8 each); each
 # object has its index in field 1 and its fader section in field 7.
 _DUMP_INPUT_GROUPS = (1, 2)
@@ -272,8 +285,11 @@ def _strict_fields(msg: bytes, schema: Dict[int, int]) -> Optional[Dict[int, obj
     return out
 
 
-def _input_section(msg: bytes) -> Optional[Tuple[int, Optional[bool], Optional[str]]]:
-    """Interpret an input fader section -> (channel, muted, fader_hex).
+Section = Tuple[int, Optional[bool], Optional[str], Optional[bool]]
+
+
+def _input_section(msg: bytes) -> Optional[Section]:
+    """Interpret an input fader section -> (channel, muted, fader_hex, solo).
 
     Returns None if the message is not a fader section. Returns muted/fader as
     None (= make the channel unknown) if it is one but cannot be trusted.
@@ -286,28 +302,30 @@ def _input_section(msg: bytes) -> Optional[Tuple[int, Optional[bool], Optional[s
         return None
     channel = index + 1
     mute = f.get(4, 0)
+    solo = f.get(3, 0)
     fader_hex = f[5].hex() if 5 in f else _ZERO_FADER
     # The extra field must be exactly what build_mute_command re-sends for this
     # channel, otherwise a command from us would change it.
     extra = ("15" + f[2].hex()) if 2 in f else None
-    if (mute not in (0, 1) or extra != CHANNEL_ID_FIELDS.get(channel)
+    if (mute not in (0, 1) or solo not in (0, 1) or extra != CHANNEL_ID_FIELDS.get(channel)
             or not is_safe_fader_hex(fader_hex)):
-        return channel, None, None
-    return channel, bool(mute), fader_hex
+        return channel, None, None, None
+    return channel, bool(mute), fader_hex, bool(solo)
 
 
-def _bus_section(msg: bytes, buses: Dict[int, int]) -> Optional[Tuple[int, Optional[bool], Optional[str]]]:
-    """Interpret a bus fader section -> (channel, muted, fader_hex) for a
-    configured bus, or None."""
+def _bus_section(msg: bytes, buses: Dict[int, int]) -> Optional[Section]:
+    """Interpret a bus fader section -> (channel, muted, fader_hex, solo) for
+    a configured bus, or None."""
     f = _strict_fields(msg, _BUS_FIELDS)
     if f is None or 1 not in f or f[1] not in buses:
         return None
     channel = buses[f[1]]
     mute = f.get(3, 0)
+    solo = f.get(2, 0)
     fader_hex = f[7].hex() if 7 in f else _ZERO_FADER
-    if mute not in (0, 1) or not is_safe_fader_hex(fader_hex):
-        return channel, None, None
-    return channel, bool(mute), fader_hex
+    if mute not in (0, 1) or solo not in (0, 1) or not is_safe_fader_hex(fader_hex):
+        return channel, None, None, None
+    return channel, bool(mute), fader_hex, bool(solo)
 
 
 def _dump_group_objects(msg: bytes, groups) -> Iterator[Tuple[int, list]]:
@@ -346,7 +364,7 @@ def _dump_bus_sections(msg: bytes) -> Iterator[Tuple[int, list, bytes]]:
 
 def _dump_sections(
     msg: bytes, buses: Optional[Dict[int, int]] = None, max_input: Optional[int] = None
-) -> List[Tuple[int, Optional[bool], Optional[str]]]:
+) -> List[Section]:
     """Fader sections of all input channels (up to ``max_input``) and
     configured buses in a full state dump. ``buses`` maps bus object id ->
     channel (see _bus_map)."""
@@ -477,9 +495,9 @@ def _scan(
         raw = buf[start:start + _HEADER_LEN].hex() if is_dump else buf[start:end].hex()
         for p in parsed:
             if p is not None:
-                channel, muted, fader_hex = p
+                channel, muted, fader_hex, solo = p
                 events.append(FrameEvent(channel, muted, fader_hex, raw, end * 2,
-                                         from_dump=is_dump))
+                                         from_dump=is_dump, solo=solo))
         # Trailing zero padding is skipped by the next magic search.
         pos = consumed = end
     return events, consumed

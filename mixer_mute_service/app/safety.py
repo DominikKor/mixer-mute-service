@@ -80,6 +80,11 @@ def check_channel_send(
         # never substitute a default.
         return SafetyResult(False, "invalid fader value")
 
+    if cs.solo is None:
+        # Every command also writes the solo flag; without the observed value
+        # a send could switch the console's solo (headphone monitoring) off.
+        return SafetyResult(False, "solo state unknown")
+
     blocked = _session_and_age(
         "fader value", cs.fader_updated_at, cfg.safety.max_fader_age_seconds,
         cfg, session_epoch,

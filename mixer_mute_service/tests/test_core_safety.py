@@ -211,8 +211,8 @@ def latest_mode_session():
     cfg = Config()
     now = time.monotonic()
     epoch = now - 5
-    before = ChannelState("1f14b643", now - 3600, False, now - 3600)
-    after = ChannelState("1f14b643", now - 1, False, now - 1)
+    before = ChannelState("1f14b643", now - 3600, False, now - 3600, solo=False)
+    after = ChannelState("1f14b643", now - 1, False, now - 1, solo=False)
     check("value from an earlier connection blocked",
           check_channel_send(2, before, cfg, session_epoch=epoch).reason
           == "fader value predates current session")
@@ -221,7 +221,7 @@ def latest_mode_session():
     check("value from this connection (any age) usable",
           check_channel_send(2, after, cfg, session_epoch=epoch).ok)
     check("stale mute state from an earlier connection blocks toggles",
-          check_channel_send(2, ChannelState("1f14b643", now - 1, False, now - 3600), cfg,
+          check_channel_send(2, ChannelState("1f14b643", now - 1, False, now - 3600, solo=False), cfg,
                              session_epoch=epoch, require_mute_state=True).reason
           == "mute state predates current session")
 

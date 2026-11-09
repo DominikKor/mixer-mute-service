@@ -518,6 +518,7 @@ def _channel_view(
         "fader_value": None if cs is None else fader_hex_to_value(cs.fader_hex),
         "fader_age_seconds": _round(fader_age),
         "muted": None if cs is None else cs.muted,
+        "solo": None if cs is None else cs.solo,
         "mute_age_seconds": _round(mute_age),
         "safe": (
             client.connected and controller.enabled

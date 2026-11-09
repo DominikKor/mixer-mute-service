@@ -101,8 +101,12 @@ ev = parse_hex_stream("5a5a5a5a5a5a0000006d000001000708012dffffffff" + pad)
 check("NaN fader frame invalidates channel", len(ev) == 1 and ev[0].channel == 2 and ev[0].fader_hex is None and ev[0].muted is None)
 ev = parse_hex_stream("5a5a5a5a5a5a0000006e00000005052d00007a44")
 check("ch1 frame without its extra field invalidates ch1", len(ev) == 1 and ev[0].channel == 1 and ev[0].fader_hex is None)
-ev = parse_hex_stream("5a5a5a5a5a5a0000006e000000090908011801 2d00007a44".replace(" ", ""))
+# Field 3 is the console's solo flag (see tests/test_console_solo.py); field 6
+# is not part of a fader section.
+ev = parse_hex_stream("5a5a5a5a5a5a0000006e000000090908013001 2d00007a44".replace(" ", ""))
 check("unknown field -> frame ignored", ev == [])
+ev = parse_hex_stream("5a5a5a5a5a5a0000006e000000090908011801 2d00007a44".replace(" ", ""))
+check("solo field 3 -> parsed with solo", len(ev) == 1 and ev[0].solo is True and ev[0].muted is False)
 sb = StreamBuffer()
 frame = bytes.fromhex("5a5a5a5a5a5a0000006d0000010009080720012d0000c643" + pad)
 got = []
@@ -161,8 +165,8 @@ print("== safety (freshness modes) ==")
 now = time.monotonic()
 session = now - 10  # current session began 10s ago
 EP = {"session_epoch": session}
-seen = ChannelState(fader_hex="1f14b643", fader_updated_at=now - 3, muted=False, muted_updated_at=now - 3)
-old = ChannelState(fader_hex="1f14b643", fader_updated_at=session - 5, muted=False, muted_updated_at=session - 5)
+seen = ChannelState(solo=False, fader_hex="1f14b643", fader_updated_at=now - 3, muted=False, muted_updated_at=now - 3)
+old = ChannelState(solo=False, fader_hex="1f14b643", fader_updated_at=session - 5, muted=False, muted_updated_at=session - 5)
 empty = ChannelState()
 
 # default mode "latest": any age, but only values seen on the current link
@@ -174,7 +178,7 @@ check("latest: no live session blocked", check_channel_send(2, seen, cfg).reason
 check("latest: unknown fader blocked", check_channel_send(2, empty, cfg).reason == "no fader value known")
 check("latest: invalid channel blocked", check_channel_send(99, seen, cfg).reason == "invalid channel")
 check("latest: malformed fader blocked",
-      check_channel_send(2, ChannelState(fader_hex="zz", fader_updated_at=now), cfg).reason == "invalid fader value")
+      check_channel_send(2, ChannelState(solo=False, fader_hex="zz", fader_updated_at=now), cfg).reason == "invalid fader value")
 try:
     Config(desktop_display={"profiles": {"bad": {
         "title": "Bad target", "kind": "image", "path": "C:/image.png",
@@ -209,12 +213,12 @@ check("session: no live session blocked", check_channel_send(2, seen, cfg_s).rea
 # "age" mode (default cap 1s)
 cfg_a = Config(safety={"freshness_mode": "age"})
 check("age: fresh value safe",
-      check_channel_send(2, ChannelState(fader_hex="1f14b643", fader_updated_at=now - 0.1), cfg_a, **EP).ok)
+      check_channel_send(2, ChannelState(solo=False, fader_hex="1f14b643", fader_updated_at=now - 0.1), cfg_a, **EP).ok)
 check("age: stale value blocked", check_channel_send(2, seen, cfg_a, **EP).reason == "fader value stale")
 
 # toggle needs a known mute state in any mode
 check("toggle needs mute state",
-      check_channel_send(2, ChannelState(fader_hex="1f14b643", fader_updated_at=now), cfg,
+      check_channel_send(2, ChannelState(solo=False, fader_hex="1f14b643", fader_updated_at=now), cfg,
                          require_mute_state=True, **EP).reason == "mute state unknown")
 
 print("== HTTP smoke test (isolated config, no mixer connected) ==")
