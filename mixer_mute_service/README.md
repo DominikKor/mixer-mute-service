@@ -534,9 +534,18 @@ dort ohne Fenster mit mpv, `.exe` startet er, alles andere öffnet Windows mit
 der Standard-App. Gespeichert wird `file:<ip>|<pfad>` im jeweiligen Feld.
 
 **Durchsuchen…** gibt es nur, wenn die Weboberfläche auf dem Streaming-PC selbst
-geöffnet ist (`http://127.0.0.1:8765`): Der Service zeigt dann Ordner und
-Dateien dieses PCs (`GET /files/browse`). Anfragen von anderen Geräten lehnt er
-ab (403); dort wird der Pfad eingetippt.
+geöffnet ist (`http://127.0.0.1:8765`). Es öffnet dort den normalen
+Windows-Dialog „Datei öffnen“ (`POST /files/pick`): Der Display-Agent des
+Streaming-PCs zeigt ihn auf dessen Bildschirm, der Knopf zeigt solange
+„Dialog am PC offen…“, und der gewählte Pfad landet im Programmpunkt.
+Abbrechen lässt alles, wie es war. Der Dienst selbst kann keinen Dialog
+zeigen (er läuft als Windows-Dienst ohne Bildschirm), und der Datei-Dialog
+eines Browsers verrät der Seite nie den vollständigen Pfad; deshalb der Weg
+über den Agenten. Kann der Agent den Dialog nicht zeigen (älterer Agent, Agent
+nicht gestartet), erscheint stattdessen die eingebaute Ordnerliste
+(`GET /files/browse`). Anfragen von anderen Geräten lehnt der Service bei
+beidem ab (403); dort wird der Pfad eingetippt. Für den Windows-Dialog muss
+der Desktop-Agent auf dem Streaming-PC aktuell sein.
 
 ## Lieder (FoilPresenter) im Programm
 

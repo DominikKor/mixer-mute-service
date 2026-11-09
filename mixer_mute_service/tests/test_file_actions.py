@@ -37,8 +37,15 @@ class FakeAgent:
         self.calls = []
         self.missing = False
 
+    pick = None  # the /pick-file answer: a dict, or an exception to raise
+
     def __call__(self, url, token, payload, timeout):
         self.calls.append((url, payload))
+        if url.endswith("/pick-file"):
+            self.pick_timeout = timeout
+            if isinstance(self.pick, Exception):
+                raise self.pick
+            return self.pick
         if self.missing:
             raise urllib.error.HTTPError(url, 503, "Configured target is not available", {}, io.BytesIO(b""))
         return {"ok": True}
@@ -91,7 +98,40 @@ def main():
         check("not offered to other devices", client.get("/files/browse-available").json()["available"] is False)
         r = client.get("/files/browse", params={"path": str(_tmp)})
         check("other devices refused (403)", r.status_code == 403)
+        before = len(agent.calls)
+        r = client.post("/files/pick", json={"start": ""})
+        check("Windows dialog: other devices refused (403), agent not asked",
+              r.status_code == 403 and len(agent.calls) == before)
         file_actions._from_this_pc = lambda request: True
+
+        print("== Windows dialog (through the streaming PC's agent) ==")
+        agent.pick = {"ok": True, "path": "C:\\Musik\\Intro.mp3"}
+        r = client.post("/files/pick", json={"start": "C:\\Musik"})
+        check("picked path returned", r.status_code == 200 and r.json() == {"ok": True, "path": "C:\\Musik\\Intro.mp3"})
+        check("asks the streaming PC's own agent with the start folder, waiting long enough",
+              agent.calls[-1] == ("http://127.0.0.1:8766/pick-file", {"start": "C:\\Musik"})
+              and agent.pick_timeout >= 600)
+        agent.pick = {"ok": True, "path": None}
+        r = client.post("/files/pick", json={})
+        check("cancelled -> no path", r.status_code == 200 and r.json() == {"ok": True, "path": None})
+        agent.pick = {"ok": True, "path": "Musik\\relativ.mp3"}
+        r = client.post("/files/pick", json={"start": ""})
+        check("odd path from the agent not used", r.status_code == 502 and r.json()["fallback"] is True)
+        agent.pick = urllib.error.HTTPError("u", 404, "Not Found", {}, io.BytesIO(b""))
+        r = client.post("/files/pick", json={"start": ""})
+        check("older agent without the dialog -> page falls back to its folder list",
+              r.status_code == 503 and r.json()["fallback"] is True)
+        agent.pick = urllib.error.URLError("refused")
+        check("agent not running -> fallback", client.post("/files/pick", json={"start": ""}).json()["fallback"] is True)
+        agent.pick = urllib.error.HTTPError("u", 409, "Conflict", {},
+                                            io.BytesIO(b'{"ok": false, "reason": "a file dialog is already open on this PC"}'))
+        r = client.post("/files/pick", json={"start": ""})
+        check("dialog already open -> 409 with the agent's reason, no fallback",
+              r.status_code == 409 and r.json()["fallback"] is False
+              and r.json()["reason"] == "a file dialog is already open on this PC")
+        before = len(agent.calls)
+        check("start folder with control characters refused",
+              client.post("/files/pick", json={"start": "C:\\a\nb"}).status_code == 400 and len(agent.calls) == before)
         (_tmp / "Musik").mkdir()
         (_tmp / "Musik" / "Intro.MP3").write_bytes(b"")
         (_tmp / "Musik" / "Tool.exe").write_bytes(b"")
