@@ -6,13 +6,10 @@ refused with 400 without touching the file, and a damaged file reads as empty.
 """
 
 import json
-import os
-import pathlib
-import tempfile
 
-_tmp = pathlib.Path(tempfile.mkdtemp(prefix="mixer_colors_"))
-(_tmp / "config.yaml").write_text("mixer:\n  max_channels: 8\n")
-os.environ["MIXER_CONFIG"] = str(_tmp / "config.yaml")
+from tests.helpers import use_app_config  # noqa: E402
+
+_tmp = use_app_config("mixer_colors_")
 
 from fastapi.testclient import TestClient  # noqa: E402
 

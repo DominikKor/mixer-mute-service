@@ -8,14 +8,12 @@ status + log tail are served for the dialog.
 
 import json
 import os
-import pathlib
 import sys
-import tempfile
 import time
 
-_tmp = pathlib.Path(tempfile.mkdtemp(prefix="mixer_updater_"))
-(_tmp / "config.yaml").write_text("mixer:\n  max_channels: 8\n")
-os.environ["MIXER_CONFIG"] = str(_tmp / "config.yaml")
+from tests.helpers import use_app_config  # noqa: E402
+
+_tmp = use_app_config("mixer_updater_")
 
 from fastapi.testclient import TestClient  # noqa: E402
 

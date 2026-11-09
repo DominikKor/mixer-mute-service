@@ -7,14 +7,11 @@ update script follows, and a missing agent folder gives a clear 404.
 """
 
 import base64
-import os
-import pathlib
 import re
-import tempfile
 
-_tmp = pathlib.Path(tempfile.mkdtemp(prefix="mixer_agent_dl_"))
-(_tmp / "config.yaml").write_text("mixer:\n  max_channels: 8\n")
-os.environ["MIXER_CONFIG"] = str(_tmp / "config.yaml")
+from tests.helpers import use_app_config  # noqa: E402
+
+_tmp = use_app_config("mixer_agent_dl_")
 
 from fastapi.testclient import TestClient  # noqa: E402
 

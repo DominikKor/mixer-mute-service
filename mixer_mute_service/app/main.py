@@ -22,6 +22,8 @@ from .agent_download import router as agent_download_router
 from .buses import BusRegistry
 from .channel_settings import ChannelSettingsCache, ChannelSettingsStore
 from .camera_hls import router as camera_hls_router
+from .camera_ptz import PanTiltControl
+from .camera_webrtc import router as camera_webrtc_router
 from .camera_streams import CameraStreamStore, MediaMTXRelay
 from .channel_colors import router as channel_colors_router
 from .channel_preferences import ChannelPreferences
@@ -34,6 +36,7 @@ from .native_controls import NativeControlService
 from .power_control import PowerControlStore
 from .proxy import ProxyServer
 from .program_items import ProgramItemStore
+from .program_templates import ProgramTemplateStore, router as program_templates_router
 from .file_actions import router as file_actions_router
 from .routes import router
 from .songs import SongService, router as songs_router
@@ -136,6 +139,10 @@ async def lifespan(app: FastAPI):
     app.state.program_items = _optional(
         app, "program", lambda: ProgramItemStore(data_dir / "program_items.json"))
     app.state.songs = _optional(app, "songs", lambda: SongService(data_dir))
+    app.state.program_templates = _optional(
+        app, "program templates", lambda: ProgramTemplateStore(data_dir / "program_templates.json"))
+    camera_ptz = _optional(app, "camera pan/tilt", PanTiltControl)
+    app.state.camera_ptz = camera_ptz
     app.state.native_controls = _optional(
         app, "native controls", lambda: NativeControlService(data_dir / "native_control_state.json"))
     app.state.power_control = _optional(
@@ -176,8 +183,12 @@ async def lifespan(app: FastAPI):
         try:
             await client.stop()
         finally:
-            if camera_relay is not None:
-                await camera_relay.stop()
+            try:
+                if camera_ptz is not None:
+                    await camera_ptz.close()
+            finally:
+                if camera_relay is not None:
+                    await camera_relay.stop()
 
 
 _configure_logging()
@@ -187,8 +198,10 @@ app.include_router(updater_router)
 app.include_router(agent_download_router)
 app.include_router(channel_colors_router)
 app.include_router(songs_router)
+app.include_router(program_templates_router)
 app.include_router(file_actions_router)
 app.include_router(camera_hls_router)
+app.include_router(camera_webrtc_router)
 app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="ui")
 
 

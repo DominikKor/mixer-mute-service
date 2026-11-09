@@ -8,8 +8,10 @@ Set-StrictMode -Version Latest
 $ServiceName = "MixerMuteService"
 $FirewallRuleName = "MixerMuteService HTTP (TCP 8765)"
 $HttpPort = 8765
-$CameraWebRtcTcpRuleName = "MixerMuteService WebRTC (TCP 8889)"
+$CameraWebRtcTcpRuleName = "MixerMuteService WebRTC (TCP 8889)"  # old, no longer needed: removed below
 $CameraWebRtcUdpRuleName = "MixerMuteService WebRTC media (UDP 8189)"
+$CameraMediaTcpRuleName = "MixerMuteService WebRTC media (TCP 8189)"
+$CameraMediaPort = 8189
 $SourceDirectory = Split-Path -Parent $MyInvocation.MyCommand.Path
 $InstallDirectory = Join-Path $env:ProgramFiles "MixerMuteService"
 $DataDirectory = Join-Path $env:ProgramData "MixerMuteService"
@@ -25,6 +27,23 @@ if ($null -ne $ExistingService -and $ExistingService.Status -ne "Stopped") {
 }
 
 New-Item -ItemType Directory -Force -Path $InstallDirectory, $DataDirectory, $LogDirectory | Out-Null
+
+# The data folder holds RTSP camera passwords (camera_streams.json,
+# mediamtx-cameras.yml) and the GitHub token, and the SYSTEM update task runs a
+# script from it. Only Administrators (S-1-5-32-544) and SYSTEM (S-1-5-18)
+# may read or change it; the service itself runs as LocalSystem. Existing
+# files are reset to inherit exactly these rights.
+& icacls.exe $DataDirectory /inheritance:r /grant:r "*S-1-5-32-544:(OI)(CI)F" "*S-1-5-18:(OI)(CI)F" | Out-Null
+if ($LASTEXITCODE -ne 0) {
+    Write-Warning "Could not restrict access to $DataDirectory (icacls exit code $LASTEXITCODE)."
+}
+else {
+    & icacls.exe (Join-Path $DataDirectory "*") /reset /T /C /Q | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warning "Some files in $DataDirectory kept their old permissions (icacls exit code $LASTEXITCODE)."
+    }
+}
+$global:LASTEXITCODE = 0
 
 $SourceFullPath = [System.IO.Path]::GetFullPath($SourceDirectory).TrimEnd('\')
 $InstallFullPath = [System.IO.Path]::GetFullPath($InstallDirectory).TrimEnd('\')
@@ -127,28 +146,73 @@ New-NetFirewallRule `
     -Description "Allow LAN access to Mixer Mute Service web UI" | Out-Null
 Write-Host "Firewall rule active (Private profile)." -ForegroundColor Green
 
-foreach ($RuleName in @($CameraWebRtcTcpRuleName, $CameraWebRtcUdpRuleName)) {
+# Camera pictures (WebRTC). The signalling goes through the service port
+# above; MediaMTX keeps its own signalling port 8889 on localhost, so that
+# old rule is removed. Only the media port 8189 must be reachable, over UDP
+# and, where UDP is dropped, TCP. The rules apply to every network profile:
+# the streaming PC's LAN may be classified "Public", where Private-only rules
+# do nothing. They accept only private (LAN) addresses instead, and the port
+# carries nothing without a session negotiated through the service.
+$CameraLanAddresses = @("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")
+foreach ($RuleName in @($CameraWebRtcTcpRuleName, $CameraWebRtcUdpRuleName, $CameraMediaTcpRuleName)) {
     Get-NetFirewallRule -DisplayName $RuleName -ErrorAction SilentlyContinue | Remove-NetFirewallRule
 }
-New-NetFirewallRule `
-    -DisplayName $CameraWebRtcTcpRuleName `
-    -Direction Inbound `
-    -Action Allow `
-    -Protocol TCP `
-    -LocalPort 8889 `
-    -RemoteAddress LocalSubnet `
-    -Profile Private `
-    -Description "Allow LAN WebRTC connections to configured camera streams" | Out-Null
 New-NetFirewallRule `
     -DisplayName $CameraWebRtcUdpRuleName `
     -Direction Inbound `
     -Action Allow `
     -Protocol UDP `
-    -LocalPort 8189 `
-    -RemoteAddress LocalSubnet `
-    -Profile Private `
-    -Description "Allow LAN WebRTC media for configured camera streams" | Out-Null
-Write-Host "WebRTC firewall rules active (Private profile, LocalSubnet only)." -ForegroundColor Green
+    -LocalPort $CameraMediaPort `
+    -RemoteAddress $CameraLanAddresses `
+    -Profile Any `
+    -Description "Allow LAN WebRTC media (UDP) for the camera pictures" | Out-Null
+New-NetFirewallRule `
+    -DisplayName $CameraMediaTcpRuleName `
+    -Direction Inbound `
+    -Action Allow `
+    -Protocol TCP `
+    -LocalPort $CameraMediaPort `
+    -RemoteAddress $CameraLanAddresses `
+    -Profile Any `
+    -Description "Allow LAN WebRTC media (TCP) for the camera pictures" | Out-Null
+Write-Host ("WebRTC media rules active (UDP and TCP {0}, all profiles, private addresses only)." -f $CameraMediaPort) -ForegroundColor Green
+
+# A block rule wins over every allow rule. Windows creates such rules for a
+# program when its "allow access" prompt was cancelled, e.g. after starting
+# mediamtx.exe by hand once. Remove those for mediamtx.exe only.
+try {
+    $MediaMtxBlockRules = @(
+        Get-NetFirewallApplicationFilter -ErrorAction SilentlyContinue |
+            Where-Object { $_.Program -like "*\mediamtx.exe" } |
+            Get-NetFirewallRule -ErrorAction SilentlyContinue |
+            Where-Object { $_.Direction -eq "Inbound" -and $_.Action -eq "Block" }
+    )
+    foreach ($Rule in $MediaMtxBlockRules) {
+        Write-Host ("Removing firewall block rule for mediamtx.exe: {0}" -f $Rule.DisplayName) -ForegroundColor Yellow
+        $Rule | Remove-NetFirewallRule -ErrorAction Stop
+    }
+}
+catch {
+    Write-Warning ("Could not check or remove firewall block rules for mediamtx.exe: {0}" -f $_.Exception.Message)
+}
+
+# Report what else can keep the camera pictures (and the web UI) from LAN devices.
+try {
+    foreach ($Connection in @(Get-NetConnectionProfile -ErrorAction Stop)) {
+        Write-Host ("Network '{0}' ({1}) is classified {2}." -f $Connection.Name, $Connection.InterfaceAlias, $Connection.NetworkCategory)
+        if ("$($Connection.NetworkCategory)" -eq "Public") {
+            Write-Warning ("Network '{0}' is Public: the web UI rule (TCP {1}) only covers Private networks. Set it to Private: Set-NetConnectionProfile -InterfaceAlias '{2}' -NetworkCategory Private" -f $Connection.Name, $HttpPort, $Connection.InterfaceAlias)
+        }
+    }
+    foreach ($FirewallProfile in @(Get-NetFirewallProfile -ErrorAction Stop)) {
+        if ("$($FirewallProfile.Enabled)" -eq "True" -and "$($FirewallProfile.AllowInboundRules)" -eq "False") {
+            Write-Warning ("Firewall profile {0} blocks all incoming connections, allow rules included; LAN devices get no camera pictures or web UI there." -f $FirewallProfile.Name)
+        }
+    }
+}
+catch {
+    Write-Warning ("Could not read the network or firewall profiles: {0}" -f $_.Exception.Message)
+}
 
 Write-Host "Waiting for the HTTP endpoint..."
 $Health = $null

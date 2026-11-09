@@ -10,17 +10,13 @@ starting a row shows its first slide).
 
 import json
 import os
-import pathlib
-import tempfile
 import urllib.error
 from urllib.parse import quote
 
-_tmp = pathlib.Path(tempfile.mkdtemp(prefix="mixer_songs_"))
-(_tmp / "config.yaml").write_text(
-    "mixer:\n  max_channels: 8\n"
-    "desktop_display:\n  enabled: true\n  token_env: SONG_TEST_TOKEN\n  profiles: {}\n"
-)
-os.environ["MIXER_CONFIG"] = str(_tmp / "config.yaml")
+from tests.helpers import use_app_config  # noqa: E402
+
+_tmp = use_app_config("mixer_songs_",
+    "desktop_display:\n  enabled: true\n  token_env: SONG_TEST_TOKEN\n  profiles: {}\n")
 os.environ["SONG_TEST_TOKEN"] = "test-token"
 
 from fastapi.testclient import TestClient  # noqa: E402
@@ -66,12 +62,15 @@ class FakeAgent:
     def __init__(self):
         self.calls = []
         self.fail = False
+        self.old = False   # an agent from before the preview/alignment
         self.files = []
 
     def __call__(self, url, token, payload, timeout):
         self.calls.append((url, token, payload))
         if self.fail:
             raise urllib.error.URLError("down")
+        if self.old and ("next" in payload or "align" in payload.get("style", {})):
+            raise urllib.error.HTTPError(url, 400, "Bad Request", None, None)
         if url.endswith("/songs/library"):
             return {"ok": True, "files": self.files, "truncated": False}
         return {"ok": True, "action": payload["action"]}
@@ -148,7 +147,9 @@ def main():
         check("first slide shown with title and copyright", r.status_code == 200 and p["action"] == "show"
               and p["text"] == "Refrain" and p["title"] == "Allein deine Gnade" and p["copyright"] == "Text und Melodie: Test")
         check("screen settings sent", p["monitor"] == 3 and p["fullscreen"] is True
-              and p["style"] == {"font": "Verdana", "font_size": 72, "text_color": "#ffff00", "background_color": "#000000"})
+              and p["style"] == {"font": "Verdana", "font_size": 72, "text_color": "#ffff00",
+                                 "background_color": "#000000", "align": "center"})
+        check("next slide sent as preview", p["next"] == "Erste Strophe\nzweite Zeile")
         check("live state", r.json()["song_id"] == "Allein deine Gnade.foil" and r.json()["slide"] == 0
               and r.json()["song"]["title"] == "Allein deine Gnade")
         client.post("/songs/next")
@@ -157,6 +158,7 @@ def main():
         client.post("/songs/next")
         client.post("/songs/next")
         check("on the last slide", client.get("/songs/live").json()["slide"] == 3)
+        check("last slide: no preview (next goes dark)", agent.last()["next"] == "")
         r = client.post("/songs/next")
         check("next after the last slide blanks", agent.last()["action"] == "blank" and r.json()["blank"] is True)
         n = len(agent.calls)
@@ -169,6 +171,30 @@ def main():
         check("back one slide", client.get("/songs/live").json()["slide"] == 2)
         r = client.post("/songs/show", json={"song_id": "Allein deine Gnade.foil", "slide": 9})
         check("missing slide -> 400", r.status_code == 400)
+
+        print("== preview and alignment settings ==")
+        r = client.put("/songs/settings", json={"text_align": "justify"})
+        check("unknown alignment refused", r.status_code == 400 and "text_align" in r.json()["reason"])
+        r = client.put("/songs/settings", json={"text_align": "left", "show_next_preview": False})
+        check("alignment and preview switch saved", r.status_code == 200
+              and r.json()["settings"]["text_align"] == "left" and r.json()["settings"]["show_next_preview"] is False)
+        client.post("/songs/show", json={"song_id": "Allein deine Gnade.foil", "slide": 0})
+        p = agent.last()
+        check("preview off: nothing sent, alignment sent", p["next"] == "" and p["style"]["align"] == "left")
+        client.put("/songs/settings", json={"text_align": "center", "show_next_preview": True})
+
+        print("== older display agent ==")
+        agent.old = True
+        n = len(agent.calls)
+        r = client.post("/songs/show", json={"song_id": "Allein deine Gnade.foil", "slide": 1})
+        retried = agent.calls[n:]
+        check("refused new format, plain slide shown instead", r.status_code == 200 and len(retried) == 2
+              and "next" not in retried[1][2] and "align" not in retried[1][2]["style"]
+              and retried[1][2]["text"] == "Erste Strophe\nzweite Zeile")
+        r = client.post("/songs/blank")
+        check("blank works on the old agent too", r.status_code == 200 and "next" not in agent.last())
+        agent.old = False
+        client.post("/songs/show", json={"song_id": "Allein deine Gnade.foil", "slide": 2})
 
         print("== agent down ==")
         agent.fail = True

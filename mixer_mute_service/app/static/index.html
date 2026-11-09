@@ -321,20 +321,31 @@
   .camera-empty { min-height: 64px; place-items: start; padding: 10px 0; }
   .camera-empty[hidden], .camera-controls[hidden] { display: none; }
   @media (max-width: 760px) { .camera-grid { grid-template-columns: minmax(0, 1fr); } }
-  /* PTZ controls under a camera named Cam1/Cam2: preset keys (the camera keys
-     of the Steuerung section) and hold-to-zoom keys */
+  /* PTZ controls under a camera named Cam1/Cam2: preset keys and hold-to-move
+     keys (arrows for pan/tilt like a keyboard's arrow keys, zoom beside them) */
   .camera-controls { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px 12px; border-top: 1px solid #08090b; box-shadow: inset 0 1px 0 rgba(255,255,255,.04); }
   .camera-controls-label { font-size: 10px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; color: #7d8594; }
   .camera-presets { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 6px; }
   button.camera-preset { min-height: 44px; padding: 6px 8px; font-size: 12px; line-height: 1.2; overflow-wrap: anywhere; }
   button.camera-preset[aria-pressed="true"] { color: #fff; border-color: #0a2550; background: linear-gradient(to bottom, #3a6fae, #2a5590 55%, #224a80); }
-  .camera-zoom { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
-  button.camera-zoom-key {
-    display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 48px; padding: 0 12px;
+  .camera-ptz {
+    display: grid; gap: 6px;
+    grid-template-columns: repeat(3, minmax(44px, 1fr)) minmax(76px, 1.3fr);
+    grid-template-areas: ". up . in" "left down right out";
+  }
+  button.camera-move-key {
+    display: flex; align-items: center; justify-content: center; gap: 8px; min-width: 0; min-height: 48px; padding: 0 8px;
     font-size: 12px; touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
   }
-  button.camera-zoom-key svg { width: 20px; height: 20px; flex-shrink: 0; }
-  button.camera-zoom-key.active { color: #fff; border-color: #0a2550; background: linear-gradient(to bottom, #62adff, #3584e6 55%, #2a6cc4); transform: translateY(1px); }
+  button.camera-move-key svg { width: 20px; height: 20px; flex-shrink: 0; }
+  .camera-ptz [data-direction="up"] { grid-area: up; }
+  .camera-ptz [data-direction="left"] { grid-area: left; }
+  .camera-ptz [data-direction="down"] { grid-area: down; }
+  .camera-ptz [data-direction="right"] { grid-area: right; }
+  .camera-ptz [data-direction="in"] { grid-area: in; }
+  .camera-ptz [data-direction="out"] { grid-area: out; }
+  button.camera-zoom-key { margin-left: 6px; }
+  button.camera-move-key.active { color: #fff; border-color: #0a2550; background: linear-gradient(to bottom, #62adff, #3584e6 55%, #2a6cc4); transform: translateY(1px); }
   button.display-key {
     display: inline-grid; grid-template-columns: auto 1fr; align-items: center; gap: 4px 10px;
     min-width: 200px; max-width: 100%; min-height: 48px; padding: 8px 14px 9px 12px; text-align: left;
@@ -425,6 +436,8 @@
   .pf-display-row { display: flex; gap: 18px 24px; flex-wrap: wrap; align-items: flex-start; }
   .monitor-picker { display: flex; gap: 6px; flex-wrap: wrap; }
   button.monitor-key { width: 52px; height: 44px; padding: 0; font: 800 15px/1 var(--mono); }
+  button.align-key { display: grid; place-items: center; }
+  button.align-key svg { width: 20px; height: 20px; }
   .profile-dialog .pf-input { min-height: 44px; }
   button.monitor-key[aria-checked="true"] {
     color: #fff; border-color: #0a2550; background: linear-gradient(to bottom, #62adff, #3584e6 55%, #2a6cc4);
@@ -792,6 +805,67 @@
   #ns-order-hint.bad { color: #ff8576; }
   .ns-preview { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 8px; }
   .ns-preview .slide-box { border-radius: 3px; }
+  /* Program templates dialog */
+  dialog.template-dialog { width: min(980px, calc(100vw - 32px)); max-height: calc(100vh - 32px); overflow: auto; }
+  .tp-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  .tp-tabs { display: inline-flex; padding: 3px; gap: 3px; border-radius: 8px; border: 1px solid #000; background: #0b1418; }
+  .tp-tabs button {
+    min-height: 44px; min-width: 120px; padding: 0 16px; border: none; background: none; box-shadow: none;
+    font-size: 12px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; color: #8d96a3;
+  }
+  .tp-tabs button[aria-selected="true"] {
+    color: #e6e9ee; background: linear-gradient(to bottom, #4a5160, #353b47); box-shadow: 0 1px 2px rgba(0,0,0,.6), inset 0 1px 0 rgba(255,255,255,.12);
+  }
+  .tp-panel { display: flex; flex-direction: column; gap: 14px; }
+  .tp-panel[hidden] { display: none; }
+  .tp-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; }
+  .tp-item { display: flex; gap: 4px; min-width: 0; }
+  .tp-item button.tp-pick {
+    flex: 1; min-width: 0; min-height: 52px; padding: 6px 12px; text-align: left;
+    display: flex; flex-direction: column; justify-content: center; gap: 2px;
+  }
+  .tp-pick .tp-name { font-size: 14px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tp-pick .tp-meta { font: 600 11px/1.2 var(--mono); color: #8d96a3; }
+  .tp-item button.tp-pick[aria-checked="true"] {
+    color: #fff; border-color: #0a2550; background: linear-gradient(to bottom, #3a6fae, #2a5590 55%, #224a80);
+    box-shadow: 0 0 12px rgba(79,156,255,.35), inset 0 1px 0 rgba(255,255,255,.25), 0 2px 3px rgba(0,0,0,.55);
+  }
+  .tp-item button.tp-pick[aria-checked="true"] .tp-meta { color: #c9dcf5; }
+  .tp-item button.tp-delete { width: 44px; min-height: 52px; padding: 0; flex-shrink: 0; font-size: 18px; color: #9aa1ad; }
+  .tp-item button.tp-delete.armed { width: auto; padding: 0 10px; font-size: 12px; font-weight: 800; color: #fff; background: linear-gradient(to bottom, #c2443a, #9c2f27); }
+  .tp-empty { color: #8d96a3; font-size: 13px; padding: 6px 2px; }
+  .tp-columns { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 14px; align-items: start; }
+  #tp-songs { min-height: 190px; font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  #tp-add-song { align-self: flex-start; min-height: 44px; }
+  .tp-matches, .tp-preview { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+  .tp-match {
+    display: grid; grid-template-columns: 24px minmax(0, 1fr) auto; align-items: center; gap: 4px 10px;
+    min-height: 52px; padding: 4px 4px 4px 10px; border-radius: 6px; background: rgba(0,0,0,.2);
+  }
+  .tp-match .tp-no { font: 800 12px/1 var(--mono); color: #7d8594; text-align: right; }
+  .tp-match .tp-texts { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+  .tp-match .tp-line { font-size: 11px; color: #8d96a3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tp-match .tp-song { font-size: 14px; font-weight: 700; color: #7ff0a8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tp-match.missing .tp-song { color: #ffb36b; }
+  .tp-match button { min-height: 44px; min-width: 88px; padding: 0 12px; font-size: 12px; }
+  .tp-preview li {
+    display: grid; grid-template-columns: 52px minmax(0, 1fr) minmax(0, 1fr); gap: 10px; align-items: center;
+    min-height: 32px; padding: 4px 10px; border-radius: 5px; background: rgba(0,0,0,.18); font-size: 13px;
+  }
+  .tp-preview .tp-time { font: 700 12px/1 var(--mono); color: var(--lcd-text); }
+  .tp-preview .tp-title, .tp-preview .tp-psong { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tp-preview .tp-psong { color: #9fd0ff; }
+  .tp-preview li.song .tp-title { color: #e6e9ee; font-weight: 700; }
+  .tp-rows { display: flex; flex-direction: column; gap: 4px; }
+  .tp-row {
+    display: grid; grid-template-columns: auto 52px minmax(0, 1fr) minmax(0, 1fr); gap: 10px; align-items: center;
+    padding: 0 10px 0 2px; border-radius: 6px; background: rgba(0,0,0,.2); font-size: 13px;
+  }
+  .tp-row .compact-switch { font-size: 11px; }
+  .tp-row .tp-time { font: 700 12px/1 var(--mono); color: var(--lcd-text); }
+  .tp-row .tp-title { font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tp-row .tp-psong { color: #9fd0ff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  button.primary.armed { background: linear-gradient(to bottom, #c2443a, #9c2f27); border-color: #4a0f0b; }
   .song-search {
     position: absolute; z-index: 9; width: min(420px, calc(100vw - 16px)); padding: 10px; border-radius: 8px;
     border: 1px solid #000; background: var(--panel-bg); box-shadow: var(--panel-shadow), 0 14px 32px rgba(0,0,0,.65);
@@ -964,20 +1038,64 @@
     .beamer-state-options { display: inline-flex; gap: 4px; }
     button.beamer-state-key { min-width: 76px; min-height: 44px; padding: 6px 12px; }
     button.beamer-state-key[aria-pressed="true"] { color: #fff; border-color: #245c76; background: linear-gradient(to bottom, #286a7e, #1d4e5e); }
-  .power-off-panel { display: grid; gap: 10px; margin: 0 0 14px; padding: 12px; border: 1px solid #08090b; border-radius: 6px; background: var(--panel-bg); box-shadow: var(--panel-shadow); }
-  .power-off-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
-  .power-off-title { color: var(--text); font-size: 13px; font-weight: 800; }
-  .power-off-hint, .power-off-status { color: var(--lcd-dim); font: 600 11px/1.4 var(--mono); }
+  /* "Alles ausschalten": a Steuerung category of its own. Each target is a key
+     whose LED turns red when it belongs to the all-off; the red console key
+     in the head switches them off. Agent PCs carry a small power key in the
+     corner to shut down just that PC. */
+  .power-off-panel {
+    display: grid; gap: 8px; min-width: 0; margin: 0 0 12px; padding: 4px 12px 12px; border-radius: 8px;
+    border: 1px solid #08090b; background: var(--panel-bg); box-shadow: var(--panel-shadow);
+  }
+  .power-off-head { display: flex; align-items: center; gap: 12px; min-height: 52px; }
+  .power-off-title {
+    flex: 1; display: flex; align-items: center; gap: 10px; min-width: 0; margin: 0; padding: 4px 2px;
+    color: #9aa3b2; font-size: 12px; font-weight: 800; letter-spacing: .16em; text-transform: uppercase; text-shadow: 0 1px 0 #000;
+  }
+  .power-off-title::after {
+    content: ""; flex: 1; height: 1px; box-shadow: 0 1px 0 rgba(0,0,0,.6);
+    background: linear-gradient(to right, #343a45, transparent);
+  }
+  button.power-off-button {
+    display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 16px 0 12px;
+    font-weight: 800; letter-spacing: .08em; text-transform: uppercase;
+  }
+  button.power-off-button svg, button.power-agent-shutdown svg { width: 16px; height: 16px; flex-shrink: 0; }
+  .power-off-targets { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+  .power-tile { position: relative; display: flex; min-width: 0; }
+  label.power-off-target {
+    position: relative; flex: 1; display: flex; flex-direction: column; justify-content: center; gap: 4px; min-width: 0; min-height: 64px;
+    padding: 10px 12px 10px 24px; border-radius: 6px; border: 1px solid #07080a; cursor: pointer; color: #c9ced6;
+    background: linear-gradient(to bottom, #3b4049, #2b2f36 55%, #24272d);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.13), inset 0 -2px 0 rgba(0,0,0,.3), 0 2px 3px rgba(0,0,0,.55);
+    -webkit-tap-highlight-color: transparent; user-select: none;
+  }
+  .power-tile.agent label.power-off-target { padding-right: 44px; }
+  label.power-off-target:hover { color: #fff; filter: brightness(1.12); }
+  label.power-off-target:active { transform: translateY(1px); box-shadow: inset 0 1px 3px rgba(0,0,0,.55), 0 1px 1px rgba(0,0,0,.5); }
+  .power-off-target input { position: absolute; opacity: 0; width: 1px; height: 1px; margin: 0; pointer-events: none; }
+  label.power-off-target:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
+  label.power-off-target::before {  /* LED: dark = stays on, red = switched off with "Ausschalten" */
+    content: ""; position: absolute; left: 10px; top: 50%; width: 7px; height: 7px; margin-top: -3.5px; border-radius: 50%;
+    background: #3a3f47; box-shadow: inset 0 1px 1px rgba(0,0,0,.6);
+  }
+  label.power-off-target:has(input:checked) { color: #fff; }
+  label.power-off-target:has(input:checked)::before { background: #ff4b3a; box-shadow: 0 0 6px rgba(255,75,58,.85); }
+  label.power-off-target:has(input:disabled) { cursor: progress; filter: brightness(.8); }
+  .power-off-name {
+    min-width: 0; overflow-wrap: anywhere;
+    font-size: 12px; font-weight: 800; line-height: 1.25; letter-spacing: .06em; text-transform: uppercase;
+  }
+  .power-off-meta { font: 600 10px/1 var(--mono); color: #7f8b98; overflow-wrap: anywhere; }
+  button.power-agent-shutdown {
+    position: absolute; top: 0; right: 0; width: 44px; height: 44px; padding: 7px 7px 0 0;
+    display: flex; align-items: flex-start; justify-content: flex-end;
+    color: #6f8a93; background: none; border: none; box-shadow: none; transition: color .12s;
+  }
+  button.power-agent-shutdown:hover:not(:disabled) { color: #ff8576; filter: none; }
+  button.power-agent-shutdown:active:not(:disabled) { transform: none; box-shadow: none; }
+  .power-off-status { min-height: 15px; color: var(--lcd-dim); font: 600 11px/1.4 var(--mono); }
   .power-off-status.bad { color: #ff8576; }
-  .power-off-targets { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 4px 10px; }
-  .power-off-agent { display: flex; align-items: center; gap: 6px; min-width: 0; }
-  .power-off-target { display: flex; align-items: center; gap: 9px; min-width: 0; min-height: 44px; color: #c9ced6; font-size: 12px; cursor: pointer; }
-  .power-off-agent .power-off-target { flex: 1; }
-  .power-off-target input { flex: 0 0 18px; width: 18px; height: 18px; margin: 0; accent-color: #ff8576; }
-  .power-off-target span { min-width: 0; overflow-wrap: anywhere; }
-  button.power-off-button { min-width: 160px; min-height: 44px; }
-  button.power-off-button:disabled { cursor: not-allowed; opacity: .5; filter: none; }
-  button.power-agent-shutdown { min-width: 112px; min-height: 44px; padding: 6px 9px; font-size: 10px; }
+  @media (max-width: 760px) { .power-off-targets { grid-template-columns: repeat(auto-fill, minmax(124px, 1fr)); } }
     .beamer-state-current { color: var(--lcd-dim); font: 600 11px/1.35 var(--mono); }
   .companion-categories { display: grid; gap: 12px; }
   .companion-category {
@@ -1180,6 +1298,7 @@
     <button class="section-toggle" aria-expanded="true" aria-controls="program-body">Programm</button>
     <div class="panel-tools">
       <button id="song-settings-btn" class="add-key" title="Liedanzeige: Bibliothek, Anzeige-PC und Aussehen für alle Lieder">Liedanzeige</button>
+      <button id="program-template-btn" class="add-key" title="Programm als Vorlage speichern oder eine Vorlage mit den Liedern des Tages anwenden">Vorlagen…</button>
       <button id="program-reset-btn" class="add-key" title="Startzeiten und Verzögerungen vergessen (neuer Gottesdienst, Probe)">Ablauf zurücksetzen</button>
       <button id="program-add-btn" class="add-key"><svg class="plus-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 4v16M4 12h16"/></svg>Programmpunkt</button>
     </div>
@@ -1271,17 +1390,14 @@
       </div>
       <span id="beamer-state-current" class="beamer-state-current" role="status" aria-live="polite">Zustand unbekannt</span>
     </div>
-    <div id="power-off-panel" class="power-off-panel">
+    <section id="power-off-panel" class="power-off-panel" aria-labelledby="power-off-title">
       <div class="power-off-head">
-        <div>
-          <div class="power-off-title">Alles ausschalten</div>
-          <div class="power-off-hint">Auswahl wird gespeichert; Agent-PCs fahren nach 10 Sekunden herunter.</div>
-        </div>
-        <button id="power-off-selected" class="danger power-off-button" type="button" disabled>Alles ausschalten</button>
+        <h3 id="power-off-title" class="power-off-title">Alles ausschalten</h3>
+        <button id="power-off-selected" class="key-mute power-off-button" type="button" disabled title="Alle rot markierten Geräte ausschalten"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 3v8M6.3 6.8a8 8 0 1 0 11.4 0"/></svg>Ausschalten</button>
       </div>
       <div id="power-off-targets" class="power-off-targets"></div>
       <div id="power-off-status" class="power-off-status" role="status" aria-live="polite">Abschaltziele werden geladen</div>
-    </div>
+    </section>
     <div id="companion-categories" class="companion-categories" aria-live="polite"></div>
   </div>
 </section>
@@ -1366,6 +1482,50 @@
   </div>
 </dialog>
 
+<dialog id="template-dialog" class="update-dialog profile-dialog template-dialog" aria-labelledby="tp-heading">
+  <div class="update-body">
+    <div class="tp-head">
+      <h3 id="tp-heading">Programm-Vorlagen</h3>
+      <div class="tp-tabs" role="tablist" aria-label="Vorlage anwenden oder speichern">
+        <button type="button" role="tab" id="tp-tab-apply" aria-selected="true" aria-controls="tp-apply">Anwenden</button>
+        <button type="button" role="tab" id="tp-tab-save" aria-selected="false" aria-controls="tp-save">Speichern</button>
+      </div>
+    </div>
+    <div id="tp-apply" class="tp-panel" role="tabpanel" aria-labelledby="tp-tab-apply">
+      <div class="pf-field"><span class="pf-label" id="tp-list-label">Vorlage</span>
+        <div id="tp-list" class="tp-list" role="radiogroup" aria-labelledby="tp-list-label"></div></div>
+      <div class="tp-columns">
+        <div class="pf-field">
+          <label class="pf-label" for="tp-songs">Lieder – ein Lied pro Zeile (Titel oder Liederbuch-Nummer)</label>
+          <textarea id="tp-songs" class="pf-input" rows="8" spellcheck="false" placeholder="Gott, du bist da&#10;EG 331&#10;In Christus ist mein ganzer Halt"></textarea>
+          <button type="button" id="tp-add-song" class="add-key"><svg class="plus-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 4v16M4 12h16"/></svg>Lied aus der Bibliothek</button>
+        </div>
+        <div class="pf-field"><span class="pf-label">In der Bibliothek gefunden</span>
+          <ol id="tp-matches" class="tp-matches" aria-live="polite"></ol></div>
+      </div>
+      <div class="pf-field"><span class="pf-label" id="tp-preview-label">Programm danach</span>
+        <ol id="tp-preview" class="tp-preview" aria-labelledby="tp-preview-label"></ol>
+        <span id="tp-hint" class="pf-hint"></span></div>
+      <div id="tp-apply-error" class="update-lcd err" hidden></div>
+      <div class="update-actions">
+        <button type="button" class="tp-close">Schließen</button>
+        <button type="button" id="tp-apply-btn" class="primary">Programm ersetzen</button>
+      </div>
+    </div>
+    <div id="tp-save" class="tp-panel" role="tabpanel" aria-labelledby="tp-tab-save" hidden>
+      <label class="pf-field"><span>Name der Vorlage</span>
+        <input id="tp-name" class="pf-input" type="text" maxlength="60" autocomplete="off" placeholder="z. B. Gottesdienst" /></label>
+      <div class="pf-field"><span class="pf-label">Aktuelles Programm – Liedplätze bekommen beim Anwenden die Lieder des Tages</span>
+        <div id="tp-rows" class="tp-rows"></div></div>
+      <div id="tp-save-error" class="update-lcd err" hidden></div>
+      <div class="update-actions">
+        <button type="button" class="tp-close">Schließen</button>
+        <button type="button" id="tp-save-btn" class="primary">Als Vorlage speichern</button>
+      </div>
+    </div>
+  </div>
+</dialog>
+
 <dialog id="new-song-dialog" class="update-dialog profile-dialog new-song-dialog" aria-labelledby="ns-heading">
   <form id="new-song-form" class="update-body" novalidate>
     <h3 id="ns-heading">Neues Lied</h3>
@@ -1422,10 +1582,17 @@
       <label class="pf-field"><span>Textfarbe</span><input id="sg-text-color" class="pf-color" type="color" /></label>
       <label class="pf-field"><span>Hintergrund</span><input id="sg-bg-color" class="pf-color" type="color" /></label>
     </div>
+    <div class="pf-field"><span class="pf-label" id="sg-align-label">Ausrichtung</span>
+      <div id="sg-align" class="monitor-picker" role="radiogroup" aria-labelledby="sg-align-label">
+        <button type="button" class="monitor-key align-key" role="radio" data-align="left" aria-label="Linksbündig" title="Linksbündig"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 6h16M4 10h10M4 14h16M4 18h10"/></svg></button>
+        <button type="button" class="monitor-key align-key" role="radio" data-align="center" aria-label="Zentriert" title="Zentriert"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 6h16M7 10h10M4 14h16M7 18h10"/></svg></button>
+        <button type="button" class="monitor-key align-key" role="radio" data-align="right" aria-label="Rechtsbündig" title="Rechtsbündig"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 6h16M10 10h10M4 14h16M10 18h10"/></svg></button>
+      </div></div>
     <div class="sg-switches">
       <label class="compact-switch"><input id="sg-fullscreen" type="checkbox" /><span class="track"></span>Vollbild</label>
       <label class="compact-switch"><input id="sg-show-title" type="checkbox" /><span class="track"></span>Titel</label>
       <label class="compact-switch"><input id="sg-show-copyright" type="checkbox" /><span class="track"></span>Copyright</label>
+      <label class="compact-switch" title="Darunter in Grau die nächste Folie, wenn Platz ist"><input id="sg-show-next" type="checkbox" /><span class="track"></span>Vorschau nächste Folie</label>
     </div>
     <div id="sg-sample" class="slide-box" role="img" aria-label="Beispielfolie mit diesen Einstellungen"></div>
     <div class="sg-library">
@@ -1551,7 +1718,10 @@ const UI_BUILD_ID = "__BUILD_ID__";
 let PERSONS_BOOTSTRAPPED = false;
 
 function resolvedBuildId() {
-  return UI_BUILD_ID && UI_BUILD_ID !== "__BUILD_ID__" ? UI_BUILD_ID : "dev";
+  // The release build replaces the placeholder everywhere in this file, so a
+  // comparison with the placeholder text would always match: check the
+  // release format (yyyyMMdd-HHmmss-<commit>) instead.
+  return /^\d{8}-\d{6}-\w+$/.test(UI_BUILD_ID) ? UI_BUILD_ID : "dev";
 }
 
 // Which version runs: a release carries "yyyyMMdd-HHmmss-<commit>" (written
@@ -2803,14 +2973,11 @@ function fmtAge(a) { return a === null || a === undefined ? "—" : a.toFixed(2)
 let CAMERA_STREAMS_SIGNATURE = "";
 let CAMERA_STREAMS = [];
 
-// On the streaming PC itself the WebRTC player (port 8889, lowest delay).
-// Other devices may not reach that port through the PC's firewall, so they
-// get the same camera as HLS through the service's own port (app/camera_hls.py).
+// Every device gets the WebRTC player (lowest delay), signalled through the
+// service's own port; it falls back to HLS by itself when the WebRTC media
+// port of the streaming PC cannot be reached (static/camera-player.html).
 function cameraPlayerUrl(cameraId) {
-  const id = encodeURIComponent(cameraId);
-  return ["localhost", "127.0.0.1", "[::1]"].includes(location.hostname)
-    ? `http://${location.hostname}:8889/${id}`
-    : `/camera-hls/${id}/`;
+  return `/camera-player.html?cam=${encodeURIComponent(cameraId)}`;
 }
 
 function renderCameraStreams(data) {
@@ -2823,7 +2990,7 @@ function renderCameraStreams(data) {
   const status = $("camera-stream-status");
   status.textContent = data.relay_ready ? (cameras.length ? "MediaMTX bereit" : "") : (data.reason || "MediaMTX-Relay nicht bereit");
   status.classList.toggle("bad", !data.relay_ready);
-  stopAllCameraZoom();
+  stopAllCameraMoves();
   grid.replaceChildren();
   $("camera-empty").hidden = cameras.length > 0;
   for (const camera of cameras) {
@@ -2876,25 +3043,30 @@ function renderCameraStreams(data) {
 }
 
 // ---- PTZ controls in the camera section ----------------------------------
-// A stream card named "Cam1"/"Cam2" gets the VISCA keys of that camera from the
-// Steuerung catalog (presets, as stored there with their labels) plus
-// hold-to-zoom keys: the catalog's zoom keys only start a zoom that runs to
-// the end stop, here releasing the key stops it.
+// A stream card named "Cam1"/"Cam2" gets that camera's VISCA presets (catalog
+// camera keys with the labels they had in Steuerung, where they no longer
+// appear) plus hold-to-move keys: arrows pan/tilt and Weit/Nah zoom while
+// held, releasing the key stops the camera.
 
 const CAMERA_LAST_PRESET = {};
-const CAMERA_ZOOM = {};
+// Per camera and kind ("pan" / "zoom"): the command chain, the held direction
+// and its timers.
+const CAMERA_MOVES = {};
+const CAMERA_MOVE_KINDS = {
+  // The service stops a pan/tilt after 3 s without news, so a held arrow
+  // repeats its direction every second.
+  pan: { path: "pan-tilt", name: "Schwenken", keepalive: 1000, failsafe: 30000 },
+  zoom: { path: "zoom", name: "Zoom", keepalive: 0, failsafe: 15000 },
+};
+const CAMERA_ARROWS = {
+  up: { label: "nach oben neigen", path: "M12 19V5M5.5 11.5L12 5l6.5 6.5" },
+  left: { label: "nach links schwenken", path: "M19 12H5M11.5 5.5L5 12l6.5 6.5" },
+  down: { label: "nach unten neigen", path: "M12 5v14M5.5 12.5L12 19l6.5-6.5" },
+  right: { label: "nach rechts schwenken", path: "M5 12h14M12.5 5.5L19 12l-6.5 6.5" },
+};
 
 function viscaCameraId(name) {
   return (name || "").toLowerCase().replace(/[^a-z0-9]/g, "");
-}
-
-function viscaAction(button) {
-  if (button.kind === "native") return button.native_action || null;
-  if (button.kind === "companion") {
-    const target = (COMPANION_DATA.companion_targets || []).find(t => t.id === button.target_button_id);
-    return target ? target.native_action || null : null;
-  }
-  return null;
 }
 
 function cameraPresetLabel(label) {
@@ -2903,35 +3075,41 @@ function cameraPresetLabel(label) {
 
 function renderCameraControls() {
   const presets = {};
-  for (const button of COMPANION_DATA.buttons || []) {
-    const action = viscaAction(button);
+  for (const button of COMPANION_DATA.camera_buttons || []) {
+    const action = button.native_action;
     if (!action || action.type !== "visca-preset") continue;
     (presets[action.camera] = presets[action.camera] || []).push({ id: button.id, label: button.label, preset: action.preset });
   }
   for (const controls of document.querySelectorAll(".camera-controls")) {
     const cam = controls.dataset.viscaCamera;
     const list = (presets[cam] || []).sort((a, b) => a.preset - b.preset);
-    // Only cameras the Steuerung catalog knows (cam1, cam2) get controls.
+    // Only cameras the catalog knows (cam1, cam2) get controls.
     controls.hidden = !list.length;
     const name = controls.closest(".camera-card").querySelector(".camera-card-title").textContent;
-    // Rebuild only on a real change, so a held zoom key is never replaced.
+    // Rebuild only on a real change, so a held key is never replaced.
     const signature = JSON.stringify([name, list]);
     if (controls.dataset.signature === signature) continue;
     controls.dataset.signature = signature;
-    stopCameraZoom(cam);
+    stopCameraMoves(cam);
     if (!list.length) { controls.replaceChildren(); continue; }
+    const c = escapeAttr(cam);
+    const n = escapeAttr(name);
+    const arrows = Object.entries(CAMERA_ARROWS).map(([direction, arrow]) => `
+        <button type="button" class="camera-move-key camera-arrow" data-camera-move="pan" data-direction="${direction}" data-camera="${c}"
+          title="${n} ${arrow.label}" aria-label="${n} ${arrow.label}, gedrückt halten">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${arrow.path}"/></svg></button>`).join("");
     controls.innerHTML = `
       <div class="camera-controls-label">Presets</div>
       <div class="camera-presets">${list.map(p => `
-        <button type="button" class="camera-preset" data-camera-preset="${escapeAttr(p.id)}" data-camera="${escapeAttr(cam)}"
+        <button type="button" class="camera-preset" data-camera-preset="${escapeAttr(p.id)}" data-camera="${c}"
           aria-pressed="${CAMERA_LAST_PRESET[cam] === p.id}" title="${escapeAttr(p.label)} (Preset ${p.preset})">${escapeHtml(cameraPresetLabel(p.label))}</button>`).join("")}
       </div>
-      <div class="camera-controls-label">Zoom – gedrückt halten</div>
-      <div class="camera-zoom">
-        <button type="button" class="camera-zoom-key" data-camera-zoom="out" data-camera="${escapeAttr(cam)}" aria-label="${escapeAttr(name)} herauszoomen, gedrückt halten">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5L21 21M7.5 10.5h6"/></svg>Weit</button>
-        <button type="button" class="camera-zoom-key" data-camera-zoom="in" data-camera="${escapeAttr(cam)}" aria-label="${escapeAttr(name)} hineinzoomen, gedrückt halten">
+      <div class="camera-controls-label">Schwenken &amp; Zoom – gedrückt halten</div>
+      <div class="camera-ptz">${arrows}
+        <button type="button" class="camera-move-key camera-zoom-key" data-camera-move="zoom" data-direction="in" data-camera="${c}" aria-label="${n} hineinzoomen, gedrückt halten">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5L21 21M7.5 10.5h6M10.5 7.5v6"/></svg>Nah</button>
+        <button type="button" class="camera-move-key camera-zoom-key" data-camera-move="zoom" data-direction="out" data-camera="${c}" aria-label="${n} herauszoomen, gedrückt halten">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5L21 21M7.5 10.5h6"/></svg>Weit</button>
       </div>`;
   }
 }
@@ -2954,44 +3132,66 @@ async function pressCameraPreset(key) {
   }
 }
 
-// Commands of one camera go out strictly in order, so a quick tap never lets
-// "stop" overtake its "in"/"out".
-function sendCameraZoom(camera, direction) {
-  const state = CAMERA_ZOOM[camera] || (CAMERA_ZOOM[camera] = { chain: Promise.resolve(), direction: null, timer: null });
+function cameraMoveState(camera, kind) {
+  const id = `${camera}:${kind}`;
+  return CAMERA_MOVES[id] || (CAMERA_MOVES[id] = { camera, kind, chain: Promise.resolve(), direction: null, timer: null, keepalive: null });
+}
+
+// Commands of one camera and kind go out strictly in order, so a quick tap
+// never lets "stop" overtake its move.
+function sendCameraMove(state, direction) {
+  const kind = CAMERA_MOVE_KINDS[state.kind];
   state.chain = state.chain
-    .then(() => api("POST", `/cameras/${encodeURIComponent(camera)}/zoom`, { direction }))
+    .then(() => api("POST", `/cameras/${encodeURIComponent(state.camera)}/${kind.path}`, { direction }))
     .then(result => {
-      if (!result.ok || result.data.ok === false) toast(`Zoom ${camera}: ${result.data.reason || "HTTP " + result.status}`, false);
+      if (!result.ok || result.data.ok === false) toast(`${kind.name} ${state.camera}: ${result.data.reason || "HTTP " + result.status}`, false);
     })
-    .catch(() => toast(`Zoom ${camera}: Dienst nicht erreichbar`, false));
+    .catch(() => toast(`${kind.name} ${state.camera}: Dienst nicht erreichbar`, false));
 }
 
-function startCameraZoom(key) {
-  const camera = key.dataset.camera;
-  const direction = key.dataset.cameraZoom;
-  const state = CAMERA_ZOOM[camera];
-  if (state && state.direction === direction) return;
-  if (state && state.direction) stopCameraZoom(camera);
-  sendCameraZoom(camera, direction);
-  const current = CAMERA_ZOOM[camera];
-  current.direction = direction;
+function startCameraMove(key) {
+  const state = cameraMoveState(key.dataset.camera, key.dataset.cameraMove);
+  const direction = key.dataset.direction;
+  if (state.direction === direction) return;
+  if (state.direction) stopCameraMove(state);
+  const kind = CAMERA_MOVE_KINDS[state.kind];
+  state.direction = direction;
+  sendCameraMove(state, direction);
   key.classList.add("active");
-  // Failsafe: never keep zooming if a release got lost.
-  clearTimeout(current.timer);
-  current.timer = setTimeout(() => stopCameraZoom(camera), 15000);
+  if (kind.keepalive) {
+    // Only while the previous command is through, so a slow network never
+    // piles up requests.
+    state.keepalive = setInterval(() => {
+      if (state.direction === direction && !state.pending) {
+        state.pending = true;
+        sendCameraMove(state, direction);
+        state.chain = state.chain.finally(() => { state.pending = false; });
+      }
+    }, kind.keepalive);
+  }
+  // Failsafe: never keep moving if a release got lost.
+  state.timer = setTimeout(() => stopCameraMove(state), kind.failsafe);
 }
 
-function stopCameraZoom(camera) {
-  const state = CAMERA_ZOOM[camera];
+function stopCameraMove(state) {
   if (!state || !state.direction) return;
   state.direction = null;
   clearTimeout(state.timer);
-  document.querySelectorAll(`[data-camera-zoom][data-camera="${camera}"].active`).forEach(b => b.classList.remove("active"));
-  sendCameraZoom(camera, "stop");
+  clearInterval(state.keepalive);
+  document.querySelectorAll(`[data-camera-move="${state.kind}"][data-camera="${state.camera}"].active`).forEach(b => b.classList.remove("active"));
+  sendCameraMove(state, "stop");
 }
 
-function stopAllCameraZoom() {
-  for (const camera of Object.keys(CAMERA_ZOOM)) stopCameraZoom(camera);
+function stopCameraMoves(camera) {
+  for (const state of Object.values(CAMERA_MOVES)) if (state.camera === camera) stopCameraMove(state);
+}
+
+function stopAllCameraMoves() {
+  for (const state of Object.values(CAMERA_MOVES)) stopCameraMove(state);
+}
+
+function stopCameraMoveKey(key) {
+  stopCameraMove(CAMERA_MOVES[`${key.dataset.camera}:${key.dataset.cameraMove}`]);
 }
 
 let DESKTOP_PROFILES_SIGNATURE = "";
@@ -3492,54 +3692,51 @@ function renderPowerOffConfig(data) {
     return;
   }
   const selected = new Set(config.selected_targets || []);
-  const addTarget = (label, checked, attribute, value = "") => {
-    const row = document.createElement("label");
-    row.className = "power-off-target";
+  // One key per target; tapping it toggles whether "Ausschalten" includes it
+  // (a hidden checkbox inside the key carries the state).
+  const addTarget = (name, meta, checked, data) => {
+    const tile = document.createElement("div");
+    tile.className = "power-tile";
+    const key = document.createElement("label");
+    key.className = "power-off-target";
     const input = document.createElement("input");
     input.type = "checkbox";
     input.checked = checked;
     input.disabled = POWER_OFF_CONFIG_BUSY;
-    if (attribute === "beamer") input.dataset.powerBeamer = "true";
-    else {
-      input.dataset.powerTarget = value;
-      input.value = value;
-    }
-    const text = document.createElement("span");
-    text.textContent = label;
-    row.append(input, text);
-    targets.append(row);
+    Object.assign(input.dataset, data);
+    if (data.powerTarget) input.value = data.powerTarget;
+    const title = document.createElement("span");
+    title.className = "power-off-name";
+    title.textContent = name;
+    const sub = document.createElement("span");
+    sub.className = "power-off-meta";
+    sub.textContent = meta;
+    key.title = `${name}: ${checked ? "wird mit ausgeschaltet" : "bleibt an"} – tippen zum Umschalten`;
+    key.append(input, title, sub);
+    tile.append(key);
+    targets.append(tile);
+    return tile;
   };
-  const addAgentTarget = target => {
-    const row = document.createElement("div");
-    row.className = "power-off-agent";
-    const label = document.createElement("label");
-    label.className = "power-off-target";
-    const input = document.createElement("input");
-    input.type = "checkbox";
-    input.checked = selected.has(target.ip);
-    input.disabled = POWER_OFF_CONFIG_BUSY;
-    input.dataset.powerTarget = target.ip;
-    input.value = target.ip;
-    const text = document.createElement("span");
-    text.textContent = `${target.label} · ${target.ip}`;
-    label.append(input, text);
+  addTarget("Beamer", "Projektor", config.beamer === true, { powerBeamer: "true" });
+  for (const target of config.available_targets) {
+    const tile = addTarget(target.label, target.ip, selected.has(target.ip), { powerTarget: target.ip });
+    tile.classList.add("agent");
     const shutdown = document.createElement("button");
     shutdown.type = "button";
-    shutdown.className = "power-agent-shutdown danger";
+    shutdown.className = "power-agent-shutdown";
     shutdown.dataset.powerAgentShutdown = target.ip;
-    shutdown.textContent = "Herunterfahren";
-    shutdown.title = `${target.label} in 10 Sekunden herunterfahren`;
-    row.append(label, shutdown);
-    targets.append(row);
-  };
-  addTarget("Beamer ausschalten", config.beamer === true, "beamer");
-  for (const target of config.available_targets) addAgentTarget(target);
+    shutdown.title = `Nur ${target.label} jetzt herunterfahren (nach 10 Sekunden)`;
+    shutdown.setAttribute("aria-label", shutdown.title);
+    shutdown.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 3v8M6.3 6.8a8 8 0 1 0 11.4 0"/></svg>';
+    tile.append(shutdown);
+  }
   const status = $("power-off-status");
   status.classList.remove("bad");
-  status.textContent = config.available_targets.length
-    ? "Auswahl wird automatisch gespeichert."
-    : "Keine Agent-PCs in Desktop-Profilen konfiguriert.";
-  $("power-off-selected").disabled = POWER_OFF_CONFIG_BUSY || POWER_OFF_BUSY || (!selected.size && config.beamer !== true);
+  const count = selected.size + (config.beamer === true ? 1 : 0);
+  status.textContent = (config.available_targets.length ? "" : "Keine Agent-PCs in den Desktop-Profilen. ")
+    + (count ? `${count} ${count === 1 ? "Gerät" : "Geräte"} rot markiert · Agent-PCs fahren 10 s nach dem Befehl herunter`
+      : "Geräte antippen, die „Ausschalten“ mit ausschalten soll");
+  $("power-off-selected").disabled = POWER_OFF_CONFIG_BUSY || POWER_OFF_BUSY || !count;
 }
 
 async function loadPowerOffConfig() {
@@ -4396,40 +4593,43 @@ $("camera-grid").addEventListener("click", async (event) => {
   const preset = event.target.closest("button[data-camera-preset]");
   if (preset) return pressCameraPreset(preset);
 });
-// Hold-to-zoom: zoom while the key is held (finger, mouse or Enter/Space).
+// Hold-to-move (arrows, zoom): move while the key is held (finger, mouse or
+// Enter/Space); releasing, sliding off or losing the pointer stops it.
+const cameraMoveKey = event => event.target.closest("button[data-camera-move]");
 $("camera-grid").addEventListener("pointerdown", (event) => {
-  const key = event.target.closest("button[data-camera-zoom]");
+  const key = cameraMoveKey(event);
   if (!key || event.button > 0) return;
   event.preventDefault();
-  try { key.setPointerCapture(event.pointerId); } catch (_) { /* release still ends the zoom */ }
-  startCameraZoom(key);
+  try { key.setPointerCapture(event.pointerId); } catch (_) { /* release still ends the move */ }
+  startCameraMove(key);
 });
 for (const type of ["pointerup", "pointercancel", "lostpointercapture"]) {
   $("camera-grid").addEventListener(type, (event) => {
-    const key = event.target.closest("button[data-camera-zoom]");
-    if (key) stopCameraZoom(key.dataset.camera);
+    const key = cameraMoveKey(event);
+    if (key) stopCameraMoveKey(key);
   });
 }
 $("camera-grid").addEventListener("keydown", (event) => {
-  const key = event.target.closest("button[data-camera-zoom]");
+  const key = cameraMoveKey(event);
   if (!key || (event.key !== "Enter" && event.key !== " ")) return;
   event.preventDefault();
-  if (!event.repeat) startCameraZoom(key);
+  if (!event.repeat) startCameraMove(key);
 });
 $("camera-grid").addEventListener("keyup", (event) => {
-  const key = event.target.closest("button[data-camera-zoom]");
-  if (key && (event.key === "Enter" || event.key === " ")) stopCameraZoom(key.dataset.camera);
+  const key = cameraMoveKey(event);
+  if (key && (event.key === "Enter" || event.key === " ")) stopCameraMoveKey(key);
 });
 $("camera-grid").addEventListener("focusout", (event) => {
-  const key = event.target.closest("button[data-camera-zoom]");
-  if (key && key.classList.contains("active")) stopCameraZoom(key.dataset.camera);
+  const key = cameraMoveKey(event);
+  if (key && key.classList.contains("active")) stopCameraMoveKey(key);
 });
 $("camera-grid").addEventListener("contextmenu", (event) => {
-  if (event.target.closest("button[data-camera-zoom]")) event.preventDefault();
+  if (cameraMoveKey(event)) event.preventDefault();
 });
-// Never leave a camera zooming when the page loses focus or is hidden.
-window.addEventListener("blur", stopAllCameraZoom);
-document.addEventListener("visibilitychange", () => { if (document.hidden) stopAllCameraZoom(); });
+// Never leave a camera moving when the page loses focus or is hidden.
+window.addEventListener("blur", stopAllCameraMoves);
+window.addEventListener("pagehide", stopAllCameraMoves);
+document.addEventListener("visibilitychange", () => { if (document.hidden) stopAllCameraMoves(); });
 $("tile-menu").addEventListener("click", (event) => {
   const item = event.target.closest("button[data-menu-action]");
   if (!item) return;
@@ -5150,8 +5350,9 @@ async function loadProgramItems() {
   $("program-empty").textContent = "Noch keine Programmpunkte.";
   PROGRAM_ITEMS = items.data;
   PROGRAM_GROUPS = groups.data;
-  PROGRAM_BUTTONS = buttons.data.buttons || [];
-  PROGRAM_BUTTON_CATEGORIES = Object.fromEntries((buttons.data.categories || []).map(category => [category.id, category.name]));
+  // Camera presets left Steuerung but program rows can still run them.
+  PROGRAM_BUTTONS = [...(buttons.data.buttons || []), ...(buttons.data.camera_buttons || [])];
+  PROGRAM_BUTTON_CATEGORIES = { cameras: "Kameras", ...Object.fromEntries((buttons.data.categories || []).map(category => [category.id, category.name])) };
   PROGRAM_DESKTOP_PROFILES = desktop.data.profiles || [];
   renderProgramItems();
 }
@@ -5581,13 +5782,38 @@ async function loadSongs() {
 // Slide layout. Keep in sync with _draw_slide() in
 // desktop_agent/show_image_agent.py, which draws the real screen.
 const SLIDE = { padX: 0.06, padY: 0.07, titleH: 0.12, copyH: 0.08, line: 1.25 };
+// Next-slide preview: grey (text colour mixed into the background), at most
+// half the text size, never below 20 px on 1080 lines, only in the room under
+// the centred text (which never moves for it).
+const PREVIEW = { scale: 0.5, min: 20, gap: 0.5, mix: 0.45 };
 let SLIDE_CTX = null;
+
+function mixColor(fg, bg, amount) {
+  const a = parseInt(fg.slice(1), 16), b = parseInt(bg.slice(1), 16);
+  return "#" + [16, 8, 0].map(s => {
+    const x = (b >> s) & 255, y = (a >> s) & 255;
+    return Math.round(x + (y - x) * amount).toString(16).padStart(2, "0");
+  }).join("");
+}
+
+// {px, lines} of the next-slide preview, or null where it does not fit.
+function previewLayout(ctx, settings, lines, nextLines, px, boxW, boxH, H) {
+  if (!nextLines.length) return null;
+  const minPx = PREVIEW.min * H / 1080;
+  let pp = PREVIEW.scale * px;
+  const widest = size => { ctx.font = songSlideFont(size, settings); return Math.max(...nextLines.map(l => ctx.measureText(l).width)); };
+  while (pp >= minPx && widest(pp) > boxW) pp *= 0.94;
+  if (pp < minPx) return null;
+  const free = (boxH - lines.length * px * SLIDE.line) / 2 - PREVIEW.gap * px;
+  const count = Math.min(nextLines.length, free > 0 ? Math.floor(free / (pp * SLIDE.line)) : 0);
+  return count >= 1 ? { px: pp, lines: nextLines.slice(0, count) } : null;
+}
 
 function songSlideFont(px, settings, bold = false) {
   return `${bold ? "700 " : ""}${px}px "${settings.font}", Verdana, sans-serif`;
 }
 
-// slide: {text, title, copyright, blank}
+// slide: {text, title, copyright, next, blank}
 function renderSlide(box, slide, settings) {
   const W = box.clientWidth, H = box.clientHeight;
   box.replaceChildren();
@@ -5595,6 +5821,7 @@ function renderSlide(box, slide, settings) {
   box.style.color = settings.text_color;
   if (!W || !H || slide.blank) return;
   const ctx = SLIDE_CTX || (SLIDE_CTX = document.createElement("canvas").getContext("2d"));
+  const align = settings.text_align || "center";
   const padX = SLIDE.padX * W, padY = SLIDE.padY * H;
   const titleH = slide.title ? SLIDE.titleH * H : 0;
   const copyH = slide.copyright ? SLIDE.copyH * H : 0;
@@ -5608,40 +5835,57 @@ function renderSlide(box, slide, settings) {
     px *= 0.94;
   }
   px = Math.max(minPx, px);
+  const place = (el, top, font, color) => {
+    el.style.top = `${top}px`;
+    el.style.font = font;
+    el.style.textAlign = align;
+    if (el.classList.contains("slide-line")) { el.style.left = `${padX}px`; el.style.right = `${padX}px`; }
+    if (color) el.style.color = color;
+    box.appendChild(el);
+  };
   const top = padY + titleH + (boxH - lines.length * px * SLIDE.line) / 2;
   lines.forEach((line, i) => {
     const el = document.createElement("div");
     el.className = "slide-line";
-    el.style.top = `${top + i * px * SLIDE.line}px`;
-    el.style.font = songSlideFont(px, settings);
     el.textContent = line;
-    box.appendChild(el);
+    place(el, top + i * px * SLIDE.line, songSlideFont(px, settings));
   });
+  const preview = slide.next
+    ? previewLayout(ctx, settings, lines, slide.next.split("\n"), px, boxW, boxH, H) : null;
+  if (preview) {
+    const grey = mixColor(settings.text_color, settings.background_color, PREVIEW.mix);
+    const previewTop = padY + titleH + boxH - preview.lines.length * preview.px * SLIDE.line;
+    preview.lines.forEach((line, i) => {
+      const el = document.createElement("div");
+      el.className = "slide-line slide-next";
+      el.textContent = line;
+      place(el, previewTop + i * preview.px * SLIDE.line, songSlideFont(preview.px, settings), grey);
+    });
+  }
   if (slide.title) {
     const el = document.createElement("div");
     el.className = "slide-title";
-    el.style.top = `${padY + titleH / 2}px`;
-    el.style.font = songSlideFont(0.05 * H, settings, true);
     el.textContent = slide.title;
-    box.appendChild(el);
+    place(el, padY + titleH / 2, songSlideFont(0.05 * H, settings, true));
   }
   if (slide.copyright) {
     const el = document.createElement("div");
     el.className = "slide-copy";
-    el.style.top = `${H - padY - copyH / 2}px`;
-    el.style.font = songSlideFont(0.026 * H, settings);
     el.textContent = slide.copyright;
-    box.appendChild(el);
+    place(el, H - padY - copyH / 2, songSlideFont(0.026 * H, settings));
   }
 }
 
-// What the display PC shows for slide i (title and copyright on the first).
+// What the display PC shows for slide i (title and copyright on the first,
+// the next slide as preview unless it is the last one).
 function songSlide(song, index, settings) {
   const first = index === 0;
+  const upcoming = song.slides[index + 1];
   return {
     text: song.slides[index].text,
     title: settings.show_title && first ? song.title : "",
     copyright: settings.show_copyright && first ? song.copyright : "",
+    next: settings.show_next_preview !== false && upcoming ? upcoming.text : "",
   };
 }
 
@@ -5746,9 +5990,11 @@ new ResizeObserver(() => { if (SONG_LIVE.song && SONG_SETTINGS) renderSongLive()
 
 // ---- Presenter keys (whenever the page is open) ----------------------------
 // Clickers send Page Down / Page Up, many also "b" or "." for a black screen.
-//   next (Page Down, →, space): next slide of the song on screen; once the
-//        song is done (dark after its last slide) or none is shown, the next
-//        program row, like the big Weiter key
+//   Page Down: next slide of the song on screen; once the song is done (dark
+//        after its last slide) or none is shown, the next program row, like
+//        the big Weiter key
+//   →, space: next slide only -- never a program row (a stray key on a
+//        keyboard must not switch mute groups live)
 //   back (Page Up, ←): previous slide (the program never goes back)
 //   b or .: black screen and back on;  h: Beamer hide / unhide
 // Not while typing in a field or with a dialog open.
@@ -5792,7 +6038,8 @@ document.addEventListener("keydown", event => {
   // Space on a focused key would also press that key.
   if (event.key === " " && t.closest && t.closest("button")) return;
   const key = event.key.length === 1 ? event.key.toLowerCase() : event.key;
-  if (["PageDown", "ArrowRight", " "].includes(key)) { event.preventDefault(); presenterNext(); }
+  if (key === "PageDown") { event.preventDefault(); presenterNext(); }
+  else if (["ArrowRight", " "].includes(key)) { if (SONG_LIVE.song) { event.preventDefault(); songNext(); } }
   else if (["PageUp", "ArrowLeft"].includes(key)) { if (SONG_LIVE.song) { event.preventDefault(); songPrev(); } }
   else if (key === "b" || key === ".") { event.preventDefault(); songBlankToggle(); }
   else if (key === "h") { event.preventDefault(); presenterBeamerToggle(); }
@@ -6003,22 +6250,32 @@ function songMatches(query) {
   }).slice(0, 40);
 }
 
-// onPick(song or null); allowNone adds "Kein Lied".
-function openSongSearch(anchor, onPick, allowNone = true) {
+// onPick(song or null); allowNone adds "Kein Lied". Inside a modal dialog
+// (everything outside it is inert) the popover opens in the dialog; options
+// .candidates are listed first while the search is empty.
+function openSongSearch(anchor, onPick, allowNone = true, options = {}) {
   closeSongSearch();
   const pop = document.createElement("div");
   pop.className = "song-search";
   pop.innerHTML = '<input type="search" class="pf-input" placeholder="Titel oder Liederbuch-Nummer" aria-label="Lied suchen" autocomplete="off" /><div class="song-search-list" role="listbox"></div>';
-  document.body.appendChild(pop);
+  const dialog = anchor.closest("dialog[open]");
+  (dialog || document.body).appendChild(pop);
   const r = anchor.getBoundingClientRect();
   const width = pop.offsetWidth;
-  pop.style.left = `${Math.min(Math.max(8, r.left), innerWidth - width - 8) + scrollX}px`;
-  pop.style.top = `${r.bottom + 4 + scrollY}px`;
+  const left = Math.min(Math.max(8, r.left), innerWidth - width - 8);
+  if (dialog) {
+    pop.style.position = "fixed";  // placed after the first render (placeInDialog)
+    pop.style.left = `${left}px`;
+  } else {
+    pop.style.left = `${left + scrollX}px`;
+    pop.style.top = `${r.bottom + 4 + scrollY}px`;
+  }
   const input = pop.querySelector("input");
   const list = pop.querySelector(".song-search-list");
   const pick = song => { closeSongSearch(); onPick(song); };
   const render = () => {
-    const matches = songMatches(input.value);
+    const candidates = !input.value.trim() && options.candidates?.length ? options.candidates : null;
+    const matches = candidates || songMatches(input.value);
     list.replaceChildren();
     if (allowNone) {
       const none = document.createElement("button");
@@ -6057,6 +6314,15 @@ function openSongSearch(anchor, onPick, allowNone = true) {
   document.addEventListener("pointerdown", onOutside, true);
   SONG_SEARCH = { pop, onOutside };
   render();
+  if (dialog) {
+    // Below the key, or above it when there is more room there; the list
+    // shrinks so the whole popover stays on screen.
+    const below = innerHeight - r.bottom - 12, above = r.top - 12;
+    const room = below >= 300 || below >= above ? below : above;
+    list.style.maxHeight = `${Math.max(120, Math.min(320, room - (pop.offsetHeight - list.offsetHeight)))}px`;
+    if (room === below) pop.style.top = `${r.bottom + 4}px`;
+    else pop.style.bottom = `${innerHeight - r.top + 4}px`;
+  }
   input.focus();
 }
 
@@ -6075,9 +6341,347 @@ $("program-items").addEventListener("click", event => {
   });
 });
 
+// ---- program templates: save the program, apply it with the day's songs ----
+//
+// The songs come as text, one per line (or one by one from the library). The
+// service matches each line (POST /songs/match); a line it cannot place gets
+// a "Wählen" key. The preview is the service's own result (dry run), so what
+// is shown is exactly what "Programm ersetzen" writes.
+
+const TEMPLATES = { list: [], selected: null, matches: [], picked: new Map(), seq: 0, timer: null };
+const SLOT_TITLE_RE = /lied|lobpreis|song|worship|anbetung/i;
+
+function songById(id) { return SONG_INDEX.get(id) || null; }
+
+// A key that needs a second tap: true when it was already armed.
+function armKey(button, label) {
+  if (button.dataset.armed) {
+    clearTimeout(Number(button.dataset.armed));
+    delete button.dataset.armed;
+    button.classList.remove("armed");
+    button.textContent = button.dataset.label;
+    return true;
+  }
+  button.dataset.label = button.textContent;
+  button.textContent = label;
+  button.classList.add("armed");
+  button.dataset.armed = String(setTimeout(() => {
+    delete button.dataset.armed;
+    button.classList.remove("armed");
+    button.textContent = button.dataset.label;
+  }, 6000));
+  return false;
+}
+
+function disarmKey(button) {
+  if (button.dataset.armed) armKey(button, "");
+}
+
+function templateTab(save) {
+  $("tp-tab-apply").setAttribute("aria-selected", String(!save));
+  $("tp-tab-save").setAttribute("aria-selected", String(save));
+  $("tp-apply").hidden = save;
+  $("tp-save").hidden = !save;
+  closeSongSearch();
+  if (save) renderTemplateRows();
+}
+
+function renderTemplateList() {
+  const list = $("tp-list");
+  list.replaceChildren();
+  if (!TEMPLATES.list.length) {
+    const empty = document.createElement("div");
+    empty.className = "tp-empty";
+    empty.textContent = "Noch keine Vorlage. Unter „Speichern“ das aktuelle Programm als Vorlage ablegen.";
+    list.appendChild(empty);
+  }
+  for (const template of TEMPLATES.list) {
+    const item = document.createElement("div");
+    item.className = "tp-item";
+    const pick = document.createElement("button");
+    pick.type = "button";
+    pick.className = "tp-pick";
+    pick.setAttribute("role", "radio");
+    pick.setAttribute("aria-checked", String(template.id === TEMPLATES.selected));
+    const name = document.createElement("span");
+    name.className = "tp-name";
+    name.textContent = template.name;
+    const meta = document.createElement("span");
+    meta.className = "tp-meta";
+    meta.textContent = `${template.rows.length} Punkte · ${template.slot_count} ${template.slot_count === 1 ? "Liedplatz" : "Liedplätze"}`;
+    pick.append(name, meta);
+    pick.addEventListener("click", () => {
+      TEMPLATES.selected = template.id;
+      $("tp-name").value = template.name;
+      renderTemplateList();
+      updateTemplatePreview();
+    });
+    const del = document.createElement("button");
+    del.type = "button";
+    del.className = "tp-delete";
+    del.textContent = "×";
+    del.title = `Vorlage „${template.name}“ löschen`;
+    del.setAttribute("aria-label", del.title);
+    del.addEventListener("click", async () => {
+      if (!armKey(del, "Löschen?")) return;
+      const result = await api("DELETE", `/program/templates/${encodeURIComponent(template.id)}`);
+      if (!result.ok) { toast(result.data.reason || `HTTP ${result.status}`, false); return; }
+      toast(`Vorlage „${template.name}“ gelöscht`, true);
+      if (TEMPLATES.selected === template.id) TEMPLATES.selected = null;
+      await loadTemplates();
+    });
+    item.append(pick, del);
+    list.appendChild(item);
+  }
+}
+
+async function loadTemplates() {
+  const result = await api("GET", "/program/templates");
+  TEMPLATES.list = result.ok && Array.isArray(result.data.templates) ? result.data.templates : [];
+  if (!TEMPLATES.list.some(t => t.id === TEMPLATES.selected)) TEMPLATES.selected = TEMPLATES.list[0]?.id || null;
+  renderTemplateList();
+  updateTemplatePreview();
+}
+
+// The songs to apply: each line's match, or what was picked for that line.
+function templateSongs() {
+  return TEMPLATES.matches.map(match => {
+    const picked = TEMPLATES.picked.has(match.line) ? TEMPLATES.picked.get(match.line) : match.song_id;
+    return { song_id: picked && songById(picked) ? picked : null, text: match.line };
+  });
+}
+
+function renderTemplateMatches() {
+  const list = $("tp-matches");
+  list.replaceChildren();
+  if (!TEMPLATES.matches.length) {
+    const empty = document.createElement("li");
+    empty.className = "tp-empty";
+    empty.textContent = SONG_LIST.length ? "Noch keine Lieder eingegeben." : "Bibliothek noch nicht geladen – unter „Liedanzeige“ laden.";
+    list.appendChild(empty);
+    return;
+  }
+  const songs = templateSongs();
+  TEMPLATES.matches.forEach((match, i) => {
+    const song = songs[i].song_id ? songById(songs[i].song_id) : null;
+    const li = document.createElement("li");
+    li.className = "tp-match" + (song ? "" : " missing");
+    const no = document.createElement("span");
+    no.className = "tp-no";
+    no.textContent = String(i + 1);
+    const texts = document.createElement("span");
+    texts.className = "tp-texts";
+    const line = document.createElement("span");
+    line.className = "tp-line";
+    line.textContent = match.line;
+    const found = document.createElement("span");
+    found.className = "tp-song";
+    found.textContent = song ? `♪ ${song.title}`
+      : match.candidates.length ? "Nicht eindeutig – bitte wählen" : "Nicht gefunden – kommt als Text in den Titel";
+    texts.append(found, line);
+    const choose = document.createElement("button");
+    choose.type = "button";
+    choose.textContent = song ? "Ändern" : "Wählen";
+    choose.setAttribute("aria-label", `Lied für Zeile ${i + 1} wählen`);
+    choose.addEventListener("click", () => {
+      const candidates = match.candidates.map(c => songById(c.song_id)).filter(Boolean);
+      openSongSearch(choose, picked => {
+        TEMPLATES.picked.set(match.line, picked ? picked.id : null);
+        renderTemplateMatches();
+        updateTemplatePreview();
+      }, true, { candidates });
+    });
+    li.append(no, texts, choose);
+    list.appendChild(li);
+  });
+}
+
+async function matchTemplateSongs() {
+  const lines = $("tp-songs").value.split("\n").map(l => l.trim()).filter(Boolean).slice(0, 40);
+  const seq = ++TEMPLATES.seq;
+  const result = lines.length ? await api("POST", "/songs/match", { lines }) : { ok: true, data: { matches: [] } };
+  if (seq !== TEMPLATES.seq) return;  // typed on meanwhile
+  TEMPLATES.matches = result.ok && Array.isArray(result.data.matches) ? result.data.matches : [];
+  renderTemplateMatches();
+  updateTemplatePreview();
+}
+
+async function updateTemplatePreview() {
+  const list = $("tp-preview");
+  const template = TEMPLATES.list.find(t => t.id === TEMPLATES.selected);
+  const apply = $("tp-apply-btn");
+  disarmKey(apply);
+  apply.disabled = !template;
+  if (!template) {
+    list.replaceChildren();
+    $("tp-hint").textContent = "";
+    return;
+  }
+  const songs = templateSongs();
+  const seq = TEMPLATES.seq;
+  const result = await api("POST", `/program/templates/${encodeURIComponent(template.id)}/apply`, { dry_run: true, songs });
+  if (seq !== TEMPLATES.seq || template.id !== TEMPLATES.selected) return;
+  list.replaceChildren();
+  if (!result.ok || !Array.isArray(result.data.rows)) {
+    $("tp-hint").textContent = result.data.reason || `Vorschau nicht möglich (HTTP ${result.status})`;
+    return;
+  }
+  const daySongs = new Set(songs.map(s => s.song_id).filter(Boolean));
+  for (const row of result.data.rows) {
+    const li = document.createElement("li");
+    if (row.song && daySongs.has(row.song)) li.className = "song";
+    const time = document.createElement("span");
+    time.className = "tp-time";
+    time.textContent = row.time;
+    const title = document.createElement("span");
+    title.className = "tp-title";
+    title.textContent = row.title;
+    const song = document.createElement("span");
+    song.className = "tp-psong";
+    song.textContent = row.song ? `♪ ${songById(row.song)?.title || row.song}` : "";
+    li.append(time, title, song);
+    list.appendChild(li);
+  }
+  const extra = Math.max(0, songs.length - template.slot_count);
+  const empty = Math.max(0, template.slot_count - songs.length);
+  const missing = songs.filter(s => !s.song_id).length;
+  $("tp-hint").textContent = [
+    extra ? `${extra} ${extra === 1 ? "Lied wird" : "Lieder werden"} nach dem letzten Liedplatz angehängt.` : "",
+    empty ? `${empty} ${empty === 1 ? "Liedplatz bleibt" : "Liedplätze bleiben"} ohne Lied.` : "",
+    missing ? `${missing} ohne Lied aus der Bibliothek (Text steht im Titel).` : "",
+    PROGRAM_ITEMS.length ? `Ersetzt das aktuelle Programm (${PROGRAM_ITEMS.length} Punkte).` : "",
+  ].filter(Boolean).join(" ");
+}
+
+function renderTemplateRows() {
+  const rows = $("tp-rows");
+  rows.replaceChildren();
+  $("tp-save-btn").disabled = !PROGRAM_ITEMS.length;
+  if (!PROGRAM_ITEMS.length) {
+    const empty = document.createElement("div");
+    empty.className = "tp-empty";
+    empty.textContent = "Das Programm ist leer – erst Programmpunkte anlegen.";
+    rows.appendChild(empty);
+    return;
+  }
+  for (const item of PROGRAM_ITEMS) {
+    const row = document.createElement("div");
+    row.className = "tp-row";
+    const label = document.createElement("label");
+    label.className = "compact-switch";
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.dataset.slot = item.id;
+    input.checked = Boolean(item.song) || SLOT_TITLE_RE.test(item.title);
+    const track = document.createElement("span");
+    track.className = "track";
+    label.append(input, track, "Liedplatz");
+    const time = document.createElement("span");
+    time.className = "tp-time";
+    time.textContent = item.time;
+    const title = document.createElement("span");
+    title.className = "tp-title";
+    title.textContent = item.title;
+    const song = document.createElement("span");
+    song.className = "tp-psong";
+    song.textContent = item.song ? `♪ ${songById(item.song)?.title || item.song}` : "";
+    row.append(label, time, title, song);
+    rows.appendChild(row);
+  }
+}
+
+function templateError(id, message) {
+  $(id).hidden = !message;
+  $(id).textContent = message || "";
+}
+
+async function openTemplateDialog() {
+  closeSongSearch();
+  templateError("tp-apply-error", "");
+  templateError("tp-save-error", "");
+  $("tp-songs").value = "";
+  TEMPLATES.matches = [];
+  TEMPLATES.picked.clear();
+  $("template-dialog").showModal();
+  await Promise.all([loadSongs(), loadProgramItems()]);
+  await loadTemplates();
+  $("tp-name").value = TEMPLATES.list.find(t => t.id === TEMPLATES.selected)?.name || "";
+  templateTab(!TEMPLATES.list.length);
+  renderTemplateMatches();
+}
+
+$("program-template-btn").addEventListener("click", openTemplateDialog);
+$("tp-tab-apply").addEventListener("click", () => templateTab(false));
+$("tp-tab-save").addEventListener("click", () => templateTab(true));
+$("template-dialog").querySelectorAll(".tp-close").forEach(b => b.addEventListener("click", () => $("template-dialog").close()));
+$("template-dialog").addEventListener("close", closeSongSearch);
+$("template-dialog").addEventListener("scroll", closeSongSearch);
+$("tp-songs").addEventListener("input", () => {
+  clearTimeout(TEMPLATES.timer);
+  TEMPLATES.timer = setTimeout(matchTemplateSongs, 250);
+});
+$("tp-add-song").addEventListener("click", event => {
+  openSongSearch(event.currentTarget, song => {
+    const area = $("tp-songs");
+    const text = area.value.replace(/\s+$/, "");
+    area.value = (text ? text + "\n" : "") + song.title;
+    TEMPLATES.picked.set(song.title, song.id);
+    matchTemplateSongs();
+  }, false);
+});
+$("tp-apply-btn").addEventListener("click", async event => {
+  const button = event.currentTarget;
+  const template = TEMPLATES.list.find(t => t.id === TEMPLATES.selected);
+  if (!template) return;
+  if (PROGRAM_ITEMS.length && !armKey(button, `Wirklich ersetzen? (${PROGRAM_ITEMS.length} Punkte)`)) return;
+  button.disabled = true;
+  try {
+    const result = await api("POST", `/program/templates/${encodeURIComponent(template.id)}/apply`, { songs: templateSongs() });
+    if (!result.ok || result.data.ok === false) {
+      templateError("tp-apply-error", result.data.reason || `HTTP ${result.status}`);
+      return;
+    }
+    $("template-dialog").close();
+    toast(`Vorlage „${template.name}“ angewendet: ${result.data.items.length} Programmpunkte`, true);
+    for (const warning of result.data.warnings || []) toast(`${warning.title}: ${warning.reason}`, false);
+    await loadProgramItems();
+  } finally {
+    button.disabled = false;
+  }
+});
+$("tp-save-btn").addEventListener("click", async event => {
+  const button = event.currentTarget;
+  const name = $("tp-name").value.trim();
+  if (!name) { templateError("tp-save-error", "Bitte einen Namen eingeben."); $("tp-name").focus(); return; }
+  const replace = button.classList.contains("armed");
+  if (replace) armKey(button, "");
+  const slots = [...$("tp-rows").querySelectorAll("input[data-slot]:checked")].map(input => input.dataset.slot);
+  button.disabled = true;
+  try {
+    const result = await api("POST", "/program/templates", { name, slots, replace });
+    if (result.status === 409) {
+      templateError("tp-save-error", `Es gibt schon eine Vorlage „${name}“.`);
+      armKey(button, "Vorlage ersetzen?");
+      return;
+    }
+    if (!result.ok || result.data.ok === false) {
+      templateError("tp-save-error", result.data.reason || `HTTP ${result.status}`);
+      return;
+    }
+    templateError("tp-save-error", "");
+    toast(`Vorlage „${result.data.template.name}“ gespeichert (${result.data.template.slot_count} Liedplätze)`, true);
+    TEMPLATES.selected = result.data.template.id;
+    await loadTemplates();
+    templateTab(false);
+  } finally {
+    button.disabled = false;
+  }
+});
+$("tp-name").addEventListener("input", () => { disarmKey($("tp-save-btn")); templateError("tp-save-error", ""); });
+
 // ---- shared song settings dialog -------------------------------------------
 
-const SONG_FORM = { monitor: 2 };
+const SONG_FORM = { monitor: 2, align: "center" };
 
 function songFormSettings() {
   return {
@@ -6091,6 +6695,8 @@ function songFormSettings() {
     background_color: $("sg-bg-color").value,
     show_title: $("sg-show-title").checked,
     show_copyright: $("sg-show-copyright").checked,
+    text_align: SONG_FORM.align,
+    show_next_preview: $("sg-show-next").checked,
   };
 }
 
@@ -6100,8 +6706,14 @@ function renderSongSample() {
   const sample = SONG_LIVE.song
     ? songSlide(SONG_LIVE.song, 0, settings)
     : { text: "Großer Gott, wir loben dich,\nHerr, wir preisen deine Stärke.\nVor dir neigt die Erde sich\nund bewundert deine Werke.",
-        title: settings.show_title ? "Großer Gott, wir loben dich" : "", copyright: settings.show_copyright ? "Text: Ignaz Franz 1771" : "" };
+        title: settings.show_title ? "Großer Gott, wir loben dich" : "", copyright: settings.show_copyright ? "Text: Ignaz Franz 1771" : "",
+        next: settings.show_next_preview ? "Alles, was dich preisen kann,\nCherubim und Seraphinen" : "" };
   renderSlide($("sg-sample"), sample, settings);
+}
+
+function setSongAlign(align) {
+  SONG_FORM.align = ["left", "center", "right"].includes(align) ? align : "center";
+  $("sg-align").querySelectorAll("[data-align]").forEach(b => b.setAttribute("aria-checked", String(b.dataset.align === SONG_FORM.align)));
 }
 
 function songLibraryStatus() {
@@ -6133,6 +6745,8 @@ async function openSongDialog() {
   $("sg-fullscreen").checked = s.fullscreen !== false;
   $("sg-show-title").checked = s.show_title !== false;
   $("sg-show-copyright").checked = s.show_copyright !== false;
+  $("sg-show-next").checked = s.show_next_preview !== false;
+  setSongAlign(s.text_align || "center");
   $("sg-monitor").replaceChildren(...[1, 2, 3, 4].map(n => {
     const b = document.createElement("button");
     b.type = "button";
@@ -6163,6 +6777,10 @@ $("sg-cancel").addEventListener("click", () => $("song-dialog").close());
 $("sg-monitor").addEventListener("click", event => {
   const b = event.target.closest("[data-monitor]");
   if (b) { setSongMonitor(Number(b.dataset.monitor)); }
+});
+$("sg-align").addEventListener("click", event => {
+  const b = event.target.closest("[data-align]");
+  if (b) { setSongAlign(b.dataset.align); renderSongSample(); }
 });
 $("song-form").addEventListener("input", renderSongSample);
 $("song-form").addEventListener("submit", async event => {

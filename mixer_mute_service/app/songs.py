@@ -31,7 +31,7 @@ import urllib.error
 import urllib.request
 from ipaddress import IPv4Address
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Literal, Optional, Tuple
 
 from fastapi import APIRouter, Body, Request
 from fastapi.responses import JSONResponse
@@ -61,6 +61,10 @@ class SongSettings(BaseModel):
     background_color: str = "#000000"
     show_title: bool = True
     show_copyright: bool = True
+    # Text alignment of the slide (lyrics, preview, title, copyright).
+    text_align: Literal["left", "center", "right"] = "center"
+    # Below the slide, in grey, the first lines of the next slide where room is.
+    show_next_preview: bool = True
 
     @field_validator("library_path")
     @classmethod
@@ -143,16 +147,20 @@ class SongService:
     def slide_payload(self, song_id: str, slide: int) -> dict:
         song, s = self.songs[song_id], self.settings
         first = slide == 0
+        slides = song["slides"]
+        # After the last slide "next" goes dark, so there is nothing to preview.
+        upcoming = slides[slide + 1]["text"] if s.show_next_preview and slide + 1 < len(slides) else ""
         return {
             "action": "show",
             **self._screen(),
-            "text": song["slides"][slide]["text"],
+            "text": slides[slide]["text"],
             "title": song["title"] if s.show_title and first else "",
             "copyright": song["copyright"] if s.show_copyright and first else "",
+            "next": upcoming,
         }
 
     def blank_payload(self) -> dict:
-        return {"action": "blank", **self._screen(), "text": "", "title": "", "copyright": ""}
+        return {"action": "blank", **self._screen(), "text": "", "title": "", "copyright": "", "next": ""}
 
     def _screen(self) -> dict:
         s = self.settings
@@ -161,8 +169,18 @@ class SongService:
             "style": {
                 "font": s.font, "font_size": s.font_size,
                 "text_color": s.text_color, "background_color": s.background_color,
+                "align": s.text_align,
             },
         }
+
+
+def legacy_song_payload(payload: dict) -> dict:
+    """The /song request as display agents before the next-slide preview and
+    text alignment expect it (they refuse unknown keys)."""
+    legacy = {k: v for k, v in payload.items() if k != "next"}
+    if isinstance(legacy.get("style"), dict):
+        legacy["style"] = {k: v for k, v in legacy["style"].items() if k != "align"}
+    return legacy
 
 
 def _agent_post(url: str, token: str, payload: dict, timeout: float) -> dict:
@@ -185,7 +203,16 @@ async def _call_agent(request: Request, path: str, payload: dict, timeout: float
     service: SongService = request.app.state.songs
     url = f"http://{service.settings.target_ip}:{AGENT_PORT}{path}"
     try:
-        return await asyncio.to_thread(_agent_post, url, token, payload, timeout), 200
+        try:
+            return await asyncio.to_thread(_agent_post, url, token, payload, timeout), 200
+        except urllib.error.HTTPError as exc:
+            legacy = legacy_song_payload(payload) if path == "/song" else payload
+            if exc.code != 400 or legacy == payload:
+                raise
+            # An older display agent: show the slide without preview/alignment
+            # rather than not at all, until the display service is updated.
+            log.warning("Display agent refused the song preview/alignment (old version?); sending the plain slide")
+            return await asyncio.to_thread(_agent_post, url, token, legacy, timeout), 200
     except urllib.error.HTTPError as exc:
         log.warning("Display agent rejected %s: HTTP %s", path, exc.code)
         if exc.code == 409 and path == "/songs/save":

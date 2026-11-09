@@ -51,6 +51,11 @@ class CameraZoomRequest(BaseModel):
     direction: Literal["in", "out", "stop"]
 
 
+class CameraPanTiltRequest(BaseModel):
+    # Hold-to-move: a direction starts (or keeps alive) a move, "stop" ends it.
+    direction: Literal["left", "right", "up", "down", "stop"]
+
+
 class PowerOffConfigRequest(BaseModel):
     target_ips: List[str] = Field(default_factory=list)
     beamer: bool = False

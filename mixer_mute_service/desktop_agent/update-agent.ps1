@@ -8,7 +8,9 @@
 # An installed agent is found via its scheduled task: its files are replaced in
 # place, then the running agent is stopped and started again. Without a task,
 # install-agent.ps1 does the first install, which needs administrator rights
-# (firewall rule).
+# (firewall rule). The files then go to the local app data of the user signed
+# in at the console (the display user), not of the administrator account the
+# elevated script runs as, and the agent is registered for that user.
 
 $ErrorActionPreference = "Stop"
 $TaskName = "MixerMuteDisplayAgent"
@@ -36,6 +38,24 @@ function Test-AgentPort {
     return $false
 }
 
+# The user signed in at this PC's console ("DOMAIN\user"), else the current one.
+function Get-DisplayUser {
+    $User = (Get-CimInstance Win32_ComputerSystem).UserName
+    if ([string]::IsNullOrWhiteSpace($User)) { $User = "$env:USERDOMAIN\$env:USERNAME" }
+    return $User
+}
+
+# That user's %LOCALAPPDATA% (an elevated script sees the admin's own).
+function Get-UserLocalAppData([string]$User) {
+    try {
+        $Sid = (New-Object Security.Principal.NTAccount($User)).Translate([Security.Principal.SecurityIdentifier]).Value
+        $UserProfile = Get-CimInstance Win32_UserProfile -Filter "SID = '$Sid'"
+        if ($UserProfile -and $UserProfile.LocalPath) { return (Join-Path $UserProfile.LocalPath "AppData\Local") }
+    } catch {
+    }
+    return $env:LOCALAPPDATA
+}
+
 function Test-Administrator {
     $Identity = [Security.Principal.WindowsIdentity]::GetCurrent()
     return ([Security.Principal.WindowsPrincipal]$Identity).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
@@ -49,7 +69,8 @@ try {
         $AgentScript = $Action.Arguments.Trim().Trim('"')
         $AgentDirectory = Split-Path -Parent $AgentScript
     } else {
-        $AgentDirectory = Join-Path $env:LOCALAPPDATA "MixerMuteDisplayAgent\agent"
+        $DisplayUser = Get-DisplayUser
+        $AgentDirectory = Join-Path (Get-UserLocalAppData $DisplayUser) "MixerMuteDisplayAgent\agent"
         if (-not (Test-Administrator)) {
             throw "Kein installierter Agent gefunden. Die Erstinstallation braucht Administratorrechte: Datei per Rechtsklick 'Als Administrator ausfuehren'."
         }
@@ -64,14 +85,20 @@ try {
     Write-Host "$($AgentFiles.Count) Dateien geschrieben."
 
     if (-not $Task) {
-        Write-Host "Erstinstallation ueber install-agent.ps1 ..."
-        & (Join-Path $AgentDirectory "install-agent.ps1")
+        Write-Host "Erstinstallation ueber install-agent.ps1 fuer $DisplayUser ..."
+        & (Join-Path $AgentDirectory "install-agent.ps1") -User $DisplayUser
     } else {
         $Running = @(Get-CimInstance Win32_Process -Filter "Name = 'pythonw.exe' OR Name = 'python.exe'" |
             Where-Object { $_.CommandLine -like "*show_image_agent.py*" })
         foreach ($Process in $Running) {
             Write-Host "Stoppe laufenden Agent (PID $($Process.ProcessId))"
-            Stop-Process -Id $Process.ProcessId -Force
+            try {
+                Stop-Process -Id $Process.ProcessId -Force
+            } catch {
+                # The agent of another user needs administrator rights; the new
+                # files are written already, so carry on and start ours.
+                Write-Warning "Agent PID $($Process.ProcessId) laesst sich ohne Administratorrechte nicht stoppen; er laeuft bis zur naechsten Anmeldung mit der alten Version."
+            }
         }
         if ($Running.Count) { Start-Sleep -Seconds 1 }
 
