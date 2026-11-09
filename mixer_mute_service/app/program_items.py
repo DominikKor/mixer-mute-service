@@ -11,6 +11,7 @@ from datetime import datetime, time as clock_time
 from pathlib import Path
 from typing import List, Optional
 
+from .file_actions import file_action_error, is_file_action
 from .jsonstore import read_json, write_json_atomic
 
 log = logging.getLogger("mixer.program")
@@ -73,7 +74,12 @@ class ProgramItemStore:
         result = {"time": scheduled_time, "title": title, "person": person, "group": group}
         for field in _ACTION_FIELDS:
             value = data.get(field)
-            if value is not None and (not isinstance(value, str) or len(value) > 80):
+            if is_file_action(value):
+                # A file opened directly: "file:<ip>|<path>" (app/file_actions.py)
+                problem = file_action_error(value)
+                if problem:
+                    raise ProgramItemError(f"{field}: {problem}")
+            elif value is not None and (not isinstance(value, str) or len(value) > 80):
                 raise ProgramItemError(f"{field} must be a button ID or empty")
             result[field] = value or None
         for field in _DESCRIPTION_FIELDS:

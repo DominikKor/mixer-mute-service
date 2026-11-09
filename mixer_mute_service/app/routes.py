@@ -24,6 +24,7 @@ from .desktop_profiles import ProfileEditError, add_profile, delete_profile, upd
 from .groups import GroupError
 from .native_controls import NativeControlError
 from .program_items import ProgramItemError
+from .file_actions import is_file_action, run_file_action
 from .songs import show_slide
 from .models import (
     AlwaysOnRequest,
@@ -624,8 +625,8 @@ async def _program_reference_error(item: dict, request: Request):
         return "unknown group"
     for field in _PROGRAM_ACTION_FIELDS:
         button_id = item.get(field)
-        if not button_id:
-            continue
+        if not button_id or is_file_action(button_id):
+            continue  # file paths are checked when saved; the file itself when it runs
         if button_id.startswith("desktop:"):
             profile_id = button_id.removeprefix("desktop:")
             if not profile_id or profile_id not in request.app.state.cfg.desktop_display.profiles:
@@ -755,11 +756,14 @@ async def _play_program_item(item_id: str, request: Request):
         button_id = item.get(field)
         if not button_id:
             continue
-        if button_id.startswith("desktop:"):
-            response = await open_desktop_profile(button_id.removeprefix("desktop:"), request)
+        if is_file_action(button_id):
+            result, status_code = await run_file_action(request, button_id)
         else:
-            response = await companion_button_press(button_id, request)
-        result, status_code = _unwrap(response)
+            if button_id.startswith("desktop:"):
+                response = await open_desktop_profile(button_id.removeprefix("desktop:"), request)
+            else:
+                response = await companion_button_press(button_id, request)
+            result, status_code = _unwrap(response)
         linked_actions.append({"field": field, **result})
         if status_code != 200 or result.get("ok") is False:
             return JSONResponse({
