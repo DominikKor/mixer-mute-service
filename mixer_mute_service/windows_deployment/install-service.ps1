@@ -8,6 +8,8 @@ Set-StrictMode -Version Latest
 $ServiceName = "MixerMuteService"
 $FirewallRuleName = "MixerMuteService HTTP (TCP 8765)"
 $HttpPort = 8765
+$CameraWebRtcTcpRuleName = "MixerMuteService WebRTC (TCP 8889)"
+$CameraWebRtcUdpRuleName = "MixerMuteService WebRTC media (UDP 8189)"
 $SourceDirectory = Split-Path -Parent $MyInvocation.MyCommand.Path
 $InstallDirectory = Join-Path $env:ProgramFiles "MixerMuteService"
 $DataDirectory = Join-Path $env:ProgramData "MixerMuteService"
@@ -124,6 +126,29 @@ New-NetFirewallRule `
     -Profile Private `
     -Description "Allow LAN access to Mixer Mute Service web UI" | Out-Null
 Write-Host "Firewall rule active (Private profile)." -ForegroundColor Green
+
+foreach ($RuleName in @($CameraWebRtcTcpRuleName, $CameraWebRtcUdpRuleName)) {
+    Get-NetFirewallRule -DisplayName $RuleName -ErrorAction SilentlyContinue | Remove-NetFirewallRule
+}
+New-NetFirewallRule `
+    -DisplayName $CameraWebRtcTcpRuleName `
+    -Direction Inbound `
+    -Action Allow `
+    -Protocol TCP `
+    -LocalPort 8889 `
+    -RemoteAddress LocalSubnet `
+    -Profile Private `
+    -Description "Allow LAN WebRTC connections to configured camera streams" | Out-Null
+New-NetFirewallRule `
+    -DisplayName $CameraWebRtcUdpRuleName `
+    -Direction Inbound `
+    -Action Allow `
+    -Protocol UDP `
+    -LocalPort 8189 `
+    -RemoteAddress LocalSubnet `
+    -Profile Private `
+    -Description "Allow LAN WebRTC media for configured camera streams" | Out-Null
+Write-Host "WebRTC firewall rules active (Private profile, LocalSubnet only)." -ForegroundColor Green
 
 Write-Host "Waiting for the HTTP endpoint..."
 $Health = $null
