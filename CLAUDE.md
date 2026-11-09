@@ -34,7 +34,7 @@ Jeder Mute- oder Fader-Befehl schreibt Fader, Mute **und** Solo gleichzeitig. Ei
 
 ## Weboberfläche: iPad UND Desktop gleichwertig
 
-Die Weboberfläche (mixer_mute_service/app/static/index.html) wird auf einem 13-Zoll-iPad-Pro in Safari bedient (Querformat und Hochformat) UND genauso auf Desktop-PCs im Browser (Maus, breite Bildschirme). Beide sind gleich wichtig: keine Änderung darf eine der beiden Umgebungen schlechter machen.
+Die Weboberfläche (mixer_mute_service/app/static/: index.html, css/app.css, js/*.js) wird auf einem 13-Zoll-iPad-Pro in Safari bedient (Querformat und Hochformat) UND genauso auf Desktop-PCs im Browser (Maus, breite Bildschirme). Beide sind gleich wichtig: keine Änderung darf eine der beiden Umgebungen schlechter machen.
 Regeln für jede UI-Änderung:
 1. Ohne horizontales Scrollen in allen Zielgrößen: iPad Querformat ca. 1376 × 1032 CSS-Pixel, Hochformat ca. 1032 × 1376 (ältere 12,9-Zoll-Modelle: 1366 × 1024); Desktop 1280 × 800, 1440 × 900, 1920 × 1080 und 2560 × 1440.
 2. Auf breiten Desktop-Bildschirmen sauber ausrichten: Bedienelemente eines Abschnitts (z. B. der Kompakt-Schalter) schließen bündig mit dessen Inhalt ab und stehen nicht verloren im leeren Raum; keine großen ungenutzten Flächen ohne Grund.

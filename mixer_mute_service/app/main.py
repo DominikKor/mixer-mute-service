@@ -226,9 +226,11 @@ async def _guard(request, call_next):
 @app.middleware("http")
 async def _revalidate_ui(request, call_next):
     """Browsers (iPad Safari in particular) may otherwise keep showing an old
-    UI after an update; make them check the page on every load."""
+    UI after an update; make them check the page and its scripts and styles
+    on every load (an unchanged file is answered with 304, no download)."""
     response = await call_next(request)
-    if request.url.path == "/" or request.url.path.endswith(".html"):
+    path = request.url.path
+    if path == "/" or path.endswith((".html", ".js", ".css")):
         response.headers["Cache-Control"] = "no-cache"
     return response
 

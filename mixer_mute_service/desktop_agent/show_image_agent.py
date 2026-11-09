@@ -677,7 +677,7 @@ def _valid_song_request(body) -> bool:
     )
 
 
-# Slide layout. Keep in sync with songSlideLayout() in app/static/index.html,
+# Slide layout. Keep in sync with renderSlide() in app/static/js/songs.js,
 # which draws the 16:9 preview the same way.
 SLIDE_PAD_X, SLIDE_PAD_Y = 0.06, 0.07
 SLIDE_TITLE_H, SLIDE_COPY_H = 0.12, 0.08

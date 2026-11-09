@@ -157,7 +157,7 @@ class SongService:
 
     def slides(self, song_id: str) -> list:
         """The slides as shown, in order. Slide numbers (show, live, next)
-        count these. Keep in sync with songDisplaySlides() in index.html."""
+        count these. Keep in sync with songDisplaySlides() in app/static/js/songs.js."""
         song = self.songs[song_id]
         if self.settings.title_slide:
             return [{"key": TITLE_SLIDE_KEY, "text": song["title"], "title_slide": True}, *song["slides"]]

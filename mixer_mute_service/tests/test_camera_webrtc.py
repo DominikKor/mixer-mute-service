@@ -152,8 +152,8 @@ def main():
         check("offers via /camera-webrtc/, falls back to /camera-hls/",
               '"/camera-webrtc/"' in page and '"/whep"' in page and '"/camera-hls/"' in page)
         check("muted inline autoplay (iPad Safari)", re.search(r"<video[^>]*\bmuted\b[^>]*\bautoplay\b[^>]*\bplaysinline\b", page) is not None)
-        index = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
-        check("index.html uses the player for every device",
+        index = (STATIC_DIR / "js" / "cameras.js").read_text(encoding="utf-8")
+        check("the camera tiles use the player for every device",
               "/camera-player.html?cam=" in index and ":8889/" not in index)
 
     script = re.search(r"<script>(.*?)</script>", page, re.S).group(1)

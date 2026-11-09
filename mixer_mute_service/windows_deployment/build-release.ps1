@@ -145,11 +145,12 @@ if (Test-Path $UiIndexPath) {
         [System.IO.File]::WriteAllText($UiIndexPath, $UiHtml, [System.Text.UTF8Encoding]::new($false))
     }
     else {
-        Write-Warning "Build ID placeholder not found in $UiIndexPath"
+        # Without it every device shows "Teststand" and never notices updates.
+        throw "Build ID placeholder __BUILD_ID__ not found in $UiIndexPath"
     }
 }
 else {
-    Write-Warning "Bundled UI file not found: $UiIndexPath"
+    throw "Bundled UI file not found: $UiIndexPath"
 }
 
 Compress-Archive -Path $ReleaseDirectory -DestinationPath $ArchivePath -CompressionLevel Optimal

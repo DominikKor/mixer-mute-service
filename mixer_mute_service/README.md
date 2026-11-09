@@ -773,7 +773,13 @@ Stream Deck --HTTP--> Local Service --TCP command--> Mixer
 - `app/request_guard.py` — refuses requests from other web sites (Origin) and
   foreign host names (DNS rebinding); extra names via `server.allowed_hosts`.
 - `app/main.py` — app setup, start order of the features, static UI.
-- `app/static/index.html` — self-contained web control panel (no build step).
+- `app/static/` — the web control panel, no build step: `index.html` (markup),
+  `css/app.css`, and `js/*.js` as classic scripts that share one global scope
+  and load in the order listed in `index.html` (`core.js` first with `api()`,
+  `toast()` and the shared state, `main.js` last, which starts the polls).
+  A function a file calls while it loads must be in that file or an earlier
+  one. The release build writes its id into `<meta name="mixer-build">` and
+  the `?v=` of every script and stylesheet.
 - `tools/probe.py`, `tools/analyze.py` — read-only capture/decode helpers used to
   reverse-engineer the protocol.
 - `tools/capture_proxy.py` — passive relay between the mixer app and the mixer
