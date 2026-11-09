@@ -45,6 +45,24 @@ class SongLibraryTests(unittest.TestCase):
         with self.assertRaises(FileNotFoundError):
             agent._read_song_library("relative/path")
 
+    def test_saves_a_new_song_into_the_library(self):
+        with tempfile.TemporaryDirectory() as directory:
+            songs = Path(directory) / "Songs"
+            songs.mkdir()
+            target = agent._save_song(directory, "Gott_ du bist da.foil", "<x>ä</x>")
+            self.assertEqual(target, songs / "Gott_ du bist da.foil")
+            self.assertEqual(target.read_text(encoding="utf-8"), "<x>ä</x>")
+            with self.assertRaises(FileExistsError):
+                agent._save_song(directory, "Gott_ du bist da.foil", "<neu/>")
+            self.assertEqual(target.read_text(encoding="utf-8"), "<x>ä</x>")  # never replaced
+            for name in ("../boese.foil", "Unter\\ordner.foil", "a/b.foil", "kein-foil.txt", ".foil", " Lied.foil"):
+                with self.subTest(name=name), self.assertRaises(ValueError):
+                    agent._save_song(directory, name, "<x/>")
+            with self.assertRaises(ValueError):
+                agent._save_song(directory, "Gross.foil", "x" * (agent.MAX_SONG_FILE_BYTES + 1))
+            with self.assertRaises(FileNotFoundError):
+                agent._save_song(str(Path(directory) / "fehlt"), "Lied.foil", "<x/>")
+
     def test_song_requests(self):
         self.assertTrue(agent._valid_song_request(SHOW))
         self.assertTrue(agent._valid_song_request({**SHOW, "action": "blank", "text": ""}))
@@ -58,6 +76,42 @@ class SongLibraryTests(unittest.TestCase):
         self.assertFalse(agent._valid_song_request({**SHOW, "style": {**SHOW["style"], "text_color": "white"}}))
         self.assertFalse(agent._valid_song_request({**SHOW, "style": {**SHOW["style"], "font_size": 500}}))
 
+
+@unittest.skipIf(tkinter is None, "this Python has no tkinter; the desktop agent needs it")
+class SongRequestHandlerTests(unittest.TestCase):
+    def test_song_request_gets_exactly_one_response(self):
+        # Regression: after the /power endpoint was added, /song answered 202
+        # and then fell through to the profile check and sent a 400 as well.
+        import json
+        import os
+        import queue
+        import socket
+        import threading
+        from http.server import ThreadingHTTPServer
+        from unittest.mock import patch
+
+        token = "test-token"
+        body = json.dumps({"action": "hide"}).encode()
+        with patch.dict(os.environ, {"DESKTOP_AGENT_TOKEN": token}), \
+                patch.object(agent, "requests", queue.Queue()) as requests:
+            server = ThreadingHTTPServer(("127.0.0.1", 0), agent.DisplayHandler)
+            threading.Thread(target=server.serve_forever, daemon=True).start()
+            try:
+                with socket.create_connection(server.server_address, timeout=5) as sock:
+                    sock.sendall(
+                        b"POST /song HTTP/1.1\r\nHost: x\r\nX-Display-Token: " + token.encode()
+                        + b"\r\nContent-Type: application/json\r\nContent-Length: "
+                        + str(len(body)).encode() + b"\r\nConnection: close\r\n\r\n" + body
+                    )
+                    raw = b""
+                    while chunk := sock.recv(4096):
+                        raw += chunk
+            finally:
+                server.shutdown()
+                server.server_close()
+        self.assertTrue(raw.startswith(b"HTTP/1.0 202"), raw[:40])
+        self.assertEqual(raw.count(b"HTTP/1."), 1, "a second response followed the 202")
+        self.assertEqual(requests.get_nowait()["action"], "hide")
 
 if __name__ == "__main__":
     unittest.main()

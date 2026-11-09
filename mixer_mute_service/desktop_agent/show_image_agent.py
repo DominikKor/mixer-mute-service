@@ -29,6 +29,8 @@ requests: queue.Queue[dict] = queue.Queue()
 MAX_SONG_FILES = 5000
 MAX_SONG_FILE_BYTES = 512 * 1024
 _COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
+# A new song's file name, as the service makes it (no folders, no odd characters).
+_SONG_NAME_RE = re.compile(r"^[A-Za-z0-9 ._()!'+-]{1,120}\.foil$")
 logger = logging.getLogger("display-agent")
 _audio_lock = threading.Lock()
 _audio_process: subprocess.Popen | None = None
@@ -415,11 +417,7 @@ def _show_image(root: tk.Tk, image_label: tk.Label, profile: dict) -> None:
 def _read_song_library(path: str) -> tuple[list[dict], bool]:
     """All .foil files of a FoilPresenter library (its "Songs" folder, or the
     folder itself). Raises FileNotFoundError when the folder is missing."""
-    folder = Path(path)
-    if not folder.is_absolute() or not folder.is_dir():
-        raise FileNotFoundError(path)
-    if (folder / "Songs").is_dir():
-        folder = folder / "Songs"
+    folder = _songs_folder(path)
     files, truncated = [], False
     for entry in sorted(folder.iterdir(), key=lambda p: p.name.casefold()):
         if entry.suffix.lower() != ".foil" or not entry.is_file():
@@ -431,6 +429,27 @@ def _read_song_library(path: str) -> tuple[list[dict], bool]:
             continue
         files.append({"name": entry.name, "xml": entry.read_bytes().decode("utf-8", errors="replace")})
     return files, truncated
+
+
+def _songs_folder(path: str) -> Path:
+    folder = Path(path)
+    if not folder.is_absolute() or not folder.is_dir():
+        raise FileNotFoundError(path)
+    return folder / "Songs" if (folder / "Songs").is_dir() else folder
+
+
+def _save_song(path: str, name: str, xml: str) -> Path:
+    """Write a new song into the library; an existing file is never replaced
+    (FileExistsError)."""
+    if not _SONG_NAME_RE.match(name) or name.strip(" .") != name or ".." in name:
+        raise ValueError("invalid song file name")
+    data = xml.encode("utf-8")
+    if not data or len(data) > MAX_SONG_FILE_BYTES:
+        raise ValueError("invalid song size")
+    target = _songs_folder(path) / name
+    with open(target, "xb") as handle:  # "x": fails if the file exists
+        handle.write(data)
+    return target
 
 
 def _valid_song_request(body) -> bool:
@@ -545,7 +564,7 @@ def _show_song(root: tk.Tk, canvas: tk.Canvas, body: dict) -> None:
 
 class DisplayHandler(BaseHTTPRequestHandler):
     def do_POST(self):
-        if self.path not in ("/display", "/audio", "/song", "/songs/library", "/power"):
+        if self.path not in ("/display", "/audio", "/song", "/songs/library", "/songs/save", "/power"):
             self.send_error(404)
             return
 
@@ -557,7 +576,8 @@ class DisplayHandler(BaseHTTPRequestHandler):
 
         try:
             length = int(self.headers.get("Content-Length", "0"))
-            if not 0 < length <= (32768 if self.path == "/song" else 8192):
+            limit = {"/song": 32768, "/songs/save": MAX_SONG_FILE_BYTES + 8192}.get(self.path, 8192)
+            if not 0 < length <= limit:
                 raise ValueError("invalid request size")
             body = json.loads(self.rfile.read(length))
         except (ValueError, json.JSONDecodeError):
@@ -569,12 +589,16 @@ class DisplayHandler(BaseHTTPRequestHandler):
         if self.path == "/songs/library":
             self._handle_song_library(body)
             return
+        if self.path == "/songs/save":
+            self._handle_song_save(body)
+            return
         if self.path == "/song":
             if not _valid_song_request(body):
                 self.send_error(400)
                 return
             requests.put({"kind": "song", "id": "song", **body})
             self._send_json(202, {"ok": True, "action": body["action"]})
+            return
         if self.path == "/power":
             self._handle_power(body)
             return
@@ -662,6 +686,29 @@ class DisplayHandler(BaseHTTPRequestHandler):
             return
         logger.info("Song library read: %s files from %s", len(files), body["path"])
         self._send_json(200, {"ok": True, "files": files, "truncated": truncated})
+
+    def _handle_song_save(self, body: dict) -> None:
+        if (not isinstance(body, dict) or set(body) != {"path", "name", "xml"}
+                or not all(isinstance(body[k], str) for k in body)):
+            self.send_error(400)
+            return
+        try:
+            target = _save_song(body["path"], body["name"], body["xml"])
+        except FileNotFoundError:
+            self.send_error(404, "Song library folder not found")
+            return
+        except FileExistsError:
+            self.send_error(409, "A song with this name exists already")
+            return
+        except ValueError:
+            self.send_error(400)
+            return
+        except OSError:
+            logger.exception("Song could not be saved: %s", body["name"])
+            self.send_error(503, "Song could not be saved")
+            return
+        logger.info("Song saved: %s", target)
+        self._send_json(200, {"ok": True, "name": body["name"]})
 
     def _send_json(self, status: int, result: dict) -> None:
         encoded = json.dumps(result, ensure_ascii=False).encode("utf-8")

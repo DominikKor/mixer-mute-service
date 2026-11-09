@@ -12,7 +12,9 @@ colours) come from the shared song display settings instead.
 
 from __future__ import annotations
 
+import re
 import xml.etree.ElementTree as ET
+from datetime import datetime
 from typing import List
 
 MAX_FILE_BYTES = 512 * 1024
@@ -73,3 +75,75 @@ def parse_foil(data: bytes) -> dict:
         "copyright": _text(root.find("copyright/text")),
         "slides": slides,
     }
+
+
+# ---- writing a new song ------------------------------------------------------
+
+_UMLAUTS = str.maketrans({"ä": "ae", "ö": "oe", "ü": "ue", "Ä": "Ae", "Ö": "Oe", "Ü": "Ue", "ß": "ss"})
+
+
+def song_file_name(title: str) -> str:
+    """A Windows-safe file name like FoilPresenter's own: umlauts spelled out,
+    other punctuation as "_" ("Gott, du bist da" -> "Gott_ du bist da.foil")."""
+    name = title.translate(_UMLAUTS)
+    name = re.sub(r"[^A-Za-z0-9 ._()!'+-]", "_", name)
+    name = re.sub(r"\s+", " ", name).strip(" .")[:120].strip(" .")
+    if not name:
+        raise FoilError("title gives no usable file name")
+    return name + ".foil"
+
+
+def _sub(parent, tag: str, text: str = "") -> ET.Element:
+    element = ET.SubElement(parent, tag)
+    element.text = text
+    return element
+
+
+def build_foil(title: str, verses: List[dict], order: List[int], copyright: str = "") -> bytes:
+    """A .foil file (FoilPresenter's format) for a new song.
+
+    verses: [{"key": "1" / "Ref", "text": ...}] in file order; order: indices
+    into verses, one per slide (the refrain may repeat).
+    """
+    if not title.strip():
+        raise FoilError("title required")
+    if not verses or not all(v.get("text", "").strip() for v in verses):
+        raise FoilError("every slide needs text")
+    if not order or not all(isinstance(i, int) and 0 <= i < len(verses) for i in order):
+        raise FoilError("order must name existing slides")
+    now = datetime.now()
+    stamp = f"{now.year}.{now.month}.{now.day}.{now.hour}.{now.minute}.{now.second}"
+    root = ET.Element("foilpresenterfolie", version="00300.000105")
+    _sub(root, "id", f"{stamp}.{now.microsecond // 1000}")
+    _sub(root, "lastchanged", stamp)
+    titel = _sub(root, "titel")
+    _sub(titel, "titelstring", title.strip())
+    for tag, value in (("sprache", "0"), ("ccliid", ""), ("tonart", ""), ("valign", "0"), ("notiz", ""), ("versionsinfo", "")):
+        _sub(root, tag, value)
+    farben = _sub(root, "farben")
+    _sub(farben, "cback", "0,0,0")
+    _sub(farben, "ctext", "0,0,0")
+    reihenfolge = _sub(root, "reihenfolge")
+    _sub(reihenfolge, "name", "Standard")
+    for index in order:
+        _sub(reihenfolge, "strophennummer", str(index))
+    strophen = _sub(root, "strophen")
+    for number, verse in enumerate(verses, start=1):
+        strophe = _sub(strophen, "strophe")
+        for tag, value in (("align", "0"), ("font", "Verdana"), ("textsize", "14"),
+                           ("bold", "0"), ("italic", "0"), ("underline", "0")):
+            _sub(strophe, tag, value)
+        _sub(strophe, "key", verse["key"])
+        _sub(strophe, "text", verse["text"].replace("\r\n", "\n").strip())
+        _sub(strophe, "sortnr", str(number))
+    _sub(root, "verkn")
+    block = _sub(root, "copyright")
+    for tag, value in (("font", "Verdana"), ("textsize", "7"), ("anzeigedauer", "5"),
+                       ("bold", "0"), ("italic", "0"), ("underline", "0")):
+        _sub(block, tag, value)
+    _sub(block, "text", copyright.strip())
+    _sub(root, "buch")
+    _sub(root, "kategorien")
+    ET.indent(root, space="\t")
+    xml = '<?xml version="1.0" encoding="UTF-8"?>\n' + ET.tostring(root, encoding="unicode", short_empty_elements=False) + "\n"
+    return xml.replace("\n", "\r\n").encode("utf-8")

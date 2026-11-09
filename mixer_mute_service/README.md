@@ -451,6 +451,16 @@ einem Feld oder bei offenem Dialog):
 | B oder . | Bildschirm schwarz / wieder an (ohne Lied: Anzeige-PC schwarz / aus) |
 | H | Beamer hide / unhide (wie die Tasten „Beamer hide/unhide“; der Ist-Zustand muss einmal gesetzt sein) |
 
+**Neues Lied…** (im Liedauswahl-Fenster) legt ein Lied an: Titel, Copyright
+und Liedtext einfügen; jede Leerzeile beginnt eine neue Folie, die Folien werden
+durchnummeriert. Eine Folie kann als Refrain markiert werden; er kommt dann
+automatisch nach jeder Strophe (Schalter: am Anfang, nach jeder Strophe, am
+Ende). Die Reihenfolge lässt sich auch von Hand eintippen, z. B. `R 1 2 R 3 R`
+(R = Refrain); die Vorschau zeigt alle Folien in dieser Reihenfolge. Gespeichert
+wird als FoilPresenter-`.foil`-Datei in der Bibliothek auf dem Anzeige-PC
+(Dateiname wie in FoilPresenter, z. B. `Gott_ du bist da.foil`); eine vorhandene
+Datei wird nie überschrieben.
+
 Der Agent braucht dafür die neue Version (Weboberfläche: *Display Service
 herunterladen*, auf dem Anzeige-PC ausführen). Endpunkte, z. B. für Companion:
 
@@ -460,6 +470,7 @@ herunterladen*, auf dem Anzeige-PC ausführen). Endpunkte, z. B. für Companion:
 | POST | `/songs/library/reload` | Bibliothek vom Anzeige-PC lesen |
 | GET | `/songs`, `/songs/{datei}` | Liste, ein Lied mit allen Folien |
 | GET | `/songs/live` | was gerade angezeigt wird |
+| POST | `/songs/create` `{"title", "copyright", "slides", "refrain", "order"}` | neues Lied in der Bibliothek speichern |
 | POST | `/songs/show` `{"song_id", "slide"}` | Folie anzeigen |
 | POST | `/songs/next`, `/songs/prev`, `/songs/blank`, `/songs/hide` | weiter, zurück, schwarz, aus |
 
