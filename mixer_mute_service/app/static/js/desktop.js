@@ -71,7 +71,6 @@ function syncProfileForm() {
   $("pf-fade-row").hidden = kind !== "audio";
   const fade = $("pf-fade").checked;
   $("pf-fade-text").textContent = fade ? "Ein" : "Aus";
-  $("pf-fade-db").disabled = !fade;
   $("pf-fade-seconds").disabled = !fade;
   renderMonitorKeys();
   const full = $("pf-fullscreen").checked;
@@ -99,7 +98,7 @@ function openProfileDialog(profileId) {
   if (profileId && !existing) return toast("Profil nicht gefunden", false);
   const p = existing || {
     title: "", kind: "image", path: "", args: [], fullscreen: true, monitor: 1, position: "top-left",
-    fade: false, fade_db: -30, fade_seconds: 5,
+    fade: false, fade_seconds: 5,
     target_ip: (DESKTOP_PROFILES[DESKTOP_PROFILES.length - 1] || {}).target_ip || "",
   };
   Object.assign(PROFILE_FORM, {
@@ -116,7 +115,6 @@ function openProfileDialog(profileId) {
   $("pf-ip").value = p.target_ip || "";
   $("pf-fullscreen").checked = !!p.fullscreen;
   $("pf-fade").checked = !!p.fade;
-  $("pf-fade-db").value = p.fade_db ?? -30;
   $("pf-fade-seconds").value = p.fade_seconds ?? 5;
   const ips = [...new Set(DESKTOP_PROFILES.map(x => x.target_ip))];
   $("pf-ip-list").innerHTML = ips.map(ip => `<option value="${escapeAttr(ip)}"></option>`).join("");
@@ -142,17 +140,15 @@ function readProfileForm() {
   if (!IPV4_RE.test(ip)) return profileFormError("IP-Adresse ungültig, z. B. 192.168.188.11", $("pf-ip"));
   // Only audio fades; other kinds keep the defaults (and config.yaml stays short).
   const fade = kind === "audio" && $("pf-fade").checked;
-  let fadeDb = -30, fadeSeconds = 5;
+  let fadeSeconds = 5;
   if (kind === "audio") {
-    fadeDb = Number($("pf-fade-db").value.replace(",", "."));
     fadeSeconds = Number($("pf-fade-seconds").value.replace(",", "."));
-    if (!$("pf-fade-db").value.trim() || !(fadeDb >= -60 && fadeDb <= 0)) return profileFormError("Lautstärke: -60 bis 0 dB, z. B. -30", $("pf-fade-db"));
     if (!$("pf-fade-seconds").value.trim() || !(fadeSeconds >= 0.5 && fadeSeconds <= 30)) return profileFormError("Dauer: 0,5 bis 30 Sekunden", $("pf-fade-seconds"));
   }
   return {
     id, title, kind, path, args, target_ip: ip, fullscreen: $("pf-fullscreen").checked,
     monitor: PROFILE_FORM.monitor, position: PROFILE_FORM.position,
-    fade, fade_db: fadeDb, fade_seconds: fadeSeconds,
+    fade, fade_seconds: fadeSeconds,
   };
 }
 
@@ -265,4 +261,3 @@ function renderChannels(state) {
   }
   for (const ch of keys) updateChannelCard(ch, chans[ch]);
 }
-

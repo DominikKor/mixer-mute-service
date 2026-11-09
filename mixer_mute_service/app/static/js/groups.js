@@ -775,5 +775,3 @@ function setPersonsHtml(wrap, html) {
   if (!sameCards) { wrap.replaceChildren(...fresh); return; }
   fresh.forEach((el, i) => { if (el.outerHTML !== old[i].outerHTML) old[i].replaceWith(el); });
 }
-
-

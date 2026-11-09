@@ -440,20 +440,25 @@ Die Wiedergabesteuerung verwendet `POST /desktop/{profile_id}/audio/play` und
 
 **Ein-/Ausfaden:** Im Profil-Editor eines Audio-Profils schaltet
 **Ein-/Ausfaden** sanftes Ein- und Ausblenden ein. Play startet dann stumm und
-blendet ueber die eingestellte Dauer (Standard 5 s) bis zur eingestellten
-Lautstaerke ein (Standard **-30 dB**, erlaubt -60 bis 0 dB); Stop blendet von
-der aktuellen Lautstaerke aus und beendet erst dann den Player. Geregelt wird
-die mpv-Lautstaerke auf dem Ziel-PC (ueber mpvs IPC-Pipe), das Mischpult wird
-nicht angefasst. In `config.yaml`:
+blendet ueber die eingestellte Dauer (Standard 5 s) **von 0 auf 100 %** ein;
+Stop blendet von der aktuellen Lautstaerke auf 0 aus und beendet erst dann den
+Player. Eine Lautstaerke-Einstellung gibt es nicht: Geregelt wird nur die
+mpv-Lautstaerke auf dem Ziel-PC (ueber mpvs IPC-Pipe), immer bis 100 %, das
+Mischpult wird nicht angefasst. Die Lautstaerke im Saal stellst du am
+Mischpult-Kanal des Ziel-PCs ein. In `config.yaml`:
 
 ```yaml
     hintergrundmusik:
       kind: "audio"
       path: 'I:\Musik\Hintergrund.mp3'
       fade: true
-      fade_db: -30
       fade_seconds: 5
 ```
+
+Fruehere Versionen hatten eine Zielstufe `fade_db` (Standard -30 dB). Eine
+solche Zeile in einer alten `config.yaml` wird ignoriert; gefadete Musik kommt
+deshalb jetzt bis zu 30 dB lauter aus dem Ziel-PC als vorher. Den Pegel einmal
+am Mischpult (Gain/Fader des PC-Kanals) neu einstellen.
 
 Dafuer muss der Desktop-Agent auf dem Ziel-PC aktuell sein; ein aelterer Agent
 lehnt Play/Stop mit Fade ab (die Meldung sagt das), ohne Fade laeuft alles wie

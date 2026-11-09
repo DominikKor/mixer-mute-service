@@ -32,7 +32,8 @@ DESKTOP_PREFIX = "desktop:"
 PROGRAM_ACTION_FIELDS = ("playback", "translation", "lyrics")
 # Profile fields the agent's /display endpoint does not take (it refuses
 # unknown keys).
-_AGENT_EXCLUDED_FIELDS = {"target_ip", "fade", "fade_db", "fade_seconds"}
+_AGENT_EXCLUDED_FIELDS = {"target_ip", "fade", "fade_seconds"}
+AUDIO_FADE_FULL_DB = 0.0  # audio fades always go up to full player volume
 
 
 # -- keys ------------------------------------------------------------------
@@ -184,8 +185,10 @@ async def control_audio(request: Request, profile_id: str, action: str) -> Resul
         return {"ok": False, "reason": "unknown audio action"}, 404
     payload = {"id": profile_id, "action": action, "path": profile.path if action == "play" else None}
     if profile.fade:
-        # Play fades in from silence to fade_db, stop fades out again.
-        payload["fade"] = {"db": profile.fade_db, "seconds": profile.fade_seconds}
+        # Play fades in from silence to full volume (0 dB = mpv 100 %), stop
+        # fades out again. The agent's protocol still names the level; it is
+        # always full volume now, so every agent version accepts it.
+        payload["fade"] = {"db": AUDIO_FADE_FULL_DB, "seconds": profile.fade_seconds}
     cfg = request.app.state.cfg.desktop_display
     try:
         return await display_agent.call(cfg, profile.target_ip, "/audio", payload), 200

@@ -40,7 +40,6 @@ async def desktop_profiles(request: Request):
                 "monitor": profile.monitor,
                 "position": profile.position,
                 "fade": profile.fade,
-                "fade_db": profile.fade_db,
                 "fade_seconds": profile.fade_seconds,
             }
             for profile_id, profile in cfg.profiles.items()

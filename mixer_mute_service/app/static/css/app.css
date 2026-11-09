@@ -438,8 +438,8 @@ button.kind-tile[aria-checked="true"] .kind-tile-desc { color: #c9dcf5; }
 /* Monitor keys and the screen with its five window positions */
 .pf-display-row { display: flex; gap: 18px 24px; flex-wrap: wrap; align-items: flex-start; }
 /* Audio: fade in on play, out on stop, to a fixed level */
-.pf-fade-row { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 1fr); gap: 12px; align-items: start; }
-@media (max-width: 560px) { .pf-fade-row { grid-template-columns: 1fr 1fr; } .pf-fade-row > :first-child { grid-column: 1 / -1; } }
+.pf-fade-row { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 12px; align-items: start; }
+@media (max-width: 560px) { .pf-fade-row { grid-template-columns: 1fr; } }
 .monitor-picker { display: flex; gap: 6px; flex-wrap: wrap; }
 button.monitor-key { width: 52px; height: 44px; padding: 0; font: 800 15px/1 var(--mono); }
 button.align-key { display: grid; place-items: center; }

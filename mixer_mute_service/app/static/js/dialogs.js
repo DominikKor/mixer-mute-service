@@ -79,5 +79,3 @@ function confirmDelete(anchor, question, okLabel = "Löschen") {
     cancel.focus({ preventScroll: true });
   });
 }
-
-

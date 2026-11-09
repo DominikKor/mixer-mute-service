@@ -198,19 +198,28 @@ check("fade keys are not written while off (default)", "fade" not in text)
 faded = AUDIO.model_copy(update={"fade": True})
 update_profile(fade_cfg, "music", faded)
 text = fade_cfg.read_text()
-check("switching fade on adds only the fade line", "fade: true" in text and "fade_db" not in text)
+check("switching fade on adds only the fade line", "fade: true" in text and "fade_seconds" not in text)
 check("fade profile loads as saved", load_config(fade_cfg).desktop_display.profiles["music"] == faded)
-custom = faded.model_copy(update={"fade_db": -24.5, "fade_seconds": 8.0})
+custom = faded.model_copy(update={"fade_seconds": 8.0})
 update_profile(fade_cfg, "music", custom)
 text = fade_cfg.read_text()
-check("dB and seconds written as plain numbers", "fade_db: -24.5" in text and "fade_seconds: 8\n" in text)
+check("seconds written as a plain number, no level", "fade_seconds: 8\n" in text and "fade_db" not in text)
 check("custom fade loads as saved", load_config(fade_cfg).desktop_display.profiles["music"] == custom)
 add_profile(fade_cfg, "music2", custom)
 check("new faded profile loads as saved", load_config(fade_cfg).desktop_display.profiles["music2"] == custom)
-check("default fade level is -30 dB", AUDIO.fade_db == -30.0 and AUDIO.fade is False)
+check("no fade level setting any more", "fade_db" not in DesktopProfileConfig.model_fields and AUDIO.fade is False)
+legacy = re.sub(r"(?m)^( +)fade_seconds: 8\n", r"\g<0>\1fade_db: -30\n", fade_cfg.read_text(), count=1)
+check("legacy fade_db line present for the next checks", "fade_db: -30" in legacy)
+fade_cfg.write_text(legacy)
+check("old config with fade_db still loads (key ignored)",
+      load_config(fade_cfg).desktop_display.profiles["music"] == custom)
+update_profile(fade_cfg, "music", custom.model_copy(update={"fade_seconds": 6.0}))
+check("editing such a profile works and leaves the old line alone",
+      "fade_seconds: 6\n" in fade_cfg.read_text() and "fade_db: -30" in fade_cfg.read_text()
+      and load_config(fade_cfg).desktop_display.profiles["music"].fade_seconds == 6.0)
 r = refused(add_profile, fade_cfg, "x", QR.model_copy(update={"fade": True}))
 check("fade on an image -> 400", r is not None and r[0] == 400)
-for field, value in (("fade_db", 1.0), ("fade_db", -61.0), ("fade_seconds", 0.0), ("fade_seconds", 31.0)):
+for field, value in (("fade_seconds", 0.0), ("fade_seconds", 31.0)):
     try:
         DesktopProfileConfig(**{**AUDIO.model_dump(), field: value})
         check(f"{field}={value} refused", False)
@@ -302,22 +311,22 @@ with TestClient(app) as client:
         check("stop does not send a track path", forward.call_args.args[2] == {
             "id": "audio", "action": "stop", "path": None
         })
+    # fade_db from an old, cached page is ignored
     faded_body = {"id": "faded", **AUDIO.model_dump(), "fade": True, "fade_db": -20.0, "fade_seconds": 4.0}
     r = client.post("/desktop/profiles", json=faded_body)
     check("faded audio profile create 200", r.status_code == 200)
     listed = {p["id"]: p for p in client.get("/desktop/profiles").json()["profiles"]}
-    check("fade settings are listed", (listed["faded"]["fade"], listed["faded"]["fade_db"],
-                                       listed["faded"]["fade_seconds"]) == (True, -20.0, 4.0)
-          and listed["audio"]["fade"] is False and listed["audio"]["fade_db"] == -30.0)
+    check("fade settings are listed, without a level", (listed["faded"]["fade"], listed["faded"]["fade_seconds"]) == (True, 4.0)
+          and listed["audio"]["fade"] is False and "fade_db" not in listed["faded"])
     with patch("app.display_agent._post", side_effect=lambda _url, _token, payload, _timeout: {
         "ok": True, "action": payload.get("action")
     }) as forward:
         client.post("/desktop/faded/audio/play")
-        check("play sends the fade", forward.call_args.args[2] == {
-            "id": "faded", "action": "play", "path": AUDIO.path, "fade": {"db": -20.0, "seconds": 4.0}})
+        check("play fades in to full volume (0 dB = 100 %)", forward.call_args.args[2] == {
+            "id": "faded", "action": "play", "path": AUDIO.path, "fade": {"db": 0.0, "seconds": 4.0}})
         client.post("/desktop/faded/audio/stop")
-        check("stop sends the fade", forward.call_args.args[2] == {
-            "id": "faded", "action": "stop", "path": None, "fade": {"db": -20.0, "seconds": 4.0}})
+        check("stop fades out from there", forward.call_args.args[2] == {
+            "id": "faded", "action": "stop", "path": None, "fade": {"db": 0.0, "seconds": 4.0}})
         client.post("/desktop/profiles", json={"id": "qrimg", **QR.model_dump()})
         client.post("/desktop/qrimg/open")
         check("display request has exactly the agent's keys", set(forward.call_args.args[2]) == {
