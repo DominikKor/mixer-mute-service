@@ -62,6 +62,12 @@ class AudioPlaybackTests(unittest.TestCase):
         self.assertIn("--really-quiet", command)
         self.assertEqual(command[-2:], ["--", str(audio_path)])
         self.assertEqual(options["creationflags"], getattr(agent.subprocess, "CREATE_NO_WINDOW", 0))
+        if agent.os.name == "nt":
+            self.assertIsNotNone(options["startupinfo"])
+            self.assertEqual(options["startupinfo"].wShowWindow, agent.subprocess.SW_HIDE)
+            self.assertTrue(options["startupinfo"].dwFlags & agent.subprocess.STARTF_USESHOWWINDOW)
+        else:
+            self.assertIsNone(options["startupinfo"])
         self.assertIs(agent._audio_process, process)
 
     def test_play_replaces_and_stop_terminates_only_owned_process(self):

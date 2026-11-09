@@ -263,6 +263,12 @@ def _play_audio(profile_id: str, path: str) -> None:
     if not mpv:
         raise FileNotFoundError("mpv was not found; install mpv or set MPV_PATH")
 
+    startup_info = None
+    if os.name == "nt":
+        startup_info = subprocess.STARTUPINFO()
+        startup_info.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        startup_info.wShowWindow = subprocess.SW_HIDE
+
     with _audio_lock:
         _stop_audio_locked()
         process = subprocess.Popen(
@@ -282,6 +288,7 @@ def _play_audio(profile_id: str, path: str) -> None:
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            startupinfo=startup_info,
         )
         _audio_process = process
     logger.info("Audio started profile=%s path=%s pid=%s", profile_id, target, process.pid)
