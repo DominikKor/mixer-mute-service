@@ -49,7 +49,6 @@ from .models import (
     StagePreferenceRequest,
 )
 from .protocol import fader_hex_to_value
-from .safety import is_channel_safe
 from .state import ChannelState
 
 router = APIRouter()
@@ -293,6 +292,7 @@ async def health(request: Request):
         "last_update_age_seconds": _round(await store.last_update_age()),
         "build_id": getattr(request.app.state, "build_id", "dev"),
         "group_count": len(groups),
+        "unavailable_features": getattr(request.app.state, "feature_errors", {}),
         "desktop_display_enabled": cfg.desktop_display.enabled,
         "desktop_display_ready": _display_ready(cfg.desktop_display),
     }
@@ -665,7 +665,7 @@ async def control_desktop_audio(profile_id: str, action: str, request: Request):
 def _channel_view(
     request: Request, channel: int, cs: "ChannelState | None", always_on: set, now: float
 ) -> dict:
-    cfg, _, client, controller = _ctx(request)
+    cfg, _, _, controller = _ctx(request)
     fader_age = None if (cs is None or cs.fader_updated_at is None) else now - cs.fader_updated_at
     mute_age = None if (cs is None or cs.muted_updated_at is None) else now - cs.muted_updated_at
     return {
@@ -676,10 +676,8 @@ def _channel_view(
         "muted": None if cs is None else cs.muted,
         "solo": None if cs is None else cs.solo,
         "mute_age_seconds": _round(mute_age),
-        "safe": (
-            client.connected and controller.enabled
-            and is_channel_safe(channel, cs, cfg, client.session_epoch)
-        ),
+        # Same checks as the send path, incl. a stale link (no current dump).
+        "safe": controller.is_send_safe(channel, cs),
         "always_on": channel in always_on,
     }
 
@@ -1080,6 +1078,7 @@ async def rename_group(group: str, body: GroupRename, request: Request):
 
 @router.post("/panic/disable")
 async def panic_disable(request: Request):
+    # Logged at WARNING and saved by the controller (survives a restart).
     _, _, _, controller = _ctx(request)
     controller.enabled = False
     return {"ok": True, "enabled": controller.enabled}
@@ -1087,6 +1086,7 @@ async def panic_disable(request: Request):
 
 @router.post("/panic/enable")
 async def panic_enable(request: Request):
+    # Logged at WARNING and saved by the controller (survives a restart).
     _, _, _, controller = _ctx(request)
     controller.enabled = True
     return {"ok": True, "enabled": controller.enabled}

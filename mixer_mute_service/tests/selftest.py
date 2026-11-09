@@ -108,7 +108,7 @@ check("ch1 frame without its extra field invalidates ch1", len(ev) == 1 and ev[0
 # Field 3 is the console's solo flag (see tests/test_console_solo.py); field 6
 # is not part of a fader section.
 ev = parse_hex_stream("5a5a5a5a5a5a0000006e000000090908013001 2d00007a44".replace(" ", ""))
-check("unknown field -> frame ignored", ev == [])
+check("unknown field on a known channel -> channel 2 made unknown", [(e.channel, e.muted, e.fader_hex, e.solo) for e in ev] == [(2, None, None, None)])
 ev = parse_hex_stream("5a5a5a5a5a5a0000006e000000090908011801 2d00007a44".replace(" ", ""))
 check("solo field 3 -> parsed with solo", len(ev) == 1 and ev[0].solo is True and ev[0].muted is False)
 sb = StreamBuffer()

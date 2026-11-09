@@ -55,6 +55,18 @@ async def wait_for(predicate, timeout=2.0):
     return predicate()
 
 
+def bound_port(server):
+    """The port the OS gave a server bound to port 0."""
+    return server.sockets[0].getsockname()[1]
+
+
+async def proxy_listen_port(proxy):
+    """The port a ProxyServer started with listen_port 0 got from the OS."""
+    while proxy._server is None or not proxy._server.sockets:
+        await asyncio.sleep(0.01)
+    return bound_port(proxy._server)
+
+
 def groups_store(cfg, name="g.json", seed=None):
     return GroupStore(TMP / name, cfg.valid_channels(), seed or {})
 
@@ -65,6 +77,9 @@ class FakeLink:
         self.session_epoch = time.monotonic() - 1
         self.sent = []
         self.fail_on = fail_on  # payload hex fragment that makes send() fail
+
+    def link_stale(self):
+        return False
 
     async def send(self, payload):
         if self.fail_on and self.fail_on in payload.hex():
@@ -80,13 +95,13 @@ async def proxy_mid_frame():
         while (d := await r.read(4096)):
             rx.extend(d)
 
-    srv = await asyncio.start_server(fake_mixer, "127.0.0.1", 16521)
-    cfg = Config(mixer={"mode": "proxy", "ip": "127.0.0.1", "port": 16521,
-                        "listen_host": "127.0.0.1", "listen_port": 16520, "max_channels": 8})
+    srv = await asyncio.start_server(fake_mixer, "127.0.0.1", 0)
+    cfg = Config(mixer={"mode": "proxy", "ip": "127.0.0.1", "port": bound_port(srv),
+                        "listen_host": "127.0.0.1", "listen_port": 0, "max_channels": 8})
     proxy = ProxyServer(cfg, StateStore())
     proxy.start()
-    await asyncio.sleep(0.2)
-    r_a, w_a = await asyncio.open_connection("127.0.0.1", 16520)
+    listen_port = await asyncio.wait_for(proxy_listen_port(proxy), 2)
+    r_a, w_a = await asyncio.open_connection("127.0.0.1", listen_port)
     await wait_for(lambda: proxy.connected)
     epoch_a = proxy.session_epoch
 
@@ -120,7 +135,7 @@ async def proxy_mid_frame():
     await w_a.drain()
 
     print("== 8 proxy: a second app closing first keeps the first one usable ==")
-    r_b, w_b = await asyncio.open_connection("127.0.0.1", 16520)
+    r_b, w_b = await asyncio.open_connection("127.0.0.1", listen_port)
     await wait_for(lambda: len(proxy._sessions) == 2)
     check("session epoch kept while a session stays live", proxy.session_epoch == epoch_a)
     w_b.close()
@@ -159,7 +174,7 @@ async def same_channel_race():
     store = StateStore()
     link = SlowLink()
     ctl = Controller(cfg, store, link, groups_store(cfg, "race.json"))
-    await store.apply_event(FrameEvent(2, False, fader_value_to_hex(750.0)))
+    await store.apply_event(FrameEvent(2, False, fader_value_to_hex(750.0), solo=False))
     await link.lock.acquire()  # e.g. a keepalive is draining
     a = asyncio.create_task(ctl.channel_set(2, True))           # Stream Deck mute
     b = asyncio.create_task(ctl.channel_set_fader(2, 500.0))    # UI fader drag
@@ -182,8 +197,9 @@ async def link_liveness():
         while await r.read(4096):
             pass  # accept handshakes, never answer
 
-    srv = await asyncio.start_server(silent_mixer, "127.0.0.1", 16522)
-    cfg = Config(mixer={"mode": "direct", "ip": "127.0.0.1", "port": 16522, "keepalive_seconds": 0.2})
+    srv = await asyncio.start_server(silent_mixer, "127.0.0.1", 0)
+    cfg = Config(mixer={"mode": "direct", "ip": "127.0.0.1", "port": bound_port(srv),
+                        "keepalive_seconds": 0.2})
     client = MixerClient(cfg, StateStore())
     client.start()
     await wait_for(lambda: client.connected)
@@ -197,9 +213,9 @@ async def link_liveness():
     stale = MixerClient(ctl_cfg, StateStore())
     stale.connected = True
     stale.session_epoch = time.monotonic() - 100
-    stale.last_rx_at = time.monotonic() - 30
+    stale.last_dump_ok_at = time.monotonic() - 30
     store = StateStore()
-    await store.apply_event(FrameEvent(2, False, "1f14b643"))
+    await store.apply_event(FrameEvent(2, False, "1f14b643", solo=False))
     ctl = Controller(ctl_cfg, store, stale, groups_store(ctl_cfg, "stale.json"))
     res = await ctl.channel_set(2, True)
     check("sends refused while the link is stale",
@@ -243,9 +259,10 @@ async def buffer_reset():
         while await r.read(4096):
             pass
 
-    srv = await asyncio.start_server(mixer, "127.0.0.1", 16523)
+    srv = await asyncio.start_server(mixer, "127.0.0.1", 0)
     store = StateStore()
-    cfg = Config(mixer={"mode": "direct", "ip": "127.0.0.1", "port": 16523, "keepalive_seconds": 0})
+    cfg = Config(mixer={"mode": "direct", "ip": "127.0.0.1", "port": bound_port(srv),
+                        "keepalive_seconds": 0})
     client = MixerClient(cfg, store)
     client.start()
     got = await wait_for(lambda: store.last_update_at is not None, timeout=4.0)
@@ -323,7 +340,7 @@ def bus_persistence():
     seen = []
     reg.on_new_bus(seen.append)
     try:
-        reg._on_dump([(128, "Hall 1")])
+        reg.discover([(128, "Hall 1")])
         raised = False
     except Exception:  # noqa: BLE001
         raised = True
@@ -379,9 +396,9 @@ async def solo_after_failure():
     link = FakeLink(fail_on="070708012d")
     ctl = Controller(cfg, store, link, groups_store(cfg, "solo.json", {"g": [1, 2]}))
     for ch in (1, 2):
-        await store.apply_event(FrameEvent(ch, True, "1f14b643"))
+        await store.apply_event(FrameEvent(ch, True, "1f14b643", solo=False))
     for ch in (3, 4):
-        await store.apply_event(FrameEvent(ch, False, "1f14b643"))
+        await store.apply_event(FrameEvent(ch, False, "1f14b643", solo=False))
     res = await ctl.group_set("g", False)
     check("group result not ok", res["ok"] is False)
     check("no other channel muted", "muted_others" not in res

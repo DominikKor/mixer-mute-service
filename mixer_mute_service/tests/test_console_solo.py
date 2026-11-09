@@ -56,6 +56,9 @@ class FakeLink:
         self.session_epoch = time.monotonic() - 1
         self.sent = []
 
+    def link_stale(self):
+        return False
+
     async def send(self, payload):
         self.sent.append(payload)
 
@@ -110,7 +113,7 @@ async def main():
     ctrl = Controller(cfg, store, link, groups)
     for e in parse_hex_stream(frame(0x6D, CH2_SOLO_UNMUTED).hex()):
         await store.apply_event(e)
-    await store.apply_event(FrameEvent(3, False, "1f14b643"))
+    await store.apply_event(FrameEvent(3, False, "1f14b643", solo=False))
     result = await ctrl.channel_set(2, True)
     check("mute on a soloed channel is allowed", result["ok"] is True)
     check("... and sends solo back", link.sent[-1].hex().endswith(CH2_SOLO_MUTED))

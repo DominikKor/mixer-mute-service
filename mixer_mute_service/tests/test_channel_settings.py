@@ -14,7 +14,7 @@ from app.channel_settings import (
     SettingsError,
     decode,
 )
-from app.protocol import BusMap, StreamBuffer, dump_channel_settings
+from app.protocol import StreamBuffer, dump_channel_settings
 
 PASS = 0
 FAIL = 0
@@ -104,7 +104,7 @@ async def main():
     cache = ChannelSettingsCache()
     body = varint(len(msg)) + msg
     frame = bytes.fromhex("5a" * 6) + struct.pack(">II", 1, len(body)) + body
-    StreamBuffer(buses=BusMap(on_settings=cache.update), max_input=16).feed(frame)
+    StreamBuffer(max_input=16, dump_listeners=[cache.on_dump]).feed(frame)
     check("stream parser hands dump settings to the cache", cache.get(2) is not None)
 
     print("== capture rules ==")

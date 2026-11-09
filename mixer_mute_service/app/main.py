@@ -77,73 +77,106 @@ def _build_id() -> str:
     return "dev"
 
 
+log = logging.getLogger("mixer.main")
+
+
+def _optional(app: FastAPI, name: str, factory):
+    """Start an optional feature. A failure there (a bad camera entry, an
+    unreadable songs file, ...) must never stop the mixer control: it is
+    logged, the feature stays unavailable (None) and is listed in
+    app.state.feature_errors."""
+    try:
+        return factory()
+    except Exception as exc:  # noqa: BLE001
+        log.exception("%s could not start; the service runs without it", name)
+        app.state.feature_errors[name] = f"{type(exc).__name__}: {exc}"
+        return None
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    app.state.feature_errors = {}
     cfg = load_config()
-    store = StateStore()
     data_dir = default_config_path().parent
-    camera_streams = CameraStreamStore(data_dir / "camera_streams.json")
-    camera_relay = MediaMTXRelay(data_dir)
-    relay_status = await camera_relay.configure(await camera_streams.relay_snapshot())
-    if not relay_status["ready"]:
-        logging.getLogger("mixer.camera_streams").warning(
-            "Camera relay unavailable: %s", relay_status["reason"]
-        )
+
+    # -- core: the mixer link and everything a mute or fader command needs --
+    store = StateStore()
     # Buses come from config plus those discovered from earlier dumps; new ones
     # are added from every dump (see app/buses.py).
     buses = BusRegistry(cfg, data_dir / "buses.json")
     # Gain/EQ/dynamics of every input, refreshed from each state dump.
     settings_cache = ChannelSettingsCache()
-    buses.bus_map.on_settings = settings_cache.update
-    channel_settings = ChannelSettingsStore(data_dir / "channel_settings.json")
+    link_args = dict(
+        bus_map=buses.bus_map,
+        on_bus_objects=buses.discover,
+        dump_listeners=[settings_cache.on_dump],
+    )
     if cfg.mixer.mode == "proxy":
-        client = ProxyServer(cfg, store, buses.bus_map)
+        client = ProxyServer(cfg, store, **link_args)
     else:
-        client = MixerClient(cfg, store, buses.bus_map)
+        client = MixerClient(cfg, store, **link_args)
     seed = {name: g.channels for name, g in cfg.groups.items()}
     groups = GroupStore(data_dir / "groups.json", cfg.valid_channels(), seed)
-    program_items = ProgramItemStore(data_dir / "program_items.json")
-    program_templates = ProgramTemplateStore(data_dir / "program_templates.json")
-    songs = SongService(data_dir)
-    native_controls = NativeControlService(data_dir / "native_control_state.json")
-    camera_ptz = PanTiltControl()
-    power_control = PowerControlStore(data_dir / "power_off_config.json")
-    companion_button_store = CompanionButtonStore(
-        data_dir / "companion_buttons.json", COMPANION_BUTTONS
-    )
-    channel_preferences = ChannelPreferences(data_dir / "channel_preferences.json")
     buses.on_new_bus(groups.allow_channel)
-    controller = Controller(cfg, store, client, groups, channel_preferences)
+    channel_preferences = ChannelPreferences(data_dir / "channel_preferences.json")
+    controller = Controller(
+        cfg, store, client, groups, channel_preferences, panic_path=data_dir / "panic_state.json"
+    )
 
     app.state.cfg = cfg
     app.state.store = store
     app.state.client = client
     app.state.groups = groups
-    app.state.program_items = program_items
-    app.state.program_templates = program_templates
-    app.state.songs = songs
-    app.state.native_controls = native_controls
-    app.state.camera_ptz = camera_ptz
-    app.state.power_control = power_control
-    app.state.companion_button_store = companion_button_store
     app.state.channel_preferences = channel_preferences
-    app.state.camera_streams = camera_streams
-    app.state.camera_relay = camera_relay
     app.state.controller = controller
     app.state.settings_cache = settings_cache
-    app.state.channel_settings = channel_settings
     app.state.build_id = _build_id()
-
     client.start()
-    logging.getLogger("mixer.main").info(
+
+    # -- optional features: each one may fail on its own -------------------
+    app.state.channel_settings = _optional(
+        app, "channel settings", lambda: ChannelSettingsStore(data_dir / "channel_settings.json"))
+    app.state.program_items = _optional(
+        app, "program", lambda: ProgramItemStore(data_dir / "program_items.json"))
+    app.state.songs = _optional(app, "songs", lambda: SongService(data_dir))
+    app.state.program_templates = _optional(
+        app, "program templates", lambda: ProgramTemplateStore(data_dir / "program_templates.json"))
+    camera_ptz = _optional(app, "camera pan/tilt", PanTiltControl)
+    app.state.camera_ptz = camera_ptz
+    app.state.native_controls = _optional(
+        app, "native controls", lambda: NativeControlService(data_dir / "native_control_state.json"))
+    app.state.power_control = _optional(
+        app, "power control", lambda: PowerControlStore(data_dir / "power_off_config.json"))
+    app.state.companion_button_store = _optional(
+        app, "control keys", lambda: CompanionButtonStore(data_dir / "companion_buttons.json", COMPANION_BUTTONS))
+    camera_streams = _optional(
+        app, "cameras", lambda: CameraStreamStore(data_dir / "camera_streams.json"))
+    camera_relay = _optional(app, "camera relay", lambda: MediaMTXRelay(data_dir))
+    if camera_streams is not None and camera_relay is not None:
+        try:
+            relay_status = await camera_relay.configure(await camera_streams.relay_snapshot())
+            if not relay_status["ready"]:
+                logging.getLogger("mixer.camera_streams").warning(
+                    "Camera relay unavailable: %s", relay_status["reason"]
+                )
+        except Exception as exc:  # noqa: BLE001 - cameras must never stop the mixer
+            log.exception("camera relay could not start; the service runs without it")
+            app.state.feature_errors["camera relay"] = f"{type(exc).__name__}: {exc}"
+    app.state.camera_streams = camera_streams
+    app.state.camera_relay = camera_relay
+
+    log.info(
         "service up: build=%s mode=%s mixer=%s:%s max_channels=%s freshness=%s "
-        "max_fader_age=%s max_mute_age=%s buses=%s groups=%s",
+        "max_fader_age=%s max_mute_age=%s buses=%s groups=%s sending=%s",
         app.state.build_id,
         cfg.mixer.mode, cfg.mixer.ip, cfg.mixer.port, cfg.mixer.max_channels,
         cfg.safety.freshness_mode, cfg.safety.max_fader_age_seconds,
         cfg.safety.max_mute_age_seconds,
         [b.channel for b in cfg.mixer.buses], sorted(await groups.list()),
+        "enabled" if controller.enabled else "DISABLED (panic, from before the restart)",
     )
+    if app.state.feature_errors:
+        log.error("features unavailable: %s", app.state.feature_errors)
     try:
         yield
     finally:
@@ -151,9 +184,11 @@ async def lifespan(app: FastAPI):
             await client.stop()
         finally:
             try:
-                await camera_ptz.close()
+                if camera_ptz is not None:
+                    await camera_ptz.close()
             finally:
-                await camera_relay.stop()
+                if camera_relay is not None:
+                    await camera_relay.stop()
 
 
 _configure_logging()

@@ -1,5 +1,6 @@
-"""Solo-on-unmute: unmuting a group mutes all other channels; muting a group
-leaves others alone. Uses the real controller + state store with a stub link."""
+"""Exclusive unmute (config exclusive_group_unmute): unmuting a group mutes all
+other channels; muting a group leaves the others alone. Uses the real
+controller + state store with a stub link."""
 
 import asyncio
 import sys
@@ -30,13 +31,16 @@ class FakeLink:
         self.session_epoch = time.monotonic()
         self.sent = []
 
+    def link_stale(self):
+        return False
+
     async def send(self, payload):
         self.sent.append(payload)
 
 
 async def set_state(store, ch, muted):
     await store.apply_event(FrameEvent(channel=ch, muted=muted, fader_hex="1f14b643",
-                                       raw_match="", end_hex_index=0))
+                                       raw_match="", end_hex_index=0, solo=False))
 
 
 async def muted_map(store, channels):
@@ -64,8 +68,8 @@ async def main():
     # UNMUTE group [1,2] -> 1,2 stay/!unmuted, others (3,4) get muted
     await ctrl.group_set("g", False)
     m = await muted_map(store, (1, 2, 3, 4))
-    check("solo: group channels unmuted", m[1] is False and m[2] is False)
-    check("solo: other channels muted", m[3] is True and m[4] is True)
+    check("exclusive unmute: group channels unmuted", m[1] is False and m[2] is False)
+    check("exclusive unmute: other channels muted", m[3] is True and m[4] is True)
 
     # reset others to unmuted, then MUTE the group -> others must stay untouched
     await set_state(store, 3, False)
@@ -84,9 +88,9 @@ async def main():
     await set_state(store2, 3, False)
     res = await ctrl2.group_set("g", False)
     m = await muted_map(store2, (3, 4))
-    check("solo: safe other muted", m[3] is True)
-    check("solo: unsafe other skipped (stays unknown)", m[4] is None)
-    check("solo: skipped other reported", 4 in res.get("others_skipped", []))
+    check("exclusive unmute: safe other muted", m[3] is True)
+    check("exclusive unmute: unsafe other skipped (stays unknown)", m[4] is None)
+    check("exclusive unmute: skipped other reported", 4 in res.get("others_skipped", []))
 
     print("== always-on channels ==")
     preferences = ChannelPreferences(Path(tempfile.mkdtemp()) / "channel_preferences.json")
@@ -110,10 +114,10 @@ async def main():
 
     await set_state(store3, 2, False)
     await set_state(store3, 4, False)
-    solo_result = await ctrl3.group_set("g", False)
+    exclusive_result = await ctrl3.group_set("g", False)
     muted = await muted_map(store3, (1, 2, 3, 4))
-    check("solo does not mute always-on other", muted[3] is False and muted[4] is True)
-    check("solo reports protected other", solo_result.get("protected_others") == [3])
+    check("exclusive unmute does not mute always-on other", muted[3] is False and muted[4] is True)
+    check("exclusive unmute reports protected other", exclusive_result.get("protected_others") == [3])
 
     direct = await ctrl3.channel_set(1, True)
     muted = await muted_map(store3, (1,))

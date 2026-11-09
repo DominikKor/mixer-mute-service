@@ -9,6 +9,14 @@ safety check, building, sending and recording the result are one step, so two
 concurrent requests (a Stream Deck mute and a UI fader drag) can never both act
 on the same old state and leave the mixer and the store disagreeing.
 
+Group commands additionally run under one group lock (taken before, and never
+inside, the command lock): the toggle decision, the group's sends and the
+exclusive unmute (muting every other channel) are one step, so two group
+buttons pressed at once run one after the other instead of interleaving.
+
+The sending flag (panic) is persisted, so a service restart during a show
+keeps sending disabled until someone enables it again.
+
 All results are plain JSON-compatible dicts matching the briefing's examples.
 """
 
@@ -16,13 +24,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import List, Optional, Tuple, Union
+from pathlib import Path
+from typing import List, Optional, Tuple
 
 from .channel_preferences import ChannelPreferences
 from .config import Config
 from .groups import GroupError, GroupStore
-from .mixer_client import MixerClient
-from .proxy import ProxyServer
+from .jsonstore import CorruptJSONError, read_json, write_json_atomic
+from .link import MixerLink
 from .protocol import (
     build_bus_command,
     build_mute_command,
@@ -37,8 +46,9 @@ log = logging.getLogger("mixer.controller")
 
 class Controller:
     def __init__(
-        self, cfg: Config, store: StateStore, client: Union[MixerClient, ProxyServer],
+        self, cfg: Config, store: StateStore, client: MixerLink,
         groups: GroupStore, channel_preferences: Optional[ChannelPreferences] = None,
+        *, panic_path: Optional[Path] = None,
     ) -> None:
         self._cfg = cfg
         self._store = store
@@ -46,7 +56,48 @@ class Controller:
         self._groups = groups
         self._channel_preferences = channel_preferences
         self._command_lock = asyncio.Lock()
-        self.enabled: bool = True  # panic toggles this
+        self._group_lock = asyncio.Lock()
+        self._panic_path = panic_path
+        self._enabled = self._load_enabled()
+
+    # -- panic (sending on/off) ----------------------------------------------
+
+    def _load_enabled(self) -> bool:
+        if self._panic_path is None:
+            return True
+        try:
+            data = read_json(self._panic_path, dict)
+        except FileNotFoundError:
+            return True
+        except CorruptJSONError:
+            log.error("panic state %s unreadable: sending stays DISABLED until enabled again",
+                      self._panic_path)
+            return False
+        enabled = data.get("enabled")
+        if not isinstance(enabled, bool):
+            log.error("panic state %s has no valid 'enabled': sending stays DISABLED until "
+                      "enabled again", self._panic_path)
+            return False
+        if not enabled:
+            log.warning("sending is DISABLED (panic was active before the restart)")
+        return enabled
+
+    @property
+    def enabled(self) -> bool:
+        return self._enabled
+
+    @enabled.setter
+    def enabled(self, value: bool) -> None:
+        value = bool(value)
+        if value != self._enabled:
+            log.warning("PANIC sending %s", "ENABLED" if value else "DISABLED")
+        self._enabled = value
+        if self._panic_path is not None:
+            try:
+                write_json_atomic(self._panic_path, {"enabled": value})
+            except OSError as exc:
+                # The switch itself still takes effect in memory.
+                log.error("could not save panic state to %s: %s", self._panic_path, exc)
 
     async def always_on_channels(self) -> set:
         if self._channel_preferences is None:
@@ -64,14 +115,23 @@ class Controller:
     # -- global gate -------------------------------------------------------
 
     def _global_block_reason(self) -> Optional[str]:
-        if not self.enabled:
+        if not self._enabled:
             return "service disabled (panic)"
         if not self._client.connected:
             return "no mixer connection"
-        link_stale = getattr(self._client, "link_stale", None)
-        if link_stale is not None and link_stale():
+        if self._client.link_stale():
             return "no data from mixer (link stale)"
         return None
+
+    def is_send_safe(self, channel: int, cs: Optional[ChannelState]) -> bool:
+        """Would a mute/unmute of this channel be sent right now? The same
+        checks as the send path (panic, connection, stale link, channel
+        state), for the UI's "safe" flag."""
+        if self._global_block_reason() is not None:
+            return False
+        return check_channel_send(
+            channel, cs, self._cfg, session_epoch=self._client.session_epoch
+        ).ok
 
     # -- single channel ----------------------------------------------------
 
@@ -109,9 +169,12 @@ class Controller:
         return cs, None
 
     async def _send(
-        self, channel: int, muted: bool, fader_hex: str, action: str, solo: bool = False
+        self, channel: int, muted: bool, fader_hex: str, action: str, *, solo: bool
     ) -> Tuple[Optional[str], Optional[dict]]:
-        """Build and send one command -> (sent_hex, None) or (None, error result)."""
+        """Build and send one command -> (sent_hex, None) or (None, error result).
+
+        ``solo`` is required: every command also writes the console's solo
+        flag, so the caller must pass the observed one."""
         try:
             bus = self._bus(channel)
             if bus is not None:
@@ -131,7 +194,7 @@ class Controller:
 
     async def channel_set(self, channel: int, target_muted: bool) -> dict:
         if channel not in self._cfg.valid_channels():
-            return {"ok": False, "channel": channel, "reason": "invalid channel"}
+            return self._blocked(channel, _act(target_muted), "invalid channel")
         async with self._command_lock:
             return await self._channel_set_locked(channel, target_muted)
 
@@ -142,8 +205,10 @@ class Controller:
             return blocked
         assert cs is not None and cs.fader_hex is not None
         fader_hex = cs.fader_hex
-        # The console's solo is sent back as observed, never changed by us.
-        sent_hex, error = await self._send(channel, target_muted, fader_hex, action, solo=bool(cs.solo))
+        # The console's solo is sent back as observed, never changed by us
+        # (the safety check guarantees it is known).
+        solo = bool(cs.solo)
+        sent_hex, error = await self._send(channel, target_muted, fader_hex, action, solo=solo)
         if error:
             return error
 
@@ -152,8 +217,8 @@ class Controller:
         await self._store.set_muted(channel, target_muted)
 
         log.info(
-            "SENT channel=%s action=%s fader=%s payload=%s",
-            channel, action, fader_hex, sent_hex,
+            "SENT channel=%s action=%s fader=%s solo=%s payload=%s",
+            channel, action, fader_hex, solo, sent_hex,
         )
         return {
             "ok": True,
@@ -172,7 +237,7 @@ class Controller:
         instead of guessing (guessing "unmuted" could open a muted channel).
         """
         if channel not in self._cfg.valid_channels():
-            return {"ok": False, "channel": channel, "reason": "invalid channel"}
+            return self._blocked(channel, "fader", "invalid channel")
 
         try:
             fader_hex = fader_value_to_hex(value)
@@ -186,14 +251,15 @@ class Controller:
                 return blocked
             assert cs is not None and cs.muted is not None
             muted = cs.muted
-            sent_hex, error = await self._send(channel, muted, fader_hex, "fader", solo=bool(cs.solo))
+            solo = bool(cs.solo)
+            sent_hex, error = await self._send(channel, muted, fader_hex, "fader", solo=solo)
             if error:
                 return error
             await self._store.set_fader(channel, fader_hex)
 
         log.info(
-            "SENT channel=%s action=fader value=%.2f muted=%s fader=%s payload=%s",
-            channel, fader_hex_to_value(fader_hex), muted, fader_hex, sent_hex,
+            "SENT channel=%s action=fader value=%.2f muted=%s solo=%s fader=%s payload=%s",
+            channel, fader_hex_to_value(fader_hex), muted, solo, fader_hex, sent_hex,
         )
         return {
             "ok": True,
@@ -217,7 +283,7 @@ class Controller:
 
     async def channel_toggle(self, channel: int) -> dict:
         if channel not in self._cfg.valid_channels():
-            return {"ok": False, "channel": channel, "reason": "invalid channel"}
+            return self._blocked(channel, "toggle", "invalid channel")
         async with self._command_lock:
             # Decide and send under the same lock, so the decision cannot be
             # based on a state another request is just changing.
@@ -250,16 +316,22 @@ class Controller:
                 details.append(safety.as_detail(ch))
         return details, states
 
+    def _group_blocked(self, group: str, action: str, reason: str, **extra) -> dict:
+        log.warning("BLOCKED group=%s action=%s reason=%r%s", group, action, reason,
+                    "".join(f" {k}={v}" for k, v in extra.items()))
+        return {"ok": False, "group": group, "reason": reason, **extra}
+
     async def group_set(self, group: str, target_muted: bool) -> dict:
-        channels = await self._group_channels(group)
-        if channels is None:
-            return {"ok": False, "group": group, "reason": "unknown group"}
+        async with self._group_lock:
+            channels = await self._group_channels(group)
+            if channels is None:
+                return self._group_blocked(group, _act(target_muted), "unknown group")
+            reason = self._global_block_reason()
+            if reason:
+                return self._group_blocked(group, _act(target_muted), reason)
+            return await self._group_set_locked(group, channels, target_muted)
 
-        reason = self._global_block_reason()
-        if reason:
-            log.warning("BLOCKED group=%s action=%s reason=%r", group, _act(target_muted), reason)
-            return {"ok": False, "group": group, "reason": reason}
-
+    async def _group_set_locked(self, group: str, channels: List[int], target_muted: bool) -> dict:
         always_on = await self.always_on_channels()
         protected = sorted(set(channels) & always_on) if target_muted else []
         action_channels = [ch for ch in channels if ch not in protected]
@@ -293,27 +365,42 @@ class Controller:
             results.append(await self.channel_set(ch, target_muted))
             sent_any = True
 
-        # Solo-on-unmute: unmuting a group also mutes every OTHER channel (incl.
-        # buses), but muting a group leaves the others alone. Channels we can't
-        # safely mute (no fresh fader) are skipped, not forced. Only after the
-        # group itself came up completely: muting everything else around a
-        # group that stayed (partly) muted could silence the whole room.
-        all_ok = all(r.get("ok") for r in results)
+        # The group is complete only if every member was sent successfully:
+        # none skipped as unsafe (partial mode), none failed, and at least one
+        # sent (all([]) would be True for a group whose members were all
+        # skipped).
+        group_complete = (
+            bool(results) and not unsafe_channels and all(r.get("ok") for r in results)
+        )
+
+        # Exclusive unmute: unmuting a group also mutes every OTHER channel
+        # (incl. buses), but muting a group leaves the others alone. Channels we
+        # can't safely mute (no current fader) are skipped, not forced. Only
+        # after the group itself came up completely: muting everything else
+        # around a group that stayed (partly) muted could silence the whole room.
         others = []
         protected_others = []
-        if not target_muted and self._cfg.safety.exclusive_group_unmute and all_ok:
-            members = set(channels)
-            other_channels = self._cfg.valid_channels() - members
-            protected_others = sorted(other_channels & always_on)
-            for ch in sorted(other_channels - always_on):
-                cs = await self._store.get_channel(ch)
-                if cs is not None and cs.muted is True:
-                    continue  # already muted, nothing to do
-                await asyncio.sleep(delay)
-                others.append(await self.channel_set(ch, True))
+        others_skipped_reason = None
+        if not target_muted and self._cfg.safety.exclusive_group_unmute and group_complete:
+            if self._channel_preferences is not None and not self._channel_preferences.readable:
+                # Which channels are "always on" is unknown: muting the others
+                # could silence a protected channel (e.g. the presenter mic).
+                others_skipped_reason = "always-on channels unknown (preferences file unreadable)"
+                log.error("group=%s action=unmute: other channels NOT muted: %s",
+                          group, others_skipped_reason)
+            else:
+                members = set(channels)
+                other_channels = self._cfg.valid_channels() - members
+                protected_others = sorted(other_channels & always_on)
+                for ch in sorted(other_channels - always_on):
+                    cs = await self._store.get_channel(ch)
+                    if cs is not None and cs.muted is True:
+                        continue  # already muted, nothing to do
+                    await asyncio.sleep(delay)
+                    others.append(await self.channel_set(ch, True))
 
         out = {
-            "ok": all_ok,
+            "ok": group_complete,
             "group": group,
             "target_muted": target_muted,
             "results": results,
@@ -323,6 +410,8 @@ class Controller:
             out["protected"] = protected
         if protected_others:
             out["protected_others"] = protected_others
+        if others_skipped_reason:
+            out["others_skipped_reason"] = others_skipped_reason
         if others:
             out["muted_others"] = others
             blocked = [r for r in others if not r.get("ok")]
@@ -331,38 +420,40 @@ class Controller:
         return out
 
     async def group_toggle(self, group: str) -> dict:
-        channels = await self._group_channels(group)
-        if channels is None:
-            return {"ok": False, "group": group, "reason": "unknown group"}
+        # Decide and act under the group lock, so the decision cannot be based
+        # on a state another group command is just changing.
+        async with self._group_lock:
+            channels = await self._group_channels(group)
+            if channels is None:
+                return self._group_blocked(group, "toggle", "unknown group")
 
-        reason = self._global_block_reason()
-        if reason:
-            return {"ok": False, "group": group, "reason": reason}
+            reason = self._global_block_reason()
+            if reason:
+                return self._group_blocked(group, "toggle", reason)
 
-        # Toggle semantics: a group counts as "active" only when ALL channels are
-        # muted -> then unmute; otherwise mute. Requires all mute states fresh.
-        always_on = await self.always_on_channels()
-        toggle_channels = [ch for ch in channels if ch not in always_on]
-        if not toggle_channels:
-            return {
-                "ok": True, "group": group, "results": [], "skipped": [],
-                "protected": sorted(channels),
-            }
+            # Toggle semantics: a group counts as "active" only when ALL channels
+            # are muted -> then unmute; otherwise mute. Requires all mute states.
+            always_on = await self.always_on_channels()
+            toggle_channels = [ch for ch in channels if ch not in always_on]
+            if not toggle_channels:
+                return {
+                    "ok": True, "group": group, "results": [], "skipped": [],
+                    "protected": sorted(channels),
+                }
 
-        # Always-on channels are excluded from deciding the group's toggle state.
-        unsafe, states = await self._evaluate_group(toggle_channels, require_mute_state=True)
-        if unsafe:
-            log.warning("BLOCKED group=%s action=toggle reason=unsafe details=%s", group, unsafe)
-            return {
-                "ok": False,
-                "group": group,
-                "reason": "unsafe group operation",
-                "details": unsafe,
-            }
+            # Always-on channels are excluded from deciding the group's toggle state.
+            unsafe, states = await self._evaluate_group(toggle_channels, require_mute_state=True)
+            if unsafe:
+                log.warning("BLOCKED group=%s action=toggle reason=unsafe details=%s", group, unsafe)
+                return {
+                    "ok": False,
+                    "group": group,
+                    "reason": "unsafe group operation",
+                    "details": unsafe,
+                }
 
-        all_muted = all(states[ch].muted for ch in toggle_channels)  # type: ignore[union-attr]
-        target = not all_muted
-        return await self.group_set(group, target)
+            all_muted = all(states[ch].muted for ch in toggle_channels)  # type: ignore[union-attr]
+            return await self._group_set_locked(group, channels, not all_muted)
 
     async def create_group_from_current_status(self, name: str) -> dict:
         if not self._client.connected:

@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
 
 from .jsonstore import read_json, write_json_atomic
-from .protocol import _decode_fields
+from .protocol import WIRE_FIXED32, WIRE_VARINT, Dump, decode_fields
 
 SECTIONS = ("input", "eq", "dynamics")
 # A snapshot only uses values from a dump at most this old (direct mode
@@ -54,12 +54,12 @@ class SettingsError(ValueError):
 def _fields(raw: Optional[bytes]) -> Dict[int, object]:
     """{field: value} of one section (first occurrence; floats decoded)."""
     out: Dict[int, object] = {}
-    for field, wire, value in _decode_fields(raw or b"") or []:
+    for field, wire, value in decode_fields(raw or b"") or []:
         if field in out:
             continue
-        if wire == 5:
+        if wire == WIRE_FIXED32:
             out[field] = struct.unpack("<f", value)[0]
-        elif wire == 0:
+        elif wire == WIRE_VARINT:
             out[field] = value
     return out
 
@@ -105,6 +105,10 @@ class ChannelSettingsCache:
     def __init__(self) -> None:
         self._latest: Dict[int, Tuple[float, Dict[str, bytes]]] = {}
 
+    def on_dump(self, dump: Dump) -> None:
+        """Dump listener (see protocol.StreamBuffer)."""
+        self.update(dump.settings)
+
     def update(self, channels: Dict[int, Dict[str, bytes]]) -> None:
         now = time.monotonic()
         for channel, sections in channels.items():
@@ -126,8 +130,10 @@ class ChannelSettingsStore:
             if isinstance(snap, dict) and isinstance(snap.get("channels"), dict)
         }
 
-    def _persist(self) -> None:
-        write_json_atomic(self._path, self._snapshots, ensure_ascii=False)
+    def _commit(self, snapshots: Dict[str, dict]) -> None:
+        """Write first, then switch: a failed write leaves memory unchanged."""
+        write_json_atomic(self._path, snapshots, ensure_ascii=False)
+        self._snapshots = snapshots
 
     async def capture(
         self,
@@ -172,8 +178,7 @@ class ChannelSettingsStore:
             "skipped": skipped,
         }
         async with self._lock:
-            self._snapshots[group] = snapshot
-            self._persist()
+            self._commit({**self._snapshots, group: snapshot})
         return self.view(group, snapshot)
 
     async def get(self, group: str) -> Optional[dict]:
@@ -201,13 +206,12 @@ class ChannelSettingsStore:
         async with self._lock:
             if old not in self._snapshots:
                 return False
-            self._snapshots[new] = self._snapshots.pop(old)
-            self._persist()
+            self._commit({(new if k == old else k): v for k, v in self._snapshots.items()})
             return True
 
     async def delete_group(self, group: str) -> bool:
         async with self._lock:
-            if self._snapshots.pop(group, None) is None:
+            if group not in self._snapshots:
                 return False
-            self._persist()
+            self._commit({k: v for k, v in self._snapshots.items() if k != group})
             return True
