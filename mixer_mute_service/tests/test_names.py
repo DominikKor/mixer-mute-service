@@ -86,5 +86,20 @@ class RenameTests(unittest.TestCase):
         self.assertEqual(names["obs"], "Stream")
 
 
+    def test_camera_preset_renamed(self):
+        r = self.client.put("/camera-presets/native-cam1-preset-1/label", json={"name": "CAM1  Kanzel"})
+        self.assertEqual((r.status_code, r.json()["button"]["label"]), (200, "CAM1 Kanzel"))
+        labels = {b["id"]: b["label"] for b in self.client.get("/companion/buttons").json()["camera_buttons"]}
+        self.assertEqual(labels["native-cam1-preset-1"], "CAM1 Kanzel")
+        stored = json.loads((self.folder / "companion_buttons.json").read_text(encoding="utf-8"))
+        self.assertEqual(stored["camera_labels"]["native-cam1-preset-1"], "CAM1 Kanzel")
+        # Empty: the catalog's label again.
+        r = self.client.put("/camera-presets/native-cam1-preset-1/label", json={"name": ""})
+        self.assertEqual(r.json()["button"]["label"], "CAM1 Pult nah")
+        self.assertNotIn("native-cam1-preset-1", json.loads(
+            (self.folder / "companion_buttons.json").read_text(encoding="utf-8"))["camera_labels"])
+        self.assertEqual(self.client.put("/camera-presets/beamer-freeze/label", json={"name": "x"}).status_code, 404)
+        self.assertEqual(self.client.put("/camera-presets/native-cam1-preset-1/label", json={"name": "x" * 65}).status_code, 400)
+
 if __name__ == "__main__":
     unittest.main()

@@ -741,6 +741,11 @@ sie.
 - **Steuerung** (mit *Bearbeiten*): Kategorien und die Geräte unter *Alles
   ausschalten* (Beamer, Agent-PCs; leer = Name aus den Desktop-Profilen).
 - **Programm → Vorlagen**: die Vorlagen.
+- **Kameras**: der Stift neben „Presets“ schaltet das Umbenennen für diese
+  Kamera ein (Tasten gestrichelt); dann öffnet ein Tippen auf ein Preset den
+  Namen, statt die Kamera zu bewegen. Gespeichert wird mit der Kamera davor
+  („CAM1 Kanzel“), damit Programmzeilen die Kameras unterscheiden; leer = Name
+  aus dem Katalog. Nochmal den Stift: wieder normal.
 
 Kanäle, Mutegruppen, Steuerungstasten, Kameras und Desktop-Profile ließen sich
 schon vorher umbenennen.
@@ -751,6 +756,7 @@ schon vorher umbenennen.
 | PUT | `/lights/scenes/{id}` `{"name"}` | Szene umbenennen |
 | PUT | `/program/templates/{id}` `{"name"}` | Vorlage umbenennen |
 | POST | `/companion/categories/{id}/rename` `{"name"}` | Kategorie umbenennen |
+| PUT | `/camera-presets/{tasten-id}/label` `{"name"}` | Kamera-Preset umbenennen (`""` = Katalogname) |
 
 ## Configuration (`config.yaml`)
 

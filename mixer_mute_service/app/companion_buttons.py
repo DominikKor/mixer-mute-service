@@ -317,8 +317,26 @@ class CompanionButtonStore:
         async with self._lock:
             buttons = deepcopy(CAMERA_BUTTONS)
             for button in buttons:
+                button["default_label"] = button["label"]
                 button["label"] = self._camera_labels.get(button["id"], button["label"])
             return buttons
+
+    async def set_camera_label(self, button_id: str, label) -> dict:
+        """Rename a catalog camera key (camera section, program rows); an
+        empty label goes back to the catalog's. KeyError: not a camera key."""
+        if button_id not in CAMERA_BUTTON_IDS:
+            raise KeyError(button_id)
+        label = " ".join(label.split()) if isinstance(label, str) else None
+        if label is None or len(label) > 64:
+            raise ValueError("label must be text of at most 64 characters")
+        async with self._lock:
+            if label and label != COMPANION_BUTTONS_BY_ID[button_id]["label"]:
+                self._camera_labels[button_id] = label
+            else:
+                self._camera_labels.pop(button_id, None)
+            self._persist()
+            return {**deepcopy(COMPANION_BUTTONS_BY_ID[button_id]),
+                    "label": self._camera_labels.get(button_id, COMPANION_BUTTONS_BY_ID[button_id]["label"])}
 
     async def get_button(self, button_id: str):
         async with self._lock:

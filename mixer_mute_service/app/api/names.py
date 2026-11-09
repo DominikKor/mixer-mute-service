@@ -6,6 +6,7 @@ PUT  /names/{kind}/{id} {name}            kind: light-zone, light-circuit,
 PUT  /lights/scenes/{id} {name}           rename a light scene
 PUT  /program/templates/{id} {name}       rename a program template
 POST /companion/categories/{id}/rename {name}
+PUT  /camera-presets/{button id}/label {name}   "" = the catalog's label
 """
 
 from __future__ import annotations
@@ -81,3 +82,18 @@ async def rename_companion_category(category_id: str, request: Request, body: di
     except ValueError as exc:
         return fail(str(exc), 409 if "exists" in str(exc) else 400)
     return {"ok": True, "category": category}
+
+
+@router.put("/camera-presets/{button_id}/label")
+async def rename_camera_preset(button_id: str, request: Request, body: dict = Body(...)):
+    store = request.app.state.companion_button_store
+    if store is None:
+        return fail("control keys are not available", 503)
+    try:
+        button = await store.set_camera_label(button_id, body.get("name", ""))
+    except KeyError:
+        return fail("unknown camera preset", 404)
+    except ValueError as exc:
+        return fail(str(exc), 400)
+    log.info("Camera preset %s -> %r", button_id, button["label"])
+    return {"ok": True, "button": button}

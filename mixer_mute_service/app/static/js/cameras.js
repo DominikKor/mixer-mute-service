@@ -85,6 +85,9 @@ function renderCameraStreams(data) {
 // held, releasing the key stops the camera.
 
 const CAMERA_LAST_PRESET = {};
+// Cameras whose presets are being renamed (pencil next to "Presets"): a tap
+// on a preset then opens its name instead of moving the camera.
+const CAMERA_RENAMING = new Set();
 // Per camera and kind ("pan" / "zoom"): the command chain, the held direction
 // and its timers.
 const CAMERA_MOVES = {};
@@ -114,7 +117,9 @@ function renderCameraControls() {
   for (const button of COMPANION_DATA.camera_buttons || []) {
     const action = button.native_action;
     if (!action || action.type !== "visca-preset") continue;
-    (presets[action.camera] = presets[action.camera] || []).push({ id: button.id, label: button.label, preset: action.preset });
+    (presets[action.camera] = presets[action.camera] || []).push({
+      id: button.id, label: button.label, preset: action.preset, defaultLabel: button.default_label || button.label,
+    });
   }
   for (const controls of document.querySelectorAll(".camera-controls")) {
     const cam = controls.dataset.viscaCamera;
@@ -135,9 +140,14 @@ function renderCameraControls() {
           title="${n} ${arrow.label}" aria-label="${n} ${arrow.label}, gedrückt halten">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${arrow.path}"/></svg></button>`).join("");
     controls.innerHTML = `
-      <div class="camera-controls-label">Presets</div>
+      <div class="camera-presets-head">
+        <span class="camera-controls-label"><span class="camera-presets-title">Presets</span><span class="camera-presets-hint"> – zum Umbenennen antippen</span></span>
+        <button type="button" class="rename-btn" data-camera-rename="${c}" aria-pressed="false"
+          title="Presets von ${n} umbenennen" aria-label="Presets von ${n} umbenennen">&#9998;</button>
+      </div>
       <div class="camera-presets">${list.map(p => `
         <button type="button" class="camera-preset" data-camera-preset="${escapeAttr(p.id)}" data-camera="${c}"
+          data-label="${escapeAttr(p.label)}" data-default-label="${escapeAttr(p.defaultLabel)}"
           aria-pressed="${CAMERA_LAST_PRESET[cam] === p.id}" title="${escapeAttr(p.label)} (Preset ${p.preset})">${escapeHtml(cameraPresetLabel(p.label))}</button>`).join("")}
       </div>
       <div class="camera-controls-label">Schwenken &amp; Zoom – gedrückt halten</div>
@@ -147,10 +157,47 @@ function renderCameraControls() {
         <button type="button" class="camera-move-key camera-zoom-key" data-camera-move="zoom" data-direction="out" data-camera="${c}" aria-label="${n} herauszoomen, gedrückt halten">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5L21 21M7.5 10.5h6"/></svg>Weit</button>
       </div>`;
+    setCameraRenaming(cam, CAMERA_RENAMING.has(cam));
   }
 }
 
+// Rename mode of one camera's presets on or off.
+function setCameraRenaming(cam, on) {
+  if (on) CAMERA_RENAMING.add(cam); else CAMERA_RENAMING.delete(cam);
+  for (const controls of document.querySelectorAll(".camera-controls")) {
+    if (controls.dataset.viscaCamera !== cam) continue;
+    controls.classList.toggle("renaming", on);
+    controls.querySelector("[data-camera-rename]")?.setAttribute("aria-pressed", String(on));
+  }
+}
+
+// The preset's name as a field; stored on the service with the camera in
+// front ("CAM1 Kanzel"), so program rows still tell the cameras apart.
+function startCameraPresetRename(key) {
+  const cam = key.dataset.camera;
+  const fallback = cameraPresetLabel(key.dataset.defaultLabel);
+  const shown = key.dataset.label === key.dataset.defaultLabel ? "" : cameraPresetLabel(key.dataset.label);
+  let slot = key.parentElement;
+  if (!slot.classList.contains("camera-preset-slot")) {
+    slot = document.createElement("div");
+    slot.className = "camera-preset-slot";
+    key.replaceWith(slot);
+    slot.appendChild(key);
+  }
+  startInlineRename(slot, shown, {
+    placeholder: fallback, allowEmpty: true, maxLength: 58,
+    save: async name => {
+      const label = name ? `${cam.toUpperCase()} ${name}` : "";
+      if (await saveName("PUT", `/camera-presets/${encodeURIComponent(key.dataset.cameraPreset)}/label`, label, "Preset")) {
+        await loadCompanionButtons();
+        loadProgramItems();  // program rows list the presets by name
+      }
+    },
+  });
+}
+
 async function pressCameraPreset(key) {
+  if (key.closest(".camera-controls.renaming")) return startCameraPresetRename(key);
   if (key.disabled) return;
   key.disabled = true;
   try {
@@ -453,3 +500,9 @@ async function deleteDesktopProfile(profileId, anchor) {
   DESKTOP_PROFILES_SIGNATURE = "";
   await refresh();
 }
+
+// The pencil next to "Presets": renaming on/off for that camera.
+$("camera-grid").addEventListener("click", event => {
+  const pencil = event.target.closest("[data-camera-rename]");
+  if (pencil) setCameraRenaming(pencil.dataset.cameraRename, !CAMERA_RENAMING.has(pencil.dataset.cameraRename));
+});

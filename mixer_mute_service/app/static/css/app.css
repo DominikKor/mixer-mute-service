@@ -1384,3 +1384,13 @@ button.light-circuit[data-state="unknown"] .light-lamp { background: none; borde
 .power-tile .inline-rename { width: 100%; min-height: 64px; }
 .tp-item .rename-btn { margin: 0; align-self: center; }
 .tp-item .inline-rename { width: 100%; min-height: 52px; }
+/* Camera presets: one pencil per camera switches renaming on (keys get a
+   dashed edge, a tap opens the name instead of moving the camera). */
+.camera-presets-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 44px; }
+.camera-presets-head .rename-btn { margin: 0; }
+.camera-presets-hint { display: none; letter-spacing: .06em; color: #8fb3bd; }
+.camera-controls.renaming .camera-presets-hint { display: inline; }
+.camera-controls.renaming .rename-btn[data-camera-rename] { opacity: 1; color: #fff; }
+.camera-controls.renaming button.camera-preset { outline: 1px dashed #8fb3bd; outline-offset: -4px; }
+.camera-preset-slot { display: grid; min-width: 0; }
+.camera-preset-slot .inline-rename { width: 100%; min-height: 44px; }
