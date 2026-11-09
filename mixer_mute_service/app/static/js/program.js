@@ -16,9 +16,11 @@ let PROGRAM_STATUS = { current_id: null, next_id: null };
 const PROGRAM_BUSY = new Set();     // play / clone in progress, per item
 const PROGRAM_SAVING = new Set();   // a save is in flight, per item
 const PROGRAM_RESAVE = new Set();   // another edit arrived meanwhile
-// Hide key: an open eye while the row is shown, struck through once hidden.
+// Hide key: shows what a click does, like the title: struck through while the
+// row is shown (click hides it), an open eye once hidden (click shows it again).
 const ICON_EYE = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>`;
 const ICON_EYE_OFF = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.6-7 10-7c2 0 3.8.7 5.2 1.6M22 12s-3.6 7-10 7c-2 0-3.8-.7-5.2-1.6"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2M3 3l18 18"/></svg>`;
+const ICON_DOTS = `<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>`;
 const PROGRAM_FIELDS = [
   "time", "title", "person", "group", "playback", "translation", "lyrics",
   "playback_description", "translation_description", "lyrics_description", "song", "light",
@@ -238,24 +240,28 @@ function buildProgramRow(item, draft = false) {
   primary.title = draft ? "Programmpunkt speichern" : "Programmpunkt starten";
   primary.setAttribute("aria-label", draft ? "Programmpunkt speichern" : "Programmpunkt starten");
   actions.appendChild(primary);
-  if (!draft) {
-    const clone = document.createElement("button");
-    clone.type = "button";
-    clone.dataset.programAction = "clone";
-    clone.dataset.programId = item.id;
-    clone.innerHTML = ICON_COPY;
-    clone.title = "Duplizieren: Kopie direkt darunter";
-    actions.appendChild(clone);
+  if (draft) {
+    const cancel = document.createElement("button");
+    cancel.type = "button";
+    cancel.className = "danger";
+    cancel.dataset.programAction = "cancel";
+    cancel.innerHTML = ICON_X;
+    cancel.title = "Bearbeitung abbrechen";
+    cancel.setAttribute("aria-label", "Programmpunkt abbrechen");
+    actions.appendChild(cancel);
+  } else {
+    // Duplicate and delete sit in the "⋮" menu (#program-menu).
+    const menu = document.createElement("button");
+    menu.type = "button";
+    menu.className = "program-menu-btn";
+    menu.dataset.programAction = "menu";
+    menu.dataset.programId = item.id;
+    menu.title = "Duplizieren oder löschen";
+    menu.setAttribute("aria-haspopup", "menu");
+    menu.setAttribute("aria-expanded", "false");
+    menu.innerHTML = ICON_DOTS;
+    actions.appendChild(menu);
   }
-  const secondary = document.createElement("button");
-  secondary.type = "button";
-  secondary.className = "danger";
-  secondary.dataset.programAction = draft ? "cancel" : "delete";
-  if (!draft) secondary.dataset.programId = item.id;
-  secondary.innerHTML = draft ? ICON_X : ICON_TRASH;
-  secondary.title = draft ? "Bearbeitung abbrechen" : "Programmpunkt löschen";
-  secondary.setAttribute("aria-label", draft ? "Programmpunkt abbrechen" : "Programmpunkt löschen");
-  actions.appendChild(secondary);
   programCell(row, "Aktion", actions, "program-actions-cell");
   if (!draft) updateProgramRow(row, item);
   return row;
@@ -304,16 +310,14 @@ function updateProgramRow(row, item) {
   const hide = row.querySelector('[data-program-action="hide"]');
   if (hide && hide.getAttribute("aria-pressed") !== String(hidden)) {
     hide.setAttribute("aria-pressed", String(hidden));
-    hide.innerHTML = hidden ? ICON_EYE_OFF : ICON_EYE;
+    hide.innerHTML = hidden ? ICON_EYE : ICON_EYE_OFF;
   }
   if (hide) {
     hide.title = hidden ? "Wieder einblenden: „Weiter“ startet ihn wieder" : "Ausblenden: grau, „Weiter“ überspringt ihn";
     hide.setAttribute("aria-label", `${label} ${hidden ? "wieder einblenden" : "ausblenden und überspringen"}`);
   }
-  const clone = row.querySelector('[data-program-action="clone"]');
-  if (clone) clone.setAttribute("aria-label", `${label} duplizieren`);
-  const del = row.querySelector('[data-program-action="delete"]');
-  if (del) del.setAttribute("aria-label", `${label} löschen`);
+  const menu = row.querySelector('[data-program-action="menu"]');
+  if (menu) menu.setAttribute("aria-label", `${label}: duplizieren oder löschen`);
 }
 
 // Rows are kept and updated in place (focus, cursor and the draft row
@@ -638,8 +642,20 @@ $("program-items").addEventListener("click", event => {
   const action = button.dataset.programAction;
   if (action === "create") return createProgramItem(button.closest("tr"));
   if (action === "cancel") { PROGRAM_DRAFT = false; renderProgramItems(); return; }
-  if (action === "clone") return cloneProgramItem(button.dataset.programId, button);
+  if (action === "menu") {
+    if (button.getAttribute("aria-expanded") === "true") closeTileMenu();
+    else openTileMenu(button, $("program-menu"));
+    return;
+  }
   if (action === "hide") return toggleProgramHidden(button.dataset.programId, button);
-  if (action === "delete") return deleteProgramItem(button.dataset.programId, button);
   if (action === "play") return playProgramItem(button.dataset.programId, button);
+});
+$("program-menu").addEventListener("click", event => {
+  const entry = event.target.closest("button[data-menu-action]");
+  if (!entry || !OPEN_MENU) return;
+  // The row's "⋮" key anchors the delete question once the menu is gone.
+  const trigger = OPEN_MENU.trigger;
+  closeTileMenu();
+  if (entry.dataset.menuAction === "clone") cloneProgramItem(trigger.dataset.programId, trigger);
+  else if (entry.dataset.menuAction === "delete") deleteProgramItem(trigger.dataset.programId, trigger);
 });

@@ -441,15 +441,17 @@ async function loadCameraStreams() {
   }
 }
 
-// ---- tile menu ("⋮") ------------------------------------------------------
-// One shared menu, placed under the dots of the tile it was opened from.
+// ---- "⋮" menus --------------------------------------------------------------
+// One menu open at a time, placed under the dots it was opened from: the
+// shared tile menu of the desktop keys, the program rows' menu.
 
 let TILE_MENU_PROFILE = null;
+let OPEN_MENU = null;  // { menu, trigger }
 
-function openTileMenu(trigger) {
+function openTileMenu(trigger, menu = $("tile-menu")) {
   closeTileMenu();
-  const menu = $("tile-menu");
-  TILE_MENU_PROFILE = trigger.dataset.profileMenu;
+  OPEN_MENU = { menu, trigger };
+  TILE_MENU_PROFILE = trigger.dataset.profileMenu || null;
   trigger.setAttribute("aria-expanded", "true");
   menu.hidden = false;
   const r = trigger.getBoundingClientRect();
@@ -462,14 +464,12 @@ function openTileMenu(trigger) {
 }
 
 function closeTileMenu(refocus = false) {
-  const menu = $("tile-menu");
-  if (menu.hidden) return;
+  if (!OPEN_MENU) return;
+  const { menu, trigger } = OPEN_MENU;
+  OPEN_MENU = null;
   menu.hidden = true;
-  const trigger = document.querySelector(`[data-profile-menu][aria-expanded="true"]`);
-  if (trigger) {
-    trigger.setAttribute("aria-expanded", "false");
-    if (refocus) trigger.focus();
-  }
+  trigger.setAttribute("aria-expanded", "false");
+  if (refocus && trigger.isConnected) trigger.focus();
   TILE_MENU_PROFILE = null;
 }
 
