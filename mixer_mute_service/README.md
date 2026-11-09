@@ -83,7 +83,33 @@ in and out; the choice is remembered per device.
 
 The page polls `/state`, `/health` and `/groups` about once per second.
 
+## Beamer Hide / Unhide
+
+The Beamer category has separate **Beamer hide** and **Beamer unhide** actions.
+Because the projector command is a toggle, first set the actual current mode in
+the **Beamerzustand** selector. This only records the current state; it does not
+send a projector command. A Hide/Unhide action sends one toggle only when its
+target differs from the recorded state. The state is persisted in
+`native_control_state.json`; it starts as **unknown**, so both actions stay
+blocked until the operator declares the current mode. If the projector is
+toggled by another device, update the selector before using the web controls.
+
 ## Endpoints
+
+### Beamer hide/unhide
+
+The **Beamerzustand** selector declares the projector's current physical mode;
+it does not send a command. The state starts unknown, so **Beamer hide** and
+**Beamer unhide** stay blocked until the operator sets it. Each action uses the
+projector's toggle script only when the requested target differs from the
+stored state. On success, the new state is persisted in
+`native_control_state.json`. If the projector is toggled by another device,
+update the selector before using the web buttons.
+
+| Method | Path | Purpose |
+| ------ | ---- | ------- |
+| GET | `/beamer/state` | read the stored state (`hidden: true`, `false` or `null`) |
+| POST | `/beamer/state` | declare the current state `{ "hidden": true/false }` without toggling |
 
 ### Steuerung keys (`/companion/...`)
 

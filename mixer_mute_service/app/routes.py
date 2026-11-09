@@ -26,6 +26,7 @@ from .native_controls import NativeControlError
 from .program_items import ProgramItemError
 from .models import (
     AlwaysOnRequest,
+    BeamerStateRequest,
     CameraStreamRequest,
     GroupCaptureRequest,
     CompanionButtonCreate,
@@ -278,6 +279,21 @@ async def health(request: Request):
 
 def _display_ready(display_cfg) -> bool:
     return display_cfg.enabled and bool(os.environ.get(display_cfg.token_env, ""))
+
+
+@router.get("/beamer/state")
+async def beamer_state(request: Request):
+    hidden = await request.app.state.native_controls.get_beamer_state()
+    return {
+        "ok": True,
+        "hidden": hidden,
+        "mode": None if hidden is None else ("hide" if hidden else "unhide"),
+    }
+
+
+@router.post("/beamer/state")
+async def set_beamer_state(body: BeamerStateRequest, request: Request):
+    return await request.app.state.native_controls.set_beamer_state(body.hidden)
 
 
 @router.get("/camera-streams")

@@ -147,10 +147,14 @@ class NativeControlService:
         self._lock = asyncio.Lock()
         self._dmx = [0] * 512
         self._levels = {"warm": 255, "cold": 50, "start": 255, "steps": 50, "fade_ms": 1000}
+        self._beamer_hidden: Optional[bool] = None
         self._load_state()
 
     def _load_state(self) -> None:
         data = read_json(self._state_path, dict, default={})
+        hidden = data.get("beamer_hidden")
+        if isinstance(hidden, bool):
+            self._beamer_hidden = hidden
         values = data.get("dmx")
         if isinstance(values, list) and len(values) == 512 and all(
             isinstance(v, int) and 0 <= v <= 255 for v in values
@@ -163,12 +167,53 @@ class NativeControlService:
                     self._levels[key] = max(low, min(high, levels[key]))
 
     def _persist_state(self) -> None:
-        # The light already changed when this runs; a full disk must not turn
+        # A hardware command may already have run; a full disk must not turn
         # a successful press into an error.
         try:
-            write_json_atomic(self._state_path, {"dmx": self._dmx, "levels": self._levels})
+            write_json_atomic(self._state_path, {
+                "dmx": self._dmx,
+                "levels": self._levels,
+                "beamer_hidden": self._beamer_hidden,
+            })
         except OSError as exc:
             log.warning("Could not save light state to %s: %s", self._state_path, exc)
+
+    async def get_beamer_state(self) -> Optional[bool]:
+        async with self._lock:
+            return self._beamer_hidden
+
+    async def set_beamer_state(self, hidden: bool) -> dict:
+        if not isinstance(hidden, bool):
+            raise NativeControlError("invalid Beamer state")
+        async with self._lock:
+            self._beamer_hidden = hidden
+            self._persist_state()
+            return {"ok": True, "hidden": hidden}
+
+    async def _toggle_beamer(self) -> None:
+        script = BEAMER_SCRIPTS.get("beamer-hide")
+        if script is None or not script.is_file():
+            raise NativeControlError("Beamer toggle script is unavailable on the service PC")
+        process = await asyncio.create_subprocess_exec("cmd.exe", "/c", str(script))
+        try:
+            code = await asyncio.wait_for(process.wait(), timeout=10)
+        except asyncio.TimeoutError:
+            process.kill()
+            await process.wait()
+            raise NativeControlError("Beamer toggle script timed out")
+        if code:
+            raise NativeControlError(f"Beamer toggle script exited with status {code}")
+
+    async def _set_beamer_mode(self, hidden: bool) -> dict:
+        async with self._lock:
+            if self._beamer_hidden is None:
+                raise NativeControlError("Beamer state is unknown; set its current state first")
+            if self._beamer_hidden == hidden:
+                return {"ok": True, "hidden": hidden, "changed": False}
+            await self._toggle_beamer()
+            self._beamer_hidden = hidden
+            self._persist_state()
+            return {"ok": True, "hidden": hidden, "changed": True}
 
     async def _update_dmx(self, compute: Callable[[list[int]], list[int]]) -> list[int]:
         """Fade from the current DMX frame to ``compute(current)``.
@@ -365,6 +410,12 @@ class NativeControlService:
             if action_type == "obs-live":
                 await asyncio.to_thread(_obs_request, OBS_HOST, OBS_PORT, "SetCurrentProgramScene", {"sceneName": scene})
             return {"ok": True}
+
+        if action_type == "beamer-set":
+            hidden = action.get("hidden")
+            if not isinstance(hidden, bool):
+                raise NativeControlError("invalid Beamer target mode")
+            return await self._set_beamer_mode(hidden)
 
         if action_type == "beamer-script":
             script = BEAMER_SCRIPTS.get(action.get("script"))

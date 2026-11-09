@@ -38,6 +38,10 @@ class AlwaysOnRequest(BaseModel):
     enabled: bool
 
 
+class BeamerStateRequest(BaseModel):
+    hidden: bool
+
+
 class CameraStreamRequest(BaseModel):
     name: str = Field(max_length=64)
     rtsp_url: str = Field(max_length=1024)

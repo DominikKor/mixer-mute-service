@@ -79,6 +79,39 @@ class NativeControlTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(controls._levels["start"], 255)
         self.assertTrue(self.state_path.with_name(self.state_path.name + ".corrupt").exists())
 
+    async def test_beamer_mode_blocks_until_current_state_is_set(self):
+        with patch.object(self.controls, "_toggle_beamer", new_callable=AsyncMock) as toggle:
+            with self.assertRaisesRegex(NativeControlError, "state is unknown"):
+                await self.controls.press({"type": "beamer-set", "hidden": True})
+        toggle.assert_not_awaited()
+
+    async def test_beamer_mode_only_toggles_when_target_differs(self):
+        await self.controls.set_beamer_state(True)
+        with patch.object(self.controls, "_toggle_beamer", new_callable=AsyncMock) as toggle:
+            already_hidden = await self.controls.press({"type": "beamer-set", "hidden": True})
+            unhide = await self.controls.press({"type": "beamer-set", "hidden": False})
+
+        self.assertFalse(already_hidden["changed"])
+        self.assertTrue(unhide["changed"])
+        self.assertFalse(await self.controls.get_beamer_state())
+        toggle.assert_awaited_once()
+        self.assertFalse(NativeControlService(self.state_path)._beamer_hidden)
+
+    async def test_beamer_state_can_be_declared_and_persisted(self):
+        result = await self.controls.set_beamer_state(False)
+        self.assertFalse(result["hidden"])
+        self.assertFalse(NativeControlService(self.state_path)._beamer_hidden)
+
+    async def test_failed_beamer_toggle_does_not_change_state(self):
+        await self.controls.set_beamer_state(True)
+        with patch.object(self.controls, "_toggle_beamer", new_callable=AsyncMock,
+                          side_effect=NativeControlError("script failed")):
+            with self.assertRaisesRegex(NativeControlError, "script failed"):
+                await self.controls.press({"type": "beamer-set", "hidden": False})
+
+        self.assertTrue(await self.controls.get_beamer_state())
+        self.assertTrue(NativeControlService(self.state_path)._beamer_hidden)
+
     async def test_artnet_settings_are_bounded_and_persisted(self):
         await self.controls.press({"type": "artnet-start-adjust", "delta": 50})
         await self.controls.press({"type": "artnet-setting-adjust", "setting": "fade_ms", "delta": -5000})
