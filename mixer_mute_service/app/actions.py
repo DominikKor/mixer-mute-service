@@ -22,7 +22,7 @@ from fastapi import Request
 from . import display_agent
 from .companion_buttons import CAMERA_BUTTON_IDS, CATALOG_ONLY_IDS, COMPANION_BUTTONS_BY_ID
 from .display_agent import AgentError
-from .file_actions import is_file_action, run_file_action, runs_from_network_share
+from .file_actions import is_file_action, not_found_reason, run_file_action, runs_from_network_share
 from .native_controls import NativeControlError
 from .responses import Result, controller_result
 
@@ -175,6 +175,8 @@ async def show_profile(request: Request, profile_id: str) -> Result:
     try:
         return await display_agent.call(cfg, profile.target_ip, "/display", payload), 200
     except AgentError as exc:
+        if exc.agent_status == 503:
+            return {"ok": False, "reason": not_found_reason(profile.path)}, 502
         return exc.answer(), exc.status
 
 

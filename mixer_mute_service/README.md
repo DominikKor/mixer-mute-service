@@ -213,6 +213,8 @@ linked light/camera/OBS keys in order.
 | POST | `/update/start` | start the GitHub update (Windows release only) |
 | GET  | `/update/agent` | the display agent of the requesting PC: present, version, current |
 | POST | `/update/agent` | push this release's agent files to it; waits until it is back |
+| GET  | `/update/agents` | the same for every PC the service sends to (Ziel-PCs, desktop profiles, song display, this PC) |
+| POST | `/update/agents` | update every agent that is behind, all at once (the Update key uses this) |
 | POST | `/panic/disable` | block all sends (tracking continues) |
 | POST | `/panic/enable` | re-enable sends |
 
@@ -452,8 +454,9 @@ auch eines Ordners, z. B. `I:\Musik\Ansage_*.mp3`,
 Ziel-PC ein; passen mehrere Eintraege, gilt der zuletzt geaenderte. Ein
 Programmpfad darf statt auf `.exe` auch auf `*` enden, dann kommen nur
 `.exe`-Dateien in Frage. Programme auf Netzlaufwerken bleiben auch mit `*`
-gesperrt. Der Platzhalter braucht den aktuellen Display-Agent (Update-Taste
-bzw. „Display Service herunterladen“ auf dem Ziel-PC).
+gesperrt. Der Platzhalter braucht den aktuellen Display-Agent auf dem Ziel-PC;
+die Update-Taste aktualisiert die Display-Agents aller PCs mit. Findet der
+Agent keine passende Datei, nennt die Meldung Muster und Ordner.
 
 Ein `audio`-Profil enthaelt den Pfad zu einer Musikdatei auf dem Ziel-PC. Dort
 muss mpv installiert sein und entweder ueber `PATH` oder die Windows-Variable
@@ -598,8 +601,8 @@ Text Platz bleibt, stehen dort in Grau (Textfarbe in den Hintergrund gemischt)
 die ersten Zeilen der nächsten Folie, höchstens halb so groß. Der Text selbst
 bleibt dabei unverändert groß und an seiner Stelle; nach der letzten Folie gibt
 es keine Vorschau. Ein Anzeige-PC mit älterem Display-Agent bekommt die Folie
-ohne Vorschau und Ausrichtung, bis der Agent aktualisiert ist (Update-Taste an
-diesem PC).
+ohne Vorschau und Ausrichtung, bis der Agent aktualisiert ist (die Update-Taste
+aktualisiert die Agents aller PCs).
 **Titelfolie** (Standard: an): Jedes Lied beginnt mit einer eigenen Folie, auf
 der der Titel in der Mitte steht und das Copyright darunter (mit dem Schalter
 *Copyright*). Sie ist Folie 0, die Liedfolien zählen ab 1; ein Programmpunkt

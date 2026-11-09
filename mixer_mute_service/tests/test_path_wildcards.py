@@ -118,6 +118,13 @@ class ServiceWildcardTests(unittest.TestCase):
         self.assertFalse(network_program("image", r"\\server\share\bilder\qr*"))
         self.assertIsNotNone(file_action_error("file:192.168.188.11|\\\\server\\share\\run*"))
 
+    def test_no_match_names_the_pattern_and_folder(self):
+        from app.file_actions import not_found_reason
+        reason = not_found_reason("I:\\Missionsbericht Videos\\2024_4.Quartal\\01*")
+        self.assertIn("01*", reason)
+        self.assertIn("I:\\Missionsbericht Videos\\2024_4.Quartal", reason)
+        self.assertEqual(not_found_reason("C:\\Uhr.url"), "file not found on the target PC")
+
     def test_runnable_files_on_a_share_are_refused_for_every_kind(self):
         # Opening an .exe or .bat "with its default app" runs it, too.
         for path in ("\\\\server\\share\\run.bat", "\\\\server\\share\\setup.msi", "//server/share/x.cmd"):

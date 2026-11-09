@@ -121,10 +121,19 @@ async def run_file_action(request: Request, value: str) -> Tuple[dict, int]:
             agent_reason = (exc.body or {}).get("reason")
             if isinstance(agent_reason, str) and agent_reason.startswith("audio player could not be started"):
                 return {"ok": False, "reason": agent_reason, "file": name}, 502
-            return {"ok": False, "reason": "file not found on the target PC", "file": name}, 502
+            return {"ok": False, "reason": not_found_reason(path), "file": name}, 502
         return {**exc.answer(), "file": name}, exc.status
     log.info("FILE %s %s on %s", "play" if kind == "audio" else "open", path, target)
     return {"ok": result.get("ok", True) is not False, "file": name, "kind": kind, "target": target}, 200
+
+
+def not_found_reason(path: str) -> str:
+    """Why the agent found nothing, with the folder it looked in."""
+    if "*" in path:
+        parent = PureWindowsPath(path)
+        return (f"no file matches {parent.name} in {parent.parent} on the target PC "
+                "(\"*\" needs the Display Service from v1.2.1-135 or newer there)")
+    return "file not found on the target PC"
 
 
 def _from_this_pc(request: Request) -> bool:

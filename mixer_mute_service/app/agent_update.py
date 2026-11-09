@@ -9,6 +9,13 @@ the agent) and starts again.
 
 GET  /update/agent   {present, version, latest, current, self_update}
 POST /update/agent   update the agent of this PC and wait until it is back
+GET  /update/agents  the same for every PC the service sends to
+POST /update/agents  update every agent that is behind (all at once)
+
+"Every PC" is the Ziel-PCs list, the PCs of the desktop profiles, the song
+display PC and the PC of the browser asking. The Update key uses the
+/agents routes: a PC whose browser never presses it (the Anzeige PC) is
+updated too.
 
 Agents from before the self-update answer 404 to /info: they need the .cmd
 download once (``self_update`` false); every later update is automatic.
@@ -77,6 +84,46 @@ def _bundle(request: Request) -> dict:
     }
 
 
+async def _update_one(request: Request, target: str, info: dict, bundle: dict) -> dict:
+    """Send the new files to one agent and wait until it runs them. Returns
+    the agent's info, with "error" when it did not work."""
+    cfg = request.app.state.cfg.desktop_display
+    try:
+        await display_agent.call(cfg, target, "/update", bundle, timeout=30.0)
+    except display_agent.AgentError as exc:
+        return {**info, "error": f"display agent update failed: {exc.reason}", "status": exc.status}
+    log.info("Display agent on %s updating %s -> %s", target, info["version"], bundle["version"])
+    # The agent starts again; wait until it reports the new version.
+    deadline = time.monotonic() + RESTART_WAIT_SECONDS
+    while time.monotonic() < deadline:
+        await asyncio.sleep(1.5)
+        after = await _agent_info(request, target)
+        if after.get("present") and after.get("current"):
+            log.info("Display agent on %s runs %s", target, after["version"])
+            return {**after, "updated": True}
+    return {**info, "error": "display agent did not come back with the new version", "status": 504}
+
+
+async def agent_pcs(request: Request) -> list:
+    """[{pc, name}] of every PC with a display agent the service knows of."""
+    state = request.app.state
+    names: dict = {}
+    target_pcs = getattr(state, "target_pcs", None)
+    if target_pcs is not None:
+        for pc in await target_pcs.get():
+            names.setdefault(pc["ip"], pc["name"])
+    for profile in state.cfg.desktop_display.profiles.values():
+        names.setdefault(profile.target_ip, profile.title)
+    songs = getattr(state, "songs", None)
+    if songs is not None:
+        names.setdefault(songs.settings.target_ip, "Liedanzeige")
+    caller = client_pc(request)
+    if caller and caller != "127.0.0.1":
+        names.setdefault(caller, "dieser PC")
+    return [{"pc": ip, "name": name} for ip, name in sorted(names.items())
+            if display_agent.allowed_target(ip)]
+
+
 def _refuse(reason: str, status: int, info: dict):
     return fail(reason, status, **{k: v for k, v in info.items() if k != "reason"})
 
@@ -100,18 +147,37 @@ async def agent_update(request: Request):
         bundle = _bundle(request)
     except FileNotFoundError as exc:
         return _refuse(str(exc), 404, info)
-    cfg = request.app.state.cfg.desktop_display
-    try:
-        await display_agent.call(cfg, target, "/update", bundle, timeout=30.0)
-    except display_agent.AgentError as exc:
-        return _refuse(f"display agent update failed: {exc.reason}", exc.status, info)
-    log.info("Display agent on %s updating %s -> %s", target, info["version"], bundle["version"])
-    # The agent starts again; wait until it reports the new version.
-    deadline = time.monotonic() + RESTART_WAIT_SECONDS
-    while time.monotonic() < deadline:
-        await asyncio.sleep(1.5)
-        after = await _agent_info(request, target)
-        if after.get("present") and after.get("current"):
-            log.info("Display agent on %s runs %s", target, after["version"])
-            return {"ok": True, "updated": True, **after}
-    return _refuse("display agent did not come back with the new version", 504, info)
+    result = await _update_one(request, target, info, bundle)
+    if "error" in result:
+        return _refuse(result["error"], result["status"], info)
+    return {"ok": True, **result}
+
+
+@router.get("/update/agents")
+async def agents_status(request: Request):
+    pcs = await agent_pcs(request)
+    infos = await asyncio.gather(*(_agent_info(request, pc["pc"]) for pc in pcs))
+    return {"ok": True, "latest": _version(request),
+            "agents": [{**pc, **info} for pc, info in zip(pcs, infos)]}
+
+
+@router.post("/update/agents")
+async def agents_update(request: Request):
+    """Update every agent that is behind, all at once. "ok" is false when one
+    that could be updated was not; agents too old for the self-update are
+    listed with self_update false (they need the .cmd download once)."""
+    pcs = await agent_pcs(request)
+    infos = await asyncio.gather(*(_agent_info(request, pc["pc"]) for pc in pcs))
+    due = [(pc, info) for pc, info in zip(pcs, infos)
+           if info.get("present") and info.get("self_update") and not info.get("current")]
+    bundle = None
+    if due:
+        try:
+            bundle = _bundle(request)
+        except FileNotFoundError as exc:
+            return fail(str(exc), 404)
+    updated = dict(zip((pc["pc"] for pc, _ in due),
+                       await asyncio.gather(*(_update_one(request, pc["pc"], info, bundle) for pc, info in due))))
+    agents = [{**pc, **updated.get(pc["pc"], info)} for pc, info in zip(pcs, infos)]
+    failed = [a for a in agents if "error" in a]
+    return {"ok": not failed, "latest": _version(request), "agents": agents}

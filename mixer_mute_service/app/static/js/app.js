@@ -234,26 +234,38 @@ function showUpdateLog(lines) {
   el.scrollTop = el.scrollHeight;
 }
 
-// Second step of the Update key: the display agent (Display Service) of the PC
+// Second step of the Update key: the display agents (Display Services) of all
+// PCs the service sends to (Streaming PC, Anzeige PC, ...), not only of the PC
 // this page runs on. After a program update the page reloads first; this flag
-// makes the new page carry on with the agent.
+// makes the new page carry on with the agents.
 const AGENT_STEP_KEY = "mixer_update_agent_step";
 
+// [{pc, name, present, version, latest, current, self_update}] or null.
 async function fetchAgentStatus() {
-  const r = await api("GET", "/update/agent");
-  return r.ok && r.data && r.data.ok !== false ? r.data : null;
+  const r = await api("GET", "/update/agents");
+  return r.ok && r.data && r.data.ok !== false && Array.isArray(r.data.agents) ? r.data.agents : null;
 }
 
-function agentNeedsUpdate(agent) {
-  return !!(agent && agent.present && (!agent.self_update || !agent.current));
+function agentNeedsUpdate(agents) {
+  return !!(agents && agents.some(a => a.present && (!a.self_update || !a.current)));
 }
 
-function agentLine(agent) {
-  if (!agent) return "Display Service: Status unbekannt";
-  if (!agent.present) return "Display Service: keiner auf diesem Gerät";
-  if (!agent.self_update) return "Display Service: zu alt für das automatische Update";
-  return agent.current ? `Display Service: ${escapeHtml(agent.version)} (aktuell)`
-    : `Display Service: ${escapeHtml(agent.version)} → ${escapeHtml(agent.latest)}`;
+function agentsTooOld(agents) {
+  return !!(agents && agents.some(a => a.present && !a.self_update));
+}
+
+function agentState(a) {
+  if (a.error) return `nicht aktualisiert: ${escapeHtml(a.error)}`;
+  if (!a.self_update) return "zu alt für das automatische Update";
+  if (a.updated) return `${escapeHtml(a.version)} (neu gestartet)`;
+  return a.current ? `${escapeHtml(a.version)} (aktuell)` : `${escapeHtml(a.version)} → ${escapeHtml(a.latest)}`;
+}
+
+function agentLine(agents) {
+  if (!agents) return "Display Services: Status unbekannt";
+  const present = agents.filter(a => a.present);
+  if (!present.length) return "Display Services: keiner erreichbar";
+  return present.map(a => `Display Service ${escapeHtml(a.name)} (${escapeHtml(a.pc)}): ${agentState(a)}`).join("<br>");
 }
 
 async function refreshUpdateButton() {
@@ -264,8 +276,8 @@ async function refreshUpdateButton() {
   btn.hidden = !data.available && !agentDue;
   btn.classList.toggle("running", !!data.active);
   btn.textContent = data.active ? "Update läuft" : "Update";
-  btn.title = [data.installed ? `Installiert: ${data.installed}` : "", agentDue ? "Display Service dieses PCs ist veraltet" : ""]
-    .filter(Boolean).join(" — ") || "Mixer Service und Display Service dieses PCs aktualisieren";
+  btn.title = [data.installed ? `Installiert: ${data.installed}` : "", agentDue ? "Ein Display Service ist veraltet" : ""]
+    .filter(Boolean).join(" — ") || "Mixer Service und die Display Services aktualisieren";
 }
 
 async function openUpdateDialog() {
@@ -290,7 +302,7 @@ async function openUpdateDialog() {
     ? `Programm: ${escapeHtml(data.installed || "unbekannt")}<br><span class="dim">Die neueste Version wird von GitHub geladen, geprüft und installiert.</span>`
     : `Programm: ${escapeHtml(data.reason || "Update nicht verfügbar.")}`;
   setUpdateLcd(`${program}<br>${agentLine(agent)}`);
-  $("update-agent-manual").hidden = !(agent && agent.present && !agent.self_update);
+  $("update-agent-manual").hidden = !agentsTooOld(agent);
   $("update-start").disabled = !data.available && !agentNeedsUpdate(agent);
 }
 
@@ -369,27 +381,25 @@ function finishUpdate(ok, message, reload) {
   tick();
 }
 
-// Update the Display Service of this PC if it is behind. programLine says how
-// the program step ended ("" when there was none).
+// Update every Display Service that is behind (all PCs at once). programLine
+// says how the program step ended ("" when there was none).
 async function runAgentStep(programLine) {
   const head = programLine ? `${programLine}<br>` : "";
   $("update-start").hidden = true;
   $("update-warn").hidden = true;
-  setUpdateLcd(`${head}<span class="dim">Display Service dieses PCs wird geprüft…</span>`);
-  const agent = await fetchAgentStatus();
-  if (!agent || !agent.present) return finishUpdate(true, `${head}${agentLine(agent)}`, false);
-  if (!agent.self_update) {
-    $("update-agent-manual").hidden = false;
-    return finishUpdate(false, `${head}${agentLine(agent)}`);
+  setUpdateLcd(`${head}<span class="dim">Display Services werden geprüft…</span>`);
+  const agents = await fetchAgentStatus();
+  const manual = agentsTooOld(agents);
+  $("update-agent-manual").hidden = !manual;
+  const due = (agents || []).filter(a => a.present && a.self_update && !a.current);
+  if (!due.length) return finishUpdate(!manual, `${head}${agentLine(agents)}`, false);
+  setUpdateLcd(`${head}Display Services werden aktualisiert und neu gestartet…<br><span class="dim">${due.map(a => escapeHtml(a.name)).join(", ")}</span>`);
+  // Each agent restarts and is waited for (up to 45 s each, all at once).
+  const r = await api("POST", "/update/agents", undefined, { timeout: 120000 });
+  if (!Array.isArray(r.data.agents)) {
+    return finishUpdate(false, `${head}Display Services nicht aktualisiert: ${escapeHtml(r.data.reason || "HTTP " + r.status)}`);
   }
-  if (agent.current) return finishUpdate(true, `${head}${agentLine(agent)}`, false);
-  setUpdateLcd(`${head}Display Service wird aktualisiert und neu gestartet…<br><span class="dim">${escapeHtml(agent.version)} → ${escapeHtml(agent.latest)}</span>`);
-  const r = await api("POST", "/update/agent");
-  if (!r.ok || r.data.ok === false) {
-    if (r.status === 409) $("update-agent-manual").hidden = false;
-    return finishUpdate(false, `${head}Display Service nicht aktualisiert: ${escapeHtml(r.data.reason || "HTTP " + r.status)}`);
-  }
-  finishUpdate(true, `${head}Display Service: ${escapeHtml(r.data.version)} (neu gestartet)`, false);
+  finishUpdate(r.ok && r.data.ok !== false && !manual, `${head}${agentLine(r.data.agents)}`, false);
 }
 
 // After the reload that follows a program update: carry on with the agent.

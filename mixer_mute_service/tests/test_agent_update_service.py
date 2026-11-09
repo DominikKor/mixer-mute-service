@@ -97,5 +97,45 @@ class AgentUpdateServiceTests(unittest.TestCase):
                     self.assertEqual(r.status_code, 504)
 
 
+class AllAgentsTests(unittest.TestCase):
+    def test_update_key_updates_every_pc(self):
+        """The Update key on the streaming PC also updates the Anzeige PC,
+        whose browser never presses it."""
+        with tempfile.TemporaryDirectory() as directory:
+            config_path = Path(directory) / "config.yaml"
+            config_path.write_text(
+                "mixer:\n  ip: 127.0.0.1\n  port: 9\n  max_channels: 8\n"
+                "desktop_display:\n  enabled: true\n  profiles:\n"
+                "    uhr:\n      title: Uhr\n      kind: file\n      path: C:/Uhr.url\n      target_ip: 192.168.188.12\n",
+                encoding="utf-8",
+            )
+            fake = FakeAgent()
+            fake.agents.update({"192.168.188.20": "v8", "192.168.188.11": "v8", "192.168.188.12": None})
+            env = {"MIXER_CONFIG": str(config_path), "DESKTOP_AGENT_TOKEN": "t", "MIXER_BUILD_ID": "v9"}
+            with patch.dict(os.environ, env), patch("app.display_agent._post", fake), \
+                    patch("app.agent_update.RESTART_WAIT_SECONDS", 4):
+                from fastapi.testclient import TestClient
+                from app.main import app
+
+                with TestClient(app, client=("127.0.0.1", 50000)) as here:
+                    before = {a["pc"]: a for a in here.get("/update/agents").json()["agents"]}
+                    self.assertEqual(sorted(before), ["192.168.188.11", "192.168.188.12", "192.168.188.20"])
+                    self.assertEqual(before["192.168.188.11"]["name"], "Anzeige PC")
+                    self.assertEqual((before["192.168.188.11"]["version"], before["192.168.188.11"]["current"]),
+                                     ("v8", False))
+                    r = here.post("/update/agents").json()
+                    after = {a["pc"]: a for a in r["agents"]}
+                    self.assertTrue(r["ok"])
+                    self.assertEqual(after["192.168.188.11"]["version"], "v9")
+                    self.assertTrue(after["192.168.188.11"]["updated"] and after["192.168.188.20"]["updated"])
+                    # Too old for the self-update: listed, nothing sent to it.
+                    self.assertFalse(after["192.168.188.12"]["self_update"])
+                    self.assertFalse(any(ip == "192.168.188.12" and path == "/update" for ip, path, _ in fake.calls))
+                    # A second press has nothing to do.
+                    n = len(fake.calls)
+                    here.post("/update/agents")
+                    self.assertFalse(any(path == "/update" for _, path, _ in fake.calls[n:]))
+
+
 if __name__ == "__main__":
     unittest.main()
