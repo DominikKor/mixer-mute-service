@@ -263,6 +263,14 @@ LAN verwenden und Kamera-Zugangsdaten nicht ueber ein untrusted WLAN eingeben.
 MediaMTX leitet Codecs unveraendert weiter; fuer breite Browser-Kompatibilitaet
 sollte die Kamera H.264 ohne B-Frames liefern.
 
+Heisst eine Kamera **Cam1** oder **Cam2** (Gross-/Kleinschreibung und
+Leerzeichen egal), zeigt ihre Kachel unter dem Bild die VISCA-Steuerung dieser
+Kamera: alle Preset-Tasten der Kategorie Kameras aus der Steuerung (mit deren
+Beschriftung, das zuletzt aufgerufene Preset leuchtet) und zwei Zoom-Tasten
+**Weit**/**Nah**. Zoom laeuft nur, solange die Taste gedrueckt ist; Loslassen,
+Fensterwechsel oder spaetestens 15 s stoppen ihn
+(`POST /cameras/{cam1|cam2}/zoom` mit `{"direction": "in"|"out"|"stop"}`).
+
 ## Dateien und Programme auf Netzwerk-PCs oeffnen
 
 Die Webseite zeigt je Profil aus `desktop_display.profiles` einen Button.
