@@ -5,7 +5,14 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from desktop_agent import show_image_agent as agent
+try:
+    import tkinter  # noqa: F401
+except ImportError:  # some Python builds (e.g. Homebrew) ship without Tk
+    tkinter = None
+
+if tkinter is not None:
+    # Pillow missing is a real error (requirements-dev.txt has it).
+    from desktop_agent import show_image_agent as agent
 
 
 class FakeProcess:
@@ -31,6 +38,7 @@ class FakeProcess:
         self.returncode = -9
 
 
+@unittest.skipIf(tkinter is None, "this Python has no tkinter; the desktop agent needs it")
 class AudioPlaybackTests(unittest.TestCase):
     def tearDown(self):
         agent._stop_audio()

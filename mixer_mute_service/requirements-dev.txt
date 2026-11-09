@@ -1,3 +1,6 @@
 -r requirements.txt
 # TestClient (tests/selftest.py) drives the app over HTTP via httpx.
 httpx>=0.27
+# tests/test_agent_audio.py imports the desktop agent, which needs Pillow
+# (install-agent.ps1 installs it on the target PCs).
+Pillow>=11
