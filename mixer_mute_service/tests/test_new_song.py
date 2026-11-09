@@ -104,7 +104,7 @@ def main():
               and saved["copyright"] == "Text: Test & Co")
         lst = client.get("/songs").json()["songs"]
         check("in the song list right away", [(s["id"], s["slide_count"]) for s in lst] == [("Gott_ du bist da.foil", 5)])
-        r = client.post("/songs/show", json={"song_id": "Gott_ du bist da.foil", "slide": 0})
+        r = client.post("/songs/show", json={"song_id": "Gott_ du bist da.foil", "slide": 1})  # 0: title slide
         check("can be shown", r.status_code == 200 and agent.calls[-1][1]["text"] == "Refrain <laut>")
 
         print("== existing files ==")

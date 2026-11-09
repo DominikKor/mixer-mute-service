@@ -10,7 +10,9 @@ GET  /songs/settings              PUT|POST /songs/settings
 POST /songs/library/reload        read the library again from the display PC
 GET  /songs                       [{id, title, books, slide_count}]
 GET  /songs/{song_id}             one song with all its slides
-GET  /songs/live                  what the screen shows: {song_id, slide, blank, song}
+GET  /songs/live                  what the screen shows: {song_id, slide, blank, song, slide_count}
+                                  slide numbers count the slides as shown: with
+                                  "title_slide" on, slide 0 is the title slide
 POST /songs/show {song_id, slide} show a slide (unblanks)
 POST /songs/next | /songs/prev    step through the current song; after the
                                   last slide "next" blanks the screen
@@ -44,6 +46,7 @@ router = APIRouter()
 log = logging.getLogger("mixer.songs")
 
 AGENT_PORT = 8766
+TITLE_SLIDE_KEY = "Titel"
 _COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 # C:\... or \\server\share\...
 _WINDOWS_PATH_RE = re.compile(r"^(?:[A-Za-z]:\\|\\\\[^\\]+\\[^\\]+)")
@@ -59,6 +62,9 @@ class SongSettings(BaseModel):
     font_size: int = Field(72, ge=12, le=240)
     text_color: str = "#ffffff"
     background_color: str = "#000000"
+    # Every song starts with a title slide: the title centred, the copyright
+    # below it. show_title then has no effect (the title is on that slide).
+    title_slide: bool = True
     show_title: bool = True
     show_copyright: bool = True
     # Text alignment of the slide (lyrics, preview, title, copyright).
@@ -144,10 +150,28 @@ class SongService:
             "loaded_at": self.loaded_at, "songs": self.songs, "errors": self.errors,
         }, ensure_ascii=False)
 
+    def slides(self, song_id: str) -> list:
+        """The slides as shown, in order. Slide numbers (show, live, next)
+        count these. Keep in sync with songDisplaySlides() in index.html."""
+        song = self.songs[song_id]
+        if self.settings.title_slide:
+            return [{"key": TITLE_SLIDE_KEY, "text": song["title"], "title_slide": True}, *song["slides"]]
+        return song["slides"]
+
     def slide_payload(self, song_id: str, slide: int) -> dict:
         song, s = self.songs[song_id], self.settings
+        slides = self.slides(song_id)
+        if slides[slide].get("title_slide"):
+            # Sent as an ordinary slide (the title as its text, always
+            # centred), so every display agent version can show it.
+            screen = self._screen()
+            screen["style"]["align"] = "center"
+            return {
+                "action": "show", **screen, "text": song["title"], "title": "",
+                "copyright": song["copyright"] if s.show_copyright else "", "next": "",
+            }
+        # Title and copyright on the first lyrics slide only without a title slide.
         first = slide == 0
-        slides = song["slides"]
         # After the last slide "next" goes dark, so there is nothing to preview.
         upcoming = slides[slide + 1]["text"] if s.show_next_preview and slide + 1 < len(slides) else ""
         return {
@@ -233,6 +257,8 @@ def _live_view(service: SongService) -> dict:
     live = dict(service.live)
     song_id = live["song_id"]
     live["song"] = {"id": song_id, **service.songs[song_id]} if song_id in service.songs else None
+    # Slides as shown (with the title slide first when it is switched on).
+    live["slide_count"] = len(service.slides(song_id)) if live["song"] else 0
     return live
 
 
@@ -244,12 +270,13 @@ async def show_slide(request: Request, song_id: str, slide: int):
         if song is None:
             reason = "song library not loaded" if not service.songs else "unknown song"
             return JSONResponse({"ok": False, "reason": reason, "song_id": song_id}, 409 if not service.songs else 404)
-        if not 0 <= slide < len(song["slides"]):
+        count = len(service.slides(song_id))
+        if not 0 <= slide < count:
             return JSONResponse({"ok": False, "reason": "no such slide", "song_id": song_id}, 400)
         result, status = await _call_agent(request, "/song", service.slide_payload(song_id, slide))
         if status == 200 and result.get("ok") is not False:
             service.live = {"song_id": song_id, "slide": slide, "blank": False}
-            log.info("SONG show %r slide %s/%s", song_id, slide + 1, len(song["slides"]))
+            log.info("SONG show %r slide %s/%s", song_id, slide + 1, count)
             return {"ok": True, **_live_view(service)}
         return _respond(result, status)
 
@@ -330,7 +357,7 @@ async def song_next(request: Request):
     live = service.live
     if live["song_id"] not in service.songs:
         return JSONResponse({"ok": False, "reason": "no song selected"}, 409)
-    last = len(service.songs[live["song_id"]]["slides"]) - 1
+    last = len(service.slides(live["song_id"])) - 1
     if live["blank"] and live["slide"] >= last:
         return {"ok": True, **_live_view(service)}  # already dark after the end
     if live["slide"] >= last:

@@ -107,14 +107,17 @@ def main():
     with TestClient(app) as client:
         print("== settings ==")
         s = client.get("/songs/settings").json()
-        check("defaults: .11, monitor 2, full screen", s["target_ip"] == "192.168.188.11" and s["monitor"] == 2 and s["fullscreen"])
+        check("defaults: .11, monitor 2, full screen, title slide", s["target_ip"] == "192.168.188.11" and s["monitor"] == 2
+              and s["fullscreen"] and s["title_slide"] is True)
         r = client.put("/songs/settings", json={"text_color": "red"})
         check("bad colour refused", r.status_code == 400 and "text_color" in r.json()["reason"])
         r = client.put("/songs/settings", json={"library_path": "foilpresenter"})
         check("relative path refused", r.status_code == 400)
         r = client.post("/songs/library/reload")
         check("reload without folder -> 400", r.status_code == 400)
-        r = client.put("/songs/settings", json={"library_path": r"C:\Users\Beamer\foilpresenter Bibliothek", "monitor": 3, "text_color": "#FFFF00"})
+        # The slide sequence below without title slide; it is tested on its own further down.
+        r = client.put("/songs/settings", json={"library_path": r"C:\Users\Beamer\foilpresenter Bibliothek", "monitor": 3,
+                                                "text_color": "#FFFF00", "title_slide": False})
         check("valid settings saved", r.status_code == 200 and r.json()["settings"]["monitor"] == 3
               and r.json()["settings"]["text_color"] == "#ffff00")
         check("stored in song_display.json", json.loads((_tmp / "song_display.json").read_text())["monitor"] == 3)
@@ -224,6 +227,34 @@ def main():
         r = client.post(f"/program/items/{item_id}/play")
         check("display PC down: row start reports it", r.status_code == 502 and "song could not be shown" in r.json()["reason"])
         agent.fail = False
+
+        print("== title slide ==")
+        client.put("/songs/settings", json={"title_slide": True, "text_align": "left"})
+        r = client.post("/songs/show", json={"song_id": "Allein deine Gnade.foil", "slide": 0})
+        p = agent.last()
+        check("slide 0 is the title slide: title as text, copyright, centred, no preview",
+              r.status_code == 200 and p["text"] == "Allein deine Gnade" and p["title"] == ""
+              and p["copyright"] == "Text und Melodie: Test" and p["next"] == "" and p["style"]["align"] == "center")
+        check("live counts the title slide", r.json()["slide_count"] == 5 and r.json()["slide"] == 0)
+        r = client.post("/songs/next")
+        p = agent.last()
+        check("then the first lyrics slide, without title/copyright, own alignment",
+              p["text"] == "Refrain" and p["title"] == "" and p["copyright"] == "" and p["style"]["align"] == "left"
+              and r.json()["slide"] == 1)
+        r = client.post("/songs/show", json={"song_id": "Allein deine Gnade.foil", "slide": 4})
+        check("last lyrics slide is slide 4", r.status_code == 200 and agent.last()["text"] == "Zweite Strophe")
+        check("slide 5 does not exist", client.post("/songs/show", json={"song_id": "Allein deine Gnade.foil", "slide": 5}).status_code == 400)
+        client.post("/songs/next")
+        check("next after the last slide still blanks", agent.last()["action"] == "blank")
+        client.put("/songs/settings", json={"show_copyright": False})
+        client.post("/songs/show", json={"song_id": "Allein deine Gnade.foil", "slide": 0})
+        check("copyright switched off: title only", agent.last()["text"] == "Allein deine Gnade" and agent.last()["copyright"] == "")
+        r = client.post(f"/program/items/{item_id}/play")
+        check("a program row starts with the title slide", r.status_code == 200 and agent.last()["text"] == "Lobe den Herren"
+              and agent.last()["title"] == "" and r.json()["song"]["slide"] == 0)
+        legacy = songs.legacy_song_payload(agent.last())
+        check("older display agents get it as a plain slide", "next" not in legacy and "align" not in legacy["style"]
+              and legacy["text"] == "Lobe den Herren")
 
     print(f"\n{PASS} passed, {FAIL} failed")
     raise SystemExit(1 if FAIL else 0)

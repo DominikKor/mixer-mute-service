@@ -748,6 +748,10 @@
     position: absolute; left: 0; right: 0; text-align: center; white-space: pre; line-height: 1; pointer-events: none;
   }
   .slide-title, .slide-copy { white-space: normal; padding: 0 6%; transform: translateY(-50%); }
+  .slide-copy { white-space: pre-line; line-height: 1.2; }  /* lines as on the display PC */
+  .sg-samples { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .sg-samples.single { grid-template-columns: minmax(0, 1fr); }
+  .compact-switch.off { opacity: .45; }
   .slide-title { font-weight: 700; }
   .slide-box .slide-tag {
     position: absolute; right: 6px; bottom: 5px; font: 800 10px/1 var(--mono); letter-spacing: .1em;
@@ -1590,11 +1594,15 @@
       </div></div>
     <div class="sg-switches">
       <label class="compact-switch"><input id="sg-fullscreen" type="checkbox" /><span class="track"></span>Vollbild</label>
-      <label class="compact-switch"><input id="sg-show-title" type="checkbox" /><span class="track"></span>Titel</label>
+      <label class="compact-switch" title="Jedes Lied beginnt mit einer Folie: Titel in der Mitte, Copyright darunter"><input id="sg-title-slide" type="checkbox" /><span class="track"></span>Titelfolie</label>
+      <label class="compact-switch" id="sg-show-title-wrap" title="Titel oben auf der ersten Liedfolie (nur ohne Titelfolie)"><input id="sg-show-title" type="checkbox" /><span class="track"></span>Titel</label>
       <label class="compact-switch"><input id="sg-show-copyright" type="checkbox" /><span class="track"></span>Copyright</label>
       <label class="compact-switch" title="Darunter in Grau die nächste Folie, wenn Platz ist"><input id="sg-show-next" type="checkbox" /><span class="track"></span>Vorschau nächste Folie</label>
     </div>
-    <div id="sg-sample" class="slide-box" role="img" aria-label="Beispielfolie mit diesen Einstellungen"></div>
+    <div class="sg-samples">
+      <div id="sg-sample-title" class="slide-box" role="img" aria-label="Beispiel-Titelfolie mit diesen Einstellungen"></div>
+      <div id="sg-sample" class="slide-box" role="img" aria-label="Beispielfolie mit diesen Einstellungen"></div>
+    </div>
     <div class="sg-library">
       <span id="sg-library-status" class="pf-hint">—</span>
       <button type="button" id="sg-reload">Speichern und Bibliothek laden</button>
@@ -5813,7 +5821,7 @@ function songSlideFont(px, settings, bold = false) {
   return `${bold ? "700 " : ""}${px}px "${settings.font}", Verdana, sans-serif`;
 }
 
-// slide: {text, title, copyright, next, blank}
+// slide: {text, title, copyright, next, blank, align}
 function renderSlide(box, slide, settings) {
   const W = box.clientWidth, H = box.clientHeight;
   box.replaceChildren();
@@ -5821,7 +5829,7 @@ function renderSlide(box, slide, settings) {
   box.style.color = settings.text_color;
   if (!W || !H || slide.blank) return;
   const ctx = SLIDE_CTX || (SLIDE_CTX = document.createElement("canvas").getContext("2d"));
-  const align = settings.text_align || "center";
+  const align = slide.align || settings.text_align || "center";
   const padX = SLIDE.padX * W, padY = SLIDE.padY * H;
   const titleH = slide.title ? SLIDE.titleH * H : 0;
   const copyH = slide.copyright ? SLIDE.copyH * H : 0;
@@ -5876,13 +5884,27 @@ function renderSlide(box, slide, settings) {
   }
 }
 
-// What the display PC shows for slide i (title and copyright on the first,
-// the next slide as preview unless it is the last one).
+// The slides as shown: with "Titelfolie" a title slide first. Slide numbers
+// (live, show, thumbnails) count these. Same as SongService.slides().
+function songDisplaySlides(song, settings) {
+  return settings.title_slide !== false
+    ? [{ key: "Titel", text: song.title, title_slide: true }, ...song.slides] : song.slides;
+}
+
+// What the display PC shows for slide i: the title slide (title centred,
+// copyright below), else the lyrics with title and copyright on the first
+// slide (only without a title slide) and the next slide as preview.
 function songSlide(song, index, settings) {
+  const slides = songDisplaySlides(song, settings);
+  const slide = slides[index];
+  if (!slide) return { blank: true };
+  if (slide.title_slide) {
+    return { text: slide.text, title: "", copyright: settings.show_copyright ? song.copyright : "", next: "", align: "center" };
+  }
   const first = index === 0;
-  const upcoming = song.slides[index + 1];
+  const upcoming = slides[index + 1];
   return {
-    text: song.slides[index].text,
+    text: slide.text,
     title: settings.show_title && first ? song.title : "",
     copyright: settings.show_copyright && first ? song.copyright : "",
     next: settings.show_next_preview !== false && upcoming ? upcoming.text : "",
@@ -5902,7 +5924,7 @@ function renderSongLive() {
   $("song-live-title").textContent = song ? song.title
     : SONG_LIVE.blank ? "Bildschirm schwarz" : "Kein Lied auf dem Bildschirm";
   $("song-live-pos").textContent = song
-    ? (SONG_LIVE.blank ? "Schwarz" : `${SONG_LIVE.slide + 1} / ${song.slides.length}`) : "";
+    ? (SONG_LIVE.blank ? "Schwarz" : `${SONG_LIVE.slide + 1} / ${songDisplaySlides(song, SONG_SETTINGS || {}).length}`) : "";
   for (const id of ["song-prev-btn", "song-next-btn", "song-blank-btn", "song-hide-btn"]) $(id).disabled = !song || SONG_BUSY;
   $("song-blank-btn").classList.toggle("on", !!SONG_LIVE.blank);
   if (!song || !SONG_SETTINGS) return;
@@ -5910,10 +5932,11 @@ function renderSongLive() {
   preview.classList.toggle("blank", !!SONG_LIVE.blank);
   renderSlide(preview, SONG_LIVE.blank ? { blank: true } : songSlide(song, SONG_LIVE.slide, SONG_SETTINGS), SONG_SETTINGS);
   const strip = $("song-slides");
+  const slides = songDisplaySlides(song, SONG_SETTINGS);
   const sig = JSON.stringify([song.id, song.slides.length, SONG_SETTINGS]);
   if (strip.dataset.sig !== sig) {
     strip.dataset.sig = sig;
-    strip.replaceChildren(...song.slides.map((slide, i) => {
+    strip.replaceChildren(...slides.map((slide, i) => {
       const button = document.createElement("button");
       button.type = "button";
       button.className = "song-thumb";
@@ -5930,7 +5953,7 @@ function renderSongLive() {
       renderSlide(box, songSlide(song, i, SONG_SETTINGS), SONG_SETTINGS);
       const tag = document.createElement("span");
       tag.className = "slide-tag";
-      tag.textContent = song.slides[i].key || String(i + 1);
+      tag.textContent = slides[i].key || String(i + 1);
       box.appendChild(tag);
     }));
   }
@@ -6001,7 +6024,7 @@ new ResizeObserver(() => { if (SONG_LIVE.song && SONG_SETTINGS) renderSongLive()
 
 function presenterNext() {
   const song = SONG_LIVE.song;
-  if (song && !(SONG_LIVE.blank && SONG_LIVE.slide >= song.slides.length - 1)) return songNext();
+  if (song && !(SONG_LIVE.blank && SONG_LIVE.slide >= songDisplaySlides(song, SONG_SETTINGS || {}).length - 1)) return songNext();
   const go = $("program-go-btn");
   if (go.disabled) return toast(PROGRAM_BUSY.size ? "Programmpunkt startet noch" : "Kein weiterer Programmpunkt", false);
   startProgram("next", "/program/next", go);
@@ -6132,22 +6155,23 @@ function renderNewSong() {
   preview.replaceChildren();
   if (!parsed.order) return;
   const settings = SONG_SETTINGS || { font: "Verdana", font_size: 72, text_color: "#ffffff", background_color: "#000000", show_title: true, show_copyright: true };
-  const boxes = parsed.order.map(() => {
+  // The new song as it will be shown (title slide included).
+  const song = {
+    title: $("ns-title").value.trim(), copyright: $("ns-copyright").value.trim(),
+    slides: parsed.order.map(index => ({ text: slides[index], key: keys[index] === "R" ? "Ref" : keys[index] })),
+  };
+  const shown = songDisplaySlides(song, settings);
+  const boxes = shown.map(() => {
     const box = document.createElement("div");
     box.className = "slide-box";
     preview.appendChild(box);
     return box;
   });
-  requestAnimationFrame(() => parsed.order.forEach((index, i) => {
-    const first = i === 0;
-    renderSlide(boxes[i], {
-      text: slides[index],
-      title: settings.show_title && first ? $("ns-title").value.trim() : "",
-      copyright: settings.show_copyright && first ? $("ns-copyright").value.trim() : "",
-    }, settings);
+  requestAnimationFrame(() => shown.forEach((slide, i) => {
+    renderSlide(boxes[i], songSlide(song, i, settings), settings);
     const tag = document.createElement("span");
     tag.className = "slide-tag";
-    tag.textContent = keys[index] === "R" ? "Ref" : keys[index];
+    tag.textContent = slide.key;
     boxes[i].appendChild(tag);
   }));
 }
@@ -6693,6 +6717,7 @@ function songFormSettings() {
     font_size: Number($("sg-size").value) || 72,
     text_color: $("sg-text-color").value,
     background_color: $("sg-bg-color").value,
+    title_slide: $("sg-title-slide").checked,
     show_title: $("sg-show-title").checked,
     show_copyright: $("sg-show-copyright").checked,
     text_align: SONG_FORM.align,
@@ -6702,13 +6727,20 @@ function songFormSettings() {
 
 function renderSongSample() {
   const settings = songFormSettings();
-  // The song on screen, or a fixed example.
-  const sample = SONG_LIVE.song
-    ? songSlide(SONG_LIVE.song, 0, settings)
-    : { text: "Großer Gott, wir loben dich,\nHerr, wir preisen deine Stärke.\nVor dir neigt die Erde sich\nund bewundert deine Werke.",
-        title: settings.show_title ? "Großer Gott, wir loben dich" : "", copyright: settings.show_copyright ? "Text: Ignaz Franz 1771" : "",
-        next: settings.show_next_preview ? "Alles, was dich preisen kann,\nCherubim und Seraphinen" : "" };
-  renderSlide($("sg-sample"), sample, settings);
+  // The song on screen, or a fixed example: its title slide (if switched on)
+  // and its first lyrics slide.
+  const song = SONG_LIVE.song || {
+    title: "Großer Gott, wir loben dich", copyright: "Text: Ignaz Franz 1771",
+    slides: [{ text: "Großer Gott, wir loben dich,\nHerr, wir preisen deine Stärke.\nVor dir neigt die Erde sich\nund bewundert deine Werke." },
+             { text: "Alles, was dich preisen kann,\nCherubim und Seraphinen" }],
+  };
+  const titled = settings.title_slide;
+  $("sg-show-title").disabled = titled;
+  $("sg-show-title-wrap").classList.toggle("off", titled);
+  $("sg-sample-title").hidden = !titled;
+  $("sg-sample-title").parentElement.classList.toggle("single", !titled);
+  if (titled) renderSlide($("sg-sample-title"), songSlide(song, 0, settings), settings);
+  renderSlide($("sg-sample"), songSlide(song, titled ? 1 : 0, settings), settings);
 }
 
 function setSongAlign(align) {
@@ -6743,6 +6775,7 @@ async function openSongDialog() {
   $("sg-text-color").value = s.text_color || "#ffffff";
   $("sg-bg-color").value = s.background_color || "#000000";
   $("sg-fullscreen").checked = s.fullscreen !== false;
+  $("sg-title-slide").checked = s.title_slide !== false;
   $("sg-show-title").checked = s.show_title !== false;
   $("sg-show-copyright").checked = s.show_copyright !== false;
   $("sg-show-next").checked = s.show_next_preview !== false;

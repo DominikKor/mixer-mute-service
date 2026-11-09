@@ -515,6 +515,12 @@ bleibt dabei unverändert groß und an seiner Stelle; nach der letzten Folie gib
 es keine Vorschau. Ein Anzeige-PC mit älterem Display-Agent bekommt die Folie
 ohne Vorschau und Ausrichtung, bis der Agent aktualisiert ist („Display Service
 herunterladen“).
+**Titelfolie** (Standard: an): Jedes Lied beginnt mit einer eigenen Folie, auf
+der der Titel in der Mitte steht und das Copyright darunter (mit dem Schalter
+*Copyright*). Sie ist Folie 0, die Liedfolien zählen ab 1; ein Programmpunkt
+startet mit ihr. Der Schalter *Titel* (Titel oben auf der ersten Liedfolie) gilt
+nur ohne Titelfolie. Die Titelfolie wird als normale, zentrierte Folie geschickt,
+jeder Display-Agent zeigt sie also ohne Update.
 **Speichern und Bibliothek laden** liest die Bibliothek (neu) ein.
 
 Ein Programmpunkt bekommt sein Lied in der Spalte *Liedtext* („♪ Lied wählen“,
