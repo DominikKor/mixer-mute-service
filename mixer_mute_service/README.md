@@ -72,8 +72,11 @@ in and out; the choice is remembered per device.
 - **Mute Gruppen**: per-group mute / unmute, **create / edit / delete**, and
   per-channel fader presets (**Use** / **Use All**). **Mutegruppe aus Status**
   creates a group from the channels currently unmuted, with their observed
-  fader values as presets.
-- **Kanal-Einstellungen** (slider key on each mute group): saves gain, high-pass,
+  fader values as presets. Each group is one line (display, Mute, Solo, "⋮");
+  tapping the display shows its channels (Set / Use and the fader). The "⋮"
+  menu has Bearbeiten (channel descriptions, remove and add channels; "Fertig"
+  ends it), Umbenennen, Use All, Kanal-Einstellungen, Duplizieren, Löschen.
+- **Kanal-Einstellungen** (in the "⋮" menu of each mute group): saves gain, high-pass,
   EQ, gate and compressor of the group's input channels as they are set on the
   console right now, and shows them per channel. Read-only: the values come
   from the mixer's state dump and nothing is sent back (buses are not

@@ -645,6 +645,8 @@ const ICON_TRASH = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" 
 let PERSON_SLIDER_ACTIVE = false;
 // The group whose "⋮" menu is open (the cards are redrawn every second).
 let PERSON_MENU_ID = null;
+// Groups in edit mode (⋮ > Bearbeiten): channel descriptions, remove and add.
+const PERSON_EDITING = new Set();
 
 // force: the user changed something here, redraw even if a field has focus
 // (the field being edited is not part of that change).
@@ -672,33 +674,36 @@ function buildPersonsHtml() {
     const allMuted = ledChs.length > 0 && ledChs.every(ch => chans[ch] && chans[ch].muted === true);
     const availableChs = allChNums.filter(ch => !assignedChs.includes(ch));
 
+    const pid = escapeAttr(person.id);
+    const editing = PERSON_EDITING.has(person.id);
+    const open = !collapsed || editing;
+    // Per channel two short lines: name, saved value, Set/Use; the fader.
+    // Description field and remove key only while editing (⋮ > Bearbeiten).
     const rows = assignedChs.map(ch => {
       const entry = person.channels[String(ch)] || {};
       const chInfo = chans[ch];
       const chName = escapeHtml(getChannelDisplayName(ch, chInfo && chInfo.name));
       const savedValue = faderHexToValue(entry.fader_hex);
+      const setAt = entry.set_at ? new Date(entry.set_at).toLocaleTimeString() : null;
       const faderSaved = entry.fader_hex
-        ? `<code class="fader-saved" title="${escapeAttr(entry.fader_hex)}">${savedValue === null ? "ungültig" : formatDb(savedValue)}</code>`
-        : `<span class="fader-saved none">—</span>`;
+        ? `<code class="fader-saved" title="Gespeichert${setAt ? " um " + escapeAttr(setAt) : ""} (${escapeAttr(entry.fader_hex)})">${savedValue === null ? "ungültig" : formatDb(savedValue)}</code>`
+        : `<span class="fader-saved none" title="Noch kein Faderwert gespeichert">—</span>`;
       const liveValue = chInfo && chInfo.fader_value !== undefined ? chInfo.fader_value : null;
       // Start at the saved value, else the live one; with neither the slider is
       // locked instead of starting at the bottom (-inf).
       const baseValue = savedValue !== null ? savedValue : liveValue;
-      const setAt = entry.set_at ? new Date(entry.set_at).toLocaleTimeString() : "nie";
-      const description = escapeAttr(entry.description || "");
-      // Two lines per channel so three groups fit side by side: name, saved
-      // value and keys on top, the fader below.
+      const description = entry.description || "";
       return `<div class="pc-row">
-        <div class="pc-name">${chName} <span class="ch-tag">CH ${ch}</span></div>
-        <div class="pc-saved">${faderSaved} <span class="set-at" title="Gespeichert um">${setAt}</span></div>
+        <div class="pc-name"><span class="pc-name-text">${chName}</span> <span class="ch-tag">CH ${ch}</span>${description && !editing ? `<span class="pc-desc">${escapeHtml(description)}</span>` : ""}</div>
+        ${faderSaved}
         <div class="pc-keys">
-          <button data-action="person-set-fader" data-pid="${escapeAttr(person.id)}" data-ch="${ch}">Set</button>
-          <button data-action="person-use-fader" data-pid="${escapeAttr(person.id)}" data-ch="${ch}" class="primary" ${entry.fader_hex ? "" : "disabled"}>Use</button>
-          <button data-action="person-remove-ch" data-pid="${escapeAttr(person.id)}" data-ch="${ch}" class="danger" title="Kanal entfernen" aria-label="Kanal entfernen">&#x2715;</button>
+          <button data-action="person-set-fader" data-pid="${pid}" data-ch="${ch}" title="Aktuellen Faderwert speichern">Set</button>
+          <button data-action="person-use-fader" data-pid="${pid}" data-ch="${ch}" class="primary" title="Gespeicherten Faderwert setzen" ${entry.fader_hex ? "" : "disabled"}>Use</button>
+          ${editing ? `<button data-action="person-remove-ch" data-pid="${pid}" data-ch="${ch}" class="danger" title="Kanal entfernen" aria-label="${chName} aus der Gruppe entfernen">&#x2715;</button>` : ""}
         </div>
-        <label class="pc-description">
-          <input type="text" maxlength="120" data-action="person-channel-description" data-pid="${escapeAttr(person.id)}" data-ch="${ch}" value="${description}" placeholder="Beschreibung für diesen Channel" aria-label="Beschreibung ${chName}" />
-        </label>
+        ${editing ? `<label class="pc-description">
+          <input type="text" maxlength="120" data-action="person-channel-description" data-pid="${pid}" data-ch="${ch}" value="${escapeAttr(description)}" placeholder="Beschreibung für diesen Channel" aria-label="Beschreibung ${chName}" />
+        </label>` : ""}
         <div class="person-fader-wrap">
           <input
             type="range"
@@ -707,7 +712,7 @@ function buildPersonsHtml() {
             step="1"
             class="fader-slider"
             data-action="person-fader-input"
-            data-pid="${escapeAttr(person.id)}"
+            data-pid="${pid}"
             data-ch="${ch}"
             value="${baseValue === null ? 0 : baseValue.toFixed(0)}"
             ${baseValue === null ? 'disabled title="Faderwert unbekannt"' : ""}
@@ -718,47 +723,40 @@ function buildPersonsHtml() {
       </div>`;
     }).join("");
 
-    const addSelect = availableChs.length
+    const addSelect = editing
       ? `<div class="add-ch-row">
-          <select id="add-ch-${escapeAttr(person.id)}" aria-label="Kanal hinzufügen">
+          ${availableChs.length ? `<select id="add-ch-${pid}" aria-label="Kanal hinzufügen">
             <option value="">Kanal hinzufügen …</option>
-            ${availableChs.map(ch => {
-              return `<option value="${ch}">${escapeHtml(getChannelDisplayName(ch, chans[ch] && chans[ch].name))} (ch ${ch})</option>`;
-            }).join("")}
+            ${availableChs.map(ch => `<option value="${ch}">${escapeHtml(getChannelDisplayName(ch, chans[ch] && chans[ch].name))} (ch ${ch})</option>`).join("")}
           </select>
-          <button data-action="person-add-ch" data-pid="${escapeAttr(person.id)}">Hinzufügen</button>
+          <button data-action="person-add-ch" data-pid="${pid}">Hinzufügen</button>` : ""}
+          <button data-action="person-edit-done" data-pid="${pid}" class="primary person-edit-done">Fertig</button>
         </div>`
       : "";
 
-    // Head: the name as large as the card allows (two lines) in a display
-    // with what is in the group below it, the pencil and a "⋮" menu (channel
-    // settings, duplicate, delete). The three keys, compact, under the display.
+    // One line: the display (name, contents, LED; tapping it opens and closes
+    // the card), Mute, Solo and "⋮" (edit, rename, Use All, channel
+    // settings, duplicate, delete).
     const names = assignedChs.map(ch => getChannelDisplayName(ch, chans[ch] && chans[ch].name));
     const meta = assignedChs.length
       ? `${assignedChs.length} ${assignedChs.length === 1 ? "Kanal" : "Kanäle"} · ${names.join(", ")}`
       : "Keine Kanäle";
-    const pid = escapeAttr(person.id);
-    html += `<div class="person-card" data-card="${pid}">
+    html += `<div class="person-card${open ? " open" : ""}${editing ? " editing" : ""}" data-card="${pid}">
       <div class="person-head">
-        <button class="collapse-btn" data-action="person-toggle-collapse" data-pid="${pid}" title="${collapsed ? "Ausklappen" : "Einklappen"}" aria-expanded="${!collapsed}"><span class="collapse-chip" aria-hidden="true">${collapsed ? "▸" : "▾"}</span></button>
-        <span class="led${allMuted ? " mute" : ""}" title="${allMuted ? "alle Kanäle gemutet" : "nicht alle Kanäle gemutet"}"></span>
         <div class="person-name-wrap">
-          <div class="person-lcd" title="${escapeAttr(person.name)} – ${escapeAttr(meta)}">
-            <span class="person-name" data-rename-person="${pid}">${escapeHtml(person.name)}</span>
+          <button class="person-lcd" data-action="person-toggle-collapse" data-pid="${pid}" aria-expanded="${open}" title="${escapeAttr(person.name)} – ${escapeAttr(meta)} (${open ? "einklappen" : "Kanäle zeigen"})">
+            <span class="person-name-line"><span class="person-chevron" aria-hidden="true">▸</span><span class="person-name" data-rename-person="${pid}">${escapeHtml(person.name)}</span></span>
             <span class="person-meta">${escapeHtml(meta)}</span>
-          </div>
+            <span class="led${allMuted ? " mute" : ""}" title="${allMuted ? "alle Kanäle gemutet" : "nicht alle Kanäle gemutet"}"></span>
+          </button>
         </div>
-        <button class="rename-btn" data-action="person-rename" data-pid="${pid}" data-name="${escapeAttr(person.name)}" title="Umbenennen" aria-label="${escapeAttr(person.name)} umbenennen">&#9998;</button>
-        <button class="person-menu-btn" data-person-menu="${pid}" title="${escapeAttr(person.name)}: Kanal-Einstellungen, duplizieren oder löschen" aria-label="${escapeAttr(person.name)}: weitere Aktionen" aria-haspopup="menu" aria-expanded="${PERSON_MENU_ID === person.id}">${ICON_DOTS}</button>
-        <div class="person-actions">
-          <button data-action="person-mute" data-pid="${pid}" class="key-mute">Mute</button>
-          <button data-action="person-solo" data-pid="${pid}" class="key-solo">Solo</button>
-          <button data-action="person-use-all" data-pid="${pid}" title="Alle gespeicherten Faderwerte der Gruppe setzen" ${Object.values(person.channels || {}).some(e => e.fader_hex) ? "" : "disabled"}>Use All</button>
-        </div>
+        <button data-action="person-mute" data-pid="${pid}" class="key-mute person-key">Mute</button>
+        <button data-action="person-solo" data-pid="${pid}" class="key-solo person-key">Solo</button>
+        <button class="person-menu-btn" data-person-menu="${pid}" title="${escapeAttr(person.name)}: bearbeiten, umbenennen, Use All, Kanal-Einstellungen, duplizieren, löschen" aria-label="${escapeAttr(person.name)}: weitere Aktionen" aria-haspopup="menu" aria-expanded="${PERSON_MENU_ID === person.id}">${ICON_DOTS}</button>
       </div>
-      <div class="person-body ${collapsed ? "collapsed" : ""}">
+      <div class="person-body${open ? "" : " collapsed"}">
       ${assignedChs.length ? `<div class="person-channels">${rows}</div>`
-        : `<div class="muted-text" style="font-size:12px;margin-bottom:8px;">Keine Kanäle zugewiesen.</div>`}
+        : `<div class="muted-text person-empty">Keine Kanäle zugewiesen.${editing ? "" : " Über ⋮ › Bearbeiten hinzufügen."}</div>`}
       ${addSelect}
       </div>
     </div>`;
@@ -793,6 +791,11 @@ function openPersonMenu(trigger) {
   closePersonMenu();
   const menu = $("person-menu");
   PERSON_MENU_ID = trigger.dataset.personMenu;
+  const person = loadPersons().find(p => p.id === PERSON_MENU_ID);
+  menu.querySelector('[data-menu-action="edit"] span').textContent =
+    PERSON_EDITING.has(PERSON_MENU_ID) ? "Bearbeiten beenden" : "Bearbeiten";
+  menu.querySelector('[data-menu-action="use-all"]').disabled =
+    !person || !Object.values(person.channels || {}).some(e => e.fader_hex);
   trigger.setAttribute("aria-expanded", "true");
   menu.hidden = false;
   const r = trigger.getBoundingClientRect();
@@ -816,6 +819,13 @@ function closePersonMenu(refocus = false) {
   PERSON_MENU_ID = null;
 }
 
+// Edit mode opens the card; leaving it keeps the card as it was before.
+function togglePersonEditing(personId) {
+  if (PERSON_EDITING.has(personId)) PERSON_EDITING.delete(personId);
+  else PERSON_EDITING.add(personId);
+  renderPersons(true);
+}
+
 $("persons").addEventListener("click", (event) => {
   const trigger = event.target.closest("button[data-person-menu]");
   if (!trigger) return;
@@ -830,7 +840,13 @@ $("person-menu").addEventListener("click", (event) => {
   const trigger = document.querySelector('[data-person-menu][aria-expanded="true"]');
   closePersonMenu();
   if (!personId) return;
-  if (item.dataset.menuAction === "settings") openSettingsDialog(personId);
+  if (item.dataset.menuAction === "edit") togglePersonEditing(personId);
+  else if (item.dataset.menuAction === "rename") {
+    const person = loadPersons().find(p => p.id === personId);
+    if (person) startRenamePerson(personId, person.name);
+  }
+  else if (item.dataset.menuAction === "use-all") useAllPersonFaders(personId);
+  else if (item.dataset.menuAction === "settings") openSettingsDialog(personId);
   else if (item.dataset.menuAction === "duplicate") duplicatePerson(personId);
   else if (item.dataset.menuAction === "delete" && trigger) {
     const person = loadPersons().find(p => p.id === personId);
