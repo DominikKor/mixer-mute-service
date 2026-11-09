@@ -672,8 +672,16 @@ groups). The assignment is saved in `buses.json` next to `groups.json`, so a
 bus keeps its number across restarts. Buses listed under `mixer.buses` in
 `config.yaml` keep the number and name given there (Echo = 17, Monitor = 18,
 because existing groups use them); the rest follow in id order (19 Hall 2 …
-24 Bus 8). The main L/R output (id 255) is never added automatically — list it
-explicitly only after checking it on the console. Built commands are
+24 Bus 8, then 25 for the main L/R output). The main L/R output (id 255,
+"Saal L/R MIX OUTPUT") is a channel with its own fader and mute like any bus,
+but because a mistake there silences the whole room, **groups never switch it**:
+not on mute, unmute or toggle (a member is reported as `protected`), not in the
+solo-on-unmute (reported in `protected_others`), and "group from current status"
+leaves it out. Only its own channel controls (UI strip, `/channels/<n>/…`, a
+channel key) send to it. Its command frame (`72 … 08 ff01 [18 01] 3d <fader>`)
+follows the bus format verified on the other buses; the main output itself was
+not switched live before this was added, so test it once on the console before
+a service. Built commands are
 byte-identical to what the iPad app sends. Channel labels (`name`) flow
 through `/state` to the UI.
 
