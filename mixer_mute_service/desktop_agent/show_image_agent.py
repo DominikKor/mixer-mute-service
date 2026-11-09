@@ -894,7 +894,7 @@ def _show_song(root: tk.Tk, canvas: tk.Canvas, body: dict) -> None:
 class DisplayHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         if self.path not in ("/display", "/audio", "/song", "/songs/library", "/songs/save", "/power",
-                             "/info", "/update"):
+                             "/info", "/update", "/pick-file"):
             self.send_error(404)
             return
 
@@ -938,6 +938,9 @@ class DisplayHandler(BaseHTTPRequestHandler):
             return
         if self.path == "/power":
             self._handle_power(body)
+            return
+        if self.path == "/pick-file":
+            self._handle_pick_file(body)
             return
         required = {
             "id", "title", "kind", "path", "args", "fullscreen", "monitor", "position"
@@ -1083,8 +1086,96 @@ class DisplayHandler(BaseHTTPRequestHandler):
         self.wfile.write(result)
         _schedule_shutdown()
 
+    def _handle_pick_file(self, body: dict) -> None:
+        if not _valid_pick_request(body):
+            self.send_error(400)
+            return
+        if os.name != "nt":
+            self._send_json(501, {"ok": False, "reason": "the file dialog needs Windows"})
+            return
+        # One dialog at a time: a second click must not stack dialogs.
+        if not _pick_lock.acquire(blocking=False):
+            self._send_json(409, {"ok": False, "reason": "a file dialog is already open on this PC"})
+            return
+        try:
+            path = _pick_file(body["start"])
+        except TimeoutError:
+            self._send_json(408, {"ok": False, "reason": "no file was picked in time"})
+            return
+        except OSError as exc:
+            logger.warning("File dialog failed: %s", exc)
+            self._send_json(503, {"ok": False, "reason": "the file dialog could not be opened"})
+            return
+        finally:
+            _pick_lock.release()
+        logger.info("File picked: %s", path if path else "(cancelled)")
+        self._send_json(200, {"ok": True, "path": path})
+
     def log_message(self, fmt, *args):
         logger.info("%s - %s", self.client_address[0], fmt % args)
+
+
+# -- Windows "open file" dialog -------------------------------------------------
+# The web page cannot learn a file's path from the browser's own picker, and
+# the service (a Windows service) cannot show a window. The agent runs in the
+# signed-in session, so it opens the real dialog on this PC's screen. It runs
+# in its own PowerShell process: the Tk window (songs, images) stays live
+# while someone picks a file. The start folder goes in through an environment
+# variable, never into the command text.
+PICK_TIMEOUT_SECONDS = 600
+_PICK_SCRIPT = r"""
+Add-Type -AssemblyName System.Windows.Forms
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$owner = New-Object System.Windows.Forms.Form
+$owner.TopMost = $true
+$owner.ShowInTaskbar = $false
+$owner.FormBorderStyle = 'None'
+$owner.Opacity = 0
+$owner.StartPosition = 'CenterScreen'
+$owner.Show()
+$owner.Activate()
+$dialog = New-Object System.Windows.Forms.OpenFileDialog
+$dialog.Title = 'Datei für den Programmpunkt'
+$dialog.Filter = 'Alle Dateien (*.*)|*.*|Musik|*.mp3;*.wav;*.m4a;*.aac;*.flac;*.ogg;*.opus;*.wma|Programme (*.exe)|*.exe'
+$dialog.CheckFileExists = $true
+$dialog.RestoreDirectory = $true
+$start = $env:MIXER_PICK_START
+if ($start -and (Test-Path -LiteralPath $start -PathType Container)) { $dialog.InitialDirectory = $start }
+$result = $dialog.ShowDialog($owner)
+$owner.Close()
+if ($result -eq [System.Windows.Forms.DialogResult]::OK) { [Console]::Out.Write($dialog.FileName) }
+"""
+_pick_lock = threading.Lock()
+
+
+def _valid_pick_request(body) -> bool:
+    return (
+        isinstance(body, dict) and set(body) == {"start"} and isinstance(body["start"], str)
+        and len(body["start"]) <= 400 and not any(ord(c) < 32 for c in body["start"])
+    )
+
+
+def _pick_file(start: str) -> str | None:
+    """Show the dialog; the chosen path, or None when cancelled. Raises
+    OSError when the dialog cannot be shown, TimeoutError after
+    PICK_TIMEOUT_SECONDS (the dialog is closed then)."""
+    import base64
+
+    encoded = base64.b64encode(_PICK_SCRIPT.encode("utf-16-le")).decode("ascii")
+    command = ["powershell.exe", "-NoProfile", "-NonInteractive", "-STA",
+               "-ExecutionPolicy", "Bypass", "-EncodedCommand", encoded]
+    environment = {**os.environ, "MIXER_PICK_START": start}
+    try:
+        finished = subprocess.run(
+            command, env=environment, stdin=subprocess.DEVNULL, capture_output=True,
+            timeout=PICK_TIMEOUT_SECONDS, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise TimeoutError("nobody picked a file in time") from exc
+    if finished.returncode != 0:
+        raise OSError(f"file dialog failed: {finished.stderr.decode('utf-8', 'replace').strip()[:200]}")
+    path = finished.stdout.decode("utf-8-sig", "replace").strip()
+    return path or None
 
 
 def drain_requests(root: tk.Tk, image_label: tk.Label, canvas: tk.Canvas) -> None:

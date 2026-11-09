@@ -5,8 +5,10 @@
 // ---- Files opened straight from a program row ------------------------------
 // An action can be "file:<ip>|<path>": the display agent on that PC plays
 // music files with mpv, starts .exe files and opens anything else with its
-// default app. The folder browser only works in a browser on the streaming
-// PC itself (the service refuses everyone else); elsewhere the path is typed.
+// default app. "Durchsuchen…" only works in a browser on the streaming PC
+// itself (the service refuses everyone else); elsewhere the path is typed.
+// It opens the real Windows dialog there (through the display agent); when
+// that is not available, the page's own folder list.
 
 const FILE_CHOOSE = "__file__";
 const THIS_PC = "127.0.0.1";
@@ -72,7 +74,7 @@ function buildFileAction(label, value) {
   browse.type = "button";
   browse.className = "file-browse";
   browse.textContent = "Durchsuchen…";
-  browse.title = "Datei auf dem Streaming-PC auswählen";
+  browse.title = "Datei auf dem Streaming-PC auswählen (Windows-Dialog)";
   row.append(target, browse);
   const kind = document.createElement("div");
   kind.className = "file-kind";
@@ -138,8 +140,46 @@ $("program-items").addEventListener("input", event => {
 });
 $("program-items").addEventListener("click", event => {
   const button = event.target.closest(".file-browse");
-  if (button) openFileBrowser(button.closest(".file-action"));
+  if (button) pickFile(button);
 });
+
+// ---- Windows dialog (streaming PC only) ----
+
+function fileStartFolder(wrap) {
+  let start = "";
+  const typed = wrap.querySelector(".file-path").value.trim();
+  try { start = localStorage.getItem("mixer_file_browser_path") || ""; } catch (_) {}
+  // Start in the folder of the file already chosen, if any.
+  if (typed && /[\\/]/.test(typed)) start = typed.replace(/[\\/][^\\/]*$/, "") || start;
+  return start;
+}
+
+async function pickFile(button) {
+  const wrap = button.closest(".file-action");
+  if (button.disabled) return;
+  const label = button.textContent;
+  button.disabled = true;
+  button.textContent = "Dialog am PC offen…";
+  let result;
+  try {
+    // Waits until a file is picked on the PC's screen (up to 10 minutes).
+    result = await api("POST", "/files/pick", { start: fileStartFolder(wrap) }, { timeout: 630000 });
+  } finally {
+    button.disabled = false;
+    button.textContent = label;
+  }
+  if (result.ok && result.data.ok !== false) {
+    if (result.data.path) pickBrowsedFile(result.data.path, wrap);
+    return;  // no path: cancelled
+  }
+  if (result.data && result.data.fallback) {
+    openFileBrowser(wrap);  // no Windows dialog here: the folder list instead
+    return;
+  }
+  toast(result.data.reason === "a file dialog is already open on this PC"
+    ? "Am Streaming-PC ist schon ein Datei-Dialog offen"
+    : `Datei-Dialog: ${result.data.reason || "HTTP " + result.status}`, false);
+}
 
 // ---- folder browser (streaming PC only) ----
 
@@ -190,18 +230,13 @@ async function showFolder(path) {
 
 function openFileBrowser(wrap) {
   FILE_BROWSER.wrap = wrap;
-  let start = "";
-  const typed = wrap.querySelector(".file-path").value.trim();
-  try { start = localStorage.getItem("mixer_file_browser_path") || ""; } catch (_) {}
-  // Start in the folder of the file already chosen, if any.
-  if (typed && /[\\/]/.test(typed)) start = typed.replace(/[\\/][^\\/]*$/, "") || start;
   $("file-dialog").showModal();
-  showFolder(start);
+  showFolder(fileStartFolder(wrap));
 }
 
-function pickBrowsedFile(path) {
-  const wrap = FILE_BROWSER.wrap;
-  $("file-dialog").close();
+function pickBrowsedFile(path, wrap = FILE_BROWSER.wrap) {
+  if ($("file-dialog").open) $("file-dialog").close();
+  try { localStorage.setItem("mixer_file_browser_path", path.replace(/[\\/][^\\/]*$/, "")); } catch (_) {}
   if (!wrap || !wrap.isConnected) return;
   wrap.querySelector(".file-path").value = path;
   // A file picked here lies on the streaming PC, so it runs there.

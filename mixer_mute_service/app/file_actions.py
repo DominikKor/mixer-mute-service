@@ -6,10 +6,19 @@ display agent runs it). Music files play there with mpv (like an audio
 profile), .exe files start, anything else opens with its Windows default app.
 "|" cannot occur in a Windows path, so it separates the two parts.
 
+POST /files/pick {"start": folder}  opens the real Windows "open file" dialog
+on the streaming PC's screen (through its display agent, which runs in the
+signed-in session) and returns the chosen path. A browser cannot tell a page
+the path of a file picked in its own dialog, and the service itself has no
+screen. When the agent cannot show it (an older agent, agent not running),
+the answer says "fallback" and the page uses the folder list instead:
+
 GET /files/browse?path=...  folders and files on the streaming PC, so a file
-can be picked instead of typed. Only for a browser on the streaming PC
-itself (a request from localhost): nobody else on the network gets to
-look around its disks.
+can be picked instead of typed.
+
+Both only for a browser on the streaming PC itself (a request from
+localhost): nobody else on the network gets to look around its disks or
+open dialogs on its screen.
 """
 
 from __future__ import annotations
@@ -22,7 +31,7 @@ import string
 from pathlib import Path, PureWindowsPath
 from typing import Optional, Tuple
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Body, Request
 from fastapi.responses import JSONResponse
 
 from . import display_agent
@@ -152,3 +161,31 @@ async def browse(request: Request, path: str = ""):
         return JSONResponse({"ok": False, "reason": "folder not found"}, 404)
     except OSError as exc:
         return JSONResponse({"ok": False, "reason": f"folder could not be read: {exc.strerror or exc}"}, 403)
+
+
+# The agent waits up to 10 minutes for a pick (desktop_agent PICK_TIMEOUT_SECONDS).
+PICK_TIMEOUT_SECONDS = 620
+
+
+@router.post("/files/pick")
+async def pick(request: Request, body: Optional[dict] = Body(None)):
+    if not _from_this_pc(request):
+        return JSONResponse({"ok": False, "reason": "the file dialog only works on the streaming PC itself"}, 403)
+    start = (body or {}).get("start") or ""
+    if not isinstance(start, str) or len(start) > MAX_PATH or any(ord(c) < 32 for c in start):
+        return JSONResponse({"ok": False, "reason": "invalid start folder"}, 400)
+    try:
+        result = await display_agent.call(
+            request.app.state.cfg.desktop_display, THIS_PC, "/pick-file", {"start": start},
+            timeout=PICK_TIMEOUT_SECONDS)
+    except AgentError as exc:
+        busy = exc.agent_status in (408, 409)
+        reason = (exc.body or {}).get("reason") if busy else exc.reason
+        # Busy or timed out: say so. Anything else (no agent, an agent without
+        # the dialog): the page shows its own folder list instead.
+        return JSONResponse({"ok": False, "reason": reason or exc.reason, "fallback": not busy},
+                            exc.agent_status if busy else 503)
+    path = result.get("path")
+    if path is not None and (not isinstance(path, str) or not _ABSOLUTE_RE.match(path) or len(path) > MAX_PATH):
+        return JSONResponse({"ok": False, "reason": "the dialog returned no usable path", "fallback": True}, 502)
+    return {"ok": True, "path": path}
