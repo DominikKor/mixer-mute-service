@@ -26,6 +26,23 @@ if ($null -ne $ExistingService -and $ExistingService.Status -ne "Stopped") {
 
 New-Item -ItemType Directory -Force -Path $InstallDirectory, $DataDirectory, $LogDirectory | Out-Null
 
+# The data folder holds RTSP camera passwords (camera_streams.json,
+# mediamtx-cameras.yml) and the GitHub token, and the SYSTEM update task runs a
+# script from it. Only Administrators (S-1-5-32-544) and SYSTEM (S-1-5-18)
+# may read or change it; the service itself runs as LocalSystem. Existing
+# files are reset to inherit exactly these rights.
+& icacls.exe $DataDirectory /inheritance:r /grant:r "*S-1-5-32-544:(OI)(CI)F" "*S-1-5-18:(OI)(CI)F" | Out-Null
+if ($LASTEXITCODE -ne 0) {
+    Write-Warning "Could not restrict access to $DataDirectory (icacls exit code $LASTEXITCODE)."
+}
+else {
+    & icacls.exe (Join-Path $DataDirectory "*") /reset /T /C /Q | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warning "Some files in $DataDirectory kept their old permissions (icacls exit code $LASTEXITCODE)."
+    }
+}
+$global:LASTEXITCODE = 0
+
 $SourceFullPath = [System.IO.Path]::GetFullPath($SourceDirectory).TrimEnd('\')
 $InstallFullPath = [System.IO.Path]::GetFullPath($InstallDirectory).TrimEnd('\')
 if ($SourceFullPath -ne $InstallFullPath) {
