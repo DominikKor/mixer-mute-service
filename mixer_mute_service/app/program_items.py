@@ -81,6 +81,10 @@ class ProgramItemStore:
             if not isinstance(value, str) or len(value) > 160:
                 raise ProgramItemError(f"{field} must be at most 160 characters")
             result[field] = value.strip()
+        song = data.get("song")
+        if song is not None and (not isinstance(song, str) or len(song) > 200):
+            raise ProgramItemError("song must be a song file name or empty")
+        result["song"] = song or None
         return result
 
     def _ordered(self) -> List[dict]:

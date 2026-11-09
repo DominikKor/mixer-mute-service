@@ -362,6 +362,40 @@ unter `C:\\ProgramData\\MixerMuteService\\config.yaml` muss
 `desktop_display.enabled: true` stehen. Die API listet Profile ueber
 `GET /desktop/profiles`; ein Button sendet `POST /desktop/{profile_id}/open`.
 
+## Lieder (FoilPresenter) im Programm
+
+Die FoilPresenter-Bibliothek bleibt auf dem Anzeige-PC (z. B. `.11`). Der
+Display-Agent dort liest die `.foil`-Dateien aus dem eingestellten Ordner (dessen
+Unterordner `Songs`, oder den Ordner selbst); der Service liest sie ein
+(`app/foil.py`), merkt sie sich in `song_library.json` und schickt zum Anzeigen
+immer nur eine Folie an den Agent, der sie im Vollbild zeichnet. Eine Folie ist
+eine Strophe in der Reihenfolge des Lieds (der Refrain wiederholt sich).
+
+In der Weboberfläche unter **Programm → Liedanzeige** (gilt für alle Lieder,
+gespeichert in `song_display.json`): Ordner auf dem Anzeige-PC, Anzeige-PC (IP),
+Monitor, Vollbild, Schrift, größte Schriftgröße (px bei 1080p, lange Folien werden
+kleiner), Text- und Hintergrundfarbe, Titel und Copyright auf der ersten Folie.
+**Speichern und Bibliothek laden** liest die Bibliothek (neu) ein.
+
+Ein Programmpunkt bekommt sein Lied in der Spalte *Liedtext* („♪ Lied wählen“,
+Suche nach Titel oder Liederbuch-Nummer); beim Start zeigt er die erste Folie.
+Unter der Weiter-Leiste erscheinen dann eine 16:9-Vorschau, alle Folien als
+Miniaturen (antippen = anzeigen) und **Zurück / Weiter / Schwarz / Aus**. Nach
+der letzten Folie schaltet *Weiter* auf schwarz. Tastatur und Presenter:
+Bild ab, →, Leertaste = weiter; Bild auf, ← = zurück; B = schwarz.
+
+Der Agent braucht dafür die neue Version (Weboberfläche: *Display Service
+herunterladen*, auf dem Anzeige-PC ausführen). Endpunkte, z. B. für Companion:
+
+| Methode | Pfad | |
+|---|---|---|
+| GET/PUT | `/songs/settings` | Liedanzeige-Einstellungen |
+| POST | `/songs/library/reload` | Bibliothek vom Anzeige-PC lesen |
+| GET | `/songs`, `/songs/{datei}` | Liste, ein Lied mit allen Folien |
+| GET | `/songs/live` | was gerade angezeigt wird |
+| POST | `/songs/show` `{"song_id", "slide"}` | Folie anzeigen |
+| POST | `/songs/next`, `/songs/prev`, `/songs/blank`, `/songs/hide` | weiter, zurück, schwarz, aus |
+
 ## Configuration (`config.yaml`)
 
 - `mixer.ip` / `mixer.port` / `mixer.max_channels` (input channels, default 16)

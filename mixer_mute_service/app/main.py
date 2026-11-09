@@ -32,6 +32,7 @@ from .native_controls import NativeControlService
 from .proxy import ProxyServer
 from .program_items import ProgramItemStore
 from .routes import router
+from .songs import SongService, router as songs_router
 from .updater import router as updater_router
 from .state import StateStore
 
@@ -91,6 +92,7 @@ async def lifespan(app: FastAPI):
     seed = {name: g.channels for name, g in cfg.groups.items()}
     groups = GroupStore(data_dir / "groups.json", cfg.valid_channels(), seed)
     program_items = ProgramItemStore(data_dir / "program_items.json")
+    songs = SongService(data_dir)
     native_controls = NativeControlService(data_dir / "native_control_state.json")
     companion_button_store = CompanionButtonStore(
         data_dir / "companion_buttons.json", COMPANION_BUTTONS
@@ -104,6 +106,7 @@ async def lifespan(app: FastAPI):
     app.state.client = client
     app.state.groups = groups
     app.state.program_items = program_items
+    app.state.songs = songs
     app.state.native_controls = native_controls
     app.state.companion_button_store = companion_button_store
     app.state.channel_preferences = channel_preferences
@@ -137,6 +140,7 @@ app.include_router(router)
 app.include_router(updater_router)
 app.include_router(agent_download_router)
 app.include_router(channel_colors_router)
+app.include_router(songs_router)
 app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="ui")
 
 

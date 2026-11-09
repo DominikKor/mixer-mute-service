@@ -24,6 +24,7 @@ from .desktop_profiles import ProfileEditError, add_profile, delete_profile, upd
 from .groups import GroupError
 from .native_controls import NativeControlError
 from .program_items import ProgramItemError
+from .songs import show_slide
 from .models import (
     AlwaysOnRequest,
     BeamerStateRequest,
@@ -630,6 +631,10 @@ async def _program_reference_error(item: dict, request: Request):
                 return f"unknown {field} desktop profile"
         elif await request.app.state.companion_button_store.get_button(button_id) is None:
             return f"unknown {field} button"
+    # Only checked once the library has been read (it lives on the display PC).
+    songs = request.app.state.songs.songs
+    if item.get("song") and songs and item["song"] not in songs:
+        return "unknown song"
     return None
 
 
@@ -766,8 +771,23 @@ async def _play_program_item(item_id: str, request: Request):
                 "linked_actions": linked_actions,
             }, status_code)
 
+    song_result = None
+    if item.get("song"):
+        song_result, status_code = _unwrap(await show_slide(request, item["song"], 0))
+        if status_code != 200 or song_result.get("ok") is False:
+            return JSONResponse({
+                "ok": False,
+                "reason": f"song could not be shown: {song_result.get('reason', 'HTTP ' + str(status_code))}",
+                "program_item_id": item_id,
+                "title": item["title"],
+                "delay_seconds": played["last_delay_seconds"],
+                "group_result": group_result,
+                "linked_actions": linked_actions,
+            }, status_code if status_code != 200 else 502)
+
     return {
         "ok": True,
+        "song": song_result,
         "program_item_id": item_id,
         "title": item["title"],
         "delay_seconds": played["last_delay_seconds"],
