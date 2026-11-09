@@ -9,16 +9,21 @@ GET    /lights/scenes                    only the scenes (no device asked)
 POST   /lights/scenes {name, replace}            save the current light
 DELETE /lights/scenes/{id}
 POST   /lights/scenes/{id}/apply
+GET    /lights/artnet                    ask the stage node (ArtPoll): name and
+                                     whether it merges a second controller
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from fastapi import APIRouter, Body, Request
 
 from ..lights import SceneError, apply_scene
-from ..native_controls import ARTNET_ZONE_LABELS, SHELLY_HOSTS, SHELLY_LABELS, NativeControlError
+from ..native_controls import (
+    ARTNET_HOST, ARTNET_ZONE_LABELS, SHELLY_HOSTS, SHELLY_LABELS, NativeControlError, artnet_status,
+)
 from ..responses import fail, reply
 
 router = APIRouter()
@@ -74,6 +79,25 @@ async def lights_stage(request: Request, body: dict = Body(...)):
     except OSError as exc:
         return fail(f"Art-Net send failed: {exc}", 502)
     return {"ok": True, "stage": stage}
+
+
+@router.get("/lights/artnet")
+async def lights_artnet(request: Request):
+    """Ask the stage's Art-Net node who it is and whether it merges: if
+    another controller (an old Companion, a lighting desk) also sends to it,
+    the stage jumps between both sources' values."""
+    if _native(request) is None:
+        return _unavailable()
+    try:
+        node = await asyncio.to_thread(artnet_status)
+    except (NativeControlError, OSError) as exc:
+        return fail(f"Art-Net node not asked: {exc}", 502, host=ARTNET_HOST)
+    if node is None:
+        return fail("Art-Net node did not answer the ArtPoll", 504, host=ARTNET_HOST)
+    merging = any(output["merging"] for output in node["outputs"])
+    if merging:
+        log.warning("Art-Net node %s merges two sources: another controller sends to the stage", ARTNET_HOST)
+    return {"ok": True, "host": ARTNET_HOST, "node": node, "merging": merging}
 
 
 @router.put("/lights/settings")

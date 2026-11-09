@@ -8,8 +8,10 @@ import hashlib
 import json
 import logging
 import os
+import select
 import socket
 import struct
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -113,20 +115,118 @@ def _shelly_rpc(host: str, method: str, params: dict) -> dict:
     return data if isinstance(data, dict) else {}
 
 
+ARTNET_PORT = 0x1936  # 6454: Art-Net's port, as destination and (by the spec) as source
+_ARTNET_ID = b"Art-Net\x00"
+_ARTNET_PROTOCOL = struct.pack(">H", 14)
+
+
+class _ArtNetSender:
+    """One UDP socket for every Art-Net packet, with ArtDmx sequence numbers.
+
+    A new socket per packet gave every frame a new source port. An Art-Net
+    node tells its sources apart by address and port and merges them: a
+    stream of "new sources" while a slider moves makes it jump between old
+    and new values (the light flickers), and without sequence numbers it
+    cannot drop a frame that arrives late. So: one socket, bound to port
+    6454 as the spec asks (another port if that is taken, e.g. by a lighting
+    program on the same PC), and sequence 1..255.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._socket: Optional[socket.socket] = None
+        self._sequence = 0
+
+    def _sock(self) -> socket.socket:
+        if self._socket is None:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            try:
+                sock.bind(("", ARTNET_PORT))
+            except OSError as exc:
+                log.warning("Art-Net: port %s is in use (%s); sending from another port", ARTNET_PORT, exc)
+                sock.bind(("", 0))
+            self._socket = sock
+        return self._socket
+
+    def send_dmx(self, host: str, universe: int, values: list[int]) -> None:
+        if len(values) != 512 or any(not 0 <= value <= 255 for value in values):
+            raise NativeControlError("invalid Art-Net DMX frame")
+        with self._lock:
+            # 0 means "no sequence"; count 1..255 and wrap.
+            self._sequence = self._sequence % 255 + 1
+            packet = (
+                _ARTNET_ID
+                + struct.pack("<H", 0x5000)        # OpDmx, low byte first
+                + _ARTNET_PROTOCOL                 # protocol version 14, high byte first
+                + bytes((self._sequence, 0))       # sequence, physical port
+                + struct.pack("<H", universe)      # SubUni, Net (15-bit Port-Address)
+                + struct.pack(">H", 512)           # data length, high byte first
+                + bytes(values)
+            )
+            try:
+                self._sock().sendto(packet, (host, ARTNET_PORT))
+            except OSError:
+                self._close()  # a fresh socket next time
+                raise
+
+    def poll(self, host: str, timeout: float = 1.5) -> Optional[dict]:
+        """ArtPoll the node; its ArtPollReply says its name and whether an
+        output merges two sources (another Art-Net controller sends too)."""
+        with self._lock:
+            sock = self._sock()
+            bound = sock.getsockname()[1]
+            while select.select([sock], [], [], 0)[0]:  # drop anything old
+                sock.recvfrom(2048)
+            sock.sendto(_ARTNET_ID + struct.pack("<H", 0x2000) + _ARTNET_PROTOCOL + bytes((0, 0)),
+                        (host, ARTNET_PORT))
+            deadline = time.monotonic() + timeout
+            while (left := deadline - time.monotonic()) > 0:
+                if not select.select([sock], [], [], left)[0]:
+                    break
+                data, (address, _) = sock.recvfrom(2048)
+                if address == host and data[:8] == _ARTNET_ID and data[8:10] == struct.pack("<H", 0x2100):
+                    return _parse_poll_reply(data)
+        if bound != ARTNET_PORT:
+            raise NativeControlError(f"no ArtPollReply (port {ARTNET_PORT} is used by another program here)")
+        return None
+
+    def _close(self) -> None:
+        if self._socket is not None:
+            self._socket.close()
+            self._socket = None
+
+
+def _parse_poll_reply(data: bytes) -> dict:
+    def text(start: int, length: int) -> str:
+        return data[start:start + length].split(b"\x00", 1)[0].decode("latin-1").strip()
+
+    ports = min(data[173], 4) if len(data) > 173 else 0
+    good_output = data[182:182 + ports] if len(data) >= 182 + ports else b""
+    return {
+        "short_name": text(26, 18),
+        "long_name": text(44, 64),
+        "report": text(108, 64),
+        "outputs": [
+            {
+                "sending_dmx": bool(flags & 0x80),
+                "merging": bool(flags & 0x08),       # two sources at once
+                "merge_mode": "LTP" if flags & 0x02 else "HTP",
+            }
+            for flags in good_output
+        ],
+    }
+
+
+_ARTNET = _ArtNetSender()
+
+
 def _send_artnet_frame(host: str, universe: int, values: list[int]) -> None:
-    if len(values) != 512 or any(not 0 <= value <= 255 for value in values):
-        raise NativeControlError("invalid Art-Net DMX frame")
-    packet = (
-        b"Art-Net\x00"
-        + struct.pack("<H", 0x5000)
-        + struct.pack(">H", 14)
-        + bytes((0, 0))
-        + struct.pack("<H", universe)
-        + struct.pack(">H", 512)
-        + bytes(values)
-    )
-    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sender:
-        sender.sendto(packet, (host, 6454))
+    _ARTNET.send_dmx(host, universe, values)
+
+
+def artnet_status(host: Optional[str] = None) -> Optional[dict]:
+    """The stage node's ArtPollReply (None: no answer)."""
+    return _ARTNET.poll(host or ARTNET_HOST)
 
 
 def _visca_tcp(host: str, port: int, payload: bytes) -> None:

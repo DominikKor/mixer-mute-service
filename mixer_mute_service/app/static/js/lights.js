@@ -6,10 +6,10 @@
 const LIGHTS = {
   data: null,           // last GET /lights
   dragging: new Set(),  // sliders the user holds: the poll leaves them alone
-  sendTimers: {},       // per slider: the next throttled send
+  sending: {},          // per slider: {busy, again, released} of its one request in flight
   busy: new Set(),      // keys with a request in flight
 };
-const LIGHT_SEND_MS = 120;  // while dragging, at most one send per this time
+const LIGHT_SEND_MS = 60;   // while dragging, at most one send per this time
 const LIGHT_POLL_MS = 3000;
 
 // Fades run while the request is open (up to 10 s), the Shellys may take
@@ -146,13 +146,39 @@ async function sendLightSlider(range, fade) {
   if (LIGHTS.data && result.data.stage) LIGHTS.data.stage = result.data.stage;
 }
 
-function scheduleLightSend(range) {
+// One request per slider at a time, always with the slider's newest value.
+// Requests that overlapped could arrive out of order and set an older value
+// after a newer one: the stage jumped back and forth while dragging.
+async function scheduleLightSend(range) {
   const id = range.dataset.lightSlider;
-  if (LIGHTS.sendTimers[id]) return;  // the pending send picks up the newest value
-  LIGHTS.sendTimers[id] = setTimeout(async () => {
-    delete LIGHTS.sendTimers[id];
-    await sendLightSlider(range, false);
-  }, LIGHT_SEND_MS);
+  const state = lightSendState(id);
+  if (state.busy) { state.again = true; return; }
+  state.busy = true;
+  try {
+    do {
+      // At most one send per LIGHT_SEND_MS; moves meanwhile only update the value.
+      const wait = LIGHT_SEND_MS - (Date.now() - state.last);
+      if (wait > 0) await new Promise(resolve => setTimeout(resolve, wait));
+      state.again = false;
+      state.last = Date.now();
+      await sendLightSlider(range, false);
+    } while (state.again);
+  } finally {
+    state.busy = false;
+    // Let go meanwhile: the poll may update this slider again.
+    if (state.released) { state.released = false; LIGHTS.dragging.delete(id); }
+  }
+}
+
+function lightSendState(id) {
+  return LIGHTS.sending[id] || (LIGHTS.sending[id] = { busy: false, again: false, released: false, last: 0 });
+}
+
+// The slider was let go: free it for the poll now, or once its send is done.
+function releaseLightSlider(id) {
+  const state = lightSendState(id);
+  if (state.busy) state.released = true;
+  else LIGHTS.dragging.delete(id);
 }
 
 function initLightSliders(container) {
@@ -171,16 +197,14 @@ function initLightSliders(container) {
   container.addEventListener("change", async event => {
     const range = event.target.closest("input[data-light-slider]");
     if (!range) return;
-    const id = range.dataset.lightSlider;
-    clearTimeout(LIGHTS.sendTimers[id]);
-    delete LIGHTS.sendTimers[id];
-    await sendLightSlider(range, false);
-    LIGHTS.dragging.delete(id);
+    // The final value: queued behind a send still running, never beside it.
+    lightSendState(range.dataset.lightSlider).released = true;
+    await scheduleLightSend(range);
   });
   // A drag that ends outside the slider (finger slid off) still lets go.
   for (const type of ["pointerup", "pointercancel"]) {
     document.addEventListener(type, () => {
-      for (const id of [...LIGHTS.dragging]) if (!LIGHTS.sendTimers[id]) LIGHTS.dragging.delete(id);
+      for (const id of [...LIGHTS.dragging]) releaseLightSlider(id);
     });
   }
   container.addEventListener("click", async event => {

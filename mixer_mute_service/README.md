@@ -707,6 +707,12 @@ weiter über `/companion/buttons/{id}/press` drücken.
   Warm und Kalt für alle Zonen; *Alle an* (auf die Einschalthelligkeit, eine
   schon leuchtende Zone bleibt) und *Alle aus*. Beim Ziehen folgt das Licht
   direkt, Tasten und Szenen blenden mit dem eingestellten Übergang.
+  Art-Net: alle Pakete gehen über einen Socket mit festem Absender-Port 6454
+  und mit Sequenznummer; ein Regler schickt höchstens alle 60 ms und nie zwei
+  Werte gleichzeitig (sonst konnten sie sich überholen und das Licht flackerte).
+  Flackert es trotzdem, sendet wahrscheinlich ein zweites Programm (z. B. ein
+  altes Companion) an den Knoten: `GET /lights/artnet` fragt ihn per ArtPoll und
+  meldet mit `"merging": true`, dass er zwei Quellen mischt.
 - **Raumlicht** (Shelly, 7 Kreise): An/Aus je Kreis mit dem Zustand, den der
   Shelly meldet (alle paar Sekunden gefragt); ein Kreis, der nicht antwortet,
   zeigt „?“.
@@ -728,6 +734,7 @@ startet die Zeile nicht mehr („unknown light scene“), bis eine andere gewäh
 | GET | `/lights/scenes` | nur die Szenen |
 | POST | `/lights/scenes` `{"name", "replace"}` | aktuelles Licht als Szene speichern |
 | POST | `/lights/scenes/{id}/apply` | Szene einblenden |
+| GET  | `/lights/artnet` | Bühnen-Knoten per ArtPoll fragen: Name, `merging` (zweiter Sender) |
 | DELETE | `/lights/scenes/{id}` | Szene löschen |
 
 ## Umbenennen
