@@ -361,15 +361,24 @@ button.display-key {
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .display-key-meta { font: 600 10px/1 var(--mono); color: #7f8b98; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-/* Profile action key(s) plus a "⋮" menu key in the top-right corner. Edit,
-   duplicate and delete live in the menu, so nothing covers the title. On a
-   music tile the dots sit right after Stop: the padding is exactly the menu
-   key's 44 px, so there is no empty gap between them. */
+/* Profile key plus a "⋮" menu key in the top-right corner. Edit, duplicate
+   and delete live in the menu, so nothing covers the title. */
 .display-tile { position: relative; display: inline-flex; max-width: 100%; }
 .display-tile button.display-key { padding-right: 42px; }
-.display-tile.audio { gap: 4px; padding-right: 44px; }
-.display-tile.audio button.display-key { padding-right: 12px; }
-button.display-audio-stop { min-width: 64px; min-height: 48px; padding: 8px; }
+/* Music tile: one wide key; Stop is a red stop square inside it on the right
+   (34 px, tap area 44 px), with "Stop" faintly engraved; the dots stay in
+   the top-right corner like on every tile. */
+.display-tile.audio button.display-key { padding-right: 96px; }
+button.display-audio-stop {
+  position: absolute; top: 50%; right: 50px; width: 34px; height: 34px; margin-top: -17px; padding: 0;
+  display: grid; place-items: center; border-radius: 7px; border: 1px solid #3d0a05;
+  font-size: 8px; font-weight: 900; letter-spacing: .08em; text-transform: uppercase;
+  color: rgba(255,255,255,.2); text-shadow: 0 1px 0 rgba(255,255,255,.12), 0 -1px 0 rgba(0,0,0,.4);
+  background: linear-gradient(to bottom, #d9483a, #b02a1e 55%, #8f1f15);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.25), inset 0 -2px 0 rgba(0,0,0,.25), 0 1px 3px rgba(0,0,0,.55);
+}
+button.display-audio-stop::after { content: ""; position: absolute; inset: -6px; }  /* -6 from inside the 1 px border: 44 px */
+button.display-audio-stop:hover:not(:disabled) { color: rgba(255,255,255,.3); }
 button.display-menu-btn {
   position: absolute; top: 0; right: 0; width: 44px; height: 44px; padding: 6px 4px 0 0;
   display: flex; align-items: flex-start; justify-content: flex-end;
@@ -378,9 +387,6 @@ button.display-menu-btn {
 button.display-menu-btn:hover:not(:disabled), button.display-menu-btn[aria-expanded="true"] { color: #e6f4f8; filter: none; }
 button.display-menu-btn:active:not(:disabled) { transform: none; box-shadow: none; }
 .display-menu-btn svg { display: block; width: 18px; height: 18px; }
-/* Music tile: the dots stand right next to Stop, centred on it; the key keeps
-   its full 44 px tap area to the right. */
-.display-tile.audio button.display-menu-btn { height: auto; bottom: 0; padding: 0 0 0 2px; align-items: center; justify-content: flex-start; }
 /* The tile menu: a small console panel under the dots */
 .tile-menu {
   position: fixed; z-index: 40; min-width: 180px; padding: 4px; border-radius: 6px; border: 1px solid #000;
