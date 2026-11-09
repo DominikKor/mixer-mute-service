@@ -5,10 +5,10 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-try:
-    import tkinter  # noqa: F401
-except ImportError:  # some Python builds (e.g. Homebrew) ship without Tk
-    tkinter = None
+from tests.helpers import require_tk
+
+# None without tkinter (tests skip); with REQUIRE_TK=1 (CI) that is an error.
+tkinter = require_tk()
 
 if tkinter is not None:
     # Pillow missing is a real error (requirements-dev.txt has it).

@@ -9,15 +9,12 @@ odd paths and a relay that is not ready are refused without asking MediaMTX.
 """
 
 import json
-import os
-import pathlib
-import tempfile
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-_tmp = pathlib.Path(tempfile.mkdtemp(prefix="mixer_camhls_"))
-(_tmp / "config.yaml").write_text("mixer:\n  max_channels: 8\n")
-os.environ["MIXER_CONFIG"] = str(_tmp / "config.yaml")
+from tests.helpers import no_mediamtx, use_app_config  # noqa: E402
+
+_tmp = use_app_config("mixer_camhls_")
 CAM = "cam-0123456789ab"
 (_tmp / "camera_streams.json").write_text(json.dumps({"cameras": [
     {"id": CAM, "name": "Cam1", "rtsp_url": "rtsp://192.168.188.51:554/stream1", "username": "", "password": ""},
@@ -77,7 +74,8 @@ def main():
     check("HLS on localhost only", config["hls"] is True and config["hlsAddress"].startswith("127.0.0.1:"))
     check("WebRTC unchanged", config["webrtc"] is True and config["webrtcAddress"] == ":8889")
 
-    with TestClient(app) as client:
+    # A MediaMTX installed on this machine must not be started by the test.
+    with no_mediamtx(), TestClient(app) as client:
         relay = app.state.camera_relay
         relay._has_cameras = False  # no MediaMTX binary in tests: treat the relay as ready
         print("== passed on ==")
