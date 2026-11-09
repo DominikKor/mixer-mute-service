@@ -22,7 +22,7 @@ from .config import DesktopProfileConfig, default_config_path
 from .companion_buttons import COMPANION_BUTTONS, COMPANION_BUTTONS_BY_ID
 from .desktop_profiles import ProfileEditError, add_profile, delete_profile, update_profile
 from .groups import GroupError
-from .native_controls import NativeControlError
+from .native_controls import VISCA_CAMERAS, NativeControlError
 from .program_items import ProgramItemError
 from .file_actions import is_file_action, run_file_action
 from .songs import show_slide
@@ -30,6 +30,7 @@ from .models import (
     AlwaysOnRequest,
     BeamerStateRequest,
     CameraStreamRequest,
+    CameraZoomRequest,
     GroupCaptureRequest,
     CompanionButtonCreate,
     CompanionButtonUpdate,
@@ -346,6 +347,21 @@ async def camera_stream_delete(camera_id: str, request: Request):
     relay = request.app.state.camera_relay
     status = await relay.configure(await store.relay_snapshot())
     return {"ok": True, "deleted": True, "relay_ready": status["ready"], "reason": status["reason"]}
+
+
+@router.post("/cameras/{camera}/zoom")
+async def camera_zoom(camera: str, body: CameraZoomRequest, request: Request):
+    """Hold-to-zoom for the camera section: the catalog's zoom keys only start
+    a zoom, which then runs to the end stop; the UI sends "stop" on release."""
+    if camera not in VISCA_CAMERAS:
+        return JSONResponse({"ok": False, "reason": "unknown camera"}, 404)
+    action = {"type": "visca-zoom", "camera": camera, "direction": body.direction}
+    try:
+        result = await request.app.state.native_controls.press(action)
+    except NativeControlError as exc:
+        log.warning("Camera zoom failed camera=%s direction=%s reason=%s", camera, body.direction, exc)
+        return JSONResponse({"ok": False, "camera": camera, "reason": str(exc)}, 503)
+    return {**result, "camera": camera, "direction": body.direction}
 
 
 @router.get("/desktop/profiles")

@@ -42,6 +42,11 @@ class BeamerStateRequest(BaseModel):
     hidden: bool
 
 
+class CameraZoomRequest(BaseModel):
+    # Hold-to-zoom: "in"/"out" start zooming, "stop" ends it.
+    direction: Literal["in", "out", "stop"]
+
+
 class CameraStreamRequest(BaseModel):
     name: str = Field(max_length=64)
     rtsp_url: str = Field(max_length=1024)
