@@ -432,7 +432,14 @@ eine Strophe in der Reihenfolge des Lieds (der Refrain wiederholt sich).
 In der Weboberfläche unter **Programm → Liedanzeige** (gilt für alle Lieder,
 gespeichert in `song_display.json`): Ordner auf dem Anzeige-PC, Anzeige-PC (IP),
 Monitor, Vollbild, Schrift, größte Schriftgröße (px bei 1080p, lange Folien werden
-kleiner), Text- und Hintergrundfarbe, Titel und Copyright auf der ersten Folie.
+kleiner), Text- und Hintergrundfarbe, Titel und Copyright auf der ersten Folie,
+Ausrichtung (links, mittig, rechts) und **Vorschau nächste Folie**: wo unter dem
+Text Platz bleibt, stehen dort in Grau (Textfarbe in den Hintergrund gemischt)
+die ersten Zeilen der nächsten Folie, höchstens halb so groß. Der Text selbst
+bleibt dabei unverändert groß und an seiner Stelle; nach der letzten Folie gibt
+es keine Vorschau. Ein Anzeige-PC mit älterem Display-Agent bekommt die Folie
+ohne Vorschau und Ausrichtung, bis der Agent aktualisiert ist („Display Service
+herunterladen“).
 **Speichern und Bibliothek laden** liest die Bibliothek (neu) ein.
 
 Ein Programmpunkt bekommt sein Lied in der Spalte *Liedtext* („♪ Lied wählen“,

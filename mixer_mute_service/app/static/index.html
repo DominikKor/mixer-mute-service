@@ -425,6 +425,8 @@
   .pf-display-row { display: flex; gap: 18px 24px; flex-wrap: wrap; align-items: flex-start; }
   .monitor-picker { display: flex; gap: 6px; flex-wrap: wrap; }
   button.monitor-key { width: 52px; height: 44px; padding: 0; font: 800 15px/1 var(--mono); }
+  button.align-key { display: grid; place-items: center; }
+  button.align-key svg { width: 20px; height: 20px; }
   .profile-dialog .pf-input { min-height: 44px; }
   button.monitor-key[aria-checked="true"] {
     color: #fff; border-color: #0a2550; background: linear-gradient(to bottom, #62adff, #3584e6 55%, #2a6cc4);
@@ -1422,10 +1424,17 @@
       <label class="pf-field"><span>Textfarbe</span><input id="sg-text-color" class="pf-color" type="color" /></label>
       <label class="pf-field"><span>Hintergrund</span><input id="sg-bg-color" class="pf-color" type="color" /></label>
     </div>
+    <div class="pf-field"><span class="pf-label" id="sg-align-label">Ausrichtung</span>
+      <div id="sg-align" class="monitor-picker" role="radiogroup" aria-labelledby="sg-align-label">
+        <button type="button" class="monitor-key align-key" role="radio" data-align="left" aria-label="Linksbündig" title="Linksbündig"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 6h16M4 10h10M4 14h16M4 18h10"/></svg></button>
+        <button type="button" class="monitor-key align-key" role="radio" data-align="center" aria-label="Zentriert" title="Zentriert"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 6h16M7 10h10M4 14h16M7 18h10"/></svg></button>
+        <button type="button" class="monitor-key align-key" role="radio" data-align="right" aria-label="Rechtsbündig" title="Rechtsbündig"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 6h16M10 10h10M4 14h16M10 18h10"/></svg></button>
+      </div></div>
     <div class="sg-switches">
       <label class="compact-switch"><input id="sg-fullscreen" type="checkbox" /><span class="track"></span>Vollbild</label>
       <label class="compact-switch"><input id="sg-show-title" type="checkbox" /><span class="track"></span>Titel</label>
       <label class="compact-switch"><input id="sg-show-copyright" type="checkbox" /><span class="track"></span>Copyright</label>
+      <label class="compact-switch" title="Darunter in Grau die nächste Folie, wenn Platz ist"><input id="sg-show-next" type="checkbox" /><span class="track"></span>Vorschau nächste Folie</label>
     </div>
     <div id="sg-sample" class="slide-box" role="img" aria-label="Beispielfolie mit diesen Einstellungen"></div>
     <div class="sg-library">
@@ -5581,13 +5590,38 @@ async function loadSongs() {
 // Slide layout. Keep in sync with _draw_slide() in
 // desktop_agent/show_image_agent.py, which draws the real screen.
 const SLIDE = { padX: 0.06, padY: 0.07, titleH: 0.12, copyH: 0.08, line: 1.25 };
+// Next-slide preview: grey (text colour mixed into the background), at most
+// half the text size, never below 20 px on 1080 lines, only in the room under
+// the centred text (which never moves for it).
+const PREVIEW = { scale: 0.5, min: 20, gap: 0.5, mix: 0.45 };
 let SLIDE_CTX = null;
+
+function mixColor(fg, bg, amount) {
+  const a = parseInt(fg.slice(1), 16), b = parseInt(bg.slice(1), 16);
+  return "#" + [16, 8, 0].map(s => {
+    const x = (b >> s) & 255, y = (a >> s) & 255;
+    return Math.round(x + (y - x) * amount).toString(16).padStart(2, "0");
+  }).join("");
+}
+
+// {px, lines} of the next-slide preview, or null where it does not fit.
+function previewLayout(ctx, settings, lines, nextLines, px, boxW, boxH, H) {
+  if (!nextLines.length) return null;
+  const minPx = PREVIEW.min * H / 1080;
+  let pp = PREVIEW.scale * px;
+  const widest = size => { ctx.font = songSlideFont(size, settings); return Math.max(...nextLines.map(l => ctx.measureText(l).width)); };
+  while (pp >= minPx && widest(pp) > boxW) pp *= 0.94;
+  if (pp < minPx) return null;
+  const free = (boxH - lines.length * px * SLIDE.line) / 2 - PREVIEW.gap * px;
+  const count = Math.min(nextLines.length, free > 0 ? Math.floor(free / (pp * SLIDE.line)) : 0);
+  return count >= 1 ? { px: pp, lines: nextLines.slice(0, count) } : null;
+}
 
 function songSlideFont(px, settings, bold = false) {
   return `${bold ? "700 " : ""}${px}px "${settings.font}", Verdana, sans-serif`;
 }
 
-// slide: {text, title, copyright, blank}
+// slide: {text, title, copyright, next, blank}
 function renderSlide(box, slide, settings) {
   const W = box.clientWidth, H = box.clientHeight;
   box.replaceChildren();
@@ -5595,6 +5629,7 @@ function renderSlide(box, slide, settings) {
   box.style.color = settings.text_color;
   if (!W || !H || slide.blank) return;
   const ctx = SLIDE_CTX || (SLIDE_CTX = document.createElement("canvas").getContext("2d"));
+  const align = settings.text_align || "center";
   const padX = SLIDE.padX * W, padY = SLIDE.padY * H;
   const titleH = slide.title ? SLIDE.titleH * H : 0;
   const copyH = slide.copyright ? SLIDE.copyH * H : 0;
@@ -5608,40 +5643,57 @@ function renderSlide(box, slide, settings) {
     px *= 0.94;
   }
   px = Math.max(minPx, px);
+  const place = (el, top, font, color) => {
+    el.style.top = `${top}px`;
+    el.style.font = font;
+    el.style.textAlign = align;
+    if (el.classList.contains("slide-line")) { el.style.left = `${padX}px`; el.style.right = `${padX}px`; }
+    if (color) el.style.color = color;
+    box.appendChild(el);
+  };
   const top = padY + titleH + (boxH - lines.length * px * SLIDE.line) / 2;
   lines.forEach((line, i) => {
     const el = document.createElement("div");
     el.className = "slide-line";
-    el.style.top = `${top + i * px * SLIDE.line}px`;
-    el.style.font = songSlideFont(px, settings);
     el.textContent = line;
-    box.appendChild(el);
+    place(el, top + i * px * SLIDE.line, songSlideFont(px, settings));
   });
+  const preview = slide.next
+    ? previewLayout(ctx, settings, lines, slide.next.split("\n"), px, boxW, boxH, H) : null;
+  if (preview) {
+    const grey = mixColor(settings.text_color, settings.background_color, PREVIEW.mix);
+    const previewTop = padY + titleH + boxH - preview.lines.length * preview.px * SLIDE.line;
+    preview.lines.forEach((line, i) => {
+      const el = document.createElement("div");
+      el.className = "slide-line slide-next";
+      el.textContent = line;
+      place(el, previewTop + i * preview.px * SLIDE.line, songSlideFont(preview.px, settings), grey);
+    });
+  }
   if (slide.title) {
     const el = document.createElement("div");
     el.className = "slide-title";
-    el.style.top = `${padY + titleH / 2}px`;
-    el.style.font = songSlideFont(0.05 * H, settings, true);
     el.textContent = slide.title;
-    box.appendChild(el);
+    place(el, padY + titleH / 2, songSlideFont(0.05 * H, settings, true));
   }
   if (slide.copyright) {
     const el = document.createElement("div");
     el.className = "slide-copy";
-    el.style.top = `${H - padY - copyH / 2}px`;
-    el.style.font = songSlideFont(0.026 * H, settings);
     el.textContent = slide.copyright;
-    box.appendChild(el);
+    place(el, H - padY - copyH / 2, songSlideFont(0.026 * H, settings));
   }
 }
 
-// What the display PC shows for slide i (title and copyright on the first).
+// What the display PC shows for slide i (title and copyright on the first,
+// the next slide as preview unless it is the last one).
 function songSlide(song, index, settings) {
   const first = index === 0;
+  const upcoming = song.slides[index + 1];
   return {
     text: song.slides[index].text,
     title: settings.show_title && first ? song.title : "",
     copyright: settings.show_copyright && first ? song.copyright : "",
+    next: settings.show_next_preview !== false && upcoming ? upcoming.text : "",
   };
 }
 
@@ -6077,7 +6129,7 @@ $("program-items").addEventListener("click", event => {
 
 // ---- shared song settings dialog -------------------------------------------
 
-const SONG_FORM = { monitor: 2 };
+const SONG_FORM = { monitor: 2, align: "center" };
 
 function songFormSettings() {
   return {
@@ -6091,6 +6143,8 @@ function songFormSettings() {
     background_color: $("sg-bg-color").value,
     show_title: $("sg-show-title").checked,
     show_copyright: $("sg-show-copyright").checked,
+    text_align: SONG_FORM.align,
+    show_next_preview: $("sg-show-next").checked,
   };
 }
 
@@ -6100,8 +6154,14 @@ function renderSongSample() {
   const sample = SONG_LIVE.song
     ? songSlide(SONG_LIVE.song, 0, settings)
     : { text: "Großer Gott, wir loben dich,\nHerr, wir preisen deine Stärke.\nVor dir neigt die Erde sich\nund bewundert deine Werke.",
-        title: settings.show_title ? "Großer Gott, wir loben dich" : "", copyright: settings.show_copyright ? "Text: Ignaz Franz 1771" : "" };
+        title: settings.show_title ? "Großer Gott, wir loben dich" : "", copyright: settings.show_copyright ? "Text: Ignaz Franz 1771" : "",
+        next: settings.show_next_preview ? "Alles, was dich preisen kann,\nCherubim und Seraphinen" : "" };
   renderSlide($("sg-sample"), sample, settings);
+}
+
+function setSongAlign(align) {
+  SONG_FORM.align = ["left", "center", "right"].includes(align) ? align : "center";
+  $("sg-align").querySelectorAll("[data-align]").forEach(b => b.setAttribute("aria-checked", String(b.dataset.align === SONG_FORM.align)));
 }
 
 function songLibraryStatus() {
@@ -6133,6 +6193,8 @@ async function openSongDialog() {
   $("sg-fullscreen").checked = s.fullscreen !== false;
   $("sg-show-title").checked = s.show_title !== false;
   $("sg-show-copyright").checked = s.show_copyright !== false;
+  $("sg-show-next").checked = s.show_next_preview !== false;
+  setSongAlign(s.text_align || "center");
   $("sg-monitor").replaceChildren(...[1, 2, 3, 4].map(n => {
     const b = document.createElement("button");
     b.type = "button";
@@ -6163,6 +6225,10 @@ $("sg-cancel").addEventListener("click", () => $("song-dialog").close());
 $("sg-monitor").addEventListener("click", event => {
   const b = event.target.closest("[data-monitor]");
   if (b) { setSongMonitor(Number(b.dataset.monitor)); }
+});
+$("sg-align").addEventListener("click", event => {
+  const b = event.target.closest("[data-align]");
+  if (b) { setSongAlign(b.dataset.align); renderSongSample(); }
 });
 $("song-form").addEventListener("input", renderSongSample);
 $("song-form").addEventListener("submit", async event => {

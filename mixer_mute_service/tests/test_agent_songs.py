@@ -76,6 +76,34 @@ class SongLibraryTests(unittest.TestCase):
         self.assertFalse(agent._valid_song_request({**SHOW, "style": {**SHOW["style"], "text_color": "white"}}))
         self.assertFalse(agent._valid_song_request({**SHOW, "style": {**SHOW["style"], "font_size": 500}}))
 
+    def test_preview_and_alignment_requests(self):
+        new = {**SHOW, "next": "Nächste\nStrophe", "style": {**SHOW["style"], "align": "left"}}
+        self.assertTrue(agent._valid_song_request(new))
+        self.assertTrue(agent._valid_song_request({**new, "next": ""}))
+        self.assertTrue(agent._valid_song_request({**SHOW, "next": "x"}))  # align is optional
+        self.assertFalse(agent._valid_song_request({**new, "style": {**new["style"], "align": "justify"}}))
+        self.assertFalse(agent._valid_song_request({**new, "next": 5}))
+        self.assertFalse(agent._valid_song_request({**new, "next": "x" * 8001}))
+
+    def test_preview_grey_and_room(self):
+        self.assertEqual(agent._mix_color("#ffffff", "#000000", 0.45), "#737373")
+        self.assertEqual(agent._mix_color("#000000", "#ffffff", 0.45), "#8c8c8c")
+        measure = lambda text, size: len(text) * size * 0.5  # noqa: E731
+        two_lines = ["Zeile 1", "Zeile 2"]
+        # 1080 px screen, text 72 px: plenty of room below two lines.
+        fits = agent._preview_layout(measure, two_lines, ["Nächste Zeile", "zweite"], 72, 1800, 900, 1080)
+        self.assertEqual(fits, (36, ["Nächste Zeile", "zweite"]))
+        # A full slide leaves no room: no preview, the text keeps its size.
+        full = ["Zeile"] * 9
+        self.assertIsNone(agent._preview_layout(measure, full, ["Nächste"], 72, 1800, 900, 1080))
+        # Only as many preview lines as fit: 6 lines of 72 px leave
+        # (900 - 540) / 2 - 36 = 144 px, three preview lines of 45 px.
+        some = agent._preview_layout(measure, ["Z"] * 6, ["a", "b", "c", "d", "e"], 72, 1800, 900, 1080)
+        self.assertEqual(some, (36, ["a", "b", "c"]))
+        # Too wide even at the smallest size, or nothing to preview: none.
+        self.assertIsNone(agent._preview_layout(measure, two_lines, ["x" * 400], 72, 1800, 900, 1080))
+        self.assertIsNone(agent._preview_layout(measure, two_lines, [], 72, 1800, 900, 1080))
+
 
 @unittest.skipIf(tkinter is None, "this Python has no tkinter; the desktop agent needs it")
 class SongRequestHandlerTests(unittest.TestCase):
