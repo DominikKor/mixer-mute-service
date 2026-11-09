@@ -36,7 +36,7 @@ class NativeControlTests(unittest.IsolatedAsyncioTestCase):
     async def test_concurrent_toggles_build_on_each_other(self):
         # Two quick presses: the second must see the first one's result and
         # switch the zone off again, not compute "on" from the old frame.
-        async def slow_fade(target):
+        async def slow_fade(target, fade=True):
             await asyncio.sleep(0.01)
 
         with patch.object(self.controls, "_fade_to", side_effect=slow_fade):
@@ -134,7 +134,7 @@ class NativeControlTests(unittest.IsolatedAsyncioTestCase):
         await self.controls.set_beamer_state(True)
         release = asyncio.Event()
 
-        async def slow_fade(target):
+        async def slow_fade(target, fade=True):
             await release.wait()
 
         with patch.object(self.controls, "_fade_to", side_effect=slow_fade), \

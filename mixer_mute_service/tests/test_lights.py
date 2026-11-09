@@ -62,6 +62,15 @@ class LightsApiTests(unittest.TestCase):
         self.addCleanup(self.ctx.__exit__, None, None, None)
         self.client.put("/lights/settings", json={"fade_ms": 0})
 
+    def test_fade_and_jump(self):
+        self.client.put("/lights/settings", json={"fade_ms": 400})
+        self.client.post("/lights/stage", json={"zones": {"left": 200}})
+        faded = len(self.devices.frames)
+        self.client.post("/lights/stage", json={"zones": {"left": 100}, "fade": False})
+        self.assertGreater(faded, 5)
+        self.assertEqual(len(self.devices.frames) - faded, 1)
+        self.assertEqual(self.devices.zone_white("left"), 100)
+
     def test_state_lists_stage_circuits_and_scenes(self):
         data = self.client.get("/lights").json()
         self.assertEqual(set(data["stage"]["zones"]), set(native_mod.ARTNET_ZONES))
@@ -118,6 +127,7 @@ class LightsApiTests(unittest.TestCase):
         self.assertIn("light-tech", r.json()["errors"])
         self.assertEqual(self.client.post("/lights/scenes/nope/apply").status_code, 404)
 
+        self.assertEqual([s["name"] for s in self.client.get("/lights/scenes").json()["scenes"]], ["Predigt"])
         stored = json.loads((self.folder / "light_scenes.json").read_text(encoding="utf-8"))
         self.assertEqual([s["name"] for s in stored], ["Predigt"])
         self.assertEqual(self.client.delete(f"/lights/scenes/{scene['id']}").status_code, 200)

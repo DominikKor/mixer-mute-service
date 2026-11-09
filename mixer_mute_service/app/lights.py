@@ -8,9 +8,11 @@ applied). Program rows name a scene in their "light" field; it is applied
 when the row starts.
 
 GET    /lights                       stage, circuits (on/off/null), scenes
-POST   /lights/stage {zones, warm, cold}         absolute values, faded
+POST   /lights/stage {zones, warm, cold, fade}   absolute values, faded
+                                     unless fade is false (slider drags)
 PUT    /lights/settings {start, steps, fade_ms}
 POST   /lights/circuits {states: {target: bool}} room light on/off
+GET    /lights/scenes                    only the scenes (no device asked)
 POST   /lights/scenes {name, replace}            save the current light
 DELETE /lights/scenes/{id}
 POST   /lights/scenes/{id}/apply
@@ -214,7 +216,7 @@ async def lights_stage(request: Request, body: dict = Body(...)):
     if zones is not None and not isinstance(zones, dict):
         return fail("zones must be {zone: level}", 400)
     try:
-        stage = await native.set_stage(zones, body.get("warm"), body.get("cold"))
+        stage = await native.set_stage(zones, body.get("warm"), body.get("cold"), fade=body.get("fade") is not False)
     except NativeControlError as exc:
         return fail(str(exc), 400 if "must be" in str(exc) or "unknown" in str(exc) else 502)
     except OSError as exc:
@@ -250,6 +252,13 @@ async def lights_circuits(request: Request, body: dict = Body(...)):
     if errors:
         return fail("room light not switched everywhere", 502, errors=errors)
     return {"ok": True}
+
+
+@router.get("/lights/scenes")
+async def lights_scenes(request: Request):
+    """Only the scenes (program rows): no device is asked."""
+    scenes = request.app.state.light_scenes
+    return {"ok": True, "scenes": await scenes.list() if scenes is not None else []}
 
 
 @router.post("/lights/scenes")

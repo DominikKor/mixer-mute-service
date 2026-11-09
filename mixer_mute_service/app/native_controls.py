@@ -284,7 +284,7 @@ class NativeControlService:
         self._persist_state()
         return {"ok": True, "hidden": hidden, "changed": True}
 
-    async def _update_dmx(self, compute: Callable[[list[int]], list[int]]) -> list[int]:
+    async def _update_dmx(self, compute: Callable[[list[int]], list[int]], fade: bool = True) -> list[int]:
         """Fade from the current DMX frame to ``compute(current)``.
 
         The target is computed under the lock, so two quick presses build on
@@ -292,15 +292,16 @@ class NativeControlService:
         """
         async with self._lock:
             target = compute(self._dmx.copy())
-            await self._fade_to(target)
+            await self._fade_to(target, fade)
             self._dmx = target
             self._persist_state()
             return target
 
-    async def _fade_to(self, target: list[int]) -> None:
-        """Send the fade frames. The caller holds ``self._lock``."""
+    async def _fade_to(self, target: list[int], fade: bool = True) -> None:
+        """Send the fade frames (one frame without fade). The caller holds
+        ``self._lock``."""
         start = self._dmx.copy()
-        frames = max(1, min(1500, self._levels["fade_ms"] // 40))
+        frames = max(1, min(1500, self._levels["fade_ms"] // 40)) if fade else 1
         for index in range(1, frames + 1):
             frame = [round(a + (b - a) * index / frames) for a, b in zip(start, target)]
             await asyncio.to_thread(_send_artnet_frame, ARTNET_HOST, ARTNET_UNIVERSE, frame)
@@ -333,8 +334,9 @@ class NativeControlService:
         }
 
     async def set_stage(self, zones: Optional[dict] = None, warm: Optional[int] = None,
-                        cold: Optional[int] = None) -> dict:
-        """Fade the stage to absolute values; zones not named keep theirs."""
+                        cold: Optional[int] = None, fade: bool = True) -> dict:
+        """Fade the stage to absolute values; zones not named keep theirs.
+        fade=False jumps (a slider being dragged sends many small steps)."""
         zones = zones or {}
         if any(name not in ARTNET_ZONES for name in zones):
             raise NativeControlError("unknown Art-Net zone")
@@ -351,7 +353,7 @@ class NativeControlService:
                 self._set_zone(frame, name, zones.get(name, frame[zone["white"] - 1]))
             return frame
 
-        await self._update_dmx(compute)
+        await self._update_dmx(compute, fade)
         return self.stage_state()
 
     async def set_light_settings(self, values: dict) -> dict:

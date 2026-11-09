@@ -21,3 +21,4 @@ poll(() => refresh({ light: true }), 1000);
 poll(pullGroupsFromBackend, 5000);
 poll(refreshUpdateButton, 30000);
 poll(loadChannelColors, 5000);
+loadLights().then(() => poll(refreshLights, LIGHT_POLL_MS));

@@ -662,6 +662,41 @@ Programm und setzt den Ablauf zurück.
 | POST | `/program/templates/{id}/apply` `{"songs": [{"song_id", "text"}], "dry_run"}` | anwenden (`dry_run`: nur Vorschau) |
 | POST | `/songs/match` `{"lines"}` | Liedzeilen in der Bibliothek suchen |
 
+## Licht
+
+Die Section **Licht** steuert das ganze Licht; in der Steuerung gibt es die
+Kategorien Licht und Mixer nicht mehr (Katalog v8 räumt sie aus, eigene Tasten
+darin bleiben). Programmzeilen, Overall-Makros und eigene Tasten, die diese
+Tasten per ID nutzen, funktionieren weiter; Companion/Stream Deck kann sie auch
+weiter über `/companion/buttons/{id}/press` drücken.
+
+- **Bühne** (Art-Net, 4 Zonen): je Zone An/Aus und ein Regler 0–100 %, dazu
+  Warm und Kalt für alle Zonen; *Alle an* (auf die Einschalthelligkeit, eine
+  schon leuchtende Zone bleibt) und *Alle aus*. Beim Ziehen folgt das Licht
+  direkt, Tasten und Szenen blenden mit dem eingestellten Übergang.
+- **Raumlicht** (Shelly, 7 Kreise): An/Aus je Kreis mit dem Zustand, den der
+  Shelly meldet (alle paar Sekunden gefragt); ein Kreis, der nicht antwortet,
+  zeigt „?“.
+- **Einstellungen**: Einschalthelligkeit, Übergang (0–10 s) und Dimmschritt
+  (für die Heller/Dunkler-Tasten über Companion).
+- **Szenen**: *+ Szene* speichert das Licht, wie es gerade ist (Bühne, Warm/Kalt,
+  alle Raumlicht-Kreise mit bekanntem Zustand). Antippen blendet die Szene ein.
+
+Im **Programm** hat jede Zeile die Spalte *Licht*: eine Szene, die beim Start
+der Zeile eingeblendet wird (vor Tasten und Lied). Wird die Szene gelöscht,
+startet die Zeile nicht mehr („unknown light scene“), bis eine andere gewählt ist.
+
+| Methode | Pfad | |
+|---|---|---|
+| GET | `/lights` | Bühne, Einstellungen, Raumlicht-Kreise, Szenen |
+| POST | `/lights/stage` `{"zones": {"left": 0..255}, "warm", "cold", "fade"}` | Bühne setzen (`fade: false` springt) |
+| PUT | `/lights/settings` `{"start", "steps", "fade_ms"}` | Einstellungen |
+| POST | `/lights/circuits` `{"states": {"light-front": true}}` | Raumlicht schalten |
+| GET | `/lights/scenes` | nur die Szenen |
+| POST | `/lights/scenes` `{"name", "replace"}` | aktuelles Licht als Szene speichern |
+| POST | `/lights/scenes/{id}/apply` | Szene einblenden |
+| DELETE | `/lights/scenes/{id}` | Szene löschen |
+
 ## Configuration (`config.yaml`)
 
 - `mixer.ip` / `mixer.port` / `mixer.max_channels` (input channels, default 16)

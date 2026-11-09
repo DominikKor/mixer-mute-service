@@ -10,6 +10,7 @@ let PROGRAM_DESKTOP_PROFILES = [];
 // Preset choices per camera for the rows' camera line: {cam1: [{value, label}], ...}
 let PROGRAM_CAMERA_PRESETS = { cam1: [], cam2: [] };
 let PROGRAM_CAMERA_SEQ = null;  // last camera outcome already reported
+let PROGRAM_LIGHT_SCENES = [];     // [{id, name}] from /lights/scenes
 let PROGRAM_DRAFT = false;
 let PROGRAM_STATUS = { current_id: null, next_id: null };
 const PROGRAM_BUSY = new Set();     // play / clone in progress, per item
@@ -17,7 +18,7 @@ const PROGRAM_SAVING = new Set();   // a save is in flight, per item
 const PROGRAM_RESAVE = new Set();   // another edit arrived meanwhile
 const PROGRAM_FIELDS = [
   "time", "title", "person", "group", "playback", "translation", "lyrics",
-  "playback_description", "translation_description", "lyrics_description", "song",
+  "playback_description", "translation_description", "lyrics_description", "song", "light",
   "cam1_preset", "cam2_preset", "camera_wait_seconds",
 ];
 const PROGRAM_CAMERAS = [["cam1", "Cam 1"], ["cam2", "Cam 2"]];
@@ -98,6 +99,14 @@ function programSelect(field, label, value, options, placeholder) {
 
 // A row without a group leaves the mutes alone and only runs its actions.
 const NO_PROGRAM_GROUP = "Keine Mutegruppe";
+// A row without a light scene leaves the light as it is.
+const NO_PROGRAM_LIGHT = "Licht bleibt";
+
+function programLightOptions(value) {
+  const options = PROGRAM_LIGHT_SCENES.map(scene => ({ value: scene.id, label: scene.name }));
+  if (value && !options.some(option => option.value === value)) options.push({ value, label: "Gelöschte Szene" });
+  return options;
+}
 
 function programGroupOptions() {
   return Object.keys(PROGRAM_GROUPS).map(group => ({ value: group, label: group }));
@@ -189,6 +198,7 @@ function buildProgramRow(item, draft = false) {
   programCell(row, "Titel", programInput("title", "Titel", item.title, "text", 120));
   programCell(row, "Person", programInput("person", "Person", item.person, "text", 80));
   programCell(row, "Mutegruppe", programSelect("group", "Mutegruppe", item.group, programGroupOptions(), NO_PROGRAM_GROUP));
+  programCell(row, "Licht", programSelect("light", "Lichtszene", item.light, programLightOptions(item.light), NO_PROGRAM_LIGHT));
 
   for (const [field, label] of [["playback", "Playback"], ["translation", "Übersetzung"], ["lyrics", "Liedtext"]]) {
     const link = document.createElement("div");
@@ -253,6 +263,10 @@ function updateProgramRow(row, item) {
       setSelectOptions(control, PROGRAM_CAMERA_PRESETS[control.dataset.programCamera], control.dataset.placeholder, value);
     } else if (control.tagName === "SELECT") {
       const value = keep ? control.value : item[field];
+      if (field === "light") {
+        setSelectOptions(control, programLightOptions(value), NO_PROGRAM_LIGHT, value);
+        continue;
+      }
       const options = field === "group" ? groupOptions : programActionOptions(value);
       setSelectOptions(control, options, field === "group" ? NO_PROGRAM_GROUP : "Keine Aktion", value);
       if (field !== "group") syncFileAction(control);
@@ -302,6 +316,8 @@ function renderProgramItems() {
     else {
       const group = draft.querySelector('[data-program-field="group"]');
       setSelectOptions(group, programGroupOptions(), NO_PROGRAM_GROUP, group.value);
+      const light = draft.querySelector('[data-program-field="light"]');
+      setSelectOptions(light, programLightOptions(light.value), NO_PROGRAM_LIGHT, light.value);
       for (const field of ["playback", "translation", "lyrics"]) {
         const sel = draft.querySelector(`[data-program-field="${field}"]`);
         setSelectOptions(sel, programActionOptions(sel.value), "Keine Aktion", sel.value);
@@ -319,10 +335,11 @@ function renderProgramItems() {
 }
 
 async function loadProgramItems() {
-  const [items, groups, buttons, desktop, status] = await Promise.all([
+  const [items, groups, buttons, desktop, status, scenes] = await Promise.all([
     api("GET", "/program/items"), api("GET", "/groups"), api("GET", "/companion/buttons"),
-    api("GET", "/desktop/profiles"), api("GET", "/program/status"),
+    api("GET", "/desktop/profiles"), api("GET", "/program/status"), api("GET", "/lights/scenes"),
   ]);
+  if (scenes.ok && Array.isArray(scenes.data.scenes)) PROGRAM_LIGHT_SCENES = scenes.data.scenes;
   if (status.ok && status.data) PROGRAM_STATUS = status.data;
   if (!items.ok || !Array.isArray(items.data) || !groups.ok || !buttons.ok || !desktop.ok) {
     $("program-empty").hidden = false;
@@ -332,12 +349,21 @@ async function loadProgramItems() {
   $("program-empty").textContent = "Noch keine Programmpunkte.";
   PROGRAM_ITEMS = items.data;
   PROGRAM_GROUPS = groups.data;
-  // Camera presets left Steuerung but program rows can still run them.
-  PROGRAM_BUTTONS = [...(buttons.data.buttons || []), ...(buttons.data.camera_buttons || [])];
-  PROGRAM_BUTTON_CATEGORIES = { cameras: "Kameras", ...Object.fromEntries((buttons.data.categories || []).map(category => [category.id, category.name])) };
+  // Camera presets and the light and mixer keys left Steuerung but program
+  // rows can still run them.
+  PROGRAM_BUTTONS = [...(buttons.data.buttons || []), ...(buttons.data.camera_buttons || []), ...(buttons.data.catalog_buttons || [])];
+  PROGRAM_BUTTON_CATEGORIES = { cameras: "Kameras", light: "Licht", mixer: "Mixer", ...Object.fromEntries((buttons.data.categories || []).map(category => [category.id, category.name])) };
   PROGRAM_DESKTOP_PROFILES = desktop.data.profiles || [];
   PROGRAM_CAMERA_PRESETS = programCameraPresets(buttons.data.camera_buttons || []);
   noteCameraProgram(PROGRAM_STATUS.camera);
+  renderProgramItems();
+}
+
+// After a scene was saved or deleted in the Licht section.
+async function loadProgramLightScenes() {
+  const result = await api("GET", "/lights/scenes");
+  if (!result.ok || !Array.isArray(result.data.scenes)) return;
+  PROGRAM_LIGHT_SCENES = result.data.scenes;
   renderProgramItems();
 }
 
@@ -419,7 +445,7 @@ function readProgramRow(row) {
     if (control && field === "time") control.value = normalizeProgramTime(control.value);
     result[field] = control ? control.value.trim() : "";
   }
-  for (const field of ["playback", "translation", "lyrics", "song"]) {
+  for (const field of ["playback", "translation", "lyrics", "song", "light"]) {
     if (result[field] === FILE_CHOOSE) result[field] = null;  // file chosen, path not entered yet
     result[field] ||= null;
   }
