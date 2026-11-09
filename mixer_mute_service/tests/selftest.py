@@ -513,6 +513,25 @@ with TestClient(app) as client:
     check("panic disable", p["enabled"] is False)
     client.post("/panic/enable")
 
+    print("== channel settings snapshot ==")
+    check("settings of unknown group -> 404",
+          client.post("/groups/nope/settings-snapshot").status_code == 404)
+    check("no settings saved yet -> 404", client.get("/groups/drums/settings-snapshot").status_code == 404)
+    refused = client.post("/groups/drums/settings-snapshot")
+    check("capture without mixer data -> 409 with details", refused.status_code == 409
+          and len(refused.json()["details"]) == 4)
+    from tests.test_channel_settings import CH2_INPUT, CH2_EQ, CH2_DYN
+    app.state.settings_cache.update({ch: {"input": CH2_INPUT, "eq": CH2_EQ, "dynamics": CH2_DYN} for ch in (1, 2, 3, 4)})
+    saved_epoch = app.state.client.session_epoch
+    app.state.client.session_epoch = time.monotonic() - 5
+    captured = client.post("/groups/drums/settings-snapshot")
+    app.state.client.session_epoch = saved_epoch
+    check("capture with current mixer data -> 200", captured.status_code == 200
+          and sorted(captured.json()["channels"]) == ["1", "2", "3", "4"])
+    shown = client.get("/groups/drums/settings-snapshot").json()
+    check("saved settings readable with names", shown["ok"] and shown["channels"]["2"]["compressor"]["on"] is True
+          and shown["channels"]["2"]["name"])
+
     print("== group CRUD ==")
     seeded = client.get("/groups").json()
     check("seeded groups present", {"drums", "vocals", "all"} <= set(seeded))

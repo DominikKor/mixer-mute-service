@@ -387,6 +387,33 @@ def _dump_sections(
     return out
 
 
+# Input channel object in the dump: 3 = input (gain, HPF), 4 = EQ,
+# 5 = dynamics (gate, compressor). Mapped live on 2026-11-09, see
+# app/channel_settings.py.
+_SETTINGS_FIELDS = {3: "input", 4: "eq", 5: "dynamics"}
+
+
+def dump_channel_settings(
+    msg: bytes, max_input: Optional[int] = None
+) -> Dict[int, Dict[str, bytes]]:
+    """Raw processing sections of every input channel in a full state dump:
+    {channel: {"input": bytes, "eq": bytes, "dynamics": bytes}}. Read-only
+    information; nothing here is ever sent back to the mixer."""
+    out: Dict[int, Dict[str, bytes]] = {}
+    for _, obj_fields in _dump_group_objects(msg, _DUMP_INPUT_GROUPS):
+        channel = (_object_id(obj_fields) or 0) + 1
+        if max_input is not None and channel > max_input:
+            continue
+        sections = {}
+        for field, wire, value in obj_fields:
+            name = _SETTINGS_FIELDS.get(field)
+            if name and wire == _BYTES and name not in sections:
+                sections[name] = value
+        if sections:
+            out[channel] = sections
+    return out
+
+
 def dump_bus_objects(msg: bytes) -> List[Tuple[int, str]]:
     """(object id, console name) of every bus in a full state dump that has a
     well-formed fader section naming the same id. Used to discover buses."""
@@ -427,9 +454,12 @@ class BusMap:
     its state from that same dump.
     """
 
-    def __init__(self, pairs: Iterable = (), on_dump=None) -> None:
+    def __init__(self, pairs: Iterable = (), on_dump=None, on_settings=None) -> None:
         self.ids: Dict[int, int] = _bus_map(pairs)
         self.on_dump = on_dump
+        # Optional: called with dump_channel_settings() of every full dump
+        # (channel processing: input/gain, EQ, dynamics; see channel_settings).
+        self.on_settings = on_settings
 
     def add(self, channel: int, object_id: int) -> None:
         self.ids[object_id] = channel
@@ -488,6 +518,11 @@ def _scan(
                     buses.on_dump(dump_bus_objects(msg))
                 except Exception:  # noqa: BLE001 - never let a callback kill the link
                     log.exception("bus discovery failed; dump parsed with known buses")
+            if buses.on_settings is not None:
+                try:
+                    buses.on_settings(dump_channel_settings(msg, max_input))
+                except Exception:  # noqa: BLE001 - settings are informational only
+                    log.exception("reading channel settings from the dump failed")
             parsed = _dump_sections(msg, buses.ids, max_input)
         else:
             parsed = []

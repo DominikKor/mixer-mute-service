@@ -250,6 +250,25 @@
     color: var(--text); background: var(--panel-bg); box-shadow: var(--panel-shadow), 0 20px 60px rgba(0,0,0,.7);
   }
   dialog.update-dialog::backdrop { background: rgba(0,0,0,.6); }
+  /* Channel settings snapshot of a mute group (read-only view) */
+  dialog.settings-dialog { width: min(1180px, calc(100vw - 32px)); }
+  .settings-hint { margin: 0; font-size: 12px; color: var(--muted); }
+  .settings-table { max-height: min(62vh, 760px); overflow: auto; border-radius: 6px; border: 1px solid #000; background: #101317; }
+  .settings-table table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .settings-table th {
+    position: sticky; top: 0; z-index: 1; padding: 8px 10px; text-align: left; background: #1b1f25;
+    font-size: 10px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; color: #8b93a1;
+  }
+  .settings-table td { padding: 8px 10px; vertical-align: top; border-top: 1px solid #23272f; color: var(--lcd-text); font-family: var(--mono); }
+  .settings-table td.ch { font-family: inherit; font-weight: 800; color: var(--text); white-space: nowrap; }
+  .settings-table .off { color: var(--lcd-dim); }
+  .settings-table .tag {
+    display: inline-block; margin-right: 6px; padding: 0 5px; border-radius: 3px; font: 800 9px/1.6 var(--mono);
+    color: #0b1a10; background: #3ee07f;
+  }
+  .settings-table .off .tag { color: #c9ced6; background: #3a3f47; }
+  .settings-table .line { white-space: nowrap; }
+  .settings-empty { padding: 18px; color: var(--lcd-dim); font: 600 12px/1.5 var(--mono); }
   .update-body { display: flex; flex-direction: column; gap: 12px; padding: 18px 20px; }
   .update-body h3 { margin: 0; font-size: 12px; font-weight: 800; letter-spacing: .18em; text-transform: uppercase; color: #d9dde3; }
   .update-lcd {
@@ -1261,6 +1280,20 @@
   </form>
 </dialog>
 
+<dialog id="settings-dialog" class="update-dialog settings-dialog" aria-labelledby="settings-title">
+  <div class="update-body">
+    <h3 id="settings-title">Kanal-Einstellungen</h3>
+    <div id="settings-lcd" class="update-lcd">—</div>
+    <p class="settings-hint">Gespeichert werden Gain, Hochpass, EQ, Gate und Kompressor der Kanäle dieser Gruppe,
+      so wie sie gerade am Pult eingestellt sind. Nur zum Nachsehen; am Pult wird nichts verändert.</p>
+    <div id="settings-table" class="settings-table"></div>
+    <div class="update-actions">
+      <button id="settings-close">Schließen</button>
+      <button id="settings-save" class="primary">Jetzt speichern</button>
+    </div>
+  </div>
+</dialog>
+
 <dialog id="update-dialog" class="update-dialog" aria-labelledby="update-title">
   <div class="update-body">
     <h3 id="update-title">Update</h3>
@@ -2116,6 +2149,94 @@ function renamePerson(personId, oldName, newName) {
   });
 }
 
+// ---- Channel settings snapshot of a mute group -------------------------------
+// Read-only: the service reads gain/HPF/EQ/gate/compressor from the mixer's
+// state dump and saves them per group; nothing is sent to the mixer.
+let SETTINGS_GROUP = null;
+
+function fmtSigned(v, unit) { return `${v > 0 ? "+" : v < 0 ? "−" : "±"}${Math.abs(v).toFixed(1)} ${unit}`; }
+function fmtHz(v) { return v >= 1000 ? `${(v / 1000).toFixed(v % 1000 ? 1 : 0)} kHz` : `${Math.round(v)} Hz`; }
+function fmtMs(v) { return v >= 1000 ? `${(v / 1000).toFixed(2)} s` : `${Math.round(v)} ms`; }
+function onOff(on) { return `<span class="tag">${on ? "AN" : "AUS"}</span>`; }
+
+function settingsRowHtml(channel, s) {
+  const eqLines = s.eq.bands.map(b =>
+    `<div class="line">${fmtHz(b.freq_hz)} ${fmtSigned(b.gain_db, "dB")} · Q ${b.q.toFixed(2)}</div>`).join("");
+  const g = s.gate, c = s.compressor;
+  return `<tr>
+    <td class="ch">${escapeHtml(s.name || "Kanal " + channel)}<div class="muted-text">CH ${escapeHtml(String(channel))}</div></td>
+    <td>${fmtSigned(s.gain_db, "dB")}</td>
+    <td class="${s.hpf.on ? "" : "off"}">${onOff(s.hpf.on)}${fmtHz(s.hpf.freq_hz)}</td>
+    <td class="${s.eq.on ? "" : "off"}">${onOff(s.eq.on)}${eqLines}</td>
+    <td class="${g.on ? "" : "off"}">${onOff(g.on)}<div class="line">Schwelle ${fmtSigned(g.threshold_db, "dB")}</div>
+      <div class="line">Range ${fmtSigned(g.range_db, "dB")}</div>
+      <div class="line">A ${fmtMs(g.attack_ms)} · H ${fmtMs(g.hold_ms)} · R ${fmtMs(g.release_ms)}</div></td>
+    <td class="${c.on ? "" : "off"}">${onOff(c.on)}<div class="line">Schwelle ${fmtSigned(c.threshold_db, "dB")} · ${c.ratio.toFixed(1)}:1</div>
+      <div class="line">A ${fmtMs(c.attack_ms)} · R ${fmtMs(c.release_ms)}</div>
+      <div class="line">Make-up ${fmtSigned(c.makeup_db, "dB")}</div></td>
+  </tr>`;
+}
+
+function renderSettingsSnapshot(data) {
+  const table = $("settings-table");
+  if (!data) {
+    $("settings-lcd").textContent = "Noch nicht gespeichert";
+    table.innerHTML = `<div class="settings-empty">Für diese Gruppe sind noch keine Einstellungen gespeichert. „Jetzt speichern“ übernimmt den aktuellen Stand vom Pult.</div>`;
+    $("settings-save").textContent = "Jetzt speichern";
+    return;
+  }
+  const when = data.captured_at ? new Date(data.captured_at) : null;
+  const skipped = (data.skipped || []).length ? ` · Busse nicht enthalten: ${data.skipped.join(", ")}` : "";
+  $("settings-lcd").textContent = when
+    ? `Gespeichert am ${when.toLocaleDateString("de-DE")} um ${when.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })}${skipped}`
+    : "Gespeichert";
+  const channels = Object.keys(data.channels).sort((a, b) => Number(a) - Number(b));
+  table.innerHTML = `<table><thead><tr><th>Kanal</th><th>Gain</th><th>Hochpass</th><th>EQ</th><th>Gate</th><th>Kompressor</th></tr></thead>
+    <tbody>${channels.map(ch => settingsRowHtml(ch, data.channels[ch])).join("")}</tbody></table>`;
+  $("settings-save").textContent = "Neu speichern";
+}
+
+async function openSettingsDialog(personId) {
+  const person = loadPersons().find(p => p.id === personId);
+  if (!person) return;
+  SETTINGS_GROUP = person.name;
+  $("settings-title").textContent = `Kanal-Einstellungen · ${person.name}`;
+  $("settings-lcd").textContent = "Wird geladen …";
+  $("settings-table").innerHTML = "";
+  $("settings-dialog").showModal();
+  const r = await api("GET", `/groups/${encodeURIComponent(person.name)}/settings-snapshot`);
+  if (SETTINGS_GROUP !== person.name) return;
+  if (r.ok && r.data.ok !== false) renderSettingsSnapshot(r.data);
+  else if (r.status === 404) renderSettingsSnapshot(null);
+  else $("settings-lcd").textContent = (r.data && r.data.reason) || "Dienst nicht erreichbar";
+}
+
+async function saveSettingsSnapshot() {
+  const group = SETTINGS_GROUP;
+  const button = $("settings-save");
+  if (!group || button.disabled) return;
+  if (button.textContent === "Neu speichern"
+      && !(await confirmDelete(button, "Gespeicherte Einstellungen durch den aktuellen Stand ersetzen?", "Ersetzen"))) return;
+  button.disabled = true;
+  try {
+    const r = await api("POST", `/groups/${encodeURIComponent(group)}/settings-snapshot`);
+    if (SETTINGS_GROUP !== group) return;
+    if (!r.ok || r.data.ok === false) {
+      const details = (r.data && r.data.details || []).map(d => `Kanal ${d.channel}: ${d.reason}`).join(", ");
+      toast(`Nicht gespeichert: ${(r.data && r.data.reason) || "HTTP " + r.status}${details ? " (" + details + ")" : ""}`, false);
+      return;
+    }
+    renderSettingsSnapshot(r.data);
+    toast(`Einstellungen von „${group}“ gespeichert`, true);
+  } finally {
+    button.disabled = false;
+  }
+}
+
+$("settings-close").addEventListener("click", () => $("settings-dialog").close());
+$("settings-save").addEventListener("click", saveSettingsSnapshot);
+$("settings-dialog").addEventListener("close", () => { SETTINGS_GROUP = null; });
+
 function openPersonCreateRow() {
   const row = $("person-create-row");
   const input = $("new-person-name");
@@ -2337,6 +2458,7 @@ function addPersonChannel(personId, ch) {
   renderPersons(true);
 }
 
+const ICON_SLIDERS = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M6 4v6M6 14v6M12 4v2M12 10v10M18 4v10M18 18v2"/><circle cx="6" cy="12" r="2"/><circle cx="12" cy="8" r="2"/><circle cx="18" cy="16" r="2"/></svg>`;
 const ICON_COPY = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/></svg>`;
 const ICON_CHECK = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg>`;
 const ICON_X = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg>`;
@@ -2439,6 +2561,7 @@ function buildPersonsHtml() {
           <button class="rename-btn" data-action="person-rename" data-pid="${escapeAttr(person.id)}" data-name="${escapeAttr(person.name)}" title="Umbenennen" aria-label="${escapeAttr(person.name)} umbenennen">&#9998;</button>
         </div>
         <div class="person-tools">
+          <button class="icon-btn" data-action="person-settings" data-pid="${escapeAttr(person.id)}" title="Kanal-Einstellungen (Gain, HPF, EQ, Gate, Kompressor)" aria-label="${escapeAttr(person.name)}: Kanal-Einstellungen">${ICON_SLIDERS}</button>
           <button class="icon-btn" data-action="person-duplicate" data-pid="${escapeAttr(person.id)}" title="Duplizieren" aria-label="${escapeAttr(person.name)} duplizieren">${ICON_COPY}</button>
           <button class="icon-btn danger" data-action="person-delete" data-pid="${escapeAttr(person.id)}" title="Löschen" aria-label="${escapeAttr(person.name)} löschen">${ICON_TRASH}</button>
         </div>
@@ -3954,6 +4077,7 @@ document.addEventListener("click", (e) => {
     case "person-use-all":     return useAllPersonFaders(btn.dataset.pid);
     case "person-toggle-collapse": return toggleGroupCollapsed(btn.dataset.pid);
     case "person-duplicate":   return duplicatePerson(btn.dataset.pid);
+    case "person-settings":    return openSettingsDialog(btn.dataset.pid);
     case "person-rename":      return startRenamePerson(btn.dataset.pid, btn.dataset.name || "");
     case "person-delete": {
       const person = loadPersons().find(p => p.id === btn.dataset.pid);

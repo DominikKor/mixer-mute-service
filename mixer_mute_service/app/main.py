@@ -20,6 +20,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .agent_download import router as agent_download_router
 from .buses import BusRegistry
+from .channel_settings import ChannelSettingsCache, ChannelSettingsStore
 from .camera_streams import CameraStreamStore, MediaMTXRelay
 from .channel_colors import router as channel_colors_router
 from .channel_preferences import ChannelPreferences
@@ -86,6 +87,10 @@ async def lifespan(app: FastAPI):
     # Buses come from config plus those discovered from earlier dumps; new ones
     # are added from every dump (see app/buses.py).
     buses = BusRegistry(cfg, data_dir / "buses.json")
+    # Gain/EQ/dynamics of every input, refreshed from each state dump.
+    settings_cache = ChannelSettingsCache()
+    buses.bus_map.on_settings = settings_cache.update
+    channel_settings = ChannelSettingsStore(data_dir / "channel_settings.json")
     if cfg.mixer.mode == "proxy":
         client = ProxyServer(cfg, store, buses.bus_map)
     else:
@@ -114,6 +119,8 @@ async def lifespan(app: FastAPI):
     app.state.camera_streams = camera_streams
     app.state.camera_relay = camera_relay
     app.state.controller = controller
+    app.state.settings_cache = settings_cache
+    app.state.channel_settings = channel_settings
     app.state.build_id = _build_id()
 
     client.start()

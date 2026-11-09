@@ -24,6 +24,7 @@ from .desktop_profiles import ProfileEditError, add_profile, delete_profile, upd
 from .groups import GroupError
 from .native_controls import VISCA_CAMERAS, NativeControlError
 from .program_items import ProgramItemError
+from .channel_settings import SettingsError
 from .file_actions import is_file_action, run_file_action
 from .songs import show_slide
 from .models import (
@@ -866,6 +867,7 @@ async def _delete_group(group: str, request: Request):
         await request.app.state.groups.delete(group)
     except GroupError as exc:
         return JSONResponse({"ok": False, "group": group, "reason": str(exc)}, 404)
+    await request.app.state.channel_settings.delete_group(group)
     return {"ok": True, "group": group, "deleted": True}
 
 
@@ -879,6 +881,44 @@ async def delete_group(group: str, request: Request):
     return await _delete_group(group, request)
 
 
+@router.get("/groups/{group}/settings-snapshot")
+async def group_settings_snapshot(group: str, request: Request):
+    """The saved gain/HPF/EQ/gate/compressor settings of a group's channels."""
+    snapshot = await request.app.state.channel_settings.get(group)
+    if snapshot is None:
+        return JSONResponse({"ok": False, "group": group, "reason": "no settings saved"}, 404)
+    _label_channels(request, snapshot)
+    return {"ok": True, **snapshot}
+
+
+@router.post("/groups/{group}/settings-snapshot")
+async def capture_group_settings(group: str, request: Request):
+    """Save the current processing settings of a group's input channels.
+    Read from the mixer's state dump; nothing is sent to the mixer."""
+    state = request.app.state
+    channels = await state.groups.get(group)
+    if channels is None:
+        return JSONResponse({"ok": False, "group": group, "reason": "unknown group"}, 404)
+    try:
+        snapshot = await state.channel_settings.capture(
+            group, channels, state.settings_cache,
+            state.client.session_epoch, state.cfg.mixer.max_channels,
+        )
+    except SettingsError as exc:
+        return JSONResponse(
+            {"ok": False, "group": group, "reason": str(exc), "details": exc.details}, 409
+        )
+    log.info("Saved channel settings of group %r (%d channels)", group, len(snapshot["channels"]))
+    _label_channels(request, snapshot)
+    return {"ok": True, **snapshot}
+
+
+def _label_channels(request: Request, snapshot: dict) -> None:
+    cfg = request.app.state.cfg
+    for channel, settings in snapshot["channels"].items():
+        settings["name"] = cfg.channel_label(int(channel))
+
+
 @router.post("/groups/{group}/rename")
 async def rename_group(group: str, body: GroupRename, request: Request):
     """Rename a group and every reference to it (Programm rows, Steuerung keys,
@@ -890,6 +930,7 @@ async def rename_group(group: str, body: GroupRename, request: Request):
         status = 404 if str(exc).startswith("unknown group") else 400
         return JSONResponse({"ok": False, "group": group, "reason": str(exc)}, status)
     new_name = body.name.strip()
+    await state.channel_settings.rename_group(group, new_name)
     program_rows = await state.program_items.rename_group(group, new_name)
     keys = await state.companion_button_store.rename_group(group, new_name)
     log.info("Group %r renamed to %r (%d program rows, %d keys)", group, new_name, program_rows, keys)

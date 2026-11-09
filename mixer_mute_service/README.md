@@ -67,6 +67,11 @@ in and out; the choice is remembered per device.
   per-channel fader presets (**Use** / **Use All**). **Mutegruppe aus Status**
   creates a group from the channels currently unmuted, with their observed
   fader values as presets.
+- **Kanal-Einstellungen** (slider key on each mute group): saves gain, high-pass,
+  EQ, gate and compressor of the group's input channels as they are set on the
+  console right now, and shows them per channel. Read-only: the values come
+  from the mixer's state dump and nothing is sent back (buses are not
+  included). Stored in `channel_settings.json`, raw as the console sent them.
 - **Programm**: a cue list with planned time, title, person, mute group
   (optional: a row without one changes no mutes) and up to three actions for
   playback, translation and lyrics. Play activates the group first, then runs
@@ -161,6 +166,8 @@ linked light/camera/OBS keys in order.
 | GET  | `/groups/{group}` | one group's channels |
 | POST | `/groups/{group}/update` | replace a group's channels `{channels}` |
 | POST | `/groups/{group}/delete` | delete a group |
+| GET  | `/groups/{group}/settings-snapshot` | saved gain/HPF/EQ/gate/compressor of the group's channels |
+| POST | `/groups/{group}/settings-snapshot` | save them now, read from the mixer's state dump (nothing is sent) |
 | POST | `/groups/{group}/rename` | rename `{name}`; Programm rows, Steuerung keys and Overall macros follow |
 | PUT  | `/groups/{group}` | legacy alias for group update |
 | DELETE | `/groups/{group}` | legacy alias for group deletion |
