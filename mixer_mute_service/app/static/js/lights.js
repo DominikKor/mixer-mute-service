@@ -12,6 +12,12 @@ const LIGHTS = {
 const LIGHT_SEND_MS = 120;  // while dragging, at most one send per this time
 const LIGHT_POLL_MS = 3000;
 
+// Fades run while the request is open (up to 10 s), the Shellys may take
+// 2.5 s each: a light request waits longer than api()'s default.
+function lightTimeout() {
+  return ((LIGHTS.data && LIGHTS.data.stage.fade_ms) || 1000) + 15000;
+}
+
 function lightPercent(value) { return `${Math.round((value || 0) * 100 / 255)} %`; }
 
 function lightStatus(message) {
@@ -105,9 +111,9 @@ async function sendLightSlider(range, fade) {
   const value = Number(range.value);
   let result;
   if (kind === "zone") {
-    result = await api("POST", "/lights/stage", { zones: { [range.dataset.lightSlider]: value }, fade });
+    result = await api("POST", "/lights/stage", { zones: { [range.dataset.lightSlider]: value }, fade }, { timeout: lightTimeout() });
   } else if (kind === "warm" || kind === "cold") {
-    result = await api("POST", "/lights/stage", { [kind]: value, fade });
+    result = await api("POST", "/lights/stage", { [kind]: value, fade }, { timeout: lightTimeout() });
   } else {
     result = await api("PUT", "/lights/settings", { [kind]: value });
   }
@@ -234,7 +240,7 @@ async function saveLightScene(replace = false) {
   const button = $("light-scene-save");
   button.disabled = true;
   try {
-    const result = await api("POST", "/lights/scenes", { name, replace });
+    const result = await api("POST", "/lights/scenes", { name, replace }, { timeout: lightTimeout() });
     if (result.status === 409 && !replace) {
       if (await confirmDelete(button, `Es gibt schon eine Szene „${name}“. Mit dem aktuellen Licht ersetzen?`, "Ersetzen")) {
         button.disabled = false;
@@ -262,7 +268,7 @@ async function lightRequest(button, method, path, body) {
   LIGHTS.busy.add(button);
   button.classList.add("busy");
   try {
-    const result = await api(method, path, body);
+    const result = await api(method, path, body, { timeout: lightTimeout() });
     if (!result.ok || result.data.ok === false) {
       const errors = result.data.errors ? ` (${Object.keys(result.data.errors).length} ohne Antwort)` : "";
       toast(`Licht: ${result.data.reason || "HTTP " + result.status}${errors}`, false);
@@ -276,7 +282,7 @@ async function lightRequest(button, method, path, body) {
 }
 
 async function loadLights() {
-  const result = await api("GET", "/lights");
+  const result = await api("GET", "/lights", undefined, { timeout: lightTimeout() });
   if (!result.ok || result.data.ok === false) {
     lightStatus(result.status === 503 ? "Lichtsteuerung ist auf diesem Dienst nicht verfügbar." : `Licht nicht erreichbar: ${result.data.reason || "HTTP " + result.status}`);
     return;
