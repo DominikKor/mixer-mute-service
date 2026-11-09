@@ -476,6 +476,21 @@ Beispiel fuer eine Systemvariable auf dem Ziel-PC:
 Die Wiedergabesteuerung verwendet `POST /desktop/{profile_id}/audio/play` und
 `POST /desktop/{profile_id}/audio/stop`.
 
+**YouTube statt Datei**: Im Audio-Profil darf statt eines Pfades ein YouTube-Link
+stehen (`youtube.com/watch?v=…`, `youtu.be/…`, `music.youtube.com`, Shorts,
+Live). Der Link wird beim Eintippen erkannt, das Profil wird dabei automatisch
+zu *Audio*. Der Agent spielt nur den Ton ohne Fenster (mpv holt ihn mit
+yt-dlp), nur das eine Video (keine Playlist); Ein-/Ausblenden und Stop wie bei
+einer Datei, das Einblenden beginnt erst, wenn der Ton wirklich läuft (Laden
+dauert ein paar Sekunden). Andere Web-Adressen nimmt der Agent nicht an.
+Dafür braucht der Ziel-PC zusätzlich **yt-dlp**: einmalig
+`winget install yt-dlp.yt-dlp` (oder `yt-dlp.exe` neben `mpv.exe` legen,
+oder die Variable `YTDLP_PATH`). Fehlt es, meldet „Play“
+„yt-dlp was not found on this PC“. YouTube ändert sein Format öfter; spielt
+ein Link nicht mehr, hilft meist `yt-dlp -U` (bzw. `winget upgrade yt-dlp.yt-dlp`).
+Der Agent auf dem Ziel-PC braucht die neue Version („Display Service
+herunterladen“ bzw. Update-Knopf).
+
 **Ein-/Ausfaden:** Im Profil-Editor eines Audio-Profils schaltet
 **Ein-/Ausfaden** sanftes Ein- und Ausblenden ein. Play startet dann stumm und
 blendet ueber die eingestellte Dauer (Standard 5 s) **von 0 auf 100 %** ein;

@@ -227,6 +227,7 @@ $("pf-title").addEventListener("input", () => {
 $("pf-id").addEventListener("input", () => { PROFILE_FORM.idTouched = true; });
 $("pf-fullscreen").addEventListener("change", syncProfileForm);
 $("pf-fade").addEventListener("change", syncProfileForm);
+$("pf-path").addEventListener("input", syncProfilePath);
 $("profile-form").addEventListener("click", (event) => {
   const kind = event.target.closest("[data-kind]");
   const monitor = event.target.closest("[data-monitor]");

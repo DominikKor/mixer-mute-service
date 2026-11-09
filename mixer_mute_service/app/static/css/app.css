@@ -1418,3 +1418,6 @@ button.light-circuit[data-state="unknown"] .light-lamp { background: none; borde
 .camera-controls.renaming button.camera-preset { outline: 1px dashed #8fb3bd; outline-offset: -4px; }
 .camera-preset-slot { display: grid; min-width: 0; }
 .camera-preset-slot .inline-rename { width: 100%; min-height: 44px; }
+/* Desktop profile: a recognised YouTube link */
+#pf-path-hint.youtube { color: #7ff0a8; font-weight: 700; }
+#pf-path-hint.youtube::before { content: "\25B6  "; }
