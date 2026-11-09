@@ -1551,7 +1551,10 @@ const UI_BUILD_ID = "__BUILD_ID__";
 let PERSONS_BOOTSTRAPPED = false;
 
 function resolvedBuildId() {
-  return UI_BUILD_ID && UI_BUILD_ID !== "__BUILD_ID__" ? UI_BUILD_ID : "dev";
+  // The release build replaces the placeholder everywhere in this file, so a
+  // comparison with the placeholder text would always match: check the
+  // release format (yyyyMMdd-HHmmss-<commit>) instead.
+  return /^\d{8}-\d{6}-\w+$/.test(UI_BUILD_ID) ? UI_BUILD_ID : "dev";
 }
 
 // Which version runs: a release carries "yyyyMMdd-HHmmss-<commit>" (written
@@ -5746,9 +5749,11 @@ new ResizeObserver(() => { if (SONG_LIVE.song && SONG_SETTINGS) renderSongLive()
 
 // ---- Presenter keys (whenever the page is open) ----------------------------
 // Clickers send Page Down / Page Up, many also "b" or "." for a black screen.
-//   next (Page Down, →, space): next slide of the song on screen; once the
-//        song is done (dark after its last slide) or none is shown, the next
-//        program row, like the big Weiter key
+//   Page Down: next slide of the song on screen; once the song is done (dark
+//        after its last slide) or none is shown, the next program row, like
+//        the big Weiter key
+//   →, space: next slide only -- never a program row (a stray key on a
+//        keyboard must not switch mute groups live)
 //   back (Page Up, ←): previous slide (the program never goes back)
 //   b or .: black screen and back on;  h: Beamer hide / unhide
 // Not while typing in a field or with a dialog open.
@@ -5792,7 +5797,8 @@ document.addEventListener("keydown", event => {
   // Space on a focused key would also press that key.
   if (event.key === " " && t.closest && t.closest("button")) return;
   const key = event.key.length === 1 ? event.key.toLowerCase() : event.key;
-  if (["PageDown", "ArrowRight", " "].includes(key)) { event.preventDefault(); presenterNext(); }
+  if (key === "PageDown") { event.preventDefault(); presenterNext(); }
+  else if (["ArrowRight", " "].includes(key)) { if (SONG_LIVE.song) { event.preventDefault(); songNext(); } }
   else if (["PageUp", "ArrowLeft"].includes(key)) { if (SONG_LIVE.song) { event.preventDefault(); songPrev(); } }
   else if (key === "b" || key === ".") { event.preventDefault(); songBlankToggle(); }
   else if (key === "h") { event.preventDefault(); presenterBeamerToggle(); }

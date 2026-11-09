@@ -446,7 +446,8 @@ einem Feld oder bei offenem Dialog):
 
 | Taste | Wirkung |
 |---|---|
-| Bild ab, →, Leertaste | nächste Folie des Lieds; ist das Lied durch (schwarz nach der letzten Folie) oder läuft keins: nächster Programmpunkt |
+| Bild ab | nächste Folie des Lieds; ist das Lied durch (schwarz nach der letzten Folie) oder läuft keins: nächster Programmpunkt |
+| →, Leertaste | nur nächste Liedfolie, nie ein Programmpunkt (eine versehentlich gedrückte Taste schaltet so keine Mutegruppe) |
 | Bild auf, ← | vorige Folie (im Programm geht es nie zurück) |
 | B oder . | Bildschirm schwarz / wieder an (ohne Lied: Anzeige-PC schwarz / aus) |
 | H | Beamer hide / unhide (wie die Tasten „Beamer hide/unhide“; der Ist-Zustand muss einmal gesetzt sein) |
