@@ -2,6 +2,13 @@
 // Classic script: all files share one global scope and load in the order
 // of index.html; main.js runs last and starts everything.
 
+loadCompanionButtons();
+// Desktop keys name their PC once the list is in.
+loadTargetPcs().then(() => { DESKTOP_PROFILES_SIGNATURE = ""; });
+initSections();
+initStage();
+initCompanionEditing();
+applyBuildMigrations();
 loadProgramItems();
 poll(refreshProgramState, 5000);
 loadSongs().then(() => poll(refreshSongLive, 1500));

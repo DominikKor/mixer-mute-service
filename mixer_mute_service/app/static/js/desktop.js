@@ -93,13 +93,96 @@ function profileFormError(msg, field) {
   if (msg) box.scrollIntoView({ block: "nearest" });
 }
 
+// ---- Target PCs (Streaming PC, Anzeige PC) --------------------------------
+// Fields that send to another PC offer these two instead of an IP field; their
+// names and addresses live in the "Ziel-PCs" window. Settings still store the
+// IP, so an address that matches neither PC stays selectable ("Andere IP").
+
+let TARGET_PCS = [
+  { id: "streaming", name: "Streaming PC", ip: "192.168.188.20" },
+  { id: "display", name: "Anzeige PC", ip: "192.168.188.11" },
+];
+
+async function loadTargetPcs() {
+  const result = await api("GET", "/target-pcs");
+  if (result.ok && Array.isArray(result.data.pcs)) TARGET_PCS = result.data.pcs;
+}
+
+function targetPcName(ip) {
+  const pc = TARGET_PCS.find(item => item.ip === ip);
+  return pc ? pc.name : null;
+}
+
+function targetPcLabel(ip) {
+  const name = targetPcName(ip);
+  return name ? `${name} (${ip})` : ip;
+}
+
+// Fill a PC <select>; keeps an address that is neither of the two PCs.
+function fillTargetPcSelect(select, ip) {
+  const options = TARGET_PCS.map(pc => ({ value: pc.ip, label: `${pc.name} (${pc.ip})` }));
+  if (ip && !TARGET_PCS.some(pc => pc.ip === ip)) options.push({ value: ip, label: `Andere IP (${ip})` });
+  select.replaceChildren(...options.map(option => {
+    const element = document.createElement("option");
+    element.value = option.value;
+    element.textContent = option.label;
+    return element;
+  }));
+  select.value = ip && options.some(option => option.value === ip) ? ip : options[options.length > 1 ? 1 : 0].value;
+}
+
+function targetPcsError(message, field) {
+  document.querySelectorAll("#target-pcs-form .invalid").forEach(el => el.classList.remove("invalid"));
+  $("tp-error").hidden = !message;
+  $("tp-error").textContent = message || "";
+  if (field) { field.classList.add("invalid"); field.focus(); }
+}
+
+async function openTargetPcsDialog() {
+  await loadTargetPcs();
+  for (const pc of TARGET_PCS) {
+    $(`tp-${pc.id}-name`).value = pc.name;
+    $(`tp-${pc.id}-ip`).value = pc.ip;
+  }
+  targetPcsError(null);
+  $("tp-save").disabled = false;
+  $("target-pcs-dialog").showModal();
+}
+
+async function saveTargetPcs(event) {
+  event.preventDefault();
+  const pcs = TARGET_PCS.map(pc => ({ id: pc.id, name: $(`tp-${pc.id}-name`).value.trim(), ip: $(`tp-${pc.id}-ip`).value.trim() }));
+  for (const pc of pcs) {
+    if (!pc.name) return targetPcsError("Bitte einen Namen eingeben.", $(`tp-${pc.id}-name`));
+    if (!IPV4_RE.test(pc.ip)) return targetPcsError(`IP-Adresse ungültig, z. B. ${pc.id === "display" ? "192.168.188.11" : "192.168.188.20"}`, $(`tp-${pc.id}-ip`));
+  }
+  if (pcs[0].ip === pcs[1].ip) return targetPcsError("Die beiden PCs brauchen verschiedene IP-Adressen.", $("tp-display-ip"));
+  // Selections still open in other dialogs follow a changed address.
+  const moves = Object.fromEntries(TARGET_PCS.map(old => [old.ip, pcs.find(pc => pc.id === old.id).ip]).filter(([a, b]) => a !== b));
+  $("tp-save").disabled = true;
+  const result = await api("PUT", "/target-pcs", { pcs });
+  $("tp-save").disabled = false;
+  if (!result.ok || result.data.ok === false) return targetPcsError(result.data.reason || `HTTP ${result.status}`);
+  TARGET_PCS = result.data.pcs;
+  for (const select of [$("pf-ip"), $("sg-ip")]) {
+    if (select.options.length) fillTargetPcSelect(select, moves[select.value] || select.value);
+  }
+  $("target-pcs-dialog").close();
+  const moved = result.data.moved || {};
+  const problems = moved.problems || [];
+  if (problems.length) toast(`Ziel-PCs gespeichert, aber nicht umgestellt: ${problems.join("; ")}`, false);
+  else toast("Ziel-PCs gespeichert", true);
+  DESKTOP_PROFILES_SIGNATURE = "";
+  await Promise.all([refresh(), loadSongs()]);
+}
+
 function openProfileDialog(profileId) {
   const existing = profileId ? DESKTOP_PROFILES.find(p => p.id === profileId) : null;
   if (profileId && !existing) return toast("Profil nicht gefunden", false);
   const p = existing || {
     title: "", kind: "image", path: "", args: [], fullscreen: true, monitor: 1, position: "top-left",
     fade: false, fade_seconds: 5,
-    target_ip: (DESKTOP_PROFILES[DESKTOP_PROFILES.length - 1] || {}).target_ip || "",
+    target_ip: (TARGET_PCS.find(pc => pc.id === "display") || TARGET_PCS[0]).ip,
   };
   Object.assign(PROFILE_FORM, {
     mode: existing ? "edit" : "create", id: existing ? existing.id : null, idTouched: false,
@@ -112,12 +195,10 @@ function openProfileDialog(profileId) {
   $("pf-id").title = existing ? "Die ID eines bestehenden Profils bleibt gleich" : "Wird aus dem Namen erzeugt";
   $("pf-path").value = p.path || "";
   $("pf-args").value = (p.args || []).join("\n");
-  $("pf-ip").value = p.target_ip || "";
+  fillTargetPcSelect($("pf-ip"), p.target_ip);
   $("pf-fullscreen").checked = !!p.fullscreen;
   $("pf-fade").checked = !!p.fade;
   $("pf-fade-seconds").value = p.fade_seconds ?? 5;
-  const ips = [...new Set(DESKTOP_PROFILES.map(x => x.target_ip))];
-  $("pf-ip-list").innerHTML = ips.map(ip => `<option value="${escapeAttr(ip)}"></option>`).join("");
   profileFormError(null);
   $("pf-save").disabled = false;
   syncProfileForm();
@@ -137,7 +218,7 @@ function readProfileForm() {
   if (!PROFILE_ID_RE.test(id)) return profileFormError("ID: nur Buchstaben, Ziffern, - und _ (max. 64).", $("pf-id"));
   if (!WIN_ABS_PATH_RE.test(path)) return profileFormError("Pfad: vollständiger Windows-Pfad, z. B. " + KIND_INFO[kind].placeholder, $("pf-path"));
   if (kind === "program" && !/\.exe$/i.test(path)) return profileFormError("Ein Programm muss auf eine .exe zeigen.", $("pf-path"));
-  if (!IPV4_RE.test(ip)) return profileFormError("IP-Adresse ungültig, z. B. 192.168.188.11", $("pf-ip"));
+  if (!IPV4_RE.test(ip)) return profileFormError("Bitte einen Ziel-PC wählen.", $("pf-ip"));
   // Only audio fades; other kinds keep the defaults (and config.yaml stays short).
   const fade = kind === "audio" && $("pf-fade").checked;
   let fadeSeconds = 5;

@@ -65,10 +65,10 @@ function setSongMonitor(n) {
 }
 
 async function openSongDialog() {
-  await loadSongs();
+  await Promise.all([loadSongs(), loadTargetPcs()]);
   const s = SONG_SETTINGS || {};
   $("sg-path").value = s.library_path || "";
-  $("sg-ip").value = s.target_ip || "";
+  fillTargetPcSelect($("sg-ip"), s.target_ip);
   $("sg-font").value = s.font || "Verdana";
   $("sg-size").value = s.font_size || 72;
   $("sg-text-color").value = s.text_color || "#ffffff";

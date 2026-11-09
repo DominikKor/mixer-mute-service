@@ -208,6 +208,12 @@ document.addEventListener("pointerdown", (event) => {
 window.addEventListener("scroll", () => closeTileMenu(), { passive: true });
 window.addEventListener("resize", () => closeTileMenu());
 $("new-profile-btn").addEventListener("click", () => openProfileDialog(null));
+$("target-pcs-btn").addEventListener("click", openTargetPcsDialog);
+document.addEventListener("click", event => {
+  if (event.target.closest("[data-open-target-pcs]")) openTargetPcsDialog();
+});
+$("target-pcs-form").addEventListener("submit", saveTargetPcs);
+$("tp-cancel").addEventListener("click", () => $("target-pcs-dialog").close());
 $("profile-form").addEventListener("submit", saveProfile);
 $("pf-cancel").addEventListener("click", () => $("profile-dialog").close());
 $("pf-title").addEventListener("input", () => {

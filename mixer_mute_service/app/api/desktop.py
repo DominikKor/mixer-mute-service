@@ -16,6 +16,7 @@ from ..config import DesktopProfileConfig, default_config_path
 from ..desktop_profiles import ProfileEditError, add_profile, delete_profile, update_profile
 from ..models import StagePreferenceRequest
 from ..responses import fail, reply
+from ..target_pcs import TargetPcError
 
 router = APIRouter()
 log = logging.getLogger("mixer.api.desktop")
@@ -126,6 +127,68 @@ async def control_desktop_audio(profile_id: str, action: str, request: Request):
 # Safari wipes script-written storage of a site unused for 7 days (a weekly
 # service). A cookie set by the server is not subject to that, so it is kept
 # here as well, for 10 years; the page reads it back on load.
+@router.get("/target-pcs")
+async def target_pcs(request: Request):
+    store = request.app.state.target_pcs
+    if store is None:
+        return fail("target PCs are unavailable", 503)
+    return {"ok": True, "pcs": await store.get()}
+
+
+@router.put("/target-pcs")
+async def update_target_pcs(request: Request, body: dict = Body(...)):
+    """Save the names and addresses of the Streaming PC and the Anzeige PC.
+    A changed address is carried over to everything that used the old one, so
+    keys, songs and program rows keep their PC."""
+    store = request.app.state.target_pcs
+    if store is None:
+        return fail("target PCs are unavailable", 503)
+    pcs = body.get("pcs") if isinstance(body, dict) else None
+    if isinstance(pcs, list) and any(
+            isinstance(pc, dict) and not display_agent.allowed_target(str(pc.get("ip", "")).strip()) for pc in pcs):
+        return fail("ip: must be a LAN address", 400)
+    try:
+        moves = await store.set(pcs)
+    except TargetPcError as exc:
+        return fail(str(exc), 400)
+    moved = await _move_targets(request, moves) if moves else {"problems": []}
+    if moves:
+        log.info("Target PCs moved %s: %s", moves, moved)
+    return {"ok": True, "pcs": await store.get(), "moved": moved}
+
+
+async def _move_targets(request: Request, moves: dict) -> dict:
+    """Point everything that names a moved PC by its old address at the new one
+    (all at once, so swapping the two addresses works)."""
+    state = request.app.state
+    result = {"profiles": 0, "songs": False, "power": False, "program_rows": 0, "template_rows": 0, "problems": []}
+    path = default_config_path()
+    async with _profile_lock:
+        for profile_id, profile in list(state.cfg.desktop_display.profiles.items()):
+            if profile.target_ip not in moves:
+                continue
+            moved = profile.model_copy(update={"target_ip": moves[profile.target_ip]})
+            try:
+                cfg = await asyncio.to_thread(update_profile, path, profile_id, moved)
+            except (ProfileEditError, OSError) as exc:
+                result["problems"].append(f"{profile.title}: {exc}")
+                continue
+            state.cfg.desktop_display.profiles = cfg.desktop_display.profiles
+            result["profiles"] += 1
+    songs = state.songs
+    if songs is not None and songs.settings.target_ip in moves:
+        async with songs.lock:
+            songs.save_settings(songs.settings.model_copy(update={"target_ip": moves[songs.settings.target_ip]}))
+        result["songs"] = True
+    if state.power_control is not None:
+        result["power"] = await state.power_control.retarget(moves)
+    if state.program_items is not None:
+        result["program_rows"] = await state.program_items.retarget_files(moves)
+    if state.program_templates is not None:
+        result["template_rows"] = await state.program_templates.retarget_files(moves)
+    return result
+
+
 STAGE_COOKIE = "mixer_stage"
 STAGE_COOKIE_MAX_AGE = 10 * 365 * 24 * 3600
 

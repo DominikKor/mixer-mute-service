@@ -399,9 +399,3 @@ function stageFlip(firsts) {
     if (!STAGE.anims.some(a => a.playState === "running")) document.body.classList.remove("stage-anim");
   });
 }
-
-loadCompanionButtons();
-initSections();
-initStage();
-initCompanionEditing();
-applyBuildMigrations();

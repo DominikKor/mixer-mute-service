@@ -30,6 +30,9 @@
 <section class="panel" data-section="desktop">
   <div class="panel-head">
     <button class="section-toggle" aria-expanded="true" aria-controls="desktop-body">Desktop</button>
+    <div class="panel-tools">
+      <button id="target-pcs-btn" class="add-key" type="button" title="Namen und IP-Adressen von Streaming PC und Anzeige PC"><svg class="plus-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="1.5"/><path d="M9 20h6M12 16v4"/></svg>Ziel-PCs</button>
+    </div>
   </div>
   <div id="desktop-body" class="panel-body">
     <div id="desktop-profiles" class="desktop-launch-actions">
@@ -343,12 +346,13 @@
     <div class="pf-hint">Gilt für alle Lieder. Die Bibliothek bleibt im FoilPresenter-Ordner auf dem Anzeige-PC.</div>
     <label class="pf-field"><span>Bibliothek auf dem Anzeige-PC</span>
       <input id="sg-path" class="pf-input mono" type="text" autocomplete="off" spellcheck="false" placeholder="C:\Users\…\foilpresenter Bibliothek" /></label>
-    <div class="pf-grid">
-      <label class="pf-field"><span>Anzeige-PC (IP-Adresse)</span>
-        <input id="sg-ip" class="pf-input mono" type="text" inputmode="decimal" autocomplete="off" placeholder="192.168.188.11" /></label>
-      <div class="pf-field"><span class="pf-label" id="sg-monitor-label">Monitor</span>
-        <div id="sg-monitor" class="monitor-picker" role="radiogroup" aria-labelledby="sg-monitor-label"></div></div>
-    </div>
+    <div class="pf-field"><label for="sg-ip">Anzeige auf</label>
+      <div class="pc-select-row">
+        <select id="sg-ip" class="pf-input"></select>
+        <button type="button" class="pc-edit-btn" data-open-target-pcs title="Namen und IP-Adressen der PCs ändern">PCs…</button>
+      </div></div>
+    <div class="pf-field"><span class="pf-label" id="sg-monitor-label">Monitor</span>
+      <div id="sg-monitor" class="monitor-picker" role="radiogroup" aria-labelledby="sg-monitor-label"></div></div>
     <div class="pf-grid">
       <label class="pf-field"><span>Schrift</span>
         <input id="sg-font" class="pf-input" type="text" maxlength="60" autocomplete="off" /></label>
@@ -388,6 +392,32 @@
   </form>
 </dialog>
 
+<dialog id="target-pcs-dialog" class="update-dialog companion-create-dialog" aria-labelledby="target-pcs-title">
+  <form id="target-pcs-form" class="update-body" novalidate>
+    <h3 id="target-pcs-title">Ziel-PCs</h3>
+    <div class="pf-hint">Desktop-Tasten, Liedanzeige und Datei-Aktionen wählen einen dieser beiden PCs. Eine geänderte IP gilt sofort für alles, was den PC benutzt.</div>
+    <div class="pc-config-head">Streaming PC</div>
+    <div class="pc-config-row">
+      <label class="pf-field"><span>Name</span>
+        <input id="tp-streaming-name" class="pf-input" type="text" maxlength="40" autocomplete="off" /></label>
+      <label class="pf-field"><span>IP-Adresse</span>
+        <input id="tp-streaming-ip" class="pf-input mono" type="text" inputmode="decimal" autocomplete="off" placeholder="192.168.188.20" /></label>
+    </div>
+    <div class="pc-config-head">Anzeige PC</div>
+    <div class="pc-config-row">
+      <label class="pf-field"><span>Name</span>
+        <input id="tp-display-name" class="pf-input" type="text" maxlength="40" autocomplete="off" /></label>
+      <label class="pf-field"><span>IP-Adresse</span>
+        <input id="tp-display-ip" class="pf-input mono" type="text" inputmode="decimal" autocomplete="off" placeholder="192.168.188.11" /></label>
+    </div>
+    <div id="tp-error" class="update-lcd err" hidden></div>
+    <div class="update-actions">
+      <button type="button" id="tp-cancel">Abbrechen</button>
+      <button type="submit" id="tp-save" class="primary">Speichern</button>
+    </div>
+  </form>
+</dialog>
+
 <dialog id="profile-dialog" class="update-dialog profile-dialog" aria-labelledby="profile-title">
   <form id="profile-form" class="update-body" novalidate>
     <h3 id="profile-title">Neues Profil</h3>
@@ -423,9 +453,11 @@
     <div id="pf-path-hint" class="pf-hint"></div>
     <label id="pf-args-wrap" class="pf-field"><span>Argumente – eins pro Zeile (optional)</span>
       <textarea id="pf-args" class="pf-input mono" rows="3" spellcheck="false" placeholder="z. B. --startstreaming"></textarea></label>
-    <label class="pf-field"><span>Ziel-PC (IP-Adresse)</span>
-      <input id="pf-ip" class="pf-input mono" type="text" inputmode="decimal" list="pf-ip-list" autocomplete="off" placeholder="192.168.188.11" />
-      <datalist id="pf-ip-list"></datalist></label>
+    <div class="pf-field"><label for="pf-ip">Ziel-PC</label>
+      <div class="pc-select-row">
+        <select id="pf-ip" class="pf-input"></select>
+        <button type="button" class="pc-edit-btn" data-open-target-pcs title="Namen und IP-Adressen der PCs ändern">PCs…</button>
+      </div></div>
     <div id="pf-fade-row" class="pf-fade-row" hidden>
       <div class="pf-field">
         <span class="pf-label">Ein-/Ausfaden</span>

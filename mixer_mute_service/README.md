@@ -391,6 +391,21 @@ werden auf dem jeweiligen Ziel-PC ausgefuehrt. Der Windows-Agent muss dort als
 angemeldeter Benutzer laufen, weil der Mixer-Webdienst als Windows-Dienst keine
 Fenster auf dem Desktop anzeigen kann.
 
+### Ziel-PCs
+
+In der Weboberfläche wird keine IP-Adresse eingetippt: Profile, Liedanzeige und
+Datei-Aktionen im Programm wählen **Streaming PC** oder **Anzeige PC** (mit der
+IP in Klammern). Namen und Adressen der beiden stehen im Fenster **Ziel-PCs**
+(Taste im Kopf der Desktop-Sektion oder „PCs…“ neben jeder Auswahl), gespeichert
+in `target_pcs.json` neben `config.yaml` (Start: Streaming PC `192.168.188.20`,
+Anzeige PC `192.168.188.11`). Wird dort eine Adresse geändert, stellt der Dienst
+alles um, was die alte Adresse benutzt: Profile in `config.yaml` (nur die
+`target_ip`-Zeile), Liedanzeige, Auswahl für „Alles ausschalten“ sowie
+Datei-Aktionen in Programmzeilen und Vorlagen; ein Tausch der beiden Adressen
+klappt ebenso. Eine Adresse, die zu keinem der beiden PCs passt, bleibt als
+„Andere IP“ erhalten. API: `GET /target-pcs`, `PUT /target-pcs`
+`{"pcs": [{"id": "streaming"|"display", "name", "ip"}, …]}`.
+
 Beispielprofil fuer das QR-Bild auf PC `.11`:
 
 ```yaml

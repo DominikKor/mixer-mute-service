@@ -407,9 +407,17 @@ dialog.profile-dialog { width: min(640px, calc(100vw - 32px)); max-height: calc(
 }
 .pf-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 #profile-form [hidden] { display: none; }
-.pf-label, .pf-field > span:first-child {
+.pf-label, .pf-field > span:first-child, .pf-field > label:first-child {
   font-size: 10px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; color: #7d8594;
 }
+/* Target PC: a choice of the two configured PCs, "PCs…" opens their settings */
+.pc-select-row { display: flex; gap: 8px; min-width: 0; }
+.pc-select-row select { flex: 1; min-width: 0; min-height: 44px; }
+button.pc-edit-btn { flex-shrink: 0; min-height: 44px; padding: 0 14px; }
+.pc-config-row { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); gap: 12px; }
+@media (max-width: 560px) { .pc-config-row { grid-template-columns: 1fr; } }
+.pc-config-head { font-size: 12px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; color: #c9ced6; }
+#target-pcs-dialog .pf-input, #target-pcs-dialog .update-actions button { min-height: 44px; }
 .pf-input {
   width: 100%; font: inherit; font-size: 14px; font-weight: 600; padding: 8px 10px; border-radius: 5px; color: var(--lcd-text);
   background: #0b1418; border: 1px solid #000; box-shadow: inset 0 2px 4px rgba(0,0,0,.8), 0 1px 0 rgba(255,255,255,.05);

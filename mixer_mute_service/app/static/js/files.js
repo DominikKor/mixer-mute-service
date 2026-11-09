@@ -34,11 +34,17 @@ function fileKindText(path) {
 }
 
 function fileTargetOptions() {
-  const ips = new Set([...PROGRAM_DESKTOP_PROFILES.map(p => p.target_ip), SONG_SETTINGS && SONG_SETTINGS.target_ip]);
+  // The service runs on the Streaming PC, so its own agent is 127.0.0.1.
+  const streaming = TARGET_PCS.find(pc => pc.id === "streaming");
+  const ips = new Set([
+    ...TARGET_PCS.filter(pc => pc.id !== "streaming").map(pc => pc.ip),
+    ...PROGRAM_DESKTOP_PROFILES.map(p => p.target_ip), SONG_SETTINGS && SONG_SETTINGS.target_ip,
+  ]);
   ips.delete(THIS_PC);
   return [
-    { value: THIS_PC, label: "Streaming-PC (dieser Service)" },
+    { value: THIS_PC, label: `${streaming ? streaming.name : "Streaming PC"} (dieser PC)` },
     ...[...ips].filter(Boolean).sort().map(ip => {
+      if (targetPcName(ip)) return { value: ip, label: targetPcLabel(ip) };
       const names = PROGRAM_DESKTOP_PROFILES.filter(p => p.target_ip === ip).map(p => p.title).slice(0, 2);
       return { value: ip, label: names.length ? `${ip} · ${names.join(", ")}` : ip };
     }),

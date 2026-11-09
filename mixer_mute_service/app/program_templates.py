@@ -36,7 +36,8 @@ from fastapi import APIRouter, Body, Request
 from .actions import program_reference_error
 from .jsonstore import read_json, write_json_atomic
 from .responses import fail
-from .program_items import ProgramItemError, ProgramItemStore
+from .program_items import _ACTION_FIELDS, ProgramItemError, ProgramItemStore
+from .target_pcs import retarget_file_action
 
 router = APIRouter()
 log = logging.getLogger("mixer.program_templates")
@@ -122,6 +123,21 @@ class ProgramTemplateStore:
                 self._templates.append(template)
             self._persist()
             return self._view(template)
+
+    async def retarget_files(self, moves: dict) -> int:
+        """Point file actions on a PC whose address changed at the new one."""
+        async with self._lock:
+            changed = 0
+            for template in self._templates:
+                for row in template["rows"]:
+                    for field in _ACTION_FIELDS:
+                        new = retarget_file_action(row.get(field), moves)
+                        if new != row.get(field):
+                            row[field] = new
+                            changed += 1
+            if changed:
+                self._persist()
+            return changed
 
     async def delete(self, template_id: str) -> bool:
         async with self._lock:

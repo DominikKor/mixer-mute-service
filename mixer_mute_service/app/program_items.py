@@ -13,6 +13,7 @@ from typing import List, Optional
 
 from .file_actions import file_action_error, is_file_action
 from .jsonstore import read_json, write_json_atomic
+from .target_pcs import retarget_file_action
 
 log = logging.getLogger("mixer.program")
 
@@ -198,6 +199,20 @@ class ProgramItemStore:
                 if item.get("group") == old:
                     item["group"] = new
                     changed += 1
+            if changed:
+                self._persist()
+            return changed
+
+    async def retarget_files(self, moves: dict) -> int:
+        """Point file actions on a PC whose address changed at the new one."""
+        async with self._lock:
+            changed = 0
+            for item in self._items:
+                for field in _ACTION_FIELDS:
+                    new = retarget_file_action(item.get(field), moves)
+                    if new != item.get(field):
+                        item[field] = new
+                        changed += 1
             if changed:
                 self._persist()
             return changed
