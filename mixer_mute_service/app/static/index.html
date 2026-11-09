@@ -1175,7 +1175,7 @@
         </span>
         <span id="program-cue-count" class="program-cue-count"></span>
       </div>
-      <button id="program-go-btn" class="program-play program-go" title="Nächsten Programmpunkt starten">Weiter</button>
+      <button id="program-go-btn" class="program-play program-go" title="Nächsten Programmpunkt starten (Presenter: Bild ab, wenn kein Lied läuft)">Weiter</button>
     </div>
     <div id="song-live" class="song-live idle" hidden>
       <div class="song-stage"><div id="song-preview" class="slide-box song-preview" role="img" aria-label="Aktuelle Folie"></div></div>
@@ -1189,7 +1189,7 @@
         <div class="song-controls">
           <button id="song-prev-btn" type="button" title="Vorherige Folie (Bild auf, ←)">◀ Zurück</button>
           <button id="song-next-btn" type="button" class="program-play" title="Nächste Folie (Bild ab, →, Leertaste); nach der letzten: schwarz">Weiter ▶</button>
-          <button id="song-blank-btn" type="button" title="Bildschirm schwarz / wieder an (B)">Schwarz</button>
+          <button id="song-blank-btn" type="button" title="Bildschirm schwarz / wieder an (Taste B oder .)">Schwarz</button>
           <button id="song-hide-btn" type="button" class="danger" title="Liedfenster schließen">Aus</button>
         </div>
         <div id="song-slides" class="song-slides"></div>
@@ -5601,7 +5601,8 @@ function renderSongLive() {
   wrap.hidden = !loaded && !SONG_LIVE.song;
   const song = SONG_LIVE.song;
   wrap.classList.toggle("idle", !song);
-  $("song-live-title").textContent = song ? song.title : "Kein Lied auf dem Bildschirm";
+  $("song-live-title").textContent = song ? song.title
+    : SONG_LIVE.blank ? "Bildschirm schwarz" : "Kein Lied auf dem Bildschirm";
   $("song-live-pos").textContent = song
     ? (SONG_LIVE.blank ? "Schwarz" : `${SONG_LIVE.slide + 1} / ${song.slides.length}`) : "";
   for (const id of ["song-prev-btn", "song-next-btn", "song-blank-btn", "song-hide-btn"]) $(id).disabled = !song || SONG_BUSY;
@@ -5667,7 +5668,11 @@ async function songAction(path, body) {
 function songNext() { if (SONG_LIVE.song) songAction("/songs/next"); }
 function songPrev() { if (SONG_LIVE.song) songAction("/songs/prev"); }
 function songBlankToggle() {
-  if (!SONG_LIVE.song) return;
+  if (!SONG_LIVE.song) {
+    // No song: black screen on the display PC, and off again.
+    songAction(SONG_LIVE.blank ? "/songs/hide" : "/songs/blank");
+    return;
+  }
   if (SONG_LIVE.blank) songAction("/songs/show", { song_id: SONG_LIVE.song_id, slide: SONG_LIVE.slide });
   else songAction("/songs/blank");
 }
@@ -5685,14 +5690,58 @@ $("song-choose-btn").addEventListener("click", event => openSongSearch(event.cur
 }, false));
 new ResizeObserver(() => { if (SONG_LIVE.song && SONG_SETTINGS) renderSongLive(); }).observe($("song-preview"));
 
-// Presenter clickers send Page Down / Page Up; arrows and space work too.
+// ---- Presenter keys (whenever the page is open) ----------------------------
+// Clickers send Page Down / Page Up, many also "b" or "." for a black screen.
+//   next (Page Down, →, space): next slide of the song on screen; once the
+//        song is done (dark after its last slide) or none is shown, the next
+//        program row, like the big Weiter key
+//   back (Page Up, ←): previous slide (the program never goes back)
+//   b or .: black screen and back on;  h: Beamer hide / unhide
+// Not while typing in a field or with a dialog open.
+
+function presenterNext() {
+  const song = SONG_LIVE.song;
+  if (song && !(SONG_LIVE.blank && SONG_LIVE.slide >= song.slides.length - 1)) return songNext();
+  const go = $("program-go-btn");
+  if (go.disabled) return toast(PROGRAM_BUSY.size ? "Programmpunkt startet noch" : "Kein weiterer Programmpunkt", false);
+  startProgram("next", "/program/next", go);
+}
+
+let BEAMER_KEY_BUSY = false;
+async function presenterBeamerToggle() {
+  if (BEAMER_KEY_BUSY) return;
+  BEAMER_KEY_BUSY = true;
+  const id = BEAMER_HIDDEN === true ? "beamer-unhide" : "beamer-hide";
+  try {
+    const result = await api("POST", `/companion/buttons/${id}/press`);
+    if (!result.ok || result.data.ok === false) {
+      toast(`Beamer: ${result.data.reason || "HTTP " + result.status}`, false);
+      return;
+    }
+    const state = await api("GET", "/beamer/state");
+    renderBeamerState(state.ok ? state.data : null);
+    toast(id === "beamer-hide" ? "Beamer hide" : "Beamer unhide", true);
+  } finally {
+    BEAMER_KEY_BUSY = false;
+  }
+}
+
 document.addEventListener("keydown", event => {
-  if (!SONG_LIVE.song || event.altKey || event.ctrlKey || event.metaKey) return;
+  if (event.altKey || event.ctrlKey || event.metaKey || event.repeat) return;
+  // A control that used the key itself (a channel fader takes Page Up/Down and
+  // the arrows) must not also start the next program row.
+  if (event.defaultPrevented) return;
   const t = event.target;
   if (t.closest && t.closest("input, textarea, select, dialog, [contenteditable]")) return;
-  if (["PageDown", "ArrowRight", " "].includes(event.key)) { event.preventDefault(); songNext(); }
-  else if (["PageUp", "ArrowLeft"].includes(event.key)) { event.preventDefault(); songPrev(); }
-  else if (event.key === "b" || event.key === "B") { event.preventDefault(); songBlankToggle(); }
+  if (t.closest && t.closest("[role=slider], [role=radio], [role=radiogroup], [role=menu], .fader")) return;
+  if (document.querySelector("dialog[open]")) return;
+  // Space on a focused key would also press that key.
+  if (event.key === " " && t.closest && t.closest("button")) return;
+  const key = event.key.length === 1 ? event.key.toLowerCase() : event.key;
+  if (["PageDown", "ArrowRight", " "].includes(key)) { event.preventDefault(); presenterNext(); }
+  else if (["PageUp", "ArrowLeft"].includes(key)) { if (SONG_LIVE.song) { event.preventDefault(); songPrev(); } }
+  else if (key === "b" || key === ".") { event.preventDefault(); songBlankToggle(); }
+  else if (key === "h") { event.preventDefault(); presenterBeamerToggle(); }
 });
 
 // ---- song choice: a button in the row, a search popover on <body> ----------
