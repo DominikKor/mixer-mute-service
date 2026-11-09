@@ -434,6 +434,9 @@
   button.kind-tile[aria-checked="true"] .kind-tile-desc { color: #c9dcf5; }
   /* Monitor keys and the screen with its five window positions */
   .pf-display-row { display: flex; gap: 18px 24px; flex-wrap: wrap; align-items: flex-start; }
+  /* Audio: fade in on play, out on stop, to a fixed level */
+  .pf-fade-row { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 1fr); gap: 12px; align-items: start; }
+  @media (max-width: 560px) { .pf-fade-row { grid-template-columns: 1fr 1fr; } .pf-fade-row > :first-child { grid-column: 1 / -1; } }
   .monitor-picker { display: flex; gap: 6px; flex-wrap: wrap; }
   button.monitor-key { width: 52px; height: 44px; padding: 0; font: 800 15px/1 var(--mono); }
   button.align-key { display: grid; place-items: center; }
@@ -1645,6 +1648,17 @@
     <label class="pf-field"><span>Ziel-PC (IP-Adresse)</span>
       <input id="pf-ip" class="pf-input mono" type="text" inputmode="decimal" list="pf-ip-list" autocomplete="off" placeholder="192.168.188.11" />
       <datalist id="pf-ip-list"></datalist></label>
+    <div id="pf-fade-row" class="pf-fade-row" hidden>
+      <div class="pf-field">
+        <span class="pf-label">Ein-/Ausfaden</span>
+        <label class="compact-switch"><input id="pf-fade" type="checkbox" /><span class="track"></span><span id="pf-fade-text">Aus</span></label>
+        <span class="pf-hint">Abspielen blendet langsam ein, Stop langsam aus</span>
+      </div>
+      <label class="pf-field"><span>Lautstärke (dB)</span>
+        <input id="pf-fade-db" class="pf-input mono" type="number" min="-60" max="0" step="1" autocomplete="off" /></label>
+      <label class="pf-field"><span>Dauer (Sekunden)</span>
+        <input id="pf-fade-seconds" class="pf-input mono" type="number" min="0.5" max="30" step="0.5" autocomplete="off" /></label>
+    </div>
     <div id="pf-display-row" class="pf-display-row">
       <div class="pf-field">
         <span class="pf-label" id="pf-monitor-label">Monitor</span>
@@ -3207,7 +3221,7 @@ function renderDesktopProfiles(data) {
   wrap.querySelectorAll(".display-tile").forEach(el => el.remove());
   for (const profile of data.profiles || []) {
     const audio = profile.kind === "audio";
-    const meta = audio ? `${profile.target_ip} · Audio` : `${profile.target_ip} · Monitor ${profile.monitor}${profile.fullscreen ? " · Vollbild" : ""}`;
+    const meta = audio ? `${profile.target_ip} · Audio${profile.fade ? ` · Fade ${profile.fade_db} dB` : ""}` : `${profile.target_ip} · Monitor ${profile.monitor}${profile.fullscreen ? " · Vollbild" : ""}`;
     const button = document.createElement("button");
     button.className = "display-key";
     if (audio) {
@@ -3236,7 +3250,7 @@ function renderDesktopProfiles(data) {
       stop.dataset.audioAction = "stop";
       stop.dataset.label = `Audio ${profile.target_ip}`;
       stop.textContent = "Stop";
-      stop.title = `Musik auf ${profile.target_ip} stoppen`;
+      stop.title = profile.fade ? `Musik auf ${profile.target_ip} langsam ausblenden und stoppen` : `Musik auf ${profile.target_ip} stoppen`;
       stop.setAttribute("aria-label", stop.title);
       stop.disabled = !data.ready;
     }
@@ -3468,6 +3482,11 @@ function syncProfileForm() {
   $("pf-path-hint").textContent = KIND_INFO[kind].hint;
   $("pf-args-wrap").hidden = kind !== "program";
   $("pf-display-row").hidden = kind === "audio";
+  $("pf-fade-row").hidden = kind !== "audio";
+  const fade = $("pf-fade").checked;
+  $("pf-fade-text").textContent = fade ? "Ein" : "Aus";
+  $("pf-fade-db").disabled = !fade;
+  $("pf-fade-seconds").disabled = !fade;
   renderMonitorKeys();
   const full = $("pf-fullscreen").checked;
   $("pf-fullscreen-text").textContent = full ? "Ein" : "Aus";
@@ -3494,6 +3513,7 @@ function openProfileDialog(profileId) {
   if (profileId && !existing) return toast("Profil nicht gefunden", false);
   const p = existing || {
     title: "", kind: "image", path: "", args: [], fullscreen: true, monitor: 1, position: "top-left",
+    fade: false, fade_db: -30, fade_seconds: 5,
     target_ip: (DESKTOP_PROFILES[DESKTOP_PROFILES.length - 1] || {}).target_ip || "",
   };
   Object.assign(PROFILE_FORM, {
@@ -3509,6 +3529,9 @@ function openProfileDialog(profileId) {
   $("pf-args").value = (p.args || []).join("\n");
   $("pf-ip").value = p.target_ip || "";
   $("pf-fullscreen").checked = !!p.fullscreen;
+  $("pf-fade").checked = !!p.fade;
+  $("pf-fade-db").value = p.fade_db ?? -30;
+  $("pf-fade-seconds").value = p.fade_seconds ?? 5;
   const ips = [...new Set(DESKTOP_PROFILES.map(x => x.target_ip))];
   $("pf-ip-list").innerHTML = ips.map(ip => `<option value="${escapeAttr(ip)}"></option>`).join("");
   profileFormError(null);
@@ -3531,9 +3554,19 @@ function readProfileForm() {
   if (!WIN_ABS_PATH_RE.test(path)) return profileFormError("Pfad: vollständiger Windows-Pfad, z. B. " + KIND_INFO[kind].placeholder, $("pf-path"));
   if (kind === "program" && !/\.exe$/i.test(path)) return profileFormError("Ein Programm muss auf eine .exe zeigen.", $("pf-path"));
   if (!IPV4_RE.test(ip)) return profileFormError("IP-Adresse ungültig, z. B. 192.168.188.11", $("pf-ip"));
+  // Only audio fades; other kinds keep the defaults (and config.yaml stays short).
+  const fade = kind === "audio" && $("pf-fade").checked;
+  let fadeDb = -30, fadeSeconds = 5;
+  if (kind === "audio") {
+    fadeDb = Number($("pf-fade-db").value.replace(",", "."));
+    fadeSeconds = Number($("pf-fade-seconds").value.replace(",", "."));
+    if (!$("pf-fade-db").value.trim() || !(fadeDb >= -60 && fadeDb <= 0)) return profileFormError("Lautstärke: -60 bis 0 dB, z. B. -30", $("pf-fade-db"));
+    if (!$("pf-fade-seconds").value.trim() || !(fadeSeconds >= 0.5 && fadeSeconds <= 30)) return profileFormError("Dauer: 0,5 bis 30 Sekunden", $("pf-fade-seconds"));
+  }
   return {
     id, title, kind, path, args, target_ip: ip, fullscreen: $("pf-fullscreen").checked,
     monitor: PROFILE_FORM.monitor, position: PROFILE_FORM.position,
+    fade, fade_db: fadeDb, fade_seconds: fadeSeconds,
   };
 }
 
@@ -4663,6 +4696,7 @@ $("pf-title").addEventListener("input", () => {
 });
 $("pf-id").addEventListener("input", () => { PROFILE_FORM.idTouched = true; });
 $("pf-fullscreen").addEventListener("change", syncProfileForm);
+$("pf-fade").addEventListener("change", syncProfileForm);
 $("profile-form").addEventListener("click", (event) => {
   const kind = event.target.closest("[data-kind]");
   const monitor = event.target.closest("[data-monitor]");

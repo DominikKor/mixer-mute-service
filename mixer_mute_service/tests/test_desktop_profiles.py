@@ -189,6 +189,34 @@ check("BOM kept", raw.startswith(b"\xef\xbb\xbf"))
 check("only CRLF line breaks", b"\n" not in raw.replace(b"\r\n", b""))
 check("both profiles load", set(load_config(crlf).desktop_display.profiles) == {"a", "b"})
 
+print("== audio fade ==")
+fade_cfg = cfg_file("fade", "mixer:\n  max_channels: 8\n")
+add_profile(fade_cfg, "qr", QR)
+add_profile(fade_cfg, "music", AUDIO)
+text = fade_cfg.read_text()
+check("fade keys are not written while off (default)", "fade" not in text)
+faded = AUDIO.model_copy(update={"fade": True})
+update_profile(fade_cfg, "music", faded)
+text = fade_cfg.read_text()
+check("switching fade on adds only the fade line", "fade: true" in text and "fade_db" not in text)
+check("fade profile loads as saved", load_config(fade_cfg).desktop_display.profiles["music"] == faded)
+custom = faded.model_copy(update={"fade_db": -24.5, "fade_seconds": 8.0})
+update_profile(fade_cfg, "music", custom)
+text = fade_cfg.read_text()
+check("dB and seconds written as plain numbers", "fade_db: -24.5" in text and "fade_seconds: 8\n" in text)
+check("custom fade loads as saved", load_config(fade_cfg).desktop_display.profiles["music"] == custom)
+add_profile(fade_cfg, "music2", custom)
+check("new faded profile loads as saved", load_config(fade_cfg).desktop_display.profiles["music2"] == custom)
+check("default fade level is -30 dB", AUDIO.fade_db == -30.0 and AUDIO.fade is False)
+r = refused(add_profile, fade_cfg, "x", QR.model_copy(update={"fade": True}))
+check("fade on an image -> 400", r is not None and r[0] == 400)
+for field, value in (("fade_db", 1.0), ("fade_db", -61.0), ("fade_seconds", 0.0), ("fade_seconds", 31.0)):
+    try:
+        DesktopProfileConfig(**{**AUDIO.model_dump(), field: value})
+        check(f"{field}={value} refused", False)
+    except ValueError:
+        check(f"{field}={value} refused", True)
+
 print("== refused changes leave the file alone ==")
 guard = cfg_file("guard", (ROOT / "config.yaml").read_text())
 original = guard.read_bytes()
@@ -270,6 +298,31 @@ with TestClient(app) as client:
         check("stop does not send a track path", forward.call_args.args[2] == {
             "id": "audio", "action": "stop", "path": None
         })
+    faded_body = {"id": "faded", **AUDIO.model_dump(), "fade": True, "fade_db": -20.0, "fade_seconds": 4.0}
+    r = client.post("/desktop/profiles", json=faded_body)
+    check("faded audio profile create 200", r.status_code == 200)
+    listed = {p["id"]: p for p in client.get("/desktop/profiles").json()["profiles"]}
+    check("fade settings are listed", (listed["faded"]["fade"], listed["faded"]["fade_db"],
+                                       listed["faded"]["fade_seconds"]) == (True, -20.0, 4.0)
+          and listed["audio"]["fade"] is False and listed["audio"]["fade_db"] == -30.0)
+    with patch("app.routes._forward_display_request", side_effect=lambda _url, _token, payload: {
+        "ok": True, "action": payload.get("action")
+    }) as forward:
+        client.post("/desktop/faded/audio/play")
+        check("play sends the fade", forward.call_args.args[2] == {
+            "id": "faded", "action": "play", "path": AUDIO.path, "fade": {"db": -20.0, "seconds": 4.0}})
+        client.post("/desktop/faded/audio/stop")
+        check("stop sends the fade", forward.call_args.args[2] == {
+            "id": "faded", "action": "stop", "path": None, "fade": {"db": -20.0, "seconds": 4.0}})
+        client.post("/desktop/profiles", json={"id": "qrimg", **QR.model_dump()})
+        client.post("/desktop/qrimg/open")
+        check("display request has exactly the agent's keys", set(forward.call_args.args[2]) == {
+            "id", "title", "kind", "path", "args", "fullscreen", "monitor", "position"})
+    import urllib.error  # noqa: E402
+    old_agent = urllib.error.HTTPError("http://x/audio", 400, "Bad Request", {}, None)
+    with patch("app.routes._forward_display_request", side_effect=old_agent):
+        r = client.post("/desktop/faded/audio/play")
+        check("old agent: reason says to update it", r.status_code == 400 and "update the desktop agent" in r.json()["reason"])
     if previous_token is None:
         os.environ.pop(token_name, None)
     else:

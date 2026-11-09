@@ -56,6 +56,8 @@ router = APIRouter()
 log = logging.getLogger("mixer.routes")
 # One config.yaml edit at a time.
 _profile_lock = asyncio.Lock()
+# Profile fields the display agent's /display endpoint does not take.
+_AGENT_EXCLUDED_FIELDS = {"target_ip", "fade", "fade_db", "fade_seconds"}
 
 
 def _ctx(request: Request):
@@ -519,6 +521,9 @@ async def desktop_profiles(request: Request):
                 "fullscreen": profile.fullscreen,
                 "monitor": profile.monitor,
                 "position": profile.position,
+                "fade": profile.fade,
+                "fade_db": profile.fade_db,
+                "fade_seconds": profile.fade_seconds,
             }
             for profile_id, profile in cfg.profiles.items()
         ],
@@ -607,7 +612,8 @@ async def open_desktop_profile(profile_id: str, request: Request):
             _forward_display_request,
             f"http://{profile.target_ip}:8766/display",
             token,
-            {"id": profile_id, **profile.model_dump(exclude={"target_ip"})},
+            # Exactly the keys the agent expects (it rejects any other).
+            {"id": profile_id, **profile.model_dump(exclude=_AGENT_EXCLUDED_FIELDS)},
         )
     except urllib.error.HTTPError as exc:
         log.warning("Display agent rejected request: HTTP %s", exc.code)
@@ -641,6 +647,9 @@ async def control_desktop_audio(profile_id: str, action: str, request: Request):
         "action": action,
         "path": profile.path if action == "play" else None,
     }
+    if profile.fade:
+        # Play fades in from silence to fade_db, stop fades out again.
+        payload["fade"] = {"db": profile.fade_db, "seconds": profile.fade_seconds}
     try:
         return await asyncio.to_thread(
             _forward_display_request,
@@ -652,7 +661,11 @@ async def control_desktop_audio(profile_id: str, action: str, request: Request):
         try:
             details = json.loads(exc.read().decode("utf-8"))
         except (ValueError, UnicodeDecodeError):
-            details = {"ok": False, "reason": "display agent rejected the audio request"}
+            reason = "display agent rejected the audio request"
+            if "fade" in payload and exc.code == 400:
+                # Agents before fading reject the extra field.
+                reason += "; update the desktop agent on this PC for fading"
+            details = {"ok": False, "reason": reason}
         log.warning("Display agent audio request failed: HTTP %s", exc.code)
         return JSONResponse(details, exc.code)
     except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
