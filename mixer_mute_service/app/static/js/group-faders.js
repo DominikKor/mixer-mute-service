@@ -71,6 +71,7 @@ document.addEventListener("click", (e) => {
     case "person-solo":        return soloPersonChannels(btn.dataset.pid);
     case "person-use-all":     return useAllPersonFaders(btn.dataset.pid);
     case "person-toggle-collapse": return toggleGroupCollapsed(btn.dataset.pid);
+    case "person-edit-done":   return togglePersonEditing(btn.dataset.pid);
     case "person-duplicate":   return duplicatePerson(btn.dataset.pid);
     case "person-settings":    return openSettingsDialog(btn.dataset.pid);
     case "person-rename":      return startRenamePerson(btn.dataset.pid, btn.dataset.name || "");
