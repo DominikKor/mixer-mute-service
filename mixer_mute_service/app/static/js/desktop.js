@@ -7,7 +7,8 @@
 // edited values in place, everything else in the file stays as written.
 
 let DESKTOP_PROFILES = [];
-const PROFILE_FORM = { mode: "create", id: null, idTouched: false, kind: "image", monitor: 1, position: "top-left" };
+const PROFILE_FORM = { mode: "create", id: null, idTouched: false, kind: "image", monitors: [1], position: "top-left" };
+const MAX_MONITORS = 5;
 const KIND_INFO = {
   image: { placeholder: "I:\\Bilder\\GemeindegabenQR.png",
            hint: "Bilddatei (PNG, JPG …) auf dem Ziel-PC. Der Desktop-Agent zeigt sie an; Esc blendet sie aus." },
@@ -63,20 +64,40 @@ function setRadio(groupEl, attr, value) {
   });
 }
 
+// Images may show on several monitors at once (the same image on each);
+// programs and files open on one.
 function renderMonitorKeys() {
   const wrap = $("pf-monitor");
-  const count = Math.max(4, PROFILE_FORM.monitor);
+  const multi = PROFILE_FORM.kind === "image";
+  if (!multi) PROFILE_FORM.monitors = PROFILE_FORM.monitors.slice(0, 1);
+  const count = Math.max(MAX_MONITORS, ...PROFILE_FORM.monitors);
   if (wrap.children.length !== count) {
     wrap.innerHTML = "";
     for (let i = 1; i <= count; i++) {
       const b = document.createElement("button");
-      b.type = "button"; b.className = "monitor-key"; b.setAttribute("role", "radio");
+      b.type = "button"; b.className = "monitor-key";
       b.dataset.monitor = String(i); b.textContent = String(i);
       b.setAttribute("aria-label", `Monitor ${i}`);
       wrap.appendChild(b);
     }
   }
-  setRadio(wrap, "data-monitor", PROFILE_FORM.monitor);
+  wrap.setAttribute("role", multi ? "group" : "radiogroup");
+  wrap.querySelectorAll("[data-monitor]").forEach(b => {
+    const on = PROFILE_FORM.monitors.includes(Number(b.dataset.monitor));
+    b.setAttribute("role", multi ? "checkbox" : "radio");
+    b.setAttribute("aria-checked", String(on));
+    b.tabIndex = multi || on ? 0 : -1;
+  });
+  $("pf-monitor-hint").textContent = multi
+    ? "von links gezählt · mehrere wählbar: gleiches Bild auf jedem"
+    : "von links gezählt";
+}
+
+function pickMonitor(n) {
+  if (PROFILE_FORM.kind !== "image") { PROFILE_FORM.monitors = [n]; return; }
+  const set = new Set(PROFILE_FORM.monitors);
+  if (set.has(n)) { if (set.size > 1) set.delete(n); } else set.add(n);
+  PROFILE_FORM.monitors = [...set].sort((a, b) => a - b);
 }
 
 function syncProfileForm() {
@@ -206,7 +227,7 @@ function openProfileDialog(profileId) {
   };
   Object.assign(PROFILE_FORM, {
     mode: existing ? "edit" : "create", id: existing ? existing.id : null, idTouched: false,
-    kind: p.kind, monitor: p.monitor, position: p.position,
+    kind: p.kind, monitors: p.monitors && p.monitors.length ? [...p.monitors] : [p.monitor], position: p.position,
   });
   $("profile-title").textContent = existing ? `Profil bearbeiten` : "Neues Profil";
   $("pf-title").value = p.title;
@@ -248,9 +269,11 @@ function readProfileForm() {
     fadeSeconds = Number($("pf-fade-seconds").value.replace(",", "."));
     if (!$("pf-fade-seconds").value.trim() || !(fadeSeconds >= 0.5 && fadeSeconds <= 30)) return profileFormError("Dauer: 0,5 bis 30 Sekunden", $("pf-fade-seconds"));
   }
+  if (PROFILE_FORM.monitors.some(m => m > MAX_MONITORS)) return profileFormError(`Monitor: 1 bis ${MAX_MONITORS}`, $("pf-monitor"));
+  const monitors = kind === "image" ? PROFILE_FORM.monitors : PROFILE_FORM.monitors.slice(0, 1);
   return {
     id, title, kind, path, args, target_ip: ip, fullscreen: $("pf-fullscreen").checked,
-    monitor: PROFILE_FORM.monitor, position: PROFILE_FORM.position,
+    monitor: monitors[0], monitors: monitors.length > 1 ? monitors : [], position: PROFILE_FORM.position,
     fade, fade_seconds: fadeSeconds,
   };
 }

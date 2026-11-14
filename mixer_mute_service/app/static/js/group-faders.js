@@ -234,7 +234,7 @@ $("profile-form").addEventListener("click", (event) => {
   const monitor = event.target.closest("[data-monitor]");
   const pos = event.target.closest("[data-pos]");
   if (kind) PROFILE_FORM.kind = kind.dataset.kind;
-  else if (monitor) PROFILE_FORM.monitor = Number(monitor.dataset.monitor);
+  else if (monitor) pickMonitor(Number(monitor.dataset.monitor));
   else if (pos && !pos.disabled) PROFILE_FORM.position = pos.dataset.pos;
   else return;
   syncProfileForm();

@@ -40,6 +40,7 @@ async def desktop_profiles(request: Request):
                 "target_ip": profile.target_ip,
                 "fullscreen": profile.fullscreen,
                 "monitor": profile.monitor,
+                "monitors": profile.monitors,
                 "position": profile.position,
                 "fade": profile.fade,
                 "fade_seconds": profile.fade_seconds,

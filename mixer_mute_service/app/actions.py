@@ -32,7 +32,7 @@ DESKTOP_PREFIX = "desktop:"
 PROGRAM_ACTION_FIELDS = ("playback", "translation", "lyrics")
 # Profile fields the agent's /display endpoint does not take (it refuses
 # unknown keys).
-_AGENT_EXCLUDED_FIELDS = {"target_ip", "fade", "fade_seconds"}
+_AGENT_EXCLUDED_FIELDS = {"target_ip", "fade", "fade_seconds", "monitors"}
 AUDIO_FADE_FULL_DB = 0.0  # audio fades always go up to full player volume
 
 
@@ -172,6 +172,11 @@ async def show_profile(request: Request, profile_id: str) -> Result:
     cfg = request.app.state.cfg.desktop_display
     # Exactly the keys the agent expects (it rejects any other).
     payload = {"id": profile_id, **profile.model_dump(exclude=_AGENT_EXCLUDED_FIELDS)}
+    # Only sent when used, so a single-monitor profile still works with an older agent.
+    if profile.monitors:
+        if profile.kind != "image":
+            return {"ok": False, "reason": "several monitors are only possible for images"}, 400
+        payload["monitors"] = profile.monitors
     try:
         return await display_agent.call(cfg, profile.target_ip, "/display", payload), 200
     except AgentError as exc:

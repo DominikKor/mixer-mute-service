@@ -45,6 +45,7 @@ MAX_SONG_FILE_BYTES = 512 * 1024
 _COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 # A new song's file name, as the service makes it (no folders, no odd characters).
 _SONG_NAME_RE = re.compile(r"^[A-Za-z0-9 ._()!'+-]{1,120}\.foil$")
+MAX_MONITORS = 5
 logger = logging.getLogger("display-agent")
 
 
@@ -768,7 +769,42 @@ def _shutdown_agent_pc() -> None:
 
 
 def _show_image(root: tk.Tk, image_label: tk.Label, profile: dict) -> None:
-    left, top, right, bottom = monitor_bounds(profile["monitor"])
+    """Show the image on its monitor; with "monitors" the same image on each
+    of them (the first in the main window, the others in extra windows)."""
+    monitors = profile.get("monitors") or [profile["monitor"]]
+    for monitor in monitors:  # all monitors present, or nothing is shown
+        monitor_bounds(monitor)
+    _close_mirrors()
+    _show_widget(root, image_label)
+    _show_image_on(root, image_label, profile, monitors[0])
+    for monitor in monitors[1:]:
+        window = tk.Toplevel(root, background="black")
+        window.withdraw()
+        window.protocol("WM_DELETE_WINDOW", lambda: _hide_all(root))
+        window.bind("<Escape>", lambda _event: _hide_all(root))
+        label = tk.Label(window, background="black", borderwidth=0)
+        label.pack(fill="both", expand=True)
+        _mirrors.append(window)
+        _show_image_on(window, label, profile, monitor)
+
+
+# Extra windows showing the current image on further monitors.
+_mirrors: list[tk.Toplevel] = []
+
+
+def _close_mirrors() -> None:
+    while _mirrors:
+        _mirrors.pop().destroy()
+
+
+def _hide_all(root: tk.Tk) -> None:
+    """Escape or the window's close button: hide, never end the agent."""
+    _close_mirrors()
+    root.withdraw()
+
+
+def _show_image_on(root: tk.Wm, image_label: tk.Label, profile: dict, monitor: int) -> None:
+    left, top, right, bottom = monitor_bounds(monitor)
     bounds = (right - left, bottom - top)
     with Image.open(profile["path"]) as source:
         if profile["fullscreen"]:
@@ -845,7 +881,7 @@ def _show_image(root: tk.Tk, image_label: tk.Label, profile: dict) -> None:
     logger.info(
         "Positioned image hwnd=%s monitor=%s fullscreen=%s position=%s target=%s,%s,%s,%s rect=%s,%s,%s,%s",
         hwnd,
-        profile["monitor"],
+        monitor,
         profile["fullscreen"],
         profile["position"],
         x,
@@ -1007,6 +1043,20 @@ def _draw_slide(canvas: tk.Canvas, width: int, height: int, body: dict) -> None:
                            fill=style["text_color"], font=copy_font, width=box_w, justify=align)
 
 
+def _valid_monitors(body: dict) -> bool:
+    """The same image on several monitors: 2 to 5 different ones, the first
+    being "monitor"."""
+    monitors = body["monitors"]
+    return (
+        body.get("kind") == "image"
+        and isinstance(monitors, list)
+        and 2 <= len(monitors) <= MAX_MONITORS
+        and all(type(m) is int and 1 <= m <= MAX_MONITORS for m in monitors)
+        and len(set(monitors)) == len(monitors)
+        and monitors[0] == body.get("monitor")
+    )
+
+
 def _show_widget(root: tk.Tk, widget: tk.Widget) -> None:
     """The window shows either the image label or the song canvas."""
     for child in root.pack_slaves():
@@ -1017,6 +1067,7 @@ def _show_widget(root: tk.Tk, widget: tk.Widget) -> None:
 
 
 def _show_song(root: tk.Tk, canvas: tk.Canvas, body: dict) -> None:
+    _close_mirrors()
     if body["action"] == "hide":
         root.withdraw()
         logger.info("Song window hidden")
@@ -1112,7 +1163,10 @@ class DisplayHandler(BaseHTTPRequestHandler):
         required = {
             "id", "title", "kind", "path", "args", "fullscreen", "monitor", "position"
         }
-        if not isinstance(body, dict) or set(body) != required:
+        if not isinstance(body, dict) or set(body) - {"monitors"} != required:
+            self.send_error(400)
+            return
+        if "monitors" in body and not _valid_monitors(body):
             self.send_error(400)
             return
         if (
@@ -1366,7 +1420,6 @@ def drain_requests(root: tk.Tk, image_label: tk.Label, canvas: tk.Canvas) -> Non
                 if profile["kind"] == "song":
                     _show_song(root, canvas, profile)
                 elif profile["kind"] == "image":
-                    _show_widget(root, image_label)
                     _show_image(root, image_label, profile)
                 else:
                     threading.Thread(target=_launch_profile, args=(profile,), daemon=True).start()
@@ -1375,6 +1428,20 @@ def drain_requests(root: tk.Tk, image_label: tk.Label, canvas: tk.Canvas) -> Non
     except queue.Empty:
         pass
     root.after(100, drain_requests, root, image_label, canvas)
+
+
+def create_root() -> tuple[tk.Tk, tk.Label, tk.Canvas]:
+    root = tk.Tk()
+    root.withdraw()
+    root.configure(background="black")
+    root.bind("<Escape>", lambda _event: _hide_all(root))
+    # A framed (not full-screen) window has a close button; destroying the
+    # main window would end mainloop and with it the whole agent.
+    root.protocol("WM_DELETE_WINDOW", lambda: _hide_all(root))
+    label = tk.Label(root, background="black", borderwidth=0)
+    label.pack(fill="both", expand=True)
+    canvas = tk.Canvas(root, background="black", highlightthickness=0, borderwidth=0)
+    return root, label, canvas
 
 
 def main() -> None:
@@ -1393,13 +1460,7 @@ def main() -> None:
         logger.error("Set DESKTOP_AGENT_TOKEN before starting the agent")
         return
 
-    root = tk.Tk()
-    root.withdraw()
-    root.configure(background="black")
-    root.bind("<Escape>", lambda _event: root.withdraw())
-    label = tk.Label(root, background="black", borderwidth=0)
-    label.pack(fill="both", expand=True)
-    canvas = tk.Canvas(root, background="black", highlightthickness=0, borderwidth=0)
+    root, label, canvas = create_root()
     root.after(100, drain_requests, root, label, canvas)
 
     # After a self-update the old agent may still hold the port for a moment.

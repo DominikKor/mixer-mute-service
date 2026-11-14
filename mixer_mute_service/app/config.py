@@ -134,6 +134,9 @@ class ServerConfig(BaseModel):
     allowed_hosts: List[str] = Field(default_factory=list)
 
 
+MAX_DESKTOP_MONITORS = 5
+
+
 class DesktopProfileConfig(BaseModel):
     title: str
     kind: Literal["image", "program", "file", "audio"]
@@ -142,6 +145,9 @@ class DesktopProfileConfig(BaseModel):
     args: List[str] = Field(default_factory=list)
     fullscreen: bool = True
     monitor: int = Field(default=1, ge=1)
+    # Images only: the same image on several monitors. Empty means just ``monitor``;
+    # otherwise the full sorted list, and ``monitor`` is its first entry.
+    monitors: List[int] = Field(default_factory=list)
     position: Literal["top-left", "top-right", "bottom-left", "bottom-right", "center"] = "top-left"
     # Audio only: fade in from silence to full volume (mpv 100 %) when playing
     # and back out on stop, over fade_seconds. Only the player's volume on the
@@ -155,6 +161,21 @@ class DesktopProfileConfig(BaseModel):
     def _valid_target_ip(cls, value: str) -> str:
         IPv4Address(value)
         return value
+
+    @field_validator("monitors")
+    @classmethod
+    def _valid_monitors(cls, value: List[int]) -> List[int]:
+        if any(m < 1 or m > MAX_DESKTOP_MONITORS for m in value):
+            raise ValueError(f"monitors must be 1 to {MAX_DESKTOP_MONITORS}")
+        return sorted(set(value))
+
+    @model_validator(mode="after")
+    def _normalise_monitors(self) -> "DesktopProfileConfig":
+        if len(self.monitors) == 1:
+            self.monitor, self.monitors = self.monitors[0], []
+        elif self.monitors:
+            self.monitor = self.monitors[0]
+        return self
 
 
 class DesktopDisplayConfig(BaseModel):

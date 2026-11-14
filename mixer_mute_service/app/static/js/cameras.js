@@ -291,7 +291,8 @@ function renderDesktopProfiles(data) {
   for (const profile of data.profiles || []) {
     const audio = profile.kind === "audio";
     const where = targetPcName(profile.target_ip) || profile.target_ip;
-    const meta = audio ? `${where} · Audio${profile.fade ? ` · Fade ${String(profile.fade_seconds).replace(".", ",")} s` : ""}` : `${where} · Monitor ${profile.monitor}${profile.fullscreen ? " · Vollbild" : ""}`;
+    const screens = profile.monitors && profile.monitors.length > 1 ? `Monitore ${profile.monitors.join(", ")}` : `Monitor ${profile.monitor}`;
+    const meta = audio ? `${where} · Audio${profile.fade ? ` · Fade ${String(profile.fade_seconds).replace(".", ",")} s` : ""}` : `${where} · ${screens}${profile.fullscreen ? " · Vollbild" : ""}`;
     const button = document.createElement("button");
     button.className = "display-key";
     if (audio) {

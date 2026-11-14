@@ -27,18 +27,18 @@ from typing import List, Optional, Tuple
 import yaml
 from pydantic import ValidationError
 
-from .config import Config, DesktopProfileConfig
+from .config import MAX_DESKTOP_MONITORS, Config, DesktopProfileConfig
 from .youtube import is_youtube_url
 
 PROFILE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 # Order in which a new profile's keys are written.
 FIELD_ORDER = (
-    "title", "kind", "path", "args", "target_ip", "fullscreen", "monitor", "position",
+    "title", "kind", "path", "args", "target_ip", "fullscreen", "monitor", "monitors", "position",
     "fade", "fade_seconds",
 )
 # Written for a new profile only when they differ from the default, so image,
 # program and file profiles stay as short as before.
-_OPTIONAL_FIELDS = {"fade", "fade_seconds"}
+_OPTIONAL_FIELDS = {"monitors", "fade", "fade_seconds"}
 _CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
 _PRINTABLE_ASCII_RE = re.compile(r"^[\x20-\x7e]*$")
 _EMPTY_VALUE_RE = re.compile(r"^[ \t]*(\{[ \t]*\}|null|Null|NULL|~)?[ \t]*(#.*)?$")
@@ -64,6 +64,10 @@ def validate_profile(profile: DesktopProfileConfig) -> None:
             raise ProfileEditError("text must not contain line breaks or control characters")
     if len(profile.title) > 80:
         raise ProfileEditError("title is too long (max 80 characters)")
+    if profile.monitor > MAX_DESKTOP_MONITORS:
+        raise ProfileEditError(f"monitor must be 1 to {MAX_DESKTOP_MONITORS}")
+    if profile.monitors and profile.kind != "image":
+        raise ProfileEditError("several monitors are only possible for images")
     if is_youtube_url(profile.path):
         # The agent plays a YouTube link's sound (mpv + yt-dlp); nothing else
         # can use a link.
