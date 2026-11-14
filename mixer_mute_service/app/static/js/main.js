@@ -6,10 +6,12 @@ loadCompanionButtons();
 // Desktop keys name their PC once the list is in.
 loadTargetPcs().then(() => { DESKTOP_PROFILES_SIGNATURE = ""; });
 initSections();
+initSectionOrder();
 initStage();
 initCompanionEditing();
 applyBuildMigrations();
 loadProgramItems();
+loadProgramObsScenes();
 poll(refreshProgramState, 5000);
 loadSongs().then(() => poll(refreshSongLive, 1500));
 loadFileBrowseAvailable();

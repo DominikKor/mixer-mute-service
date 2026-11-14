@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from .camera_program import CAMERAS, DEFAULT_WAIT_SECONDS, MAX_WAIT_SECONDS, MIN_WAIT_SECONDS
+from .desktop_profiles import PROFILE_ID_RE
 from .file_actions import file_action_error, is_file_action
 from .jsonstore import read_json, write_json_atomic
 from .target_pcs import retarget_file_action
@@ -21,10 +22,89 @@ log = logging.getLogger("mixer.program")
 _TIME_RE = re.compile(r"^(?:[01]\d|2[0-3]):[0-5]\d$")
 _ACTION_FIELDS = ("playback", "translation", "lyrics")
 _DESCRIPTION_FIELDS = ("playback_description", "translation_description", "lyrics_description")
+MAX_DESKTOP_PROFILES = 8
+MAX_OBS_SCENE_LENGTH = 100
+MAX_SHORTCUTS = 8
+_SHORTCUT_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 
 
 class ProgramItemError(ValueError):
     pass
+
+
+def validated_actions(data: dict) -> dict:
+    """What a program row or a shortcut does when it runs (everything but its
+    name, time and person); raises ProgramItemError."""
+    # Optional: without a group the mutes stay as they are and only the
+    # actions run (e.g. a camera change during a sermon).
+    group = str(data.get("group") or "").strip()
+    if len(group) > 64:
+        raise ProgramItemError("group must be at most 64 characters")
+    result = {"group": group}
+    for field in _ACTION_FIELDS:
+        value = data.get(field)
+        if is_file_action(value):
+            # A file opened directly: "file:<ip>|<path>" (app/file_actions.py)
+            problem = file_action_error(value)
+            if problem:
+                raise ProgramItemError(f"{field}: {problem}")
+        elif value is not None and (not isinstance(value, str) or len(value) > 80):
+            raise ProgramItemError(f"{field} must be a button ID or empty")
+        result[field] = value or None
+    for field in _DESCRIPTION_FIELDS:
+        value = data.get(field, "")
+        if not isinstance(value, str) or len(value) > 160:
+            raise ProgramItemError(f"{field} must be at most 160 characters")
+        result[field] = value.strip()
+    song = data.get("song")
+    if song is not None and (not isinstance(song, str) or len(song) > 200):
+        raise ProgramItemError("song must be a song file name or empty")
+    result["song"] = song or None
+    # Camera presets (app/camera_program.py): one per camera, or none.
+    for cam in CAMERAS:
+        value = data.get(f"{cam}_preset")
+        if isinstance(value, str) and value.strip().isdigit():
+            value = int(value.strip())
+        if value in (None, "", 0):
+            value = None
+        elif type(value) is not int or not 1 <= value <= 16:
+            raise ProgramItemError(f"{cam}_preset must be a preset 1 to 16 or empty")
+        result[f"{cam}_preset"] = value
+    wait = data.get("camera_wait_seconds")
+    if wait in (None, ""):
+        wait = DEFAULT_WAIT_SECONDS
+    try:
+        wait = float(str(wait).replace(",", "."))
+    except ValueError:
+        raise ProgramItemError("camera_wait_seconds must be a number") from None
+    if not MIN_WAIT_SECONDS <= wait <= MAX_WAIT_SECONDS:
+        raise ProgramItemError(
+            f"camera_wait_seconds must be {MIN_WAIT_SECONDS:g} to {MAX_WAIT_SECONDS:g} seconds")
+    result["camera_wait_seconds"] = wait
+    light = data.get("light")
+    if light is not None and (not isinstance(light, str) or len(light) > 64):
+        raise ProgramItemError("light must be a light scene id or empty")
+    result["light"] = light or None
+    # Desktop profiles shown or started when the row starts, in this order.
+    desktop = data.get("desktop") or []
+    if (not isinstance(desktop, list) or len(desktop) > MAX_DESKTOP_PROFILES
+            or any(not isinstance(p, str) or not PROFILE_ID_RE.fullmatch(p) for p in desktop)):
+        raise ProgramItemError(f"desktop must be a list of at most {MAX_DESKTOP_PROFILES} desktop profile IDs")
+    result["desktop"] = list(dict.fromkeys(desktop))
+    # OBS scene per camera (app/camera_program.py); empty: the camera's "Cam N Live" key.
+    for cam in CAMERAS:
+        scene = data.get(f"{cam}_scene")
+        if scene is not None and (
+                not isinstance(scene, str) or len(scene) > MAX_OBS_SCENE_LENGTH
+                or any(ord(c) < 32 for c in scene)):
+            raise ProgramItemError(f"{cam}_scene must be an OBS scene name of at most {MAX_OBS_SCENE_LENGTH} characters")
+        result[f"{cam}_scene"] = (scene or "").strip() or None
+    # Beamer: "hide", "unhide" or None (left as it is).
+    beamer = data.get("beamer") or None
+    if beamer not in (None, "hide", "unhide"):
+        raise ProgramItemError("beamer must be hide, unhide or empty")
+    result["beamer"] = beamer
+    return result
 
 
 class ProgramItemStore:
@@ -70,56 +150,13 @@ class ProgramItemStore:
         person = str(data.get("person", "")).strip()
         if len(person) > 80:
             raise ProgramItemError("person must be at most 80 characters")
-        # Optional: a row without a group leaves all mutes as they are and
-        # only runs its actions (e.g. a camera change during a sermon).
-        group = str(data.get("group") or "").strip()
-        if len(group) > 64:
-            raise ProgramItemError("group must be at most 64 characters")
-        result = {"time": scheduled_time, "title": title, "person": person, "group": group}
-        for field in _ACTION_FIELDS:
-            value = data.get(field)
-            if is_file_action(value):
-                # A file opened directly: "file:<ip>|<path>" (app/file_actions.py)
-                problem = file_action_error(value)
-                if problem:
-                    raise ProgramItemError(f"{field}: {problem}")
-            elif value is not None and (not isinstance(value, str) or len(value) > 80):
-                raise ProgramItemError(f"{field} must be a button ID or empty")
-            result[field] = value or None
-        for field in _DESCRIPTION_FIELDS:
-            value = data.get(field, "")
-            if not isinstance(value, str) or len(value) > 160:
-                raise ProgramItemError(f"{field} must be at most 160 characters")
-            result[field] = value.strip()
-        song = data.get("song")
-        if song is not None and (not isinstance(song, str) or len(song) > 200):
-            raise ProgramItemError("song must be a song file name or empty")
-        result["song"] = song or None
-        # Camera presets (app/camera_program.py): one per camera, or none.
-        for cam in CAMERAS:
-            value = data.get(f"{cam}_preset")
-            if isinstance(value, str) and value.strip().isdigit():
-                value = int(value.strip())
-            if value in (None, "", 0):
-                value = None
-            elif type(value) is not int or not 1 <= value <= 16:
-                raise ProgramItemError(f"{cam}_preset must be a preset 1 to 16 or empty")
-            result[f"{cam}_preset"] = value
-        wait = data.get("camera_wait_seconds")
-        if wait in (None, ""):
-            wait = DEFAULT_WAIT_SECONDS
-        try:
-            wait = float(str(wait).replace(",", "."))
-        except ValueError:
-            raise ProgramItemError("camera_wait_seconds must be a number") from None
-        if not MIN_WAIT_SECONDS <= wait <= MAX_WAIT_SECONDS:
-            raise ProgramItemError(
-                f"camera_wait_seconds must be {MIN_WAIT_SECONDS:g} to {MAX_WAIT_SECONDS:g} seconds")
-        result["camera_wait_seconds"] = wait
-        light = data.get("light")
-        if light is not None and (not isinstance(light, str) or len(light) > 64):
-            raise ProgramItemError("light must be a light scene id or empty")
-        result["light"] = light or None
+        result = {"time": scheduled_time, "title": title, "person": person, **validated_actions(data)}
+        # Shortcuts (app/shortcuts.py) run after the row's own steps, in this order.
+        shortcuts = data.get("shortcuts") or []
+        if (not isinstance(shortcuts, list) or len(shortcuts) > MAX_SHORTCUTS
+                or any(not isinstance(s, str) or not _SHORTCUT_ID_RE.fullmatch(s) for s in shortcuts)):
+            raise ProgramItemError(f"shortcuts must be a list of at most {MAX_SHORTCUTS} shortcut IDs")
+        result["shortcuts"] = list(dict.fromkeys(shortcuts))
         return result
 
     def _ordered(self) -> List[dict]:
@@ -226,6 +263,18 @@ class ProgramItemStore:
                 item["hidden"] = hidden
                 self._persist()
             return deepcopy(item)
+
+    async def drop_shortcut(self, shortcut_id: str) -> int:
+        """A deleted shortcut leaves every row that ran it."""
+        async with self._lock:
+            changed = 0
+            for item in self._items:
+                if shortcut_id in item.get("shortcuts", []):
+                    item["shortcuts"] = [s for s in item["shortcuts"] if s != shortcut_id]
+                    changed += 1
+            if changed:
+                self._persist()
+            return changed
 
     async def reset_played(self) -> int:
         """Forget all start times and delays (a new service or a rehearsal)."""

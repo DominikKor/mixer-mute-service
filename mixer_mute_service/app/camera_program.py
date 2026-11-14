@@ -18,6 +18,12 @@ With no camera live (title, PC or beamer on air) both presets are applied at
 once and nothing is switched. A preset for a camera that is live, and every
 preset while both are live (picture in picture), is skipped.
 
+Each camera of a row may also name an OBS scene. It replaces the switch in
+step 3: OBS goes to the scene of the camera that moved. With no camera live
+the scene of a moved camera (Cam 1 first) follows after the wait, so a
+moving camera is never seen. A scene only counts for a camera whose preset
+is applied; when nothing moves, OBS stays as it is.
+
 Steps 3 and 4 run in the background; a new row cancels a sequence still
 waiting. The last outcome is kept for the UI (``status``).
 """
@@ -28,7 +34,7 @@ import asyncio
 import logging
 import re
 import time
-from typing import Awaitable, Callable, Dict, Optional, Set
+from typing import Awaitable, Callable, Dict, List, Optional, Set
 
 from .native_controls import (
     OBS_HOST,
@@ -110,6 +116,14 @@ def valid_preset(value: object) -> bool:
     return type(value) is int and 1 <= value <= 16
 
 
+def obs_scene_names(obs: Callable[..., dict] = _obs) -> List[str]:
+    """OBS's scenes, top first as in its scene list. Raises NativeControlError."""
+    scenes = obs("GetSceneList").get("scenes", [])
+    # OBS answers bottom-up (index 0 is the lowest scene in its window).
+    names = [scene.get("sceneName") for scene in reversed(scenes) if isinstance(scene, dict)]
+    return [name for name in names if isinstance(name, str) and name]
+
+
 class CameraProgram:
     """Runs the camera part of program rows. The device calls are injected,
     so tests run the whole sequence without OBS or cameras."""
@@ -121,12 +135,14 @@ class CameraProgram:
         switch: Callable[[str], Awaitable[None]],
         transition_seconds: Callable[[], Awaitable[float]],
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        switch_scene: Optional[Callable[[str], Awaitable[None]]] = None,
     ) -> None:
         self._read_live = read_live
         self._recall = recall
         self._switch = switch
         self._transition_seconds = transition_seconds
         self._sleep = sleep
+        self._switch_scene = switch_scene
         self._task: Optional[asyncio.Task] = None
         self._seq = 0
         self.status: dict = {"seq": 0, "state": "idle", "message": "", "at": None}
@@ -141,14 +157,22 @@ class CameraProgram:
             self._task.cancel()
         self._task = None
 
-    async def run(self, presets: Dict[str, Optional[int]], wait_seconds: float, title: str = "") -> dict:
+    async def run(self, presets: Dict[str, Optional[int]], wait_seconds: float, title: str = "",
+                  scenes: Optional[Dict[str, Optional[str]]] = None) -> dict:
         """Phase one now (preset of the camera that is off air); switching and
         the second preset follow in the background. Returns what was done,
         with the status number it left (the UI reports later ones)."""
-        result = await self._run(presets, wait_seconds, title)
+        chosen = {cam: scene for cam, scene in (scenes or {}).items() if cam in CAMERAS and scene}
+        result = await self._run(presets, wait_seconds, title, chosen)
         return {**result, "seq": self.status["seq"]}
 
-    async def _run(self, presets: Dict[str, Optional[int]], wait_seconds: float, title: str) -> dict:
+    async def _to_scene(self, scene: str) -> None:
+        if self._switch_scene is None:
+            raise NativeControlError("OBS scenes cannot be switched here")
+        await self._switch_scene(scene)
+
+    async def _run(self, presets: Dict[str, Optional[int]], wait_seconds: float, title: str,
+                   scenes: Dict[str, str]) -> dict:
         wanted = {cam: presets.get(cam) for cam in CAMERAS if valid_preset(presets.get(cam))}
         if not wanted:
             return {"ok": True, "applied": [], "skipped": []}
@@ -171,8 +195,15 @@ class CameraProgram:
                 for cam, preset in wanted.items():
                     await self._recall(cam, preset)
                 applied = sorted(wanted)
-                message = "Keine Kamera live: " + ", ".join(
-                    f"{CAMERA_LABELS[c]} Preset {wanted[c]}" for c in applied) + ", nicht umgeschaltet"
+                moved = ", ".join(f"{CAMERA_LABELS[c]} Preset {wanted[c]}" for c in applied)
+                scene = next((scenes[cam] for cam in CAMERAS if cam in wanted and cam in scenes), None)
+                if scene:
+                    message = f"Keine Kamera live: {moved}, OBS-Szene „{scene}“ in {wait:g} s"
+                    self._set_status("waiting", message)
+                    self._task = asyncio.create_task(self._finish_scene(scene, wait))
+                    return {"ok": True, "message": message, "applied": applied, "skipped": [],
+                            "switch_to": None, "scene": scene, "switch_in_seconds": wait}
+                message = f"Keine Kamera live: {moved}, nicht umgeschaltet"
                 self._set_status("done", message)
                 return {"ok": True, "message": message, "applied": applied, "skipped": [], "switch_to": None}
 
@@ -189,24 +220,50 @@ class CameraProgram:
             return {"ok": False, "reason": message, "applied": [], "skipped": sorted(wanted)}
 
         later = wanted.get(on_air)
-        message = (f"{CAMERA_LABELS[off_air]} fährt Preset {wanted[off_air]} an, "
-                   f"Umschalten in {wait:g} s")
+        scene = scenes.get(off_air)
+        target = f"OBS-Szene „{scene}“" if scene else "Umschalten"
+        message = f"{CAMERA_LABELS[off_air]} fährt Preset {wanted[off_air]} an, {target} in {wait:g} s"
         self._set_status("waiting", message)
-        self._task = asyncio.create_task(self._finish(on_air, off_air, later, wait, title))
+        self._task = asyncio.create_task(self._finish(on_air, off_air, later, wait, title, scene))
         return {"ok": True, "message": message, "applied": [off_air], "skipped": [],
-                "switch_to": off_air, "switch_in_seconds": wait, "then": on_air if later else None}
+                "switch_to": off_air, "scene": scene, "switch_in_seconds": wait,
+                "then": on_air if later else None}
 
-    async def _finish(self, on_air: str, off_air: str, later: Optional[int], wait: float, title: str) -> None:
+    async def _finish_scene(self, scene: str, wait: float) -> None:
+        """No camera was live: the row's scene after the presets had time to move."""
+        try:
+            await self._sleep(wait)
+            if await self._read_live():
+                self._set_status("aborted", f"OBS wurde inzwischen umgeschaltet, Szene „{scene}“ nicht geschaltet")
+                return
+            await self._to_scene(scene)
+            self._set_status("done", f"OBS-Szene „{scene}“")
+        except asyncio.CancelledError:
+            self._set_status("aborted", "Vom nächsten Programmpunkt abgelöst")
+            raise
+        except NativeControlError as exc:
+            self._set_status("failed", f"OBS-Szene „{scene}“ nicht geschaltet: {exc}")
+        except Exception:  # noqa: BLE001 - a background task must report, not vanish
+            log.exception("Camera program failed")
+            self._set_status("failed", "Kamera-Ablauf abgebrochen (interner Fehler)")
+
+    async def _finish(self, on_air: str, off_air: str, later: Optional[int], wait: float, title: str,
+                      scene: Optional[str] = None) -> None:
+        shown = f"OBS-Szene „{scene}“" if scene else f"{CAMERA_LABELS[off_air]} live"
         try:
             await self._sleep(wait)
             live = await self._read_live()
             if live != {on_air}:
                 # Someone switched OBS meanwhile: leave the picture to them.
-                self._set_status("aborted", f"OBS wurde inzwischen umgeschaltet, {CAMERA_LABELS[off_air]} nicht live geschaltet")
+                skipped = f"Szene „{scene}“ nicht geschaltet" if scene else f"{CAMERA_LABELS[off_air]} nicht live geschaltet"
+                self._set_status("aborted", f"OBS wurde inzwischen umgeschaltet, {skipped}")
                 return
-            await self._switch(off_air)
+            if scene:
+                await self._to_scene(scene)
+            else:
+                await self._switch(off_air)
             if later is None:
-                self._set_status("done", f"{CAMERA_LABELS[off_air]} live")
+                self._set_status("done", shown)
                 return
             await self._sleep(await self._transition_seconds() + 0.5)
             live = await self._read_live()
@@ -214,7 +271,7 @@ class CameraProgram:
                 self._set_status("aborted", f"{CAMERA_LABELS[on_air]} ist wieder live, Preset {later} nicht angefahren")
                 return
             await self._recall(on_air, later)
-            self._set_status("done", f"{CAMERA_LABELS[off_air]} live, {CAMERA_LABELS[on_air]} fährt Preset {later} an")
+            self._set_status("done", f"{shown}, {CAMERA_LABELS[on_air]} fährt Preset {later} an")
         except asyncio.CancelledError:
             self._set_status("aborted", "Vom nächsten Programmpunkt abgelöst")
             raise
@@ -244,4 +301,7 @@ def device_camera_program(native_controls) -> CameraProgram:
     async def transition_seconds() -> float:
         return await asyncio.to_thread(_transition_seconds_blocking)
 
-    return CameraProgram(read_live, recall, switch, transition_seconds)
+    async def switch_scene(scene: str) -> None:
+        await native_controls.press({"type": "obs-scene", "scene": scene})
+
+    return CameraProgram(read_live, recall, switch, transition_seconds, switch_scene=switch_scene)

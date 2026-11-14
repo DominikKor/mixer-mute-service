@@ -41,6 +41,7 @@ from .target_pcs import TargetPcStore
 from .proxy import ProxyServer
 from .request_guard import refusal
 from .program_items import ProgramItemStore
+from .shortcuts import ShortcutStore
 from .program_templates import ProgramTemplateStore
 from .api import router
 from .songs import SongService
@@ -143,6 +144,7 @@ async def lifespan(app: FastAPI):
         app, "channel settings", lambda: ChannelSettingsStore(data_dir / "channel_settings.json"))
     app.state.program_items = _optional(
         app, "program", lambda: ProgramItemStore(data_dir / "program_items.json"))
+    app.state.shortcuts = _optional(app, "shortcuts", lambda: ShortcutStore(data_dir / "shortcuts.json"))
     app.state.songs = _optional(app, "songs", lambda: SongService(data_dir))
     app.state.program_templates = _optional(
         app, "program templates", lambda: ProgramTemplateStore(data_dir / "program_templates.json"))

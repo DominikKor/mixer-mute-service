@@ -115,10 +115,8 @@ function placeStagePanels() {
   }
   // Every section keeps its own thumb in the rail (in page order); the one
   // on stage is just hidden, so only that section ever changes parent.
-  for (const panel of STAGE.order) {
-    const thumb = STAGE.thumbs[panel.dataset.section];
-    if (thumb.parentNode !== rail) rail.appendChild(thumb);
-  }
+  const thumbs = STAGE.order.map(panel => STAGE.thumbs[panel.dataset.section]);
+  if (thumbs.some((thumb, i) => rail.children[i] !== thumb)) thumbs.forEach(thumb => stagePlace(rail, thumb));
   for (const panel of STAGE.order) {
     const section = panel.dataset.section;
     const thumb = STAGE.thumbs[section];

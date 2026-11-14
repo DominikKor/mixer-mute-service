@@ -35,8 +35,15 @@ Then open **http://localhost:8765/** for the web UI.
 
 The service serves a single-page control panel at `/`, built for a 13-inch
 iPad in Safari (both orientations) and desktop browsers alike. Every section
-head (Desktop, Channels, Mute Gruppen, Programm, Steuerung) folds its section
-in and out; the choice is remembered per device.
+head (Desktop, Channels, Mute Gruppen, Programm, Liedanzeige, Steuerung) folds its section
+in and out; the choice is remembered per device. **Anordnen** (switch in the
+header) shows ◀ ▲ ▼ ▶ in every section head. Sections sit in rows, up to three
+side by side (single column below 900 px width): ◀ ▶ swap a section with its
+neighbour in the row, and a section alone in its row joins the row above on
+the left (◀) or right (▶); ▲ ▼ give a section sharing a row a row of its own
+above or below, and move one alone past the row above or below. The
+arrangement is remembered per device, also sets the order of the Stage
+miniatures, and **Standard** restores the original one.
 
 - **Status bar**: mixer connection, send-enabled state, last-update age, the
   **Panic** button (disable/re-enable all sends) and **UPDATE**. Update does
@@ -82,14 +89,30 @@ in and out; the choice is remembered per device.
   from the mixer's state dump and nothing is sent back (buses are not
   included). Stored in `channel_settings.json`, raw as the console sent them.
 - **Programm**: a cue list with planned time, title, person, mute group
-  (optional: a row without one changes no mutes) and up to three actions for
-  playback, translation and lyrics. Play activates the group first, then runs
+  (optional: a row without one changes no mutes), light scene, a file each
+  for playback and translation, for lyrics a song *or* a file (small keys
+  "Lied" / "Datei", ✕ removes it), camera presets with an OBS scene per
+  camera, and desktop profiles (switches; the lit ones run in order),
+  and the beamer (hide before the row shows anything, unhide after its
+  files, desktop profiles and song; "Beamer bleibt" leaves it alone), then
+  its shortcuts (switches, run in order after the row's own steps). A
+  choice with only one entry (e.g. one light scene) is a key that
+  switches it on and off instead of a dropdown (not the OBS scenes).
+  Each row is one compact line (time, delay, title, person, chips of what it
+  does, Play / hide / "⋮"); tapping the line opens its fields for editing
+  (one row at a time, Esc or another tap closes it).
+  Play activates the group first, then runs
   the linked actions in order; the delay records the click offset from the
   planned time. The cue bar shows the clock, the next row and how long until
   it is due; **Weiter** starts the next row (also from a Stream Deck via
   `POST /program/next`). The row that ran last today is marked "Läuft", the
   next one "Nächster", earlier ones are dimmed. **Duplizieren** puts the copy
   right below its original, **Ablauf zurücksetzen** forgets all start times.
+  **Als Shortcut speichern** (row's "⋮") copies what the row does into a
+  new shortcut (`shortcuts.json`). Shortcuts are keys in the Desktop
+  section: a tap runs them without touching the program's order or start
+  times; their "⋮" edits all their assignments (same fields as a row),
+  duplicates or deletes them; **+** makes a new one.
   The eye key top right of a row hides it: the row turns grey and stays in
   the list, but **Weiter** skips it (its own Play still works); tap it again
   to show the row. Times can be typed as `930`, `9:30` or `9.30`.
@@ -192,6 +215,11 @@ linked light/camera/OBS keys in order.
 | POST | `/program/items/{item_id}/play` | activate group and linked actions |
 | POST | `/program/items/{item_id}/duplicate` | copy a row, placed right after it |
 | POST | `/program/items/{item_id}/hidden` | `{"hidden": true}` greys a row out, `/program/next` skips it |
+| POST | `/program/items/{item_id}/shortcut` | save what the row does as a new shortcut |
+| GET/POST | `/shortcuts` | list shortcuts / create one (`title` and the row's action fields) |
+| PUT/DELETE | `/shortcuts/{id}` | edit / delete (rows that ran it drop it) |
+| POST | `/shortcuts/{id}/duplicate`, `/shortcuts/{id}/play` | copy ("… (Kopie)") / run now |
+| GET  | `/program/obs-scenes` | OBS's scenes for a row's OBS scene (503 if OBS is not reachable) |
 | GET  | `/program/status` | `current_id` (started last today) and `next_id` (hidden rows skipped) |
 | POST | `/program/next` | start the next row (409 `program finished` at the end) |
 | POST | `/program/reset` | forget all start times and delays |
@@ -446,8 +474,18 @@ Bei `file` oeffnet Windows die Datei mit der Standardanwendung. `monitor` ist
 1-basiert; `fullscreen` aktiviert fuer Bilder bzw. Programmfenster den
 Vollbildmodus. Bei `fullscreen: false` legt `position` die Ausrichtung des
 Fensters fest: `top-left` (Standard), `top-right`, `bottom-left`,
-`bottom-right` oder `center`. Nach Aenderung der Konfiguration von Hand den
+`bottom-right` oder `center`. Ein Bild in einer Ecke fuellt wie beim Einrasten
+in Windows ein Viertel des Arbeitsbereichs (ohne Taskleiste); bei `center`
+richtet sich das Fenster nach dem Bild. Nach Aenderung der Konfiguration von Hand den
 Service neu starten.
+
+**Mission Spotlight** (Schalter im Profil, `mission_spotlight: true`; fuer Bild,
+Datei und Audio): `path` ist dann ein Ordner. Beim Ausloesen nimmt der Service
+das Quartal des heutigen Datums und die Woche darin (Tag 1–7 des Quartals =
+Woche 01, Tag 8–14 = Woche 02 …) und schickt `<Ordner>\<Q>. Quartal\<WW>*`; der
+Agent nimmt die Datei, deren Name mit der zweistelligen Woche beginnt, z. B.
+`I:\Mission Spotlight\3. Quartal\01_Testvideo.mp4` (bei mehreren die neueste).
+Das Profilfenster zeigt das aktuelle Quartal und die Woche.
 
 **Platzhalter `*` in Pfaden:** In allen Pfaden (Profile, Datei-Aktionen im
 Programm, Liederbibliothek) steht `*` fuer einen unbekannten Teil eines Namens,
@@ -579,8 +617,10 @@ unter `C:\\ProgramData\\MixerMuteService\\config.yaml` muss
 
 ## Dateien direkt im Programm
 
-Statt einer Desktop- oder Companion-Taste kann ein Programmpunkt in *Playback*,
-*Übersetzung* oder *Liedtext* auch direkt eine Datei starten: **Datei oder
+Ein Programmpunkt kann in *Playback*, *Übersetzung* oder *Liedtext* direkt eine
+Datei starten (Tasten aus Steuerung und Desktop-Profile stehen dort nicht mehr
+zur Wahl; ältere Zeilen behalten sie als „(bisher)“, bis etwas anderes gewählt
+wird). Desktop-Profile wählt die Zeile *Desktop* des Programmpunkts. **Datei oder
 Pfad…** wählen, den vollständigen Pfad auf dem Ziel-PC eintragen und den PC
 wählen (*Streaming-PC (dieser Service)* oder ein PC aus den Desktop-Profilen).
 Musikdateien (mp3, wav, m4a, aac, flac, ogg, opus, wma) spielt der Display-Agent
@@ -610,7 +650,15 @@ Unterordner `Songs`, oder den Ordner selbst); der Service liest sie ein
 immer nur eine Folie an den Agent, der sie im Vollbild zeichnet. Eine Folie ist
 eine Strophe in der Reihenfolge des Lieds (der Refrain wiederholt sich).
 
-In der Weboberfläche unter **Programm → Liedanzeige** (gilt für alle Lieder,
+PowerPoint-Dateien (`.pptx`) im selben Ordner werden ebenfalls eingelesen
+(`app/pptx_song.py`): Jede Folie der Präsentation ist in ihrer Reihenfolge eine
+Folie des Lieds, mit dem Text der Folie (ausgeblendete und leere Folien fallen
+weg); der Titel ist der Dateiname. Gezeigt wird wie bei allen Liedern mit den
+Einstellungen der Liedanzeige (Bilder und Gestaltung der Präsentation nicht).
+Der Agent schickt dafür nur die XML-Teile der Folien (höchstens 200 Folien,
+4 MB entpackt); dafür muss er aktualisiert sein.
+
+In der Weboberfläche unter **Liedanzeige → Einstellungen…** (gilt für alle Lieder,
 gespeichert in `song_display.json`): Ordner auf dem Anzeige-PC, Anzeige-PC (IP),
 Monitor, Vollbild, Schrift, größte Schriftgröße (px bei 1080p, lange Folien werden
 kleiner), Text- und Hintergrundfarbe, Titel und Copyright auf der ersten Folie,
@@ -630,9 +678,13 @@ jeder Display-Agent zeigt sie also ohne Update.
 **Speichern und Bibliothek laden** liest die Bibliothek (neu) ein.
 
 Ein Programmpunkt bekommt sein Lied in der Spalte *Liedtext* („♪ Lied wählen“,
-Suche nach Titel oder Liederbuch-Nummer); beim Start zeigt er die erste Folie.
-Unter der Weiter-Leiste erscheinen dann eine 16:9-Vorschau, alle Folien als
-Miniaturen (antippen = anzeigen) und **Zurück / Weiter / Schwarz / Aus**. Nach
+Suche nach Titel oder Liederbuch-Nummer; eine eingetippte Nummer zeigt die Lieder
+mit genau dieser Nummer zuerst); beim Start zeigt er die erste Folie.
+Die Steuerung dafür ist der eigene Bereich **Liedanzeige**: eine 16:9-Vorschau,
+alle Folien als Miniaturen (antippen = anzeigen), **Zurück / Weiter / Schwarz /
+Aus** sowie *Lied zeigen…*, *Neues Lied…* und *Einstellungen…*. Er wird wie
+alle anderen Bereiche auf- und zugeklappt und mit *Anordnen* platziert.
+Im Stage-Modus ist er ein eigener Bereich wie alle anderen. Nach
 der letzten Folie schaltet *Weiter* auf schwarz.
 
 Tastatur und Presenter (immer, solange die Seite offen ist; nicht beim Tippen in
@@ -694,6 +746,14 @@ wird uebersprungen; ebenso alles, wenn beide live sind (Bild im Bild). Der
 naechste Programmpunkt bricht ein noch wartendes Umschalten ab. Die Meldung
 nach dem Start nennt den ersten Schritt, das Ergebnis des Umschaltens folgt
 als zweite Meldung (`GET /program/status` → `camera`).
+
+**OBS-Szene pro Kamera** (Dropdown neben dem Preset der Kamera, Liste aus OBS):
+Statt automatisch „Cam N Live“ zu schalten, schaltet OBS in Schritt 3 auf die
+Szene der Kamera, die ihr Preset angefahren hat. Ist keine Kamera live, kommt
+die Szene einer bewegten Kamera (Cam 1 zuerst) ebenfalls erst nach der
+Wartezeit (die Kameras fahren noch). Eine Szene zählt nur für eine Kamera,
+deren Preset angefahren wird; bewegt sich nichts, bleibt OBS, wie es ist.
+*OBS · automatisch* lässt alles wie oben beschrieben.
 
 Die Wartezeit ist fest: Ob eine Kamera ihr Ziel erreicht hat, meldet VISCA
 nicht zuverlaessig. Langsame Preset-Fahrten brauchen einen groesseren Wert.

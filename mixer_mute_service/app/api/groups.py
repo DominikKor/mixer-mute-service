@@ -89,6 +89,8 @@ async def rename_group(group: str, body: GroupRename, request: Request):
     program_rows = keys = 0
     if state.program_items is not None:
         program_rows = await state.program_items.rename_group(group, new_name)
+    if getattr(state, "shortcuts", None) is not None:
+        await state.shortcuts.rename_group(group, new_name)
     if state.companion_button_store is not None:
         keys = await state.companion_button_store.rename_group(group, new_name)
     log.info("Group %r renamed to %r (%d program rows, %d keys)", group, new_name, program_rows, keys)

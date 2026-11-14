@@ -11,12 +11,10 @@
   --panel-shadow: inset 1px 0 0 rgba(255,255,255,.05), inset -1px 0 0 rgba(0,0,0,.45),
     inset 0 1px 0 rgba(255,255,255,.08), 0 3px 8px rgba(0,0,0,.5);
   --header-h: 60px;
-  /* Channel strips, laid out like the console: at most 8 per row, fewer when
-     narrow. The page is as wide as one bank of 8 strips, centred: every
-     section and the header share the strips' left and right edges, and wide
-     screens get even margins instead of an empty band right of the channels. */
-  --strip-gap: 10px; --strips-max: calc(8 * 128px + 7 * var(--strip-gap));
-  --page-pad: 24px; --page-max: calc(var(--strips-max) + 2 * var(--page-pad));
+  /* The page uses the full window width; channel strips fill each row (as
+     many as fit, at least 120 px each). */
+  --strip-gap: 10px;
+  --page-pad: 24px;
 }
 * { box-sizing: border-box; }
 body {
@@ -26,8 +24,8 @@ body {
 }
 header {
   display: flex; align-items: center; gap: 10px 20px; flex-wrap: wrap; min-height: var(--header-h);
-  /* Bar spans the window; its content lines up with the page column. */
-  padding: 8px max(var(--page-pad), calc((100% - var(--strips-max)) / 2)); position: sticky; top: 0; z-index: 10;
+  /* Bar spans the window; its content lines up with the page. */
+  padding: 8px var(--page-pad); position: sticky; top: 0; z-index: 10;
   background: linear-gradient(to bottom, #2a2e35, #1c1f24);
   border-bottom: 1px solid #000; box-shadow: inset 0 1px 0 rgba(255,255,255,.07), 0 4px 14px rgba(0,0,0,.45);
 }
@@ -62,8 +60,8 @@ header h1 { margin: 0; line-height: 0; }
   box-shadow: inset 0 0 0 1px rgba(0,0,0,.6), 0 2px 4px rgba(0,0,0,.6);
 }
 .strips {
-  display: grid; gap: 14px var(--strip-gap); max-width: var(--strips-max);
-  grid-template-columns: repeat(auto-fill, minmax(max(92px, calc((100% - 7 * var(--strip-gap)) / 8)), 1fr));
+  display: grid; gap: 14px var(--strip-gap);
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
 }
 .card {
   display: flex; flex-direction: column; align-items: center; gap: 12px; min-width: 0;
@@ -307,10 +305,18 @@ dialog.settings-dialog { width: min(1180px, calc(100vw - 32px)); }
 .muted-text { color: var(--muted); }
 
 /* Page layout: three collapsible sections (Desktop, Channels, Mute Gruppen) */
-.page { max-width: var(--page-max); margin: 0 auto; padding: 0 var(--page-pad) 48px; }
+.page { margin: 0; padding: 0 var(--page-pad) 48px; }
+/* Sections in rows of up to three side by side ("Anordnen", js/app.js sets each section's place) */
+body:not(.stage-on) .page { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); column-gap: 18px; align-items: start; }
+body:not(.stage-on) .page > .panel { grid-column: 1 / -1; min-width: 0; }
+@media (max-width: 900px) { body:not(.stage-on) .page { display: block; } }
 /* Desktop display keys: two-line keys with a readiness LED */
 .desktop-launch-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .desktop-launch-status { font: 600 11px/1 var(--mono); color: var(--lcd-dim); }
+/* Program rows saved as keys ("⋮" of a row in Programm) */
+.desktop-shortcuts { margin-top: 10px; }
+.desktop-shortcuts[hidden] { display: none; }
+.display-tile.program-shortcut button.display-key { padding-right: 14px; }
 .camera-stream-status { min-height: 18px; margin: 0 0 8px; color: var(--lcd-dim); font: 600 11px/1.4 var(--mono); }
 .camera-stream-status.bad { color: #ff8576; }
 .camera-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
@@ -502,9 +508,9 @@ button.pos-zone[aria-checked="true"], button.pos-zone[aria-checked="true"]:hover
 .screen-caption { margin-top: 18px; font: 600 11px/1 var(--mono); color: var(--lcd-dim); text-align: center; }
 /* Collapsible sections (the whole header row is the tap/click target) */
 .panel { margin-top: 18px; }
-.panel-head { display: flex; align-items: center; gap: 12px; min-height: 52px; }
+.panel-head { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 12px; min-height: 52px; }
 button.section-toggle {
-  flex: 1; display: flex; align-items: center; gap: 12px; min-width: 0; min-height: 52px; padding: 6px 4px;
+  flex: 1 0 160px; display: flex; align-items: center; gap: 12px; min-width: 0; min-height: 52px; padding: 6px 4px;
   color: #9aa3b2; background: none; border: none; box-shadow: none; text-align: left; border-radius: 6px;
   font-size: 16px; font-weight: 800; letter-spacing: .16em; text-transform: uppercase; text-shadow: 0 1px 0 #000;
   -webkit-tap-highlight-color: transparent;
@@ -519,7 +525,7 @@ button.section-toggle:active:not(:disabled) { transform: none; box-shadow: none;
   content: ""; flex: 1; height: 1px; box-shadow: 0 1px 0 rgba(0,0,0,.6);
   background: linear-gradient(to right, #343a45, transparent);
 }
-.panel-tools { display: flex; align-items: center; gap: 10px; }
+.panel-tools { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 10px; }
 .panel:not(.open) .panel-tools, .panel:not(.open) .panel-body { display: none; }
 .panel-body { padding-bottom: 8px; }
 /* Compact switch for the channel section */
@@ -694,9 +700,13 @@ button.collapse-btn:active:not(:disabled) .collapse-chip { transform: translateY
   font: inherit; font-size: 12px; line-height: 1.3;
 }
 .pc-description input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
-/* Programm: a cue list, one console panel per item in two lines --
-     time  | title    | person      | mute group | keys
-     delay | playback | translation | lyrics     | keys
+/* Programm: a cue list, one console panel per item. Closed, a row is one
+   summary line (time, title, person, chips of what it does) with Play, hide
+   and "⋮"; tapping the summary opens the fields below it --
+     time     | title       | person | mute group | light
+     playback  (2 columns)  | transl.| lyrics     (to the end)
+     camera presets and OBS scene
+     desktop profiles                             | beamer
    Every field carries its own engraved label (the table head is kept for
    screen readers only). Narrow screens fall back to two columns. */
 .program-table-wrap { min-width: 0; }
@@ -705,31 +715,34 @@ button.collapse-btn:active:not(:disabled) .collapse-chip { transform: translateY
 .program-table thead {
   position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap;
 }
-.program-table tbody { display: grid; gap: 10px; }
+.program-table tbody { display: grid; gap: 8px; }
 .program-table tr {
-  display: grid; align-items: start; gap: 10px 12px; padding: 10px 12px; border-radius: 8px;
-  grid-template-columns: 96px minmax(0, 1.55fr) minmax(0, 1fr) minmax(0, 1.1fr) minmax(0, 1fr) 88px;
+  display: grid; align-items: start; gap: 10px 12px; padding: 6px 10px 6px 12px; border-radius: 8px;
+  grid-template-columns: 96px minmax(0, 1.55fr) minmax(0, 1fr) minmax(0, 1.1fr) minmax(0, 1fr) auto;
   border: 1px solid #08090b; background: var(--panel-bg); box-shadow: var(--panel-shadow);
   transition: box-shadow .2s, opacity .2s;
 }
+.program-table tr.program-open { padding-bottom: 12px; }
 /* Running row: green edge; next row: blue edge; rows done today are dimmed.
-   The time label turns into the state ("Läuft" / "Als Nächstes"). */
+   The label above the time turns into the state ("Läuft" / "Nächster"). */
 .program-table tr.program-current {
   border-color: #0b3a1e; box-shadow: 0 0 0 1px rgba(46,204,113,.7), 0 0 18px rgba(46,204,113,.2), var(--panel-shadow);
 }
 .program-table tr.program-next {
   border-color: #0d2a4d; box-shadow: 0 0 0 1px rgba(79,156,255,.7), 0 0 18px rgba(79,156,255,.18), var(--panel-shadow);
 }
-.program-table tr.program-done { opacity: .62; }
+.program-table tr.program-done:not(.program-open) { opacity: .62; }
 .program-table tr.program-done:focus-within, .program-table tr.program-done:hover { opacity: 1; }
-.program-table tr.program-current td:first-child::before { content: "● Läuft"; color: #7ff0a8; }
-.program-table tr.program-next td:first-child::before { content: "▸ Nächster"; color: #8fc2ff; }
+.program-sum-state::before { content: "Uhrzeit"; }
+.program-draft-row .program-sum-state::before { content: "Neu"; color: #8fc2ff; }
+.program-current .program-sum-state::before { content: "● Läuft"; color: #7ff0a8; }
+.program-next .program-sum-state::before { content: "▸ Nächster"; color: #8fc2ff; }
+.program-hidden .program-sum-state::before { content: "Ausgeblendet"; color: #9aa1ad; }
 /* Hidden row: grey, skipped by "Weiter"; its keys stay usable to show it again */
 .program-table tr.program-hidden { background: #16181c; box-shadow: none; border-style: dashed; border-color: #2a2e35; }
 .program-table tr.program-hidden td:not(.program-actions-cell) { opacity: .4; filter: grayscale(1); transition: opacity .2s; }
 .program-table tr.program-hidden:focus-within td:not(.program-actions-cell),
 .program-table tr.program-hidden:hover td:not(.program-actions-cell) { opacity: .7; }
-.program-table tr.program-hidden td:first-child::before { content: "Ausgeblendet"; color: #9aa1ad; letter-spacing: .04em; white-space: nowrap; }
 .program-table tr.program-hidden button.program-play { filter: grayscale(1); opacity: .5; animation: none; }
 button.program-hide[aria-pressed="true"] { color: #ffbf4d; border-color: #4a3410; }
 .program-table td { display: flex; flex-direction: column; gap: 5px; min-width: 0; padding: 0; }
@@ -737,21 +750,78 @@ button.program-hide[aria-pressed="true"] { color: #ffbf4d; border-color: #4a3410
   content: attr(data-label); font-size: 10px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase;
   color: #7d8594; text-shadow: 0 1px 0 #000;
 }
-.program-table td:nth-child(1) { grid-area: 1 / 1; }   /* Uhrzeit */
-.program-table td:nth-child(2) { grid-area: 2 / 1; }   /* Verzoegerung */
-.program-table td:nth-child(3) { grid-area: 1 / 2; }   /* Titel */
-.program-table td:nth-child(4) { grid-area: 1 / 3; }   /* Person */
-.program-table td:nth-child(5) { grid-area: 1 / 4; }   /* Mutegruppe */
-.program-table td:nth-child(6) { grid-area: 1 / 5; }   /* Licht */
-.program-table td:nth-child(7) { grid-area: 2 / 2; }   /* Playback */
-.program-table td:nth-child(8) { grid-area: 2 / 3; }   /* Uebersetzung */
-.program-table td:nth-child(9) { grid-area: 2 / 4 / 3 / 6; }   /* Liedtext */
-.program-table td:nth-child(10) { grid-area: 3 / 1 / 4 / 6; }   /* Kamera */
-.program-table td.program-actions-cell { grid-area: 1 / 6 / 4 / 7; align-self: stretch; }
-.program-camera { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; gap: 8px 12px; align-items: center; }
+.program-table td.program-summary-cell::before, .program-table td.program-actions-cell::before { content: none; }
+.program-table tr:not(.program-open) td.program-edit-cell { display: none; }
+.program-table td.program-summary-cell { grid-area: 1 / 1 / 2 / 6; }
+.program-table td.program-actions-cell { grid-area: 1 / 6 / 2 / 7; align-self: center; }
+.program-table tr.program-open td.program-summary-cell { padding-bottom: 8px; border-bottom: 1px solid rgba(255,255,255,.06); }
+.program-table tr.program-open td.program-actions-cell { align-self: start; }
+.program-table td.pc-time { grid-area: 2 / 1; }
+.program-table td.pc-title { grid-area: 2 / 2; }
+.program-table td.pc-person { grid-area: 2 / 3; }
+.program-table td.pc-group { grid-area: 2 / 4; }
+.program-table td.pc-light { grid-area: 2 / 5 / 3 / 7; }
+.program-table td.pc-playback { grid-area: 3 / 1 / 4 / 3; }
+.program-table td.pc-translation { grid-area: 3 / 3 / 4 / 4; }
+.program-table td.pc-lyrics { grid-area: 3 / 4 / 4 / 7; }
+.program-table td.pc-camera { grid-area: 4 / 1 / 5 / 7; }
+.program-table td.pc-desktop { grid-area: 5 / 1 / 6 / 5; }
+.program-table td.pc-beamer { grid-area: 5 / 5 / 6 / 7; }
+.program-table td.pc-shortcuts { grid-area: 6 / 1 / 7 / 7; }
+.program-table [hidden], .song-picker[hidden] { display: none !important; }
+/* Shortcut dialog: the same fields without time, person and shortcuts */
+dialog.shortcut-dialog { width: min(1000px, calc(100vw - 32px)); }
+.program-table.shortcut-table tr {
+  grid-template-columns: repeat(4, minmax(0, 1fr)); padding: 0; border: none; background: none; box-shadow: none;
+}
+.program-table.shortcut-table td.pc-title { grid-area: 1 / 1 / 2 / 3; }
+.program-table.shortcut-table td.pc-group { grid-area: 1 / 3 / 2 / 4; }
+.program-table.shortcut-table td.pc-light { grid-area: 1 / 4 / 2 / 5; }
+.program-table.shortcut-table td.pc-playback { grid-area: 2 / 1 / 3 / 2; }
+.program-table.shortcut-table td.pc-translation { grid-area: 2 / 2 / 3 / 3; }
+.program-table.shortcut-table td.pc-lyrics { grid-area: 2 / 3 / 3 / 5; }
+.program-table.shortcut-table td.pc-camera { grid-area: 3 / 1 / 4 / 5; }
+.program-table.shortcut-table td.pc-desktop { grid-area: 4 / 1 / 5 / 4; }
+.program-table.shortcut-table td.pc-beamer { grid-area: 4 / 4 / 5 / 5; }
+/* The summary: the whole line is the key that opens and closes the row */
+.program-table button.program-summary {
+  display: grid; grid-template-columns: 84px minmax(0, 1fr) 32px; align-items: center; gap: 4px 12px;
+  width: 100%; min-height: 56px; padding: 4px 0; text-align: left; color: inherit;
+  background: none; border: none; box-shadow: none; border-radius: 6px; cursor: pointer;
+}
+.program-table button.program-summary:hover:not(:disabled) { background: rgba(255,255,255,.035); filter: none; }
+.program-table button.program-summary:active:not(:disabled) { transform: none; box-shadow: none; }
+.program-table button.program-summary:disabled { opacity: 1; cursor: default; }
+.program-table button.program-summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.program-sum-when { display: grid; gap: 3px; justify-items: start; }
+.program-sum-state { font-size: 9px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; color: #7d8594; white-space: nowrap; }
+.program-sum-time { font: 700 19px/1 var(--mono); color: var(--lcd-text); text-shadow: var(--lcd-glow); letter-spacing: .04em; }
+.program-summary .program-delay { min-height: 0; padding: 2px 6px; font-size: 11px; box-shadow: none; }
+.program-sum-main { display: grid; gap: 5px; min-width: 0; }
+.program-sum-head { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+.program-sum-title { font-size: 15px; font-weight: 800; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.program-sum-person { font-size: 13px; color: #9aa3b0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.program-sum-chips { display: flex; flex-wrap: wrap; gap: 4px; min-width: 0; }
+.program-chip {
+  display: inline-flex; align-items: baseline; gap: 5px; max-width: 260px; padding: 3px 8px; border-radius: 10px;
+  font-size: 11px; font-weight: 600; color: var(--lcd-text); background: #0b1418; border: 1px solid #000;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.program-chip b { font-size: 9px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; color: #7d8594; }
+.program-chip.group { border-color: #3d2a0a; }
+.program-chip.light { border-color: #3d3a0a; }
+.program-chip.camera { border-color: #0d2a4d; }
+.program-chip.desktop, .program-chip.beamer { border-color: #2a1d4d; }
+.program-chip.song, .program-chip.file { border-color: #0b3a1e; }
+.program-chip.none { color: var(--lcd-dim); font-weight: 500; }
+.program-sum-chevron { display: grid; place-items: center; color: #6f8a93; transition: transform .2s; }
+.program-open .program-sum-chevron { transform: rotate(180deg); color: #e6f4f8; }
+.program-draft-row .program-sum-chevron { visibility: hidden; }
+@media (prefers-reduced-motion: reduce) { .program-sum-chevron { transition: none; } }
+/* Per camera: preset and OBS scene side by side; then the wait */
+.program-camera { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)) auto; gap: 8px 12px; align-items: center; }
 .program-camera-wait { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 700; color: #9aa3b0; white-space: nowrap; }
 .program-table .program-camera-wait input { width: 64px; text-align: center; }
-.program-table td.program-actions-cell::before { content: none; }
 .program-table input, .program-table select {
   width: 100%; min-width: 0; min-height: 44px; padding: 8px 10px; border-radius: 5px;
   font: inherit; font-size: 13px; font-weight: 600; color: var(--lcd-text);
@@ -768,8 +838,41 @@ button.program-hide[aria-pressed="true"] { color: #ffbf4d; border-color: #4a3410
   font: 700 17px/1 var(--mono); text-align: center; letter-spacing: .04em;
   background: var(--lcd-bg); box-shadow: var(--lcd-shadow); text-shadow: var(--lcd-glow);
 }
-.program-action-link { display: grid; gap: 6px; min-width: 0; }
+/* Playback / Übersetzung / Liedtext: small keys to choose (Liedtext: a song
+   or a file), then what was chosen with ✕ on the right to remove it. */
+.program-action-link { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; min-width: 0; align-items: start; }
+.program-action-link > * { grid-column: 1; }
+.program-action-link > .program-action-clear { grid-column: 2; grid-row: 1; }
 .program-action-link input { font-size: 12px; }
+.program-action-choose { display: flex; flex-wrap: wrap; gap: 6px; }
+.program-table button.program-icon-btn {
+  display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 0 14px; font-size: 12px; font-weight: 700;
+}
+.program-table button.program-action-clear {
+  display: grid; place-items: center; width: 44px; height: 44px; padding: 0; color: #9aa3b0;
+}
+.program-action-current { display: flex; align-items: center; min-height: 44px; }
+.program-action-legacy { font: 600 12px/1.3 var(--mono); color: var(--lcd-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* A select with a single choice: a key that switches it on and off */
+.program-table button.program-single {
+  display: flex; align-items: center; gap: 8px; width: 100%; min-height: 44px; padding: 0 12px;
+  font-size: 12px; font-weight: 700; text-align: left;
+}
+.program-table button.program-single span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.program-table button.program-single[aria-pressed="true"] {
+  color: #fff; border-color: #0a2550; background: linear-gradient(to bottom, #62adff, #3584e6 55%, #2a6cc4);
+}
+.program-table button.program-single svg { flex-shrink: 0; }
+/* Desktop profiles of a row: one switch per profile, lit when it runs with the row */
+.program-desktop { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
+.program-table button.program-desktop-key {
+  min-height: 44px; max-width: 100%; padding: 0 14px; font-size: 12px; font-weight: 700;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.program-table button.program-desktop-key[aria-pressed="true"] {
+  color: #fff; border-color: #0a2550; background: linear-gradient(to bottom, #62adff, #3584e6 55%, #2a6cc4);
+}
+.program-desktop-empty { display: flex; align-items: center; min-height: 44px; font: 600 12px/1.3 var(--mono); color: var(--lcd-dim); }
 .program-delay {
   display: flex; align-items: center; justify-content: center; min-height: 44px; border-radius: 5px;
   background: var(--lcd-bg); border: 1px solid #000; box-shadow: var(--lcd-shadow);
@@ -778,17 +881,10 @@ button.program-hide[aria-pressed="true"] { color: #ffbf4d; border-color: #4a3410
 .program-delay.late { color: #ffbf4d; text-shadow: 0 0 6px rgba(255,191,77,.45); }    /* started after its time */
 .program-delay.early { color: #7ff0a8; text-shadow: 0 0 6px rgba(46,204,113,.45); }   /* started before */
 .program-delay.ontime { color: var(--lcd-text); text-shadow: var(--lcd-glow); }
-/* Play (bigger, on top), hide and the "⋮" menu (duplicate, delete) stacked in one narrow column */
-.program-actions { display: flex; flex-direction: column; justify-content: center; gap: 6px; height: 100%; }
-/* Two-line layout: the keys start level with the first line of fields, so
-   Play sits in the row's top right corner (an empty label keeps the same
-   height as the field labels). */
-@media (min-width: 901px) {
-  .program-table td.program-actions-cell::before { content: "\00a0"; }
-  .program-actions { justify-content: flex-start; height: auto; }
-}
-.program-actions button { display: grid; place-items: center; width: 100%; height: 44px; padding: 0; }
-.program-actions button.program-play { height: 60px; font-size: 15px; }
+/* Play (the big key), hide and the "⋮" menu (duplicate, shortcut, delete) side by side */
+.program-actions { display: flex; align-items: center; gap: 6px; }
+.program-actions button { display: grid; place-items: center; width: 52px; height: 52px; padding: 0; }
+.program-actions button.program-play { width: 92px; font-size: 15px; }
 .program-next button.program-play { animation: program-next-glow 1.6s ease-in-out infinite; }
 @keyframes program-next-glow { 50% { box-shadow: 0 0 22px rgba(46,204,113,.75), inset 0 1px 0 rgba(255,255,255,.35); } }
 @media (prefers-reduced-motion: reduce) { .program-next button.program-play { animation: none; } }
@@ -834,7 +930,7 @@ button.program-hide[aria-pressed="true"] { color: #ffbf4d; border-color: #4a3410
   color: #8d96a3; text-transform: uppercase;
 }
 .song-live {
-  display: grid; grid-template-columns: minmax(280px, 1fr) minmax(0, 1.15fr); gap: 14px; margin-top: 12px;
+  display: grid; grid-template-columns: minmax(280px, 1fr) minmax(0, 1.15fr); gap: 14px;
   padding: 12px; border-radius: 8px; border: 1px solid #08090b; background: var(--panel-bg); box-shadow: var(--panel-shadow);
 }
 .song-live[hidden] { display: none; }
@@ -996,13 +1092,14 @@ button.program-go:disabled { opacity: .45; animation: none; }
 }
 @media (max-width: 900px) {
   .program-table tr { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .program-table td:nth-child(n), .program-table td.program-actions-cell { grid-area: auto; }
-  .program-table td:nth-child(3), .program-table td:nth-child(9), .program-table td.program-actions-cell { grid-column: 1 / -1; }
+  .program-table td.program-edit-cell, .program-table td.program-summary-cell, .program-table td.program-actions-cell { grid-area: auto; }
+  .program-table td.program-summary-cell, .program-table td.pc-title, .program-table td.pc-lyrics,
+  .program-table td.pc-camera, .program-table td.pc-desktop, .program-table td.pc-shortcuts, .program-table td.program-actions-cell { grid-column: 1 / -1; }
+  .program-table td.program-actions-cell { order: 1; }
+  .program-table td.program-edit-cell { order: 2; }
   .program-camera { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
   .program-camera-wait { grid-column: 1 / -1; }
-  .program-actions { flex-direction: row; justify-content: flex-end; align-items: center; }
-  .program-actions button { width: 88px; }
-  .program-actions button.program-play { width: 120px; height: 52px; }
+  .program-actions { justify-content: flex-end; }
   .program-cue { flex-wrap: wrap; }
   button.program-go { flex: 1; }
 }
@@ -1301,6 +1398,12 @@ body.stage-anim .stage-rail, body.stage-anim .stage-main, body.stage-anim .stage
 body.stage-anim .panel.stage-flying { position: relative; z-index: 5; }
 body.stage-anim .stage-thumb-screen .panel.stage-flying { position: absolute; }
 .stage-switch { margin-left: 8px; }
+/* "Anordnen": ▲ ▼ at the end of every section head */
+.section-move { display: none; gap: 6px; }
+body.arranging .section-move { display: flex; }
+.section-move button { width: 44px; min-height: 44px; padding: 0; font-size: 13px; }
+.panel:not(.open) .panel-head .section-move { margin-left: auto; }
+button.arrange-reset { min-height: 44px; padding: 0 14px; font-size: 12px; }
 /* Steuerung on stage: categories packed as tiles (big ones span several
    lanes, see layoutStageCompanion), slimmer keys (50 px, at least 44 px
    after fitting), so all keys fit one screen. */

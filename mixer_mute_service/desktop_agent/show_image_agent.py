@@ -49,14 +49,21 @@ MAX_MONITORS = 5
 logger = logging.getLogger("display-agent")
 
 
-def monitor_bounds(display_number: int) -> tuple[int, int, int, int]:
+def _monitor_areas(display_number: int) -> tuple[tuple[int, int, int, int], tuple[int, int, int, int]]:
+    """The monitor's full bounds and its work area (without the taskbar)."""
     if os.name != "nt":
         raise RuntimeError("This display agent is intended for Windows")
 
     import ctypes
     from ctypes import wintypes
 
-    monitors: list[tuple[int, int, int, int]] = []
+    class MONITORINFO(ctypes.Structure):
+        _fields_ = [("cbSize", wintypes.DWORD), ("rcMonitor", wintypes.RECT),
+                    ("rcWork", wintypes.RECT), ("dwFlags", wintypes.DWORD)]
+
+    user32 = ctypes.windll.user32
+    user32.GetMonitorInfoW.argtypes = [wintypes.HMONITOR, ctypes.POINTER(MONITORINFO)]
+    monitors: list[tuple[tuple[int, int, int, int], tuple[int, int, int, int]]] = []
 
     @ctypes.WINFUNCTYPE(
         ctypes.c_int,
@@ -65,17 +72,61 @@ def monitor_bounds(display_number: int) -> tuple[int, int, int, int]:
         ctypes.POINTER(wintypes.RECT),
         wintypes.LPARAM,
     )
-    def callback(_monitor, _dc, rect, _data):
+    def callback(monitor, _dc, rect, _data):
         bounds = rect.contents
-        monitors.append((bounds.left, bounds.top, bounds.right, bounds.bottom))
+        full = (bounds.left, bounds.top, bounds.right, bounds.bottom)
+        info = MONITORINFO(cbSize=ctypes.sizeof(MONITORINFO))
+        if user32.GetMonitorInfoW(monitor, ctypes.byref(info)):
+            work = info.rcWork
+            monitors.append((full, (work.left, work.top, work.right, work.bottom)))
+        else:
+            monitors.append((full, full))
         return 1
 
-    if not ctypes.windll.user32.EnumDisplayMonitors(None, None, callback, 0):
+    if not user32.EnumDisplayMonitors(None, None, callback, 0):
         raise OSError("Could not enumerate displays")
-    monitors.sort(key=lambda rect: (rect[0], rect[1]))
+    monitors.sort(key=lambda areas: (areas[0][0], areas[0][1]))
     if display_number < 1 or display_number > len(monitors):
         raise RuntimeError(f"Display {display_number} not found; detected {len(monitors)}")
     return monitors[display_number - 1]
+
+
+def monitor_bounds(display_number: int) -> tuple[int, int, int, int]:
+    return _monitor_areas(display_number)[0]
+
+
+def monitor_work_area(display_number: int) -> tuple[int, int, int, int]:
+    return _monitor_areas(display_number)[1]
+
+
+def _invisible_border(hwnd) -> tuple[int, int, int, int]:
+    """Left, top, right, bottom width of the invisible resize border Windows
+    10/11 put around a framed window (0s where there is none)."""
+    import ctypes
+    from ctypes import wintypes
+
+    user32 = ctypes.windll.user32
+    user32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+    user32.PhysicalToLogicalPointForPerMonitorDPI.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.POINT)]
+    dwm = ctypes.windll.dwmapi
+    dwm.DwmGetWindowAttribute.argtypes = [wintypes.HWND, wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD]
+    outer = wintypes.RECT()
+    visible = wintypes.RECT()
+    if not user32.GetWindowRect(hwnd, ctypes.byref(outer)):
+        return 0, 0, 0, 0
+    # DWMWA_EXTENDED_FRAME_BOUNDS: the visible frame, always in physical pixels.
+    if dwm.DwmGetWindowAttribute(hwnd, 9, ctypes.byref(visible), ctypes.sizeof(visible)) != 0:
+        return 0, 0, 0, 0
+    top_left = wintypes.POINT(visible.left, visible.top)
+    bottom_right = wintypes.POINT(visible.right, visible.bottom)
+    user32.PhysicalToLogicalPointForPerMonitorDPI(hwnd, ctypes.byref(top_left))
+    user32.PhysicalToLogicalPointForPerMonitorDPI(hwnd, ctypes.byref(bottom_right))
+    return (
+        max(0, top_left.x - outer.left),
+        max(0, top_left.y - outer.top),
+        max(0, outer.right - bottom_right.x),
+        max(0, outer.bottom - bottom_right.y),
+    )
 
 
 def _visible_windows() -> dict[int, int]:
@@ -177,6 +228,17 @@ def _window_position(
         return positions[position]
     except KeyError as exc:
         raise ValueError(f"Unsupported window position: {position}") from exc
+
+
+def _framed_window_position(
+    area: tuple[int, int, int, int], width: int, height: int,
+    invisible: tuple[int, int, int, int], position: str,
+) -> tuple[int, int]:
+    """Where a window of this outer size goes so its visible frame sits in the
+    corner, as when it is snapped there (the invisible border lies outside)."""
+    inv_left, inv_top, inv_right, inv_bottom = invisible
+    x, y = _window_position(area, width - inv_left - inv_right, height - inv_top - inv_bottom, position)
+    return x - inv_left, y - inv_top
 
 
 def _place_process_window(
@@ -845,14 +907,20 @@ def _hide_all(root: tk.Tk) -> None:
 
 
 def _show_image_on(root: tk.Wm, image_label: tk.Label, profile: dict, monitor: int) -> None:
-    left, top, right, bottom = monitor_bounds(monitor)
-    bounds = (right - left, bottom - top)
-    with Image.open(profile["path"]) as source:
-        if profile["fullscreen"]:
-            image = ImageOps.fit(source.convert("RGB"), bounds)
-        else:
-            image = source.convert("RGB")
-            image.thumbnail(bounds, Image.Resampling.LANCZOS)
+    fullscreen = profile["fullscreen"]
+    # A framed window keeps the taskbar free, like a window snapped into a corner.
+    left, top, right, bottom = monitor_bounds(monitor) if fullscreen else monitor_work_area(monitor)
+    with Image.open(profile["path"]) as opened:
+        source = opened.convert("RGB")
+
+    def fitted(width: int, height: int) -> Image.Image:
+        if fullscreen:
+            return ImageOps.fit(source, (width, height))
+        image = source.copy()
+        image.thumbnail((max(1, width), max(1, height)), Image.Resampling.LANCZOS)
+        return image
+
+    image = fitted(right - left, bottom - top)
     photo = ImageTk.PhotoImage(image)
     root.withdraw()
     root.overrideredirect(profile["fullscreen"])
@@ -908,10 +976,35 @@ def _show_image_on(root: tk.Wm, image_label: tk.Label, profile: dict, monitor: i
         raise ctypes.WinError()
     frame_width = (outer.right - outer.left) - (client.right - client.left)
     frame_height = (outer.bottom - outer.top) - (client.bottom - client.top)
-    window_width = right - left if profile["fullscreen"] else image.width + frame_width
-    window_height = bottom - top if profile["fullscreen"] else image.height + frame_height
-    # Place the whole window (frame included), so a corner sits in the corner.
-    x, y = _window_position((left, top, right, bottom), window_width, window_height, profile["position"])
+    if fullscreen:
+        window_width, window_height = right - left, bottom - top
+        x, y = left, top
+    else:
+        invisible = _invisible_border(hwnd)
+        visible_frame_width = frame_width - invisible[0] - invisible[2]
+        visible_frame_height = frame_height - invisible[1] - invisible[3]
+        if profile["position"] == "center":
+            resized = fitted(right - left - visible_frame_width, bottom - top - visible_frame_height)
+        else:
+            # A corner gets a quarter of the work area, as Windows' corner snap does.
+            quarter_width, quarter_height = (right - left) // 2, (bottom - top) // 2
+            resized = ImageOps.contain(source, (
+                max(1, quarter_width - visible_frame_width), max(1, quarter_height - visible_frame_height)
+            ), Image.Resampling.LANCZOS)
+        if resized.size != image.size:
+            image = resized
+            photo = ImageTk.PhotoImage(image)
+            image_label.configure(image=photo)
+            image_label.image = photo
+        if profile["position"] == "center":
+            window_width = image.width + frame_width
+            window_height = image.height + frame_height
+        else:
+            window_width = quarter_width + invisible[0] + invisible[2]
+            window_height = quarter_height + invisible[1] + invisible[3]
+        x, y = _framed_window_position(
+            (left, top, right, bottom), window_width, window_height, invisible, profile["position"]
+        )
     insert_after = -1 if profile["fullscreen"] else -2
     flags = 0x0040 | (0x0020 if profile["fullscreen"] else 0)
     if not user32.SetWindowPos(
@@ -940,19 +1033,54 @@ def _show_image_on(root: tk.Wm, image_label: tk.Label, profile: dict, monitor: i
 
 def _read_song_library(path: str) -> tuple[list[dict], bool]:
     """All .foil files of a FoilPresenter library (its "Songs" folder, or the
-    folder itself). Raises FileNotFoundError when the folder is missing."""
+    folder itself), and PowerPoint songs (.pptx: only the XML of their slides,
+    the service takes the text from it). Raises FileNotFoundError when the
+    folder is missing."""
     folder = _songs_folder(path)
     files, truncated = [], False
     for entry in sorted(folder.iterdir(), key=lambda p: p.name.casefold()):
-        if entry.suffix.lower() != ".foil" or not entry.is_file():
+        suffix = entry.suffix.lower()
+        if suffix not in (".foil", ".pptx") or not entry.is_file() or entry.name.startswith("~$"):
             continue
         if len(files) >= MAX_SONG_FILES:
             truncated = True
             break
+        if suffix == ".pptx":
+            parts = _pptx_parts(entry)
+            if parts:
+                files.append({"name": entry.name, "pptx_parts": parts})
+            continue
         if entry.stat().st_size > MAX_SONG_FILE_BYTES:
             continue
         files.append({"name": entry.name, "xml": entry.read_bytes().decode("utf-8", errors="replace")})
     return files, truncated
+
+
+MAX_PPTX_SLIDES = 200
+MAX_PPTX_PART_BYTES = 1024 * 1024
+MAX_PPTX_XML_BYTES = 4 * 1024 * 1024
+_PPTX_PART_RE = re.compile(r"^ppt/(?:presentation\.xml|_rels/presentation\.xml\.rels|slides/slide\d{1,4}\.xml)$")
+
+
+def _pptx_parts(file: Path) -> dict | None:
+    """The presentation, its relations and the slides as XML text (pictures
+    and media are left in the file); None for a file that is no readable
+    .pptx or too big unpacked."""
+    import zipfile
+
+    try:
+        with zipfile.ZipFile(file) as archive:
+            infos = [info for info in archive.infolist() if _PPTX_PART_RE.match(info.filename)]
+            slides = sum(1 for info in infos if info.filename.startswith("ppt/slides/"))
+            # Sizes as unpacked, checked before anything is unpacked.
+            if (slides > MAX_PPTX_SLIDES or any(info.file_size > MAX_PPTX_PART_BYTES for info in infos)
+                    or sum(info.file_size for info in infos) > MAX_PPTX_XML_BYTES):
+                logger.warning("PowerPoint song skipped (too big): %s", file)
+                return None
+            return {info.filename: archive.read(info).decode("utf-8", errors="replace") for info in infos}
+    except (zipfile.BadZipFile, OSError, KeyError):
+        logger.warning("PowerPoint song could not be read: %s", file)
+        return None
 
 
 def _songs_folder(path: str) -> Path:

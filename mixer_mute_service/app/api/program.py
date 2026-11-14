@@ -15,14 +15,18 @@ from fastapi import APIRouter, Body, Request
 from fastapi.responses import Response
 from pydantic import ValidationError
 
-from ..camera_program import CAMERAS, DEFAULT_WAIT_SECONDS
+from ..camera_program import CAMERAS, DEFAULT_WAIT_SECONDS, obs_scene_names
 from ..actions import (
     PROGRAM_ACTION_FIELDS,
+    assigned_shortcuts,
     program_conflict_error,
     program_reference_error,
+    press_native,
     run_action,
+    run_profile,
 )
-from ..models import ProgramItemRequest
+from ..models import ProgramItemRequest, ShortcutRequest
+from ..native_controls import NativeControlError
 from ..program_items import ProgramItemError
 from ..responses import fail, respond, unwrap
 from ..lights import apply_scene
@@ -36,7 +40,8 @@ _MAX_PROGRAM_FILE_ITEMS = 100
 _PROGRAM_FILE_FIELDS = (
     "time", "title", "person", "group", "playback", "translation", "lyrics",
     "playback_description", "translation_description", "lyrics_description", "song", "light",
-    "cam1_preset", "cam2_preset", "camera_wait_seconds",
+    "cam1_preset", "cam2_preset", "camera_wait_seconds", "desktop", "cam1_scene", "cam2_scene", "beamer",
+    "shortcuts",
 )
 
 # One program start at a time: two quick "Weiter" presses must not both start
@@ -44,7 +49,7 @@ _PROGRAM_FILE_FIELDS = (
 _program_lock = asyncio.Lock()
 
 
-async def _validate(body: ProgramItemRequest, request: Request):
+async def _validate(body, request: Request):
     item = body.model_dump()
     reason = await program_reference_error(request, item)
     if reason is not None:
@@ -156,6 +161,119 @@ async def hide_program_item(item_id: str, request: Request, body: dict = Body(..
     return {"ok": True, "item": item}
 
 
+@router.post("/program/items/{item_id}/shortcut")
+async def shortcut_from_program_item(item_id: str, request: Request):
+    """Save what the row does as a new shortcut (a copy: editing one leaves the other)."""
+    store = _shortcut_store(request)
+    if store is None:
+        return fail("shortcuts unavailable", 503)
+    item = await request.app.state.program_items.get(item_id)
+    if item is None:
+        return fail("unknown program item", 404)
+    try:
+        shortcut = await store.create(item)
+    except ProgramItemError as exc:
+        return fail(str(exc), 400)
+    return {"ok": True, "shortcut": shortcut}
+
+
+# ---- shortcuts (app/shortcuts.py) ------------------------------------------
+
+def _shortcut_store(request: Request):
+    return getattr(request.app.state, "shortcuts", None)
+
+
+@router.get("/shortcuts")
+async def list_shortcuts(request: Request):
+    store = _shortcut_store(request)
+    if store is None:
+        return fail("shortcuts unavailable", 503)
+    return {"ok": True, "shortcuts": await store.list()}
+
+
+@router.post("/shortcuts")
+async def create_shortcut(body: ShortcutRequest, request: Request):
+    store = _shortcut_store(request)
+    if store is None:
+        return fail("shortcuts unavailable", 503)
+    invalid = await _validate(body, request)
+    if invalid:
+        return invalid
+    try:
+        shortcut = await store.create(body.model_dump())
+    except ProgramItemError as exc:
+        return fail(str(exc), 400)
+    return {"ok": True, "shortcut": shortcut}
+
+
+@router.put("/shortcuts/{shortcut_id}")
+async def update_shortcut(shortcut_id: str, body: ShortcutRequest, request: Request):
+    store = _shortcut_store(request)
+    if store is None:
+        return fail("shortcuts unavailable", 503)
+    invalid = await _validate(body, request)
+    if invalid:
+        return invalid
+    try:
+        shortcut = await store.update(shortcut_id, body.model_dump())
+    except ProgramItemError as exc:
+        return fail(str(exc), 400)
+    if shortcut is None:
+        return fail("unknown shortcut", 404)
+    return {"ok": True, "shortcut": shortcut}
+
+
+@router.post("/shortcuts/{shortcut_id}/duplicate")
+async def duplicate_shortcut(shortcut_id: str, request: Request):
+    store = _shortcut_store(request)
+    if store is None:
+        return fail("shortcuts unavailable", 503)
+    try:
+        shortcut = await store.duplicate(shortcut_id)
+    except ProgramItemError as exc:
+        return fail(str(exc), 400)
+    if shortcut is None:
+        return fail("unknown shortcut", 404)
+    return {"ok": True, "shortcut": shortcut}
+
+
+@router.delete("/shortcuts/{shortcut_id}")
+async def delete_shortcut(shortcut_id: str, request: Request):
+    store = _shortcut_store(request)
+    if store is None:
+        return fail("shortcuts unavailable", 503)
+    if not await store.delete(shortcut_id):
+        return fail("unknown shortcut", 404)
+    rows = await request.app.state.program_items.drop_shortcut(shortcut_id)
+    return {"ok": True, "shortcut_id": shortcut_id, "deleted": True, "program_items": rows}
+
+
+@router.post("/shortcuts/{shortcut_id}/play")
+async def play_shortcut(shortcut_id: str, request: Request):
+    """Run a shortcut now; the program's run order and start times stay as they are."""
+    store = _shortcut_store(request)
+    if store is None:
+        return fail("shortcuts unavailable", 503)
+    async with _program_lock:
+        shortcut = await store.get(shortcut_id)
+        if shortcut is None:
+            return fail("unknown shortcut", 404)
+        broken = await program_reference_error(request, shortcut)
+        if broken:
+            return fail(broken, 409, shortcut_id=shortcut_id)
+        return await _run_steps(request, shortcut, {"shortcut_id": shortcut_id, "title": shortcut["title"]})
+
+
+@router.get("/program/obs-scenes")
+async def program_obs_scenes():
+    """The scenes OBS has, in the order of its scene list."""
+    try:
+        scenes = await asyncio.to_thread(obs_scene_names)
+    except NativeControlError as exc:
+        return fail(f"OBS not reachable: {exc}", 503)
+    return {"ok": True, "scenes": scenes}
+
+
 @router.get("/program/status")
 async def program_status(request: Request):
     """The row that ran last today and the one "Weiter" would start, plus
@@ -211,25 +329,52 @@ async def _play(item_id: str, request: Request):
     broken = await program_reference_error(request, item)
     if broken:
         return fail(broken, 409, program_item_id=item_id)
+    shortcuts = await assigned_shortcuts(request, item)
+
+    async def started() -> dict:
+        # Marked once its group is set: a refused group leaves "Weiter" on this row.
+        played = await program_store.mark_played(item_id)
+        return {"delay_seconds": played["last_delay_seconds"]}
+
+    result = await _run_steps(request, item, {"program_item_id": item_id, "title": item["title"]}, started)
+    if not isinstance(result, dict):
+        return result
+    # Then the row's shortcuts, in order; the first failure stops.
+    ran = []
+    for shortcut in shortcuts:
+        answer, status_code = unwrap(await _run_steps(
+            request, shortcut, {"shortcut_id": shortcut["id"], "title": shortcut["title"]}))
+        ran.append(answer)
+        if status_code != 200 or answer.get("ok") is False:
+            return fail(f"shortcut {shortcut['title']} failed: {answer.get('reason')}",
+                        status_code if status_code != 200 else 502, program_item_id=item_id,
+                        title=item["title"], delay_seconds=result.get("delay_seconds"), shortcuts=ran)
+    result["shortcuts"] = ran
+    # The page reports the camera part that ran last.
+    camera = next((answer["camera"] for answer in reversed(ran) if answer.get("camera")), None)
+    if camera is not None:
+        result["camera"] = camera
+    return result
+
+
+async def _run_steps(request: Request, item: dict, summary: dict, started=None):
+    """Run what a program row or shortcut does: group, light, beamer hide,
+    files, desktop profiles, song, beamer unhide, cameras. Stops at the first
+    failure. Returns the answer (a dict when everything ran)."""
     group_result = None
     if item.get("group"):
         group_result = await request.app.state.controller.group_set(item["group"], False)
         if not group_result.get("ok"):
-            # Not marked as started: "Weiter" still offers this row.
             return respond({
                 "ok": False,
                 "reason": group_result.get("reason", "mute group could not be activated"),
                 "details": group_result.get("details"),
-                "program_item_id": item_id,
+                **summary,
                 "group_result": group_result,
             })
-    played = await program_store.mark_played(item_id)
-    summary = {
-        "program_item_id": item_id,
-        "title": item["title"],
-        "delay_seconds": played["last_delay_seconds"],
-        "group_result": group_result,
-    }
+    if started is not None:
+        summary.update(await started())
+    summary["group_result"] = group_result
 
     light_result = None
     if item.get("light"):
@@ -240,6 +385,11 @@ async def _play(item_id: str, request: Request):
             return fail(reason, status_code if status_code != 200 else 502, **summary, light_result=light_result)
 
     linked_actions = []
+    # Hide before anything new is shown; unhide only once it is (below).
+    if item.get("beamer") == "hide":
+        failed = await _set_beamer(request, True, summary, linked_actions)
+        if failed:
+            return failed
     for field in PROGRAM_ACTION_FIELDS:
         value = item.get(field)
         if not value:
@@ -251,6 +401,14 @@ async def _play(item_id: str, request: Request):
             return fail(reason, status_code if status_code != 200 else 502,
                         **summary, linked_actions=linked_actions)
 
+    for profile_id in item.get("desktop") or []:
+        result, status_code = await run_profile(request, profile_id)
+        linked_actions.append({"field": "desktop", "profile": profile_id, **result})
+        if status_code != 200 or result.get("ok") is False:
+            reason = "desktop profile failed" + (" after group activation" if group_result else "")
+            return fail(reason, status_code if status_code != 200 else 502,
+                        **summary, linked_actions=linked_actions)
+
     song_result = None
     if item.get("song"):
         song_result, status_code = unwrap(await show_slide(request, item["song"], 0))
@@ -259,8 +417,14 @@ async def _play(item_id: str, request: Request):
             return fail(reason, status_code if status_code != 200 else 502,
                         **summary, linked_actions=linked_actions)
 
+    if item.get("beamer") == "unhide":
+        failed = await _set_beamer(request, False, summary, linked_actions)
+        if failed:
+            return failed
+
     # Last: the camera presets. Only the camera that is off air moves now;
-    # switching to it and the other camera's preset follow in the background.
+    # switching to it (or to its OBS scene) and the other camera's preset
+    # follow in the background.
     camera_result = None
     presets = {cam: item.get(f"{cam}_preset") for cam in CAMERAS}
     if any(presets.values()):
@@ -268,10 +432,22 @@ async def _play(item_id: str, request: Request):
         if camera_program is None:
             return fail("camera presets unavailable", 503, **summary, linked_actions=linked_actions)
         camera_result = await camera_program.run(
-            presets, item.get("camera_wait_seconds") or DEFAULT_WAIT_SECONDS, item["title"])
+            presets, item.get("camera_wait_seconds") or DEFAULT_WAIT_SECONDS, item["title"],
+            scenes={cam: item.get(f"{cam}_scene") for cam in CAMERAS})
         if not camera_result.get("ok"):
             return fail(camera_result.get("reason", "camera presets failed"), 502,
                         **summary, linked_actions=linked_actions, camera=camera_result)
 
     return {"ok": True, "song": song_result, "light": light_result, **summary,
             "linked_actions": linked_actions, "camera": camera_result}
+
+
+async def _set_beamer(request: Request, hidden: bool, summary: dict, linked_actions: list):
+    """The row's beamer state, like the "Beamer hide/unhide" keys; a failure answer or None."""
+    button_id = "beamer-hide" if hidden else "beamer-unhide"
+    result, status_code = await press_native(request, button_id, {"type": "beamer-set", "hidden": hidden})
+    linked_actions.append({"field": "beamer", **result})
+    if status_code != 200 or result.get("ok") is False:
+        return fail(f"beamer could not be set: {result.get('reason', 'HTTP ' + str(status_code))}",
+                    status_code if status_code != 200 else 502, **summary, linked_actions=linked_actions)
+    return None

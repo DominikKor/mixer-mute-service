@@ -159,8 +159,6 @@ function songBooks(song) {
 
 function renderSongLive() {
   const wrap = $("song-live");
-  const loaded = SONG_LIST.length > 0;
-  wrap.hidden = !loaded && !SONG_LIVE.song;
   const song = SONG_LIVE.song;
   wrap.classList.toggle("idle", !song);
   $("song-live-title").textContent = song ? song.title
@@ -206,7 +204,8 @@ function renderSongLive() {
 }
 
 async function refreshSongLive() {
-  if (!STAGE.on && !$("program-items").closest(".panel").classList.contains("open")) return;
+  if (!STAGE.on && !$("program-items").closest(".panel").classList.contains("open")
+      && !$("songs-panel").classList.contains("open")) return;
   // The song itself (all slides) only comes along when it changed.
   const have = SONG_LIVE.song && !SONG_LIVE_FULL ? `?have=${encodeURIComponent(SONG_LIVE.song_id)}` : "";
   const result = await api("GET", "/songs/live" + have);
@@ -499,7 +498,7 @@ function syncSongPicker(wrap) {
   const song = SONG_INDEX.get(id);
   const button = wrap.querySelector(".song-pick-btn");
   button.classList.toggle("empty", !id);
-  button.textContent = id ? `♪ ${song ? song.title : id.replace(/\.foil$/i, "")}` : "♪ Lied wählen";
+  button.textContent = id ? `♪ ${song ? song.title : id.replace(/\.(foil|pptx)$/i, "")}` : "♪ Lied wählen";
   button.title = id ? (song ? `${song.title} · ${song.slide_count} Folien` : "Lied nicht in der geladenen Bibliothek") : "Lied aus der FoilPresenter-Bibliothek";
 }
 
@@ -516,10 +515,17 @@ function songMatches(query) {
   const q = query.trim().toLocaleLowerCase("de");
   if (!q) return SONG_LIST.slice(0, 40);
   const words = q.split(/\s+/);
-  return SONG_LIST.filter(song => {
+  const matches = SONG_LIST.filter(song => {
     const hay = `${song.title} ${(song.books || []).map(b => `${b.name} ${b.number}`).join(" ")}`.toLocaleLowerCase("de");
     return words.every(w => hay.includes(w));
-  }).slice(0, 40);
+  });
+  // A typed number lists the songs with exactly that hymnal number first ("12" before 112, 120 or 12a).
+  const numbers = words.filter(w => /^\d+$/.test(w)).map(w => w.replace(/^0+(?=\d)/, ""));
+  if (numbers.length) {
+    const exact = song => (song.books || []).some(b => numbers.includes(String(b.number ?? "").trim().replace(/^0+(?=\d)/, "")));
+    matches.sort((a, b) => exact(b) - exact(a));
+  }
+  return matches.slice(0, 40);
 }
 
 // onPick(song or null); allowNone adds "Kein Lied". Inside a modal dialog
@@ -598,7 +604,7 @@ function openSongSearch(anchor, onPick, allowNone = true, options = {}) {
   input.focus();
 }
 
-$("program-items").addEventListener("click", event => {
+onProgramEditors("click", event => {
   const button = event.target.closest(".song-pick-btn");
   if (!button) return;
   const wrap = button.closest(".song-picker");

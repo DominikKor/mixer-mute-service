@@ -169,6 +169,154 @@ function initSections() {
   initChannelView(prefs);
 }
 
+// ---- Arrangement of the sections (per device) -------------------------------
+// "Anordnen" shows ◀ ▲ ▼ ▶ in every section head. Sections sit in rows; up to
+// three share a row side by side (normal view, wider than 900 px):
+//   ◀ ▶  swap with the neighbour in the row; a section alone in its row joins
+//        the row above, on its left (◀) or right (▶) end
+//   ▲ ▼  a section sharing a row gets a row of its own above / below; one
+//        alone swaps places with the row above / below
+// The rows are kept in the UI prefs; read in order they also give the order
+// of the stage miniatures. Only the moved section changes place in the page
+// (moving a section reloads the camera videos in it).
+
+const SECTION_ROW_MAX = 3;
+let SECTION_DEFAULT_ORDER = [];
+let SECTION_ROWS = [];  // [[section, ...], ...]: rows top to bottom, sections left to right
+
+function sectionPanelsInOrder() {
+  return STAGE.order.length ? STAGE.order : [...document.querySelectorAll(".page > .panel[data-section]")];
+}
+
+function initSectionOrder() {
+  const panels = [...document.querySelectorAll(".page > .panel[data-section]")];
+  SECTION_DEFAULT_ORDER = panels.map(panel => panel.dataset.section);
+  const prefs = loadUiPrefs();
+  const saved = Array.isArray(prefs.sectionRows) ? prefs.sectionRows
+    : Array.isArray(prefs.sectionOrder) ? prefs.sectionOrder.map(section => [section]) : null;
+  SECTION_ROWS = normalizeSectionRows(saved);
+  for (const panel of panels) {
+    const label = panel.querySelector(".section-toggle").textContent.trim();
+    const box = document.createElement("span");
+    box.className = "section-move";
+    for (const [dir, text, title] of [["left", "◀", "nach links"], ["up", "▲", "nach oben"],
+                                      ["down", "▼", "nach unten"], ["right", "▶", "nach rechts"]]) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.dataset.sectionMove = dir;
+      button.textContent = text;
+      button.title = `${label} ${title}`;
+      button.setAttribute("aria-label", button.title);
+      button.addEventListener("click", () => moveSection(panel.dataset.section, dir, button));
+      box.appendChild(button);
+    }
+    panel.querySelector(".panel-head").appendChild(box);
+  }
+  applySectionRows();
+  const toggle = $("arrange-toggle");
+  toggle.addEventListener("change", () => {
+    document.body.classList.toggle("arranging", toggle.checked);
+    $("arrange-reset-btn").hidden = !toggle.checked;
+  });
+  $("arrange-reset-btn").addEventListener("click", () => {
+    SECTION_ROWS = normalizeSectionRows(null);
+    applySectionRows();
+    const p = loadUiPrefs();
+    delete p.sectionRows;
+    delete p.sectionOrder;
+    saveUiPrefs(p);
+  });
+}
+
+// Unknown names are dropped; sections missing from the saved rows (new ones) get a row at the end.
+function normalizeSectionRows(rows) {
+  const known = new Set(SECTION_DEFAULT_ORDER), seen = new Set(), result = [];
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const clean = (Array.isArray(row) ? row : []).filter(s => known.has(s) && !seen.has(s));
+    clean.forEach(s => seen.add(s));
+    for (let i = 0; i < clean.length; i += SECTION_ROW_MAX) result.push(clean.slice(i, i + SECTION_ROW_MAX));
+  }
+  for (const section of SECTION_DEFAULT_ORDER) if (!seen.has(section)) result.push([section]);
+  return result;
+}
+
+// Put the sections in page order and in their grid places; with `moved`
+// only that section changes place in the page.
+function applySectionRows(moved = null) {
+  const order = SECTION_ROWS.flat();
+  const bySection = Object.fromEntries(sectionPanelsInOrder().map(panel => [panel.dataset.section, panel]));
+  if (STAGE.order.length) STAGE.order = order.map(section => bySection[section]);
+  const page = document.querySelector(".page");
+  const place = section => {
+    const next = order[order.indexOf(section) + 1];
+    if (STAGE.on) stagePlace($("stage-rail"), STAGE.thumbs[section], next ? STAGE.thumbs[next] : null);
+    else stagePlace(page, bySection[section], next ? bySection[next] : null);
+  };
+  if (moved) place(moved);
+  else [...order].reverse().forEach(place);
+  // Grid of 6 columns: one section spans 6, two 3 each, three 2 each.
+  SECTION_ROWS.forEach((sections, r) => {
+    const span = 6 / sections.length;
+    sections.forEach((section, i) => {
+      bySection[section].style.gridRow = String(r + 1);
+      bySection[section].style.gridColumn = `${1 + i * span} / span ${span}`;
+    });
+  });
+  syncSectionMoveButtons();
+  if (STAGE.on) scheduleStageLayout();
+}
+
+// The rows after moving `section` in `dir`, or null when it cannot move that way.
+function movedSectionRows(section, dir) {
+  const rows = SECTION_ROWS.map(row => [...row]);
+  const r = rows.findIndex(row => row.includes(section));
+  if (r < 0) return null;
+  const row = rows[r], c = row.indexOf(section);
+  const alone = row.length === 1;
+  if (dir === "left" || dir === "right") {
+    const n = dir === "left" ? c - 1 : c + 1;
+    if (n >= 0 && n < row.length) {
+      [row[c], row[n]] = [row[n], row[c]];
+    } else if (alone && r > 0 && rows[r - 1].length < SECTION_ROW_MAX) {
+      if (dir === "left") rows[r - 1].unshift(section); else rows[r - 1].push(section);
+      rows.splice(r, 1);
+    } else return null;
+  } else {
+    const up = dir === "up";
+    if (!alone) {
+      row.splice(c, 1);
+      rows.splice(up ? r : r + 1, 0, [section]);
+    } else {
+      const other = up ? r - 1 : r + 1;
+      if (other < 0 || other >= rows.length) return null;
+      [rows[r], rows[other]] = [rows[other], rows[r]];
+    }
+  }
+  return rows;
+}
+
+function moveSection(section, dir, button) {
+  const rows = movedSectionRows(section, dir);
+  if (!rows) return;
+  SECTION_ROWS = rows;
+  applySectionRows(section);
+  const panel = sectionPanelsInOrder().find(p => p.dataset.section === section);
+  if (!STAGE.on && panel) panel.scrollIntoView({ block: "nearest" });
+  const p = loadUiPrefs();
+  p.sectionRows = rows;
+  delete p.sectionOrder;
+  saveUiPrefs(p);
+  if (button && !button.disabled) button.focus({ preventScroll: true });
+}
+
+function syncSectionMoveButtons() {
+  for (const panel of sectionPanelsInOrder()) {
+    for (const button of panel.querySelectorAll("[data-section-move]")) {
+      button.disabled = !movedSectionRows(panel.dataset.section, button.dataset.sectionMove);
+    }
+  }
+}
+
 const CHANNEL_VIEWS = ["full", "compact", "ultra"];
 
 function applyChannelView(view) {

@@ -280,11 +280,15 @@ function stopCameraMoveKey(key) {
 let DESKTOP_PROFILES_SIGNATURE = "";
 function renderDesktopProfiles(data) {
   const wrap = $("desktop-profiles");
+  MISSION_SPOTLIGHT = data.mission_spotlight || null;
   const signature = JSON.stringify({ ready: data.ready, profiles: data.profiles || [] });
   if (signature === DESKTOP_PROFILES_SIGNATURE) return;
   DESKTOP_PROFILES_SIGNATURE = signature;
 
   DESKTOP_PROFILES = data.profiles || [];
+  // Program rows offer the same profiles.
+  PROGRAM_DESKTOP_PROFILES = DESKTOP_PROFILES;
+  renderProgramItems();
   const status = $("desktop-launch-status");
   const addTile = $("new-profile-btn");
   wrap.querySelectorAll(".display-tile").forEach(el => el.remove());
@@ -293,6 +297,8 @@ function renderDesktopProfiles(data) {
     const where = targetPcName(profile.target_ip) || profile.target_ip;
     const screens = profile.monitors && profile.monitors.length > 1 ? `Monitore ${profile.monitors.join(", ")}` : `Monitor ${profile.monitor}`;
     const meta = audio ? `${where} · Audio${profile.fade ? ` · Fade ${String(profile.fade_seconds).replace(".", ",")} s` : ""}` : `${where} · ${screens}${profile.fullscreen ? " · Vollbild" : ""}`;
+    const spotlight = profile.mission_spotlight && MISSION_SPOTLIGHT
+      ? `Spotlight Q${MISSION_SPOTLIGHT.quarter} · Woche ${MISSION_SPOTLIGHT.week} · ` : "";
     const button = document.createElement("button");
     button.className = "display-key";
     if (audio) {
@@ -311,7 +317,7 @@ function renderDesktopProfiles(data) {
     title.textContent = profile.title;
     const metaEl = document.createElement("span");
     metaEl.className = "display-key-meta";
-    metaEl.textContent = meta;
+    metaEl.textContent = spotlight + meta;
     button.append(led, title, metaEl);
     const stop = document.createElement("button");
     if (audio) {

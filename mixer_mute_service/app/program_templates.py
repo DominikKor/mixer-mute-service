@@ -48,7 +48,8 @@ MAX_SONGS = 40
 _ROW_FIELDS = (
     "time", "title", "person", "group", "playback", "translation", "lyrics",
     "playback_description", "translation_description", "lyrics_description", "song", "light",
-    "cam1_preset", "cam2_preset", "camera_wait_seconds",
+    "cam1_preset", "cam2_preset", "camera_wait_seconds", "desktop", "cam1_scene", "cam2_scene", "beamer",
+    "shortcuts",
 )
 
 

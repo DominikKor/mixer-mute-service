@@ -84,7 +84,7 @@ function buildFileAction(label, value) {
   return wrap;
 }
 
-// Show the editor for a file action and fill it from the select's value
+// Show the editor for a file action and fill it from the field's value
 // (unless the user is typing in it).
 function syncFileAction(select) {
   const wrap = select.parentElement.querySelector(".file-action");
@@ -108,9 +108,9 @@ function syncFileAction(select) {
   kind.classList.toggle("bad", text.startsWith("Bitte"));
 }
 
-// Path or PC changed: store "file:<ip>|<path>" in the action select and save.
+// Path or PC changed: store "file:<ip>|<path>" in the action field and save.
 function commitFileAction(wrap) {
-  const select = wrap.parentElement.querySelector("select[data-program-field]");
+  const control = wrap.parentElement.querySelector(":scope > [data-program-field]");
   const path = wrap.querySelector(".file-path").value.trim();
   const target = wrap.querySelector(".file-target").value || THIS_PC;
   const kind = wrap.querySelector(".file-kind");
@@ -118,21 +118,15 @@ function commitFileAction(wrap) {
   kind.textContent = text;
   kind.classList.toggle("bad", text.startsWith("Bitte"));
   if (!path || text.startsWith("Bitte")) return;
-  const value = `file:${target}|${path}`;
-  setSelectOptions(select, programActionOptions(value), "Keine Aktion", value);
-  select.dispatchEvent(new Event("change", { bubbles: true }));
+  control.value = `file:${target}|${path}`;
+  control.dispatchEvent(new Event("change", { bubbles: true }));
 }
 
-$("program-items").addEventListener("change", event => {
-  const select = event.target.closest("select[data-program-field]");
-  if (select && select.parentElement.querySelector(".file-action")) {
-    syncFileAction(select);
-    if (select.value === FILE_CHOOSE) select.parentElement.querySelector(".file-path").focus();
-  }
+onProgramEditors("change", event => {
   const wrap = event.target.closest(".file-action");
   if (wrap) commitFileAction(wrap);
 });
-$("program-items").addEventListener("input", event => {
+onProgramEditors("input", event => {
   const path = event.target.closest(".file-path");
   if (!path) return;
   const kind = path.parentElement.querySelector(".file-kind");
@@ -140,7 +134,7 @@ $("program-items").addEventListener("input", event => {
   kind.textContent = text;
   kind.classList.toggle("bad", text.startsWith("Bitte"));
 });
-$("program-items").addEventListener("click", event => {
+onProgramEditors("click", event => {
   const button = event.target.closest(".file-browse");
   if (button) pickFile(button);
 });
@@ -253,5 +247,5 @@ $("fb-cancel").addEventListener("click", () => $("file-dialog").close());
 async function loadFileBrowseAvailable() {
   const result = await api("GET", "/files/browse-available");
   FILE_BROWSE_AVAILABLE = !!(result.ok && result.data.available);
-  document.querySelectorAll("#program-items select[data-program-field]").forEach(syncFileAction);
+  document.querySelectorAll(".program-action-link").forEach(syncProgramAction);
 }

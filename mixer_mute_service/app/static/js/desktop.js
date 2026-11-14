@@ -7,6 +7,8 @@
 // edited values in place, everything else in the file stays as written.
 
 let DESKTOP_PROFILES = [];
+// Today's quarter and week from the service: {quarter, week, subfolder, file_prefix}.
+let MISSION_SPOTLIGHT = null;
 const PROFILE_FORM = { mode: "create", id: null, idTouched: false, kind: "image", monitors: [1], position: "top-left" };
 const MAX_MONITORS = 5;
 const KIND_INFO = {
@@ -103,10 +105,24 @@ function pickMonitor(n) {
 function syncProfileForm() {
   const kind = PROFILE_FORM.kind;
   setRadio($("pf-kind"), "data-kind", kind);
-  $("pf-path").placeholder = KIND_INFO[kind].placeholder;
+  // Mission Spotlight: the path is a folder; the week's file is picked by date.
+  $("pf-spotlight-row").hidden = kind === "program";
+  const spotlight = kind !== "program" && $("pf-spotlight").checked;
+  $("pf-spotlight-text").textContent = spotlight ? "Ein" : "Aus";
+  const now = MISSION_SPOTLIGHT;
+  $("pf-spotlight-hint").textContent = now
+    ? `Heute: ${now.quarter}. Quartal · Woche ${now.week} des Quartals`
+    : "Quartal und Woche werden geladen…";
+  $("pf-path-label").textContent = spotlight ? "Ordner auf dem Ziel-PC" : "Pfad auf dem Ziel-PC";
+  $("pf-path").placeholder = spotlight ? "I:\\Mission Spotlight" : KIND_INFO[kind].placeholder;
   const youtube = kind === "audio" && isYoutubeUrl($("pf-path").value.trim());
-  $("pf-path-hint").textContent = youtube ? YOUTUBE_HINT : KIND_INFO[kind].hint + WILDCARD_HINT;
-  $("pf-path-hint").classList.toggle("youtube", youtube);
+  const folder = $("pf-path").value.trim().replace(/[\\/]+$/, "") || "Ordner";
+  $("pf-path-hint").textContent = spotlight
+    ? `Ordner mit den Unterordnern „1. Quartal“ … „4. Quartal“. Gewählt wird die Datei, deren Name mit der zweistelligen Woche beginnt`
+      + (now ? `, jetzt: ${folder}\\${now.subfolder}\\${now.file_prefix}… (z. B. ${now.file_prefix}_Video.mp4)` : "")
+      + ". Passen mehrere, gilt die neueste."
+    : youtube ? YOUTUBE_HINT : KIND_INFO[kind].hint + WILDCARD_HINT;
+  $("pf-path-hint").classList.toggle("youtube", youtube && !spotlight);
   $("pf-args-wrap").hidden = kind !== "program";
   $("pf-display-row").hidden = kind === "audio";
   $("pf-fade-row").hidden = kind !== "audio";
@@ -240,6 +256,7 @@ function openProfileDialog(profileId) {
   $("pf-fullscreen").checked = !!p.fullscreen;
   $("pf-fade").checked = !!p.fade;
   $("pf-fade-seconds").value = p.fade_seconds ?? 5;
+  $("pf-spotlight").checked = !!p.mission_spotlight;
   profileFormError(null);
   $("pf-save").disabled = false;
   syncProfileForm();
@@ -258,6 +275,10 @@ function readProfileForm() {
   if (!title) return profileFormError("Bitte einen Namen eingeben.", $("pf-title"));
   if (!PROFILE_ID_RE.test(id)) return profileFormError("ID: nur Buchstaben, Ziffern, - und _ (max. 64).", $("pf-id"));
   const youtube = isYoutubeUrl(path);
+  const spotlight = kind !== "program" && $("pf-spotlight").checked;
+  if (spotlight && (youtube || !WIN_ABS_PATH_RE.test(path) || path.includes("*"))) {
+    return profileFormError("Mission Spotlight: vollständigen Ordner angeben (ohne *), z. B. I:\\Mission Spotlight", $("pf-path"));
+  }
   if (youtube && kind !== "audio") return profileFormError("Ein YouTube-Link spielt nur als Audio.", $("pf-path"));
   if (!youtube && !WIN_ABS_PATH_RE.test(path)) return profileFormError("Pfad: vollständiger Windows-Pfad, z. B. " + KIND_INFO[kind].placeholder.split(" oder ")[0] + (kind === "audio" ? ", oder ein YouTube-Link" : ""), $("pf-path"));
   if (kind === "program" && !/(\.exe|\*)$/i.test(path)) return profileFormError("Ein Programm muss auf eine .exe zeigen (oder auf * enden).", $("pf-path"));
@@ -274,7 +295,7 @@ function readProfileForm() {
   return {
     id, title, kind, path, args, target_ip: ip, fullscreen: $("pf-fullscreen").checked,
     monitor: monitors[0], monitors: monitors.length > 1 ? monitors : [], position: PROFILE_FORM.position,
-    fade, fade_seconds: fadeSeconds,
+    fade, fade_seconds: fadeSeconds, mission_spotlight: spotlight,
   };
 }
 

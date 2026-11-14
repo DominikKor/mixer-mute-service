@@ -92,10 +92,9 @@ class CompanionButtonUpdate(BaseModel):
     category_id: str
 
 
-class ProgramItemRequest(BaseModel):
-    time: str
+class ProgramActionFields(BaseModel):
+    """What a program row or a shortcut does when it starts."""
     title: str
-    person: str = ""
     group: Optional[str] = ""  # empty: the row changes no mutes
     playback: Optional[str] = None
     translation: Optional[str] = None
@@ -109,3 +108,18 @@ class ProgramItemRequest(BaseModel):
     cam2_preset: Optional[int] = None
     camera_wait_seconds: Optional[float] = None
     light: Optional[str] = None  # light scene id (app/lights.py), applied when the row starts
+    desktop: List[str] = Field(default_factory=list)  # desktop profile ids, run when the row starts
+    # OBS scene per camera, switched to when that camera moved (app/camera_program.py)
+    cam1_scene: Optional[str] = None
+    cam2_scene: Optional[str] = None
+    beamer: Optional[Literal["hide", "unhide", ""]] = None  # empty: the beamer stays as it is
+
+
+class ProgramItemRequest(ProgramActionFields):
+    time: str
+    person: str = ""
+    shortcuts: List[str] = Field(default_factory=list)  # shortcut ids, run after the row's own steps
+
+
+class ShortcutRequest(ProgramActionFields):
+    pass

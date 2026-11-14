@@ -13,6 +13,10 @@
   <label class="compact-switch stage-switch" title="Stage: ein Bereich bildschirmfüllend, die anderen als Vorschau links">
     <input id="stage-toggle" type="checkbox" /><span class="track"></span>Stage
   </label>
+  <label class="compact-switch arrange-switch" title="Bereiche mit ◀ ▲ ▼ ▶ anordnen, auch nebeneinander (gilt für dieses Gerät)">
+    <input id="arrange-toggle" type="checkbox" /><span class="track"></span>Anordnen
+  </label>
+  <button id="arrange-reset-btn" type="button" class="arrange-reset" hidden title="Bereiche wieder in der ursprünglichen Reihenfolge">Standard</button>
   <div class="status">
     <button id="update-btn" class="update-key" hidden title="Mixer Service und Display Service dieses PCs aktualisieren">Update</button>
     <div class="status-display">
@@ -37,6 +41,7 @@
       <button id="new-profile-btn" class="display-add" title="Neues Profil" aria-label="Neues Profil"><svg class="plus-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 4v16M4 12h16"/></svg></button>
       <span id="desktop-launch-status" class="desktop-launch-status">Profile werden geladen</span>
     </div>
+    <div id="desktop-shortcuts" class="desktop-launch-actions desktop-shortcuts" aria-label="Programm-Shortcuts" hidden></div>
   </div>
 </section>
 
@@ -75,7 +80,6 @@
   <div class="panel-head">
     <button class="section-toggle" aria-expanded="true" aria-controls="program-body">Programm</button>
     <div class="panel-tools">
-      <button id="song-settings-btn" class="add-key" title="Liedanzeige: Bibliothek, Anzeige-PC und Aussehen für alle Lieder">Liedanzeige</button>
       <button id="program-template-btn" class="add-key" title="Programm als Vorlage speichern oder eine Vorlage mit den Liedern des Tages anwenden">Vorlagen…</button>
       <button id="program-export-btn" class="add-key" title="Programmpunkte als bearbeitbare JSON-Datei exportieren">JSON exportieren</button>
       <button id="program-import-btn" class="add-key" title="Programmpunkte aus einer JSON-Datei importieren">JSON importieren</button>
@@ -96,15 +100,40 @@
       </div>
       <button id="program-go-btn" class="program-play program-go" title="Nächsten Programmpunkt starten (Presenter: Bild ab, wenn kein Lied läuft)">Weiter</button>
     </div>
-    <div id="song-live" class="song-live idle" hidden>
+    <div class="program-table-wrap">
+      <table class="program-table">
+        <colgroup>
+          <col style="width:6%"><col style="width:7%"><col style="width:14%"><col style="width:10%">
+          <col style="width:13%"><col style="width:10%"><col style="width:10%"><col style="width:14%"><col style="width:16%"><col>
+        </colgroup>
+        <thead><tr>
+          <th>Uhrzeit</th><th>Verzögerung</th><th>Titel</th><th>Person</th><th>Mutegruppe</th><th>Licht</th>
+          <th>Playback</th><th>Übersetzung</th><th>Liedtext</th><th>Kamera</th><th>Desktop</th><th>Beamer</th><th>Shortcuts</th><th>Aktion</th>
+        </tr></thead>
+        <tbody id="program-items"></tbody>
+      </table>
+    </div>
+    <div id="program-empty" class="program-empty" hidden>Noch keine Programmpunkte.</div>
+  </div>
+</section>
+<!-- Liedanzeige: preview and keys of the song on screen -->
+<section id="songs-panel" class="panel song-panel" data-section="songs">
+  <div class="panel-head">
+    <button class="section-toggle" aria-expanded="true" aria-controls="songs-body">Liedanzeige</button>
+    <div class="panel-tools">
+      <button id="song-choose-btn" type="button" class="add-key" title="Ein Lied direkt anzeigen">Lied zeigen…</button>
+      <button id="song-new-btn" type="button" class="add-key" title="Ein neues Lied anlegen und in der Bibliothek speichern">Neues Lied…</button>
+      <button id="song-settings-btn" type="button" class="add-key" title="Liedanzeige: Bibliothek, Anzeige-PC und Aussehen für alle Lieder">Einstellungen…</button>
+    </div>
+  </div>
+  <div id="songs-body" class="panel-body">
+    <div id="song-live" class="song-live idle">
       <div class="song-stage"><div id="song-preview" class="slide-box song-preview" role="img" aria-label="Aktuelle Folie"></div></div>
       <div class="song-side">
         <div class="song-head">
           <span class="song-head-label">Lied</span>
           <span id="song-live-title" class="song-live-title">Kein Lied auf dem Bildschirm</span>
           <span id="song-live-pos" class="song-live-pos"></span>
-          <button id="song-choose-btn" type="button" title="Ein Lied direkt anzeigen">Lied zeigen…</button>
-          <button id="song-new-btn" type="button" title="Ein neues Lied anlegen und in der Bibliothek speichern">Neues Lied…</button>
         </div>
         <div class="song-controls">
           <button id="song-prev-btn" type="button" title="Vorherige Folie (Bild auf, ←)">◀ Zurück</button>
@@ -115,20 +144,6 @@
         <div id="song-slides" class="song-slides"></div>
       </div>
     </div>
-    <div class="program-table-wrap">
-      <table class="program-table">
-        <colgroup>
-          <col style="width:6%"><col style="width:7%"><col style="width:14%"><col style="width:10%">
-          <col style="width:13%"><col style="width:10%"><col style="width:10%"><col style="width:14%"><col style="width:16%"><col>
-        </colgroup>
-        <thead><tr>
-          <th>Uhrzeit</th><th>Verzögerung</th><th>Titel</th><th>Person</th><th>Mutegruppe</th>
-          <th>Playback</th><th>Übersetzung</th><th>Liedtext</th><th>Kamera</th><th>Aktion</th>
-        </tr></thead>
-        <tbody id="program-items"></tbody>
-      </table>
-    </div>
-    <div id="program-empty" class="program-empty" hidden>Noch keine Programmpunkte.</div>
   </div>
 </section>
 <section class="panel" data-section="lights">
@@ -495,7 +510,12 @@
         </button>
       </div>
     </div>
-    <label class="pf-field"><span>Pfad auf dem Ziel-PC</span>
+    <div id="pf-spotlight-row" class="pf-field">
+      <span class="pf-label">Mission Spotlight</span>
+      <label class="compact-switch"><input id="pf-spotlight" type="checkbox" /><span class="track"></span><span id="pf-spotlight-text">Aus</span></label>
+      <span id="pf-spotlight-hint" class="pf-hint"></span>
+    </div>
+    <label class="pf-field"><span id="pf-path-label">Pfad auf dem Ziel-PC</span>
       <input id="pf-path" class="pf-input mono" type="text" autocomplete="off" spellcheck="false" /></label>
     <div id="pf-path-hint" class="pf-hint"></div>
     <label id="pf-args-wrap" class="pf-field"><span>Argumente – eins pro Zeile (optional)</span>
@@ -573,8 +593,26 @@
   <button type="button" role="menuitem" data-menu-action="duplicate"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/></svg>Duplizieren</button>
   <button type="button" role="menuitem" data-menu-action="delete" class="danger"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6"/></svg>Löschen</button>
 </div>
+<div id="shortcut-menu" class="tile-menu" role="menu" hidden>
+  <button type="button" role="menuitem" data-menu-action="edit"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/></svg>Bearbeiten</button>
+  <button type="button" role="menuitem" data-menu-action="duplicate"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/></svg>Duplizieren</button>
+  <button type="button" role="menuitem" data-menu-action="delete" class="danger"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6"/></svg>Löschen</button>
+</div>
+<dialog id="shortcut-dialog" class="update-dialog profile-dialog shortcut-dialog" aria-labelledby="shortcut-dialog-title">
+  <form id="shortcut-form" class="update-body" novalidate>
+    <h3 id="shortcut-dialog-title">Shortcut bearbeiten</h3>
+    <div class="pf-hint">Was der Shortcut tut, wie bei einem Programmpunkt. Er läuft über seine Taste unter Desktop oder nach Programmpunkten, denen er zugewiesen ist.</div>
+    <table class="program-table shortcut-table"><tbody id="shortcut-editor"></tbody></table>
+    <div id="shortcut-error" class="update-lcd err" hidden></div>
+    <div class="update-actions">
+      <button type="button" id="shortcut-cancel">Abbrechen</button>
+      <button type="submit" id="shortcut-save" class="primary">Speichern</button>
+    </div>
+  </form>
+</dialog>
 <div id="program-menu" class="tile-menu" role="menu" hidden>
   <button type="button" role="menuitem" data-menu-action="clone"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/></svg>Duplizieren</button>
+  <button type="button" role="menuitem" data-menu-action="shortcut"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="1.5"/><path d="M9 20h6M12 16v4M10 7.5l4 2.5-4 2.5z"/></svg><span id="program-menu-shortcut-text">Als Shortcut speichern</span></button>
   <button type="button" role="menuitem" data-menu-action="delete" class="danger"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6"/></svg>Löschen</button>
 </div>
 

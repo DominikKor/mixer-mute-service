@@ -29,6 +29,7 @@ mixer_mute_service/song_library.json
 mixer_mute_service/channel_settings.json
 mixer_mute_service/channel_preferences.json
 mixer_mute_service/program_items.json
+mixer_mute_service/shortcuts.json
 mixer_mute_service/update-status.json
 mixer_mute_service/logs/
 mixer_mute_service/backups/
@@ -42,6 +43,9 @@ mixer_mute_service/config.yaml.bak
 # templates the Windows release ships (config-template.yaml,
 # groups-template.json) and the service's defaults when run from the source
 # tree, which then also writes to them. Do not commit such local changes.
+
+# Local UI test setup (own config and data, no real mixer)
+mixer_mute_service/local-test/
 
 # Traffic captures (contain the live console state)
 mixer_mute_service/captures/

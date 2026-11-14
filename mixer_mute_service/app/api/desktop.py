@@ -11,7 +11,7 @@ from fastapi import APIRouter, Body, Request
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
-from .. import display_agent
+from .. import display_agent, mission_spotlight
 from ..actions import control_audio, network_program, show_profile
 from ..config import DesktopProfileConfig, default_config_path
 from ..desktop_profiles import ProfileEditError, add_profile, delete_profile, duplicate_profile, update_profile
@@ -30,6 +30,8 @@ async def desktop_profiles(request: Request):
     cfg = request.app.state.cfg.desktop_display
     return {
         "ready": display_agent.is_ready(cfg),
+        # Today's quarter and week, for Mission Spotlight profiles.
+        "mission_spotlight": mission_spotlight.current(),
         "profiles": [
             {
                 "id": profile_id,
@@ -44,6 +46,8 @@ async def desktop_profiles(request: Request):
                 "position": profile.position,
                 "fade": profile.fade,
                 "fade_seconds": profile.fade_seconds,
+                "mission_spotlight": profile.mission_spotlight,
+                "resolved_path": mission_spotlight.profile_path(profile),
             }
             for profile_id, profile in cfg.profiles.items()
         ],
@@ -203,6 +207,8 @@ async def _move_targets(request: Request, moves: dict) -> dict:
         result["power"] = await state.power_control.retarget(moves)
     if state.program_items is not None:
         result["program_rows"] = await state.program_items.retarget_files(moves)
+    if getattr(state, "shortcuts", None) is not None:
+        result["shortcuts"] = await state.shortcuts.retarget_files(moves)
     if state.program_templates is not None:
         result["template_rows"] = await state.program_templates.retarget_files(moves)
     return result

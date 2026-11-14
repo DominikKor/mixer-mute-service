@@ -8,10 +8,12 @@ import asyncio
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
-from app.camera_program import CameraProgram, _live_cameras_blocking, camera_of
+from app.camera_program import CameraProgram, _live_cameras_blocking, camera_of, obs_scene_names
 from app.native_controls import NativeControlError
 from app.program_items import ProgramItemError, ProgramItemStore
+from app.shortcuts import ShortcutStore
 
 from tests.helpers import app_client
 
@@ -93,7 +95,10 @@ class Rig:
             if self.gate is not None:
                 await self.gate.wait()
 
-        self.program = CameraProgram(read_live, recall, switch, transition, sleep)
+        async def switch_scene(scene):
+            self.events.append(("scene", scene))
+
+        self.program = CameraProgram(read_live, recall, switch, transition, sleep, switch_scene)
 
     async def settle(self):
         task = self.program._task
@@ -104,7 +109,7 @@ class Rig:
                 pass
 
     def moves(self):
-        return [event for event in self.events if event[0] in ("recall", "switch")]
+        return [event for event in self.events if event[0] in ("recall", "switch", "scene")]
 
 
 class SequenceTests(unittest.IsolatedAsyncioTestCase):
@@ -201,6 +206,69 @@ class SequenceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(empty.events, [], "OBS is not even asked")
 
 
+class SceneTests(unittest.IsolatedAsyncioTestCase):
+    async def test_scene_of_the_moved_camera_replaces_the_switch(self):
+        rig = Rig([{"cam1"}, {"cam1"}, {"cam2"}])
+        result = await rig.program.run({"cam1": 3, "cam2": 5}, 4, scenes={"cam1": "Kanzel", "cam2": "Predigt"})
+        self.assertEqual(rig.moves(), [("recall", "cam2", 5)], "the scene waits for the camera")
+        self.assertEqual(result["scene"], "Predigt")
+        await rig.settle()
+        self.assertEqual(rig.moves(), [("recall", "cam2", 5), ("scene", "Predigt"), ("recall", "cam1", 3)])
+        self.assertEqual(rig.program.status["state"], "done")
+
+    async def test_other_cameras_scene_is_not_used(self):
+        rig = Rig([{"cam1"}, {"cam1"}])
+        await rig.program.run({"cam2": 5}, 4, scenes={"cam1": "Kanzel"})
+        await rig.settle()
+        self.assertEqual(rig.moves(), [("recall", "cam2", 5), ("switch", "cam2")])
+
+    async def test_scene_without_preset_does_nothing(self):
+        rig = Rig([])
+        result = await rig.program.run({"cam1": None, "cam2": None}, 5, scenes={"cam1": "Ende (neu)"})
+        self.assertTrue(result["ok"])
+        self.assertEqual(rig.events, [], "OBS is not even asked")
+
+    async def test_no_camera_live_scene_after_the_wait(self):
+        rig = Rig([set(), set()])
+        result = await rig.program.run({"cam1": 1, "cam2": 4}, 6, scenes={"cam2": "Gottesdienst"})
+        self.assertEqual(result["switch_in_seconds"], 6.0)
+        self.assertEqual(rig.moves(), [("recall", "cam1", 1), ("recall", "cam2", 4)])
+        await rig.settle()
+        self.assertEqual(rig.moves()[-1], ("scene", "Gottesdienst"))
+        self.assertIn(("sleep", 6.0), rig.events)
+
+    async def test_no_camera_live_scene_dropped_when_obs_changed(self):
+        rig = Rig([set(), {"cam2"}])
+        await rig.program.run({"cam1": 1}, 5, scenes={"cam1": "Gottesdienst"})
+        await rig.settle()
+        self.assertEqual(rig.moves(), [("recall", "cam1", 1)])
+        self.assertEqual(rig.program.status["state"], "aborted")
+
+    async def test_live_camera_preset_skipped_scene_too(self):
+        rig = Rig([{"cam1"}])
+        result = await rig.program.run({"cam1": 3}, 5, scenes={"cam1": "Lied"})
+        self.assertTrue(result["ok"])
+        self.assertEqual(rig.moves(), [])
+
+    async def test_scene_switch_failing_is_reported(self):
+        rig = Rig([{"cam1"}, {"cam1"}])
+
+        async def broken(scene):
+            raise NativeControlError("OBS WebSocket unavailable")
+
+        rig.program._switch_scene = broken
+        result = await rig.program.run({"cam2": 5}, 5, scenes={"cam2": "Lied"})
+        self.assertTrue(result["ok"])
+        await rig.settle()
+        self.assertEqual(rig.program.status["state"], "failed")
+
+    def test_scene_names_top_first(self):
+        def obs(request_type, data=None):
+            self.assertEqual(request_type, "GetSceneList")
+            return {"scenes": [{"sceneName": "Ende"}, {"sceneName": "Predigt"}, {"sceneName": "Start"}, {}]}
+        self.assertEqual(obs_scene_names(obs), ["Start", "Predigt", "Ende"])
+
+
 def row(**extra):
     return {"time": "10:00", "title": "Predigt", "person": "", "group": "", **extra}
 
@@ -222,15 +290,51 @@ class StoreTests(unittest.IsolatedAsyncioTestCase):
                 '[{"id": "a", "time": "09:00", "title": "Alt", "person": "", "group": ""}]', encoding="utf-8")
             old = await ProgramItemStore(Path(name) / "old.json").get("a")
             self.assertEqual((old["cam1_preset"], old["cam2_preset"], old["camera_wait_seconds"]), (None, None, 5.0))
+            self.assertEqual((old["desktop"], old["cam1_scene"], old["shortcuts"]), ([], None, []))
+
+    async def test_desktop_and_scene(self):
+        with tempfile.TemporaryDirectory() as name:
+            store = ProgramItemStore(Path(name) / "program.json")
+            created = await store.create(row(desktop=["qr", "bild-2", "qr"], cam2_scene="  Predigt "))
+            self.assertEqual((created["desktop"], created["cam1_scene"], created["cam2_scene"]),
+                             (["qr", "bild-2"], None, "Predigt"))
+            self.assertEqual((await store.create(row(cam1_scene="")))["cam1_scene"], None)
+            for bad in ({"desktop": "qr"}, {"desktop": ["a b"]}, {"desktop": [f"p{i}" for i in range(9)]},
+                        {"cam1_scene": "x" * 101}, {"cam2_scene": "a\nb"}, {"cam1_scene": 3},
+                        {"shortcuts": ["nope"]}, {"shortcuts": "a" * 32}):
+                with self.assertRaises(ProgramItemError, msg=bad):
+                    await store.create(row(**bad))
+
+    async def test_shortcut_store(self):
+        with tempfile.TemporaryDirectory() as name:
+            store = ShortcutStore(Path(name) / "shortcuts.json")
+            created = await store.create({"title": "Predigt", "group": "Pult", "cam1_preset": 3, "time": "10:00"})
+            self.assertNotIn("time", created)
+            self.assertEqual((created["group"], created["cam1_preset"]), ("Pult", 3))
+            with self.assertRaises(ProgramItemError):
+                await store.create({"title": ""})
+            copy = await store.duplicate(created["id"])
+            self.assertEqual(copy["title"], "Predigt (Kopie)")
+            self.assertNotEqual(copy["id"], created["id"])
+            updated = await store.update(copy["id"], {"title": "Lied", "beamer": "hide"})
+            self.assertEqual((updated["title"], updated["group"], updated["beamer"]), ("Lied", "", "hide"))
+            self.assertEqual(await store.rename_group("Pult", "Kanzel"), 1)
+            reloaded = ShortcutStore(Path(name) / "shortcuts.json")
+            self.assertEqual([s["title"] for s in await reloaded.list()], ["Predigt", "Lied"])
+            self.assertEqual((await reloaded.get(created["id"]))["group"], "Kanzel")
+            self.assertTrue(await store.delete(copy["id"]))
+            self.assertIsNone(await store.update("missing", {"title": "X"}))
 
 
 class FakeCameraProgram:
     def __init__(self):
         self.calls = []
+        self.scenes = []
         self.status = {"seq": 3, "state": "waiting", "message": "Cam 2 fährt Preset 5 an", "at": 1.0}
 
-    async def run(self, presets, wait, title=""):
+    async def run(self, presets, wait, title="", scenes=None):
         self.calls.append((presets, wait, title))
+        self.scenes.append(scenes)
         return {"ok": True, "applied": ["cam2"], "switch_to": "cam2"}
 
 
@@ -253,6 +357,104 @@ class ApiTests(unittest.TestCase):
             played = client.post(f"/program/items/{plain}/play").json()
             self.assertIsNone(played["camera"])
             self.assertEqual(len(fake.calls), 1, "a row without presets does not touch the cameras")
+
+            with_scene = client.post("/program/items", json=row(title="Ende", cam2_preset=4, cam2_scene="Ende (neu)")).json()
+            played = client.post(f"/program/items/{with_scene['item']['id']}/play").json()
+            self.assertTrue(played["ok"], played)
+            self.assertEqual(fake.scenes[-1], {"cam1": None, "cam2": "Ende (neu)"})
+            scene_only = client.post("/program/items", json=row(title="Nur Szene", cam1_scene="X")).json()
+            calls = len(fake.calls)
+            client.post(f"/program/items/{scene_only['item']['id']}/play")
+            self.assertEqual(len(fake.calls), calls, "a scene without its preset does not touch the cameras")
+
+    def test_desktop_profiles_run_in_order_and_must_exist(self):
+        profiles = ("desktop_display:\n  enabled: true\n  profiles:\n"
+                    "    qr:\n      title: QR\n      kind: image\n      path: 'C:\\Bilder\\qr.png'\n"
+                    "    obs:\n      title: OBS\n      kind: program\n      path: 'C:\\obs\\obs64.exe'\n")
+        with app_client(profiles) as (client, _folder):
+            self.assertEqual(client.post("/program/items", json=row(desktop=["nope"])).status_code, 400)
+            item_id = client.post("/program/items", json=row(desktop=["obs", "qr"])).json()["item"]["id"]
+            ran = []
+
+            async def fake_run_profile(_request, profile_id):
+                ran.append(profile_id)
+                return {"ok": True}, 200
+
+            with patch("app.api.program.run_profile", fake_run_profile):
+                played = client.post(f"/program/items/{item_id}/play").json()
+            self.assertTrue(played["ok"], played)
+            self.assertEqual(ran, ["obs", "qr"])
+            self.assertEqual([a["profile"] for a in played["linked_actions"]], ["obs", "qr"])
+
+    def test_beamer_hide_first_unhide_after_the_content(self):
+        profiles = ("desktop_display:\n  enabled: true\n  profiles:\n"
+                    "    qr:\n      title: QR\n      kind: image\n      path: 'C:\\Bilder\\qr.png'\n")
+        with app_client(profiles) as (client, _folder):
+            self.assertNotEqual(client.post("/program/items", json=row(beamer="aus")).status_code, 200)
+            plain = client.post("/program/items", json=row()).json()["item"]
+            self.assertIsNone(plain["beamer"])
+            events = []
+
+            async def fake_press(_request, button_id, action):
+                events.append((button_id, action["hidden"]))
+                return {"ok": True, "button": button_id}, 200
+
+            async def fake_run_profile(_request, profile_id):
+                events.append(("desktop", profile_id))
+                return {"ok": True}, 200
+
+            for beamer, expected in (("hide", [("beamer-hide", True), ("desktop", "qr")]),
+                                     ("unhide", [("desktop", "qr"), ("beamer-unhide", False)])):
+                events.clear()
+                item_id = client.post("/program/items", json=row(beamer=beamer, desktop=["qr"])).json()["item"]["id"]
+                with patch("app.api.program.press_native", fake_press), \
+                        patch("app.api.program.run_profile", fake_run_profile):
+                    played = client.post(f"/program/items/{item_id}/play").json()
+                self.assertTrue(played["ok"], played)
+                self.assertEqual(events, expected, beamer)
+
+    def test_shortcuts_saved_edited_cloned_played_and_assigned(self):
+        profiles = ("desktop_display:\n  enabled: true\n  profiles:\n"
+                    "    qr:\n      title: QR\n      kind: image\n      path: 'C:\\Bilder\\qr.png'\n")
+        with app_client(profiles) as (client, _folder):
+            ran = []
+
+            async def fake_run_profile(_request, profile_id):
+                ran.append(profile_id)
+                return {"ok": True}, 200
+
+            item = client.post("/program/items", json=row(title="Begrüßung", desktop=["qr"])).json()["item"]
+            self.assertEqual(client.post("/program/items/missing/shortcut").status_code, 404)
+            saved = client.post(f"/program/items/{item['id']}/shortcut").json()["shortcut"]
+            self.assertEqual((saved["title"], saved["desktop"]), ("Begrüßung", ["qr"]))
+            self.assertEqual(client.put(f"/shortcuts/{saved['id']}", json={"title": "X", "desktop": ["nope"]}).status_code, 400)
+            edited = client.put(f"/shortcuts/{saved['id']}", json={"title": "QR zeigen", "desktop": ["qr"]}).json()
+            self.assertEqual(edited["shortcut"]["title"], "QR zeigen")
+            copy = client.post(f"/shortcuts/{saved['id']}/duplicate").json()["shortcut"]
+            self.assertEqual([s["title"] for s in client.get("/shortcuts").json()["shortcuts"]],
+                             ["QR zeigen", "QR zeigen (Kopie)"])
+
+            status_before = client.get("/program/status").json()
+            with patch("app.api.program.run_profile", fake_run_profile):
+                played = client.post(f"/shortcuts/{saved['id']}/play").json()
+            self.assertTrue(played["ok"], played)
+            self.assertEqual(ran, ["qr"])
+            self.assertEqual(client.get("/program/status").json()["current_id"], status_before["current_id"],
+                             "a shortcut leaves the program's run order alone")
+
+            self.assertEqual(client.post("/program/items", json=row(shortcuts=["0" * 32])).status_code, 400)
+            plain = client.post("/program/items", json=row(title="Lied", shortcuts=[copy["id"], saved["id"]])).json()["item"]
+            ran.clear()
+            with patch("app.api.program.run_profile", fake_run_profile):
+                played = client.post(f"/program/items/{plain['id']}/play").json()
+            self.assertTrue(played["ok"], played)
+            self.assertEqual(ran, ["qr", "qr"])
+            self.assertEqual([s["shortcut_id"] for s in played["shortcuts"]], [copy["id"], saved["id"]])
+
+            deleted = client.delete(f"/shortcuts/{copy['id']}").json()
+            self.assertEqual(deleted["program_items"], 1)
+            rows = {i["id"]: i for i in client.get("/program/items").json()}
+            self.assertEqual(rows[plain["id"]]["shortcuts"], [saved["id"]])
 
 
 if __name__ == "__main__":

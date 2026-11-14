@@ -23,6 +23,7 @@ from . import display_agent
 from .companion_buttons import CAMERA_BUTTON_IDS, CATALOG_ONLY_IDS, COMPANION_BUTTONS_BY_ID
 from .display_agent import AgentError
 from .file_actions import is_file_action, not_found_reason, run_file_action, runs_from_network_share
+from .mission_spotlight import profile_path
 from .native_controls import NativeControlError
 from .responses import Result, controller_result
 
@@ -32,7 +33,7 @@ DESKTOP_PREFIX = "desktop:"
 PROGRAM_ACTION_FIELDS = ("playback", "translation", "lyrics")
 # Profile fields the agent's /display endpoint does not take (it refuses
 # unknown keys).
-_AGENT_EXCLUDED_FIELDS = {"target_ip", "fade", "fade_seconds", "monitors"}
+_AGENT_EXCLUDED_FIELDS = {"target_ip", "fade", "fade_seconds", "monitors", "mission_spotlight"}
 AUDIO_FADE_FULL_DB = 0.0  # audio fades always go up to full player volume
 
 
@@ -171,7 +172,8 @@ async def show_profile(request: Request, profile_id: str) -> Result:
         return {"ok": False, "reason": "programs must be on the target PC, not on a network share"}, 400
     cfg = request.app.state.cfg.desktop_display
     # Exactly the keys the agent expects (it rejects any other).
-    payload = {"id": profile_id, **profile.model_dump(exclude=_AGENT_EXCLUDED_FIELDS)}
+    payload = {"id": profile_id, **profile.model_dump(exclude=_AGENT_EXCLUDED_FIELDS),
+               "path": profile_path(profile)}
     # Only sent when used, so a single-monitor profile still works with an older agent.
     if profile.monitors:
         if profile.kind != "image":
@@ -181,7 +183,7 @@ async def show_profile(request: Request, profile_id: str) -> Result:
         return await display_agent.call(cfg, profile.target_ip, "/display", payload), 200
     except AgentError as exc:
         if exc.agent_status == 503:
-            return {"ok": False, "reason": not_found_reason(profile.path)}, 502
+            return {"ok": False, "reason": not_found_reason(payload["path"])}, 502
         return exc.answer(), exc.status
 
 
@@ -193,7 +195,7 @@ async def control_audio(request: Request, profile_id: str, action: str) -> Resul
         return {"ok": False, "reason": "profile is not an audio profile"}, 400
     if action not in ("play", "stop"):
         return {"ok": False, "reason": "unknown audio action"}, 404
-    payload = {"id": profile_id, "action": action, "path": profile.path if action == "play" else None}
+    payload = {"id": profile_id, "action": action, "path": profile_path(profile) if action == "play" else None}
     if profile.fade:
         # Play fades in from silence to full volume (0 dB = mpv 100 %), stop
         # fades out again. The agent's protocol still names the level; it is
@@ -251,6 +253,9 @@ async def program_reference_error(request: Request, item: dict) -> Optional[str]
                 return f"unknown {field} desktop profile"
         elif await pressable_button(request, value) is None:
             return f"unknown {field} button"
+    for profile_id in item.get("desktop") or []:
+        if profile_id not in state.cfg.desktop_display.profiles:
+            return f"unknown desktop profile {profile_id}"
     # Only checked once the library has been read (it lives on the display PC).
     songs = state.songs.songs
     if item.get("song") and songs and item["song"] not in songs:
@@ -258,12 +263,30 @@ async def program_reference_error(request: Request, item: dict) -> Optional[str]
     scenes = getattr(state, "light_scenes", None)
     if item.get("light") and (scenes is None or await scenes.get(item["light"]) is None):
         return "unknown light scene"
+    # Shortcuts a row runs (shortcuts themselves run no shortcuts).
+    for shortcut in await assigned_shortcuts(request, item):
+        if shortcut is None:
+            return "unknown shortcut"
+        reason = await program_reference_error(request, shortcut)
+        if reason:
+            return f"shortcut {shortcut['title']}: {reason}"
     return None
+
+
+async def assigned_shortcuts(request: Request, item: dict) -> list:
+    """The shortcuts a program row runs, in order; None for one that is gone."""
+    ids = item.get("shortcuts") or []
+    store = getattr(request.app.state, "shortcuts", None)
+    return [None if store is None else await store.get(sid) for sid in ids]
 
 
 async def program_conflict_error(request: Request, item: dict) -> Optional[str]:
     """Rows that would fight over the mutes: a row with a mute group sets
     the mutes itself, so it may not also run a key that switches mutes."""
+    for shortcut in await assigned_shortcuts(request, item):
+        reason = shortcut and await program_conflict_error(request, shortcut)
+        if reason:
+            return f"shortcut {shortcut['title']}: {reason}"
     if not item.get("group"):
         return None
     for field in PROGRAM_ACTION_FIELDS:

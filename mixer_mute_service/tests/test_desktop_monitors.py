@@ -169,6 +169,18 @@ class AgentPlacementTests(unittest.TestCase):
         self.assertIsNone(agent._choose_window(windows, 0, {10, 20, 30}, None, never_iconic))
         self.assertIsNone(agent._choose_window({40: os.getpid()}, 0, set(), None, never_iconic))
 
+    def test_framed_window_sits_in_the_corner_with_its_visible_frame(self):
+        work_area = (0, 0, 1920, 1152)
+        invisible = (7, 0, 7, 7)
+        # Outer 830 x 1000; the visible frame is 816 x 993.
+        place = lambda position: agent._framed_window_position(  # noqa: E731
+            work_area, 830, 1000, invisible, position)
+        self.assertEqual(place("top-left"), (-7, 0))
+        self.assertEqual(place("top-right"), (1920 - 816 - 7, 0))
+        self.assertEqual(place("bottom-left"), (-7, 1152 - 993))
+        self.assertEqual(place("bottom-right"), (1920 - 816 - 7, 1152 - 993))
+        self.assertEqual(agent._framed_window_position(work_area, 800, 600, (0, 0, 0, 0), "top-left"), (0, 0))
+
     def test_window_moved_back_by_the_app_is_placed_again(self):
         target = (1500, 0, 400, 300)
         rects = iter([(760, 450, 400, 300)])  # the app centres itself once

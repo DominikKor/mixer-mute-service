@@ -1,7 +1,8 @@
 """Song display: FoilPresenter songs from the display PC, shown slide by slide.
 
 The song library stays where FoilPresenter keeps it, on the display PC. The
-display agent there reads the .foil files from the configured folder; this
+display agent there reads the .foil files from the configured folder (and
+.pptx songs: app/pptx_song.py); this
 service parses them (app/foil.py), keeps the result in song_library.json and
 sends one slide at a time back to the agent, which shows it full screen. The
 settings (folder, PC, monitor, look) are shared by all songs.
@@ -39,6 +40,7 @@ from . import display_agent
 from .display_agent import AgentError
 from .foil import FoilError, build_foil, parse_foil, song_file_name
 from .jsonstore import read_json, write_json_atomic
+from .pptx_song import parse_pptx
 from .responses import reply
 
 router = APIRouter()
@@ -133,6 +135,13 @@ class SongService:
         songs, errors = {}, []
         for entry in files:
             name = entry.get("name") if isinstance(entry, dict) else None
+            if isinstance(name, str) and name.lower().endswith(".pptx") and "pptx_parts" in entry:
+                # PowerPoint songs: one slide of the presentation is one slide of the song.
+                try:
+                    songs[name] = parse_pptx(name, entry["pptx_parts"])
+                except FoilError as exc:
+                    errors.append({"file": name, "reason": str(exc)})
+                continue
             xml = entry.get("xml") if isinstance(entry, dict) else None
             if not isinstance(name, str) or not isinstance(xml, str) or not name.lower().endswith(".foil"):
                 continue
