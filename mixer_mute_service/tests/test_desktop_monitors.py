@@ -157,5 +157,50 @@ class AgentMonitorTests(unittest.TestCase):
         return int(raw.split()[1])
 
 
+@unittest.skipIf(tkinter is None, "this Python has no tkinter; the desktop agent needs it")
+class AgentPlacementTests(unittest.TestCase):
+    def test_window_of_the_process_or_a_new_one(self):
+        never_iconic = lambda _hwnd: False  # noqa: E731
+        windows = {10: 111, 20: 222, 30: 333}
+        self.assertEqual(agent._choose_window(windows, 222, set(), None, never_iconic), 20)
+        # A launcher that handed over, or an app that was already running.
+        self.assertEqual(agent._choose_window(windows, 999, {10, 20}, None, never_iconic), 30)
+        self.assertEqual(agent._choose_window(windows, 0, {10, 20}, None, never_iconic), 30)
+        self.assertIsNone(agent._choose_window(windows, 0, {10, 20, 30}, None, never_iconic))
+        self.assertIsNone(agent._choose_window({40: os.getpid()}, 0, set(), None, never_iconic))
+
+    def test_window_moved_back_by_the_app_is_placed_again(self):
+        target = (1500, 0, 400, 300)
+        rects = iter([(760, 450, 400, 300)])  # the app centres itself once
+        applied = []
+
+        def apply(hwnd, _bounds, _full, _pos, again=None):
+            applied.append(again)
+            return target
+
+        clock = [0.0]
+
+        def sleep(seconds):
+            clock[0] += seconds
+
+        with patch.object(agent, "monitor_bounds", return_value=(0, 0, 1920, 1080)), \
+                patch.object(agent, "_find_window", return_value=7), \
+                patch.object(agent, "_apply_placement", side_effect=apply), \
+                patch.object(agent, "_window_rect", side_effect=lambda _h: next(rects, target)), \
+                patch.object(agent.time, "monotonic", side_effect=lambda: clock[0]), \
+                patch.object(agent.time, "sleep", side_effect=sleep):
+            agent._place_process_window(123, set(), 1, False, "top-right")
+        self.assertEqual(applied, [None, target])
+
+    def test_no_window_gives_up(self):
+        clock = [0.0]
+        with patch.object(agent, "monitor_bounds", return_value=(0, 0, 1920, 1080)), \
+                patch.object(agent, "_find_window", return_value=None), \
+                patch.object(agent.time, "monotonic", side_effect=lambda: clock[0]), \
+                patch.object(agent.time, "sleep", side_effect=lambda s: clock.__setitem__(0, clock[0] + s)):
+            with self.assertRaises(RuntimeError):
+                agent._place_process_window(123, set(), 1, False, "top-right")
+
+
 if __name__ == "__main__":
     unittest.main()

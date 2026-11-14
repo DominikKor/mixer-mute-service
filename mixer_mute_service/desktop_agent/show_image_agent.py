@@ -78,30 +78,45 @@ def monitor_bounds(display_number: int) -> tuple[int, int, int, int]:
     return monitors[display_number - 1]
 
 
-def _find_window(process_id: int):
+def _visible_windows() -> dict[int, int]:
+    """Visible, unowned top-level windows with a title: hwnd -> process id."""
     import ctypes
     from ctypes import wintypes
 
     user32 = ctypes.windll.user32
-    found = []
+    found: dict[int, int] = {}
 
     @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
     def callback(hwnd, _data):
-        owner = wintypes.DWORD()
-        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(owner))
-        if owner.value == process_id and user32.IsWindowVisible(hwnd):
-            found.append(hwnd)
-            return False
+        if user32.IsWindowVisible(hwnd) and not user32.GetWindow(hwnd, 4) and user32.GetWindowTextLengthW(hwnd):
+            owner = wintypes.DWORD()
+            user32.GetWindowThreadProcessId(hwnd, ctypes.byref(owner))
+            found[hwnd] = owner.value
         return True
 
     user32.EnumWindows(callback, 0)
-    foreground = user32.GetForegroundWindow()
-    if foreground in found:
+    return found
+
+
+def _choose_window(windows: dict[int, int], process_id: int, before: set, foreground, iconic) -> int | None:
+    """The started process's window; otherwise a window that appeared since
+    the start (a launcher handed over, or the app was already running)."""
+    candidates = [h for h, pid in windows.items() if process_id and pid == process_id]
+    if not candidates:
+        candidates = [h for h, pid in windows.items() if h not in before and pid != os.getpid()]
+    if foreground in candidates:
         return foreground
-    for hwnd in found:
-        if not user32.IsIconic(hwnd):
+    for hwnd in candidates:
+        if not iconic(hwnd):
             return hwnd
-    return found[0] if found else None
+    return candidates[0] if candidates else None
+
+
+def _find_window(process_id: int, before: set):
+    import ctypes
+
+    user32 = ctypes.windll.user32
+    return _choose_window(_visible_windows(), process_id, before, user32.GetForegroundWindow(), user32.IsIconic)
 
 
 def _shell_open_file(path: Path) -> int:
@@ -137,10 +152,7 @@ def _shell_open_file(path: Path) -> int:
     if not ctypes.windll.shell32.ShellExecuteExW(ctypes.byref(info)):
         raise ctypes.WinError()
     if not info.hProcess:
-        hwnd = ctypes.windll.user32.GetForegroundWindow()
-        owner = wintypes.DWORD()
-        ctypes.windll.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(owner))
-        return owner.value
+        return 0  # handed to a running app: its new window is found instead
     try:
         return ctypes.windll.kernel32.GetProcessId(info.hProcess)
     finally:
@@ -168,55 +180,83 @@ def _window_position(
 
 
 def _place_process_window(
-    process_id: int, monitor: int, fullscreen: bool, position: str
+    process_id: int, before: set, monitor: int, fullscreen: bool, position: str
 ) -> None:
-    if not process_id:
-        logger.warning("No process handle was returned; window placement skipped")
-        return
+    """Move the started app's window to its place, and keep it there while
+    the app settles: many apps centre or restore their window right after
+    showing it, or replace a splash screen by the main window."""
+    bounds = monitor_bounds(monitor)
     deadline = time.monotonic() + 20
-    hwnd = None
-    while time.monotonic() < deadline:
-        hwnd = _find_window(process_id)
-        if hwnd:
-            break
-        time.sleep(0.2)
-    if not hwnd:
-        raise RuntimeError("Application window was not found within 20 seconds")
+    settle_until = None
+    placed: dict[int, tuple[int, int, int, int]] = {}
+    corrections = 0
+    while True:
+        hwnd = _find_window(process_id, before)
+        if hwnd and hwnd not in placed:
+            target = _apply_placement(hwnd, bounds, fullscreen, position)
+            if target:
+                placed[hwnd] = target
+                settle_until = time.monotonic() + PLACEMENT_SETTLE_SECONDS
+                logger.info("Positioned window pid=%s hwnd=%s monitor=%s fullscreen=%s position=%s rect=%s",
+                            process_id, hwnd, monitor, fullscreen, position, target)
+        elif hwnd and corrections < 10 and not _rect_close(_window_rect(hwnd), placed[hwnd]):
+            corrections += 1
+            logger.info("Window hwnd=%s moved by the app to %s; placing it again", hwnd, _window_rect(hwnd))
+            _apply_placement(hwnd, bounds, fullscreen, position, placed[hwnd])
+        now = time.monotonic()
+        if settle_until is not None and now >= settle_until:
+            return
+        if settle_until is None and now >= deadline:
+            raise RuntimeError("Application window was not found within 20 seconds")
+        time.sleep(0.25)
 
+
+PLACEMENT_SETTLE_SECONDS = 4.0
+
+
+def _rect_close(rect, target, tolerance: int = 4) -> bool:
+    return rect is None or all(abs(a - b) <= tolerance for a, b in zip(rect, target))
+
+
+def _window_rect(hwnd) -> tuple[int, int, int, int] | None:
+    """x, y, width, height; None once the window is gone."""
     import ctypes
     from ctypes import wintypes
 
-    left, top, right, bottom = monitor_bounds(monitor)
-    user32 = ctypes.windll.user32
-    user32.ShowWindow(hwnd, 9)
     rect = wintypes.RECT()
-    if not user32.GetWindowRect(hwnd, ctypes.byref(rect)):
-        raise ctypes.WinError()
-    width = right - left if fullscreen else rect.right - rect.left
-    height = bottom - top if fullscreen else rect.bottom - rect.top
-    x, y = _window_position((left, top, right, bottom), width, height, position)
+    if not ctypes.windll.user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+        return None
+    return rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top
+
+
+def _apply_placement(hwnd, bounds, fullscreen: bool, position: str, target=None):
+    """Place the window; returns the rect it was given, None if it is gone."""
+    import ctypes
+
+    user32 = ctypes.windll.user32
+    left, top, right, bottom = bounds
+    if target is None:
+        user32.ShowWindow(hwnd, 9)  # SW_RESTORE: a maximised window cannot be moved
+        current = _window_rect(hwnd)
+        if current is None:
+            return None
+        if fullscreen:
+            width, height = right - left, bottom - top
+        else:
+            width, height = min(current[2], right - left), min(current[3], bottom - top)
+        x, y = _window_position(bounds, width, height, position)
+        target = (x, y, width, height)
     if fullscreen:
         style = user32.GetWindowLongW(hwnd, -16)
         user32.SetWindowLongW(hwnd, -16, (style & ~0x00CF0000) | 0x80000000)
-        insert_after = -1
-        flags = 0x0040 | 0x0020
+        insert_after, flags = -1, 0x0040 | 0x0020
     else:
-        insert_after = -2
-        flags = 0x0040
-    if not user32.SetWindowPos(hwnd, insert_after, x, y, width, height, flags):
+        insert_after, flags = -2, 0x0040
+    if not user32.SetWindowPos(hwnd, insert_after, *target, flags):
+        if not user32.IsWindow(hwnd):
+            return None
         raise ctypes.WinError()
-    logger.info(
-        "Positioned window pid=%s hwnd=%s monitor=%s fullscreen=%s position=%s rect=%sx%s+%s+%s",
-        process_id,
-        hwnd,
-        monitor,
-        fullscreen,
-        position,
-        width,
-        height,
-        x,
-        y,
-    )
+    return target
 
 
 def resolve_path(path: str, folder: bool = False, suffixes: tuple = ()) -> Path:
@@ -257,6 +297,7 @@ def runs_from_network_share(target: Path) -> bool:
 
 def _launch_profile(profile: dict) -> None:
     try:
+        before = set(_visible_windows())
         path = Path(profile["path"])
         if profile["kind"] == "program":
             process_id = subprocess.Popen(
@@ -265,7 +306,7 @@ def _launch_profile(profile: dict) -> None:
         else:
             process_id = _shell_open_file(path)
         _place_process_window(
-            process_id, profile["monitor"], profile["fullscreen"], profile["position"]
+            process_id, before, profile["monitor"], profile["fullscreen"], profile["position"]
         )
     except Exception:
         logger.exception("Profile %s failed", profile["id"])
@@ -869,6 +910,8 @@ def _show_image_on(root: tk.Wm, image_label: tk.Label, profile: dict, monitor: i
     frame_height = (outer.bottom - outer.top) - (client.bottom - client.top)
     window_width = right - left if profile["fullscreen"] else image.width + frame_width
     window_height = bottom - top if profile["fullscreen"] else image.height + frame_height
+    # Place the whole window (frame included), so a corner sits in the corner.
+    x, y = _window_position((left, top, right, bottom), window_width, window_height, profile["position"])
     insert_after = -1 if profile["fullscreen"] else -2
     flags = 0x0040 | (0x0020 if profile["fullscreen"] else 0)
     if not user32.SetWindowPos(
