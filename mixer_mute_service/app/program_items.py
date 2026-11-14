@@ -199,13 +199,19 @@ class ProgramItemStore:
             self._persist()
             return deepcopy(item)
 
-    async def replace_all(self, rows: List[dict]) -> List[dict]:
+    async def replace_all(self, rows: List[dict], preserve_hidden: bool = False) -> List[dict]:
         """Replace the whole program (a template applied); all or nothing."""
         fields = [self._validated_fields(row) for row in rows]
         async with self._lock:
             self._items = [
-                {"id": uuid.uuid4().hex, **row, "last_delay_seconds": None, "last_played_at": None, "hidden": False}
-                for row in fields
+                {
+                    "id": uuid.uuid4().hex,
+                    **validated,
+                    "last_delay_seconds": None,
+                    "last_played_at": None,
+                    "hidden": preserve_hidden and source.get("hidden") is True,
+                }
+                for source, validated in zip(rows, fields)
             ]
             self._persist()
             return deepcopy(self._ordered())

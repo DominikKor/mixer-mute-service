@@ -140,6 +140,56 @@ class ProgramHiddenRouteTests(unittest.TestCase):
                     self.assertEqual(client.post("/program/items/nope/hidden", json={"hidden": True}).status_code, 404)
                     self.assertFalse(client.post(f"/program/items/{ids[0]}/hidden", json={"hidden": False}).json()["item"]["hidden"])
 
+    def test_program_file_export_import_and_invalid_import_is_atomic(self):
+        import os
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as directory:
+            config_path = Path(directory) / "config.yaml"
+            config_path.write_text(
+                "mixer:\n  ip: 127.0.0.1\n  port: 9\n  max_channels: 8\n"
+                "server:\n  host: 127.0.0.1\n  port: 8765\n",
+                encoding="utf-8",
+            )
+            with patch.dict(os.environ, {"MIXER_CONFIG": str(config_path)}):
+                from fastapi.testclient import TestClient
+                from app.main import app
+
+                with TestClient(app) as client:
+                    created = client.post("/program/items", json={**row("10:00", "Original"), "group": ""})
+                    original_id = created.json()["item"]["id"]
+                    exported = client.get("/program/export")
+                    self.assertEqual(exported.status_code, 200)
+                    self.assertIn('filename="programm.json"', exported.headers["content-disposition"])
+                    payload = exported.json()
+                    self.assertEqual(payload["format"], "mixer-mute-service-program")
+                    self.assertEqual(payload["version"], 1)
+                    self.assertNotIn("id", payload["items"][0])
+
+                    payload["items"][0]["title"] = "Aus Datei bearbeitet"
+                    payload["items"][0]["hidden"] = True
+                    imported = client.post("/program/import", json=payload)
+                    self.assertEqual(imported.status_code, 200, imported.text)
+                    item = imported.json()["items"][0]
+                    self.assertEqual(item["title"], "Aus Datei bearbeitet")
+                    self.assertTrue(item["hidden"])
+                    self.assertNotEqual(item["id"], original_id)
+                    imported_id = item["id"]
+
+                    invalid = {
+                        **payload,
+                        "items": [
+                            {**payload["items"][0], "title": "Darf nicht gespeichert werden"},
+                            {**payload["items"][0], "time": "25:00"},
+                        ],
+                    }
+                    rejected = client.post("/program/import", json=invalid)
+                    self.assertEqual(rejected.status_code, 400)
+                    current = client.get("/program/items").json()
+                    self.assertEqual(len(current), 1)
+                    self.assertEqual(current[0]["id"], imported_id)
+                    self.assertEqual(current[0]["title"], "Aus Datei bearbeitet")
+
 
 class MacroRenameTests(unittest.IsolatedAsyncioTestCase):
     async def test_renamed_macro_group_survives_catalog_update(self):

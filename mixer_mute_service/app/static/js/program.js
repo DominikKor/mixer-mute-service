@@ -614,6 +614,44 @@ function playProgramItem(itemId, button) {
 
 
 $("program-go-btn").addEventListener("click", event => startProgram("next", "/program/next", event.currentTarget));
+$("program-export-btn").addEventListener("click", () => {
+  const link = document.createElement("a");
+  link.href = "/program/export";
+  link.download = "programm.json";
+  link.click();
+});
+$("program-import-btn").addEventListener("click", () => $("program-import-file").click());
+$("program-import-file").addEventListener("change", async event => {
+  const input = event.currentTarget;
+  const file = input.files && input.files[0];
+  input.value = "";
+  if (!file) return;
+  if (PROGRAM_DRAFT || PROGRAM_SAVING.size || PROGRAM_RESAVE.size) {
+    toast("Bitte zuerst die laufende Bearbeitung abschließen", false);
+    return;
+  }
+  if (!(await confirmDelete($("program-import-btn"), "Die Datei ersetzt das gesamte aktuelle Programm. Weiter?", "Importieren"))) return;
+  let payload;
+  try {
+    payload = JSON.parse(await file.text());
+  } catch (_) {
+    toast("Die Datei ist kein gültiges JSON", false);
+    return;
+  }
+  const button = $("program-import-btn");
+  button.disabled = true;
+  try {
+    const result = await api("POST", "/program/import", payload, { timeout: 30000 });
+    if (!result.ok || result.data.ok === false) {
+      toast(result.data.reason || `HTTP ${result.status}`, false);
+      return;
+    }
+    await loadProgramItems();
+    toast(`${result.data.items.length} Programmpunkte importiert`, true);
+  } finally {
+    button.disabled = false;
+  }
+});
 $("program-reset-btn").addEventListener("click", async event => {
   const button = event.currentTarget;
   if (!(await confirmDelete(button, "Startzeiten und Verzögerungen aller Punkte vergessen? „Weiter“ beginnt dann wieder oben.", "Zurücksetzen"))) return;

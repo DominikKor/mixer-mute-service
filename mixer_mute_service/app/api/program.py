@@ -8,9 +8,12 @@ stop at the first failure."""
 from __future__ import annotations
 
 import asyncio
+import json
 from typing import Optional
 
 from fastapi import APIRouter, Body, Request
+from fastapi.responses import Response
+from pydantic import ValidationError
 
 from ..camera_program import CAMERAS, DEFAULT_WAIT_SECONDS
 from ..actions import (
@@ -26,6 +29,15 @@ from ..lights import apply_scene
 from ..songs import show_slide
 
 router = APIRouter()
+
+_PROGRAM_FILE_FORMAT = "mixer-mute-service-program"
+_PROGRAM_FILE_VERSION = 1
+_MAX_PROGRAM_FILE_ITEMS = 100
+_PROGRAM_FILE_FIELDS = (
+    "time", "title", "person", "group", "playback", "translation", "lyrics",
+    "playback_description", "translation_description", "lyrics_description", "song", "light",
+    "cam1_preset", "cam2_preset", "camera_wait_seconds",
+)
 
 # One program start at a time: two quick "Weiter" presses must not both start
 # a row, and a row must not run twice in parallel.
@@ -46,6 +58,57 @@ async def _validate(body: ProgramItemRequest, request: Request):
 @router.get("/program/items")
 async def list_program_items(request: Request):
     return await request.app.state.program_items.list()
+
+
+@router.get("/program/export")
+async def export_program(request: Request):
+    items = await request.app.state.program_items.list()
+    payload = {
+        "format": _PROGRAM_FILE_FORMAT,
+        "version": _PROGRAM_FILE_VERSION,
+        "items": [
+            {**{field: item.get(field) for field in _PROGRAM_FILE_FIELDS}, "hidden": item["hidden"]}
+            for item in items
+        ],
+    }
+    return Response(
+        content=json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+        media_type="application/json",
+        headers={"Content-Disposition": 'attachment; filename="programm.json"'},
+    )
+
+
+@router.post("/program/import")
+async def import_program(request: Request, body: dict = Body(...)):
+    if body.get("format") != _PROGRAM_FILE_FORMAT or body.get("version") != _PROGRAM_FILE_VERSION:
+        return fail("unsupported program file format or version", 400)
+    rows = body.get("items")
+    if not isinstance(rows, list):
+        return fail("items must be a list", 400)
+    if len(rows) > _MAX_PROGRAM_FILE_ITEMS:
+        return fail(f"at most {_MAX_PROGRAM_FILE_ITEMS} program items", 400)
+
+    imported = []
+    for index, row in enumerate(rows):
+        if not isinstance(row, dict):
+            return fail(f"item {index + 1} must be an object", 400)
+        hidden = row.get("hidden", False)
+        if type(hidden) is not bool:
+            return fail(f"item {index + 1}: hidden must be true or false", 400)
+        try:
+            item = ProgramItemRequest.model_validate(row)
+        except ValidationError:
+            return fail(f"item {index + 1} has invalid fields", 400)
+        invalid = await _validate(item, request)
+        if invalid:
+            return invalid
+        imported.append({**item.model_dump(), "hidden": hidden})
+
+    try:
+        items = await request.app.state.program_items.replace_all(imported, preserve_hidden=True)
+    except ProgramItemError as exc:
+        return fail(str(exc), 400)
+    return {"ok": True, "items": items}
 
 
 @router.post("/program/items")
