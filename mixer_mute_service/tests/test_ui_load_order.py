@@ -18,7 +18,8 @@ except ImportError:  # pragma: no cover - CI installs it (requirements-dev.txt)
 
 STATIC = Path(__file__).resolve().parent.parent / "app" / "static"
 DEFERRED_CALLS = {"addEventListener", "setTimeout", "setInterval", "poll", "requestAnimationFrame",
-                  "then", "catch", "finally", "observe"}
+                  "then", "catch", "finally", "observe",
+                  "onProgramEditors"}  # js/program.js: document.addEventListener for the field editors
 DEFERRED_NEW = {"ResizeObserver", "MutationObserver", "IntersectionObserver", "Promise"}
 FUNCTIONS = ("arrow_function", "function_expression", "function", "generator_function")
 
