@@ -147,5 +147,105 @@ class AllAgentsTests(unittest.TestCase):
                     self.assertEqual(now["192.168.188.20"]["mpv"], r"C:\Program Files\mpv\mpv.exe")
 
 
+class RestartFakeAgent(FakeAgent):
+    """Newer agents: /info says restart is there and when the process
+    started; /restart (and /update) start a new process."""
+
+    def __init__(self):
+        super().__init__()
+        self.started = {}     # ip -> start time
+        self.can_restart = set()
+
+    def __call__(self, url, token, payload, timeout):
+        ip, path = url[len("http://"):].split(":", 1)[0], "/" + url.split("/", 3)[3]
+        if ip in self.agents and self.agents[ip] is not None:
+            if path == "/info":
+                self.calls.append((ip, path, payload))
+                extra = {"restart": True, "started_at": self.started[ip]} if ip in self.can_restart else {}
+                return {"ok": True, "version": self.agents[ip], **extra}
+            if path == "/restart":
+                self.calls.append((ip, path, payload))
+                self.started[ip] += 100.0
+                return {"ok": True, "version": self.agents[ip], "restarting": True}
+            if path == "/update":
+                self.started[ip] += 100.0
+                self.can_restart.add(ip)  # the new files have /restart
+        return super().__call__(url, token, payload, timeout)
+
+
+class AgentRestartTests(unittest.TestCase):
+    def test_update_key_restarts_current_agents_too(self):
+        """Wish: the Update key always restarts the Display Services, also
+        when they already run the newest version."""
+        with tempfile.TemporaryDirectory() as directory:
+            config_path = Path(directory) / "config.yaml"
+            config_path.write_text(
+                "mixer:\n  ip: 127.0.0.1\n  port: 9\n  max_channels: 8\n"
+                "desktop_display:\n  enabled: true\n  profiles:\n"
+                "    uhr:\n      title: Uhr\n      kind: file\n      path: C:/Uhr.url\n      target_ip: 192.168.188.12\n"
+                "    tafel:\n      title: Tafel\n      kind: file\n      path: C:/T.url\n      target_ip: 192.168.188.13\n",
+                encoding="utf-8",
+            )
+            fake = RestartFakeAgent()
+            # .20 current with /restart, .11 behind, .12 too old, .13 not reachable
+            fake.agents.update({"192.168.188.20": "v9", "192.168.188.11": "v8", "192.168.188.12": None})
+            fake.started.update({"192.168.188.20": 1000.0, "192.168.188.11": 2000.0})
+            fake.can_restart.add("192.168.188.20")
+            env = {"MIXER_CONFIG": str(config_path), "DESKTOP_AGENT_TOKEN": "t", "MIXER_BUILD_ID": "v9"}
+            with patch.dict(os.environ, env), patch("app.display_agent._post", fake), \
+                    patch("app.agent_update.RESTART_WAIT_SECONDS", 4):
+                from fastapi.testclient import TestClient
+                from app.main import app
+
+                with TestClient(app, client=("127.0.0.1", 50000)) as here:
+                    status = {a["pc"]: a for a in here.get("/update/agents").json()["agents"]}
+                    self.assertTrue(status["192.168.188.20"]["restart"])
+                    self.assertFalse(status["192.168.188.11"]["restart"], "an older agent has no /restart")
+                    r = here.post("/update/agents").json()
+                    after = {a["pc"]: a for a in r["agents"]}
+                    self.assertTrue(r["ok"], r)
+                    self.assertTrue(after["192.168.188.20"].get("restarted"), "current agent restarted")
+                    self.assertNotIn("updated", after["192.168.188.20"])
+                    self.assertTrue(after["192.168.188.11"].get("updated"), "behind: self-update as before")
+                    self.assertFalse(any(ip == "192.168.188.11" and p == "/restart" for ip, p, _ in fake.calls),
+                                     "an agent without /restart is only updated")
+                    self.assertFalse(after["192.168.188.12"]["self_update"])
+                    self.assertFalse(after["192.168.188.13"]["present"], "not reachable: reported, nothing sent")
+                    # A second press restarts both again (both have /restart now).
+                    n = len(fake.calls)
+                    r = here.post("/update/agents").json()
+                    restarted = sorted(ip for ip, p, _ in fake.calls[n:] if p == "/restart")
+                    self.assertEqual(restarted, ["192.168.188.11", "192.168.188.20"])
+                    self.assertTrue(all(a.get("restarted") for a in r["agents"] if a["pc"] in restarted))
+
+    def test_agent_that_does_not_come_back_is_reported(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config_path = Path(directory) / "config.yaml"
+            config_path.write_text("mixer:\n  ip: 127.0.0.1\n  port: 9\n  max_channels: 8\n"
+                                   "desktop_display:\n  enabled: true\n", encoding="utf-8")
+            fake = RestartFakeAgent()
+            fake.agents["192.168.188.20"] = "v9"
+            fake.started["192.168.188.20"] = 1000.0
+            fake.can_restart.add("192.168.188.20")
+            original = fake.__call__
+
+            def stuck(url, token, payload, timeout):  # accepts /restart, never restarts
+                if url.endswith("/restart"):
+                    return {"ok": True, "restarting": True}
+                return original(url, token, payload, timeout)
+
+            env = {"MIXER_CONFIG": str(config_path), "DESKTOP_AGENT_TOKEN": "t", "MIXER_BUILD_ID": "v9"}
+            with patch.dict(os.environ, env), patch("app.display_agent._post", stuck), \
+                    patch("app.agent_update.RESTART_WAIT_SECONDS", 2):
+                from fastapi.testclient import TestClient
+                from app.main import app
+
+                with TestClient(app, client=("127.0.0.1", 50000)) as here:
+                    r = here.post("/update/agents").json()
+                    agent = next(a for a in r["agents"] if a["pc"] == "192.168.188.20")
+                    self.assertFalse(r["ok"])
+                    self.assertEqual(agent["error"], "display agent did not come back after the restart")
+
+
 if __name__ == "__main__":
     unittest.main()

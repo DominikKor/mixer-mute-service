@@ -79,6 +79,7 @@ class FakeDevices:
         self.native = native
         self.shelly = {host: target == "light-tech" for target, host in native.SHELLY_HOSTS.items()}
         self.scene = "Cam 1"
+        self.agent_started = {}  # "ip:port" of a fake display agent -> its start time
         self.scenes = ["Willkommen (neu)", "Cam 1", "Cam 2", "PC2", "BeamerVonVorne", "Ende (neu)", "Preview Scene"]
 
     def shelly_rpc(self, host, method, params):
@@ -138,7 +139,12 @@ class FakeDevices:
             no_mpv = "192.168.188.11" in url
             return {"ok": True, "version": os.environ.get("MIXER_BUILD_ID", version),
                     "mpv": None if no_mpv else r"C:\Program Files\mpv\mpv.exe",
-                    "ytdlp": None if no_mpv else r"C:\Program Files\mpv\yt-dlp.exe", "restored_env": []}
+                    "ytdlp": None if no_mpv else r"C:\Program Files\mpv\yt-dlp.exe", "restored_env": [],
+                    "restart": True, "started_at": self.agent_started.setdefault(url.split("/")[2], 1000.0)}
+        if path in ("/restart", "/update"):
+            # A new agent process: its start time changes (the service waits for that).
+            host = url.split("/")[2]
+            self.agent_started[host] = self.agent_started.get(host, 1000.0) + 1.0
         if path == "/songs/library":
             return {"ok": True, "files": []}
         log.info("FAKE display agent %s %s", url, {k: v for k, v in payload.items() if k != "files"})

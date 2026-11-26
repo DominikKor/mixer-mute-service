@@ -402,20 +402,27 @@ function agentsTooOld(agents) {
   return !!(agents && agents.some(a => a.present && !a.self_update));
 }
 
+// The Update key always starts the Display Services again: one that is behind
+// through its self-update, a current one by a plain restart.
+function agentsToRestart(agents) {
+  return (agents || []).filter(a => a.present && a.self_update);
+}
+
 function agentState(a) {
-  if (a.error) return `nicht aktualisiert: ${escapeHtml(a.error)}`;
+  if (!a.present) return "nicht erreichbar";
+  if (a.error) return `nicht neu gestartet: ${escapeHtml(a.error)}`;
   if (!a.self_update) return "zu alt für das automatische Update";
   // Newer agents say whether they find mpv (music); without it nothing plays there.
   const player = "mpv" in a && !a.mpv ? " · mpv nicht gefunden, Musik spielt dort nicht" : "";
-  if (a.updated) return `${escapeHtml(a.version)} (neu gestartet)${player}`;
+  if (a.updated) return `${escapeHtml(a.version)} (aktualisiert und neu gestartet)${player}`;
+  if (a.restarted) return `${escapeHtml(a.version)} (neu gestartet)${player}`;
   return (a.current ? `${escapeHtml(a.version)} (aktuell)` : `${escapeHtml(a.version)} → ${escapeHtml(a.latest)}`) + player;
 }
 
 function agentLine(agents) {
   if (!agents) return "Display Services: Status unbekannt";
-  const present = agents.filter(a => a.present);
-  if (!present.length) return "Display Services: keiner erreichbar";
-  return present.map(a => `Display Service ${escapeHtml(a.name)} (${escapeHtml(a.pc)}): ${agentState(a)}`).join("<br>");
+  if (!agents.some(a => a.present)) return "Display Services: keiner erreichbar";
+  return agents.map(a => `Display Service ${escapeHtml(a.name)} (${escapeHtml(a.pc)}): ${agentState(a)}`).join("<br>");
 }
 
 async function refreshUpdateButton() {
@@ -423,7 +430,8 @@ async function refreshUpdateButton() {
   const btn = $("update-btn");
   if (!data) return;
   const agentDue = agentNeedsUpdate(agent);
-  btn.hidden = !data.available && !agentDue;
+  // Also with nothing new: the key then restarts the Display Services.
+  btn.hidden = !data.available && !agentDue && !agentsToRestart(agent).length;
   btn.classList.toggle("running", !!data.active);
   btn.textContent = data.active ? "Update läuft" : "Update";
   btn.title = [data.installed ? `Installiert: ${data.installed}` : "", agentDue ? "Ein Display Service ist veraltet" : ""]
@@ -453,7 +461,11 @@ async function openUpdateDialog() {
     : `Programm: ${escapeHtml(data.reason || "Update nicht verfügbar.")}`;
   setUpdateLcd(`${program}<br>${agentLine(agent)}`);
   $("update-agent-manual").hidden = !agentsTooOld(agent);
-  $("update-start").disabled = !data.available && !agentNeedsUpdate(agent);
+  const restart = agentsToRestart(agent).length > 0;
+  if (!data.available && restart && !agentNeedsUpdate(agent)) {
+    setUpdateLcd(`${program}<br>${agentLine(agent)}<br><span class="dim">Die Display Services werden neu gestartet.</span>`);
+  }
+  $("update-start").disabled = !data.available && !agentNeedsUpdate(agent) && !restart;
 }
 
 async function startUpdate() {
@@ -531,8 +543,9 @@ function finishUpdate(ok, message, reload) {
   tick();
 }
 
-// Update every Display Service that is behind (all PCs at once). programLine
-// says how the program step ended ("" when there was none).
+// Start every Display Service again (all PCs at once): one that is behind gets
+// the new version, a current one a plain restart. programLine says how the
+// program step ended ("" when there was none).
 async function runAgentStep(programLine) {
   const head = programLine ? `${programLine}<br>` : "";
   $("update-start").hidden = true;
@@ -541,13 +554,14 @@ async function runAgentStep(programLine) {
   const agents = await fetchAgentStatus();
   const manual = agentsTooOld(agents);
   $("update-agent-manual").hidden = !manual;
-  const due = (agents || []).filter(a => a.present && a.self_update && !a.current);
+  const due = agentsToRestart(agents);
   if (!due.length) return finishUpdate(!manual, `${head}${agentLine(agents)}`, false);
-  setUpdateLcd(`${head}Display Services werden aktualisiert und neu gestartet…<br><span class="dim">${due.map(a => escapeHtml(a.name)).join(", ")}</span>`);
+  const verb = due.some(a => !a.current) ? "aktualisiert bzw. neu gestartet" : "neu gestartet";
+  setUpdateLcd(`${head}Display Services werden ${verb}…<br><span class="dim">${due.map(a => escapeHtml(a.name)).join(", ")}</span>`);
   // Each agent restarts and is waited for (up to 45 s each, all at once).
   const r = await api("POST", "/update/agents", undefined, { timeout: 120000 });
   if (!Array.isArray(r.data.agents)) {
-    return finishUpdate(false, `${head}Display Services nicht aktualisiert: ${escapeHtml(r.data.reason || "HTTP " + r.status)}`);
+    return finishUpdate(false, `${head}Display Services nicht neu gestartet: ${escapeHtml(r.data.reason || "HTTP " + r.status)}`);
   }
   finishUpdate(r.ok && r.data.ok !== false && !manual, `${head}${agentLine(r.data.agents)}`, false);
 }

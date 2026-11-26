@@ -261,7 +261,7 @@ linked light/camera/OBS keys in order.
 | GET  | `/update/agent` | the display agent of the requesting PC: present, version, current |
 | POST | `/update/agent` | push this release's agent files to it; waits until it is back |
 | GET  | `/update/agents` | the same for every PC the service sends to (Ziel-PCs, desktop profiles, song display, this PC) |
-| POST | `/update/agents` | update every agent that is behind, all at once (the Update key uses this) |
+| POST | `/update/agents` | start every agent again, all at once (the Update key uses this): one that is behind through its self-update, a current one through a plain restart; per PC `updated`, `restarted`, `self_update: false` (too old) or `present: false` (not reachable) |
 | POST | `/panic/disable` | block all sends (tracking continues) |
 | POST | `/panic/enable` | re-enable sends |
 
@@ -512,7 +512,9 @@ Ziel-PC ein; passen mehrere Eintraege, gilt der zuletzt geaenderte. Ein
 Programmpfad darf statt auf `.exe` auch auf `*` enden, dann kommen nur
 `.exe`-Dateien in Frage. Programme auf Netzlaufwerken bleiben auch mit `*`
 gesperrt. Der Platzhalter braucht den aktuellen Display-Agent auf dem Ziel-PC;
-die Update-Taste aktualisiert die Display-Agents aller PCs mit. Findet der
+die Update-Taste aktualisiert die Display-Agents aller PCs mit und startet sie
+immer neu, auch wenn sie schon aktuell sind (dann über `POST /restart` am
+Agenten, auf demselben Weg wie nach einem Update). Findet der
 Agent keine passende Datei, nennt die Meldung Muster und Ordner.
 
 Ein `audio`-Profil enthaelt den Pfad zu einer Musikdatei auf dem Ziel-PC. Dort

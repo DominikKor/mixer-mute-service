@@ -82,6 +82,24 @@ class AgentUpdateTests(unittest.TestCase):
         status = int(head.split()[1])
         return status, (json.loads(payload) if payload.startswith(b"{") else None)
 
+    def test_restart_over_http(self):
+        """The Update key restarts current agents too (POST /restart), the
+        same way as after a self-update."""
+        restarted = threading.Event()
+        with patch.dict(os.environ, {"DESKTOP_AGENT_TOKEN": "t"}), \
+                patch.object(agent, "_restart_agent", restarted.set):
+            server = ThreadingHTTPServer(("127.0.0.1", 0), agent.DisplayHandler)
+            threading.Thread(target=server.serve_forever, daemon=True).start()
+            try:
+                self.assertEqual(self._post(server, "/restart", {}, token="wrong")[0], 401)
+                self.assertEqual(self._post(server, "/restart", {"now": True})[0], 400)
+                self.assertFalse(restarted.is_set())
+                status, answer = self._post(server, "/restart", {})
+                self.assertEqual((status, answer["ok"], answer["restarting"]), (202, True, True))
+                self.assertTrue(restarted.wait(5), "the agent did not restart")
+            finally:
+                server.shutdown()
+
     def test_info_and_update_over_http(self):
         restarted = threading.Event()
         with patch.dict(os.environ, {"DESKTOP_AGENT_TOKEN": "t"}), \
@@ -92,6 +110,7 @@ class AgentUpdateTests(unittest.TestCase):
                 status, info = self._post(server, "/info", {})
                 self.assertEqual((status, info["ok"], info["version"]), (200, True, "unknown"))
                 self.assertTrue({"mpv", "ytdlp", "restored_env"} <= set(info), "players reported for diagnosis")
+                self.assertEqual((info["restart"], info["started_at"]), (True, agent.STARTED_AT))
                 self.assertEqual(self._post(server, "/info", {}, token="wrong")[0], 401)
                 self.assertEqual(self._post(server, "/update", {"version": "v2"})[0], 400)
                 status, answer = self._post(server, "/update", GOOD)

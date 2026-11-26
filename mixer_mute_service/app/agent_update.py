@@ -11,7 +11,10 @@ GET  /update/agent   {present, version, latest, current, self_update}
 POST /update/agent   update the agent of this PC and wait until it is back
 GET  /update/agents  the same for every PC the service sends to, with the mpv
                      and yt-dlp each agent finds (null: not found)
-POST /update/agents  update every agent that is behind (all at once)
+POST /update/agents  every agent that answers starts again (all at once): one
+                     that is behind through its self-update, a current one
+                     through POST /restart on the agent (same restart, so a
+                     press of the Update key always gives fresh agents)
 
 "Every PC" is the Ziel-PCs list, the PCs of the desktop profiles, the song
 display PC and the PC of the browser asking. The Update key uses the
@@ -75,9 +78,11 @@ async def _agent_info(request: Request, target: str) -> dict:
     info = {**base, "present": True, "version": version, "current": version == latest, "self_update": True}
     # Agents since 1.2.1-16x say which mpv / yt-dlp they find (None: not
     # found) and what of the user's environment they had to fill in at start.
-    for key in ("mpv", "ytdlp", "restored_env"):
+    for key in ("mpv", "ytdlp", "restored_env", "started_at"):
         if key in answer:
             info[key] = answer[key]
+    # Agents with POST /restart say so; older ones can only be updated.
+    info["restart"] = answer.get("restart") is True
     return info
 
 
@@ -160,6 +165,25 @@ async def agent_update(request: Request):
     return {"ok": True, **result}
 
 
+async def _restart_one(request: Request, target: str, info: dict) -> dict:
+    """Restart one current agent and wait until a new process answers (its
+    start time changed). Returns the agent's info, with "error" when not."""
+    cfg = request.app.state.cfg.desktop_display
+    try:
+        await display_agent.call(cfg, target, "/restart", {}, timeout=10.0)
+    except display_agent.AgentError as exc:
+        return {**info, "error": f"display agent restart failed: {exc.reason}", "status": exc.status}
+    log.info("Display agent on %s restarting (%s)", target, info.get("version"))
+    deadline = time.monotonic() + RESTART_WAIT_SECONDS
+    while time.monotonic() < deadline:
+        await asyncio.sleep(1.5)
+        after = await _agent_info(request, target)
+        if after.get("present") and after.get("started_at") not in (None, info.get("started_at")):
+            log.info("Display agent on %s is back", target)
+            return {**after, "restarted": True}
+    return {**info, "error": "display agent did not come back after the restart", "status": 504}
+
+
 @router.get("/update/agents")
 async def agents_status(request: Request):
     pcs = await agent_pcs(request)
@@ -170,21 +194,29 @@ async def agents_status(request: Request):
 
 @router.post("/update/agents")
 async def agents_update(request: Request):
-    """Update every agent that is behind, all at once. "ok" is false when one
-    that could be updated was not; agents too old for the self-update are
-    listed with self_update false (they need the .cmd download once)."""
+    """Start every agent that answers again, all at once: one that is behind
+    gets the new files (self-update, then it restarts), a current one is
+    restarted. Per PC the answer says "updated", "restarted", self_update
+    false (too old: the .cmd download once) or present false (not
+    reachable). "ok" is false when one that could be done was not."""
     pcs = await agent_pcs(request)
     infos = await asyncio.gather(*(_agent_info(request, pc["pc"]) for pc in pcs))
-    due = [(pc, info) for pc, info in zip(pcs, infos)
-           if info.get("present") and info.get("self_update") and not info.get("current")]
+    to_update = [(pc, info) for pc, info in zip(pcs, infos)
+                 if info.get("present") and info.get("self_update") and not info.get("current")]
+    # A current agent without /restart cannot be restarted from here (only a
+    # build whose agent files lack it); it is left alone.
+    to_restart = [(pc, info) for pc, info in zip(pcs, infos)
+                  if info.get("present") and info.get("self_update") and info.get("current") and info.get("restart")]
     bundle = None
-    if due:
+    if to_update:
         try:
             bundle = _bundle(request)
         except FileNotFoundError as exc:
             return fail(str(exc), 404)
-    updated = dict(zip((pc["pc"] for pc, _ in due),
-                       await asyncio.gather(*(_update_one(request, pc["pc"], info, bundle) for pc, info in due))))
-    agents = [{**pc, **updated.get(pc["pc"], info)} for pc, info in zip(pcs, infos)]
+    jobs = [_update_one(request, pc["pc"], info, bundle) for pc, info in to_update]
+    jobs += [_restart_one(request, pc["pc"], info) for pc, info in to_restart]
+    targets = [pc["pc"] for pc, _ in to_update] + [pc["pc"] for pc, _ in to_restart]
+    done = dict(zip(targets, await asyncio.gather(*jobs)))
+    agents = [{**pc, **done.get(pc["pc"], info)} for pc, info in zip(pcs, infos)]
     failed = [a for a in agents if "error" in a]
     return {"ok": not failed, "latest": _version(request), "agents": agents}

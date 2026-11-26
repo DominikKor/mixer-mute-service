@@ -49,6 +49,8 @@ MAX_MONITORS = 5
 logger = logging.getLogger("display-agent")
 # Names of variables filled in from the user's environment at start (/info).
 RESTORED_ENV: list = []
+# When this agent process started (/info): the service sees a restart by it.
+STARTED_AT = time.time()
 
 
 def _monitor_areas(display_number: int) -> tuple[tuple[int, int, int, int], tuple[int, int, int, int]]:
@@ -1559,7 +1561,7 @@ def _show_song(root: tk.Tk, canvas: tk.Canvas, body: dict) -> None:
 class DisplayHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         if self.path not in ("/display", "/audio", "/song", "/songs/library", "/songs/save", "/power",
-                             "/info", "/update", "/pick-file"):
+                             "/info", "/update", "/restart", "/pick-file"):
             self.send_error(404)
             return
 
@@ -1586,7 +1588,13 @@ class DisplayHandler(BaseHTTPRequestHandler):
                 # Remote diagnosis: which players this agent finds (None: not
                 # found), and what of the user's environment it filled in at start.
                 "mpv": mpv, "ytdlp": _find_ytdlp(mpv), "restored_env": RESTORED_ENV,
+                # POST /restart is there (the Update key restarts current agents),
+                # and this process's start time shows that a restart happened.
+                "restart": True, "started_at": STARTED_AT,
             })
+            return
+        if self.path == "/restart":
+            self._handle_restart(body)
             return
         if self.path == "/update":
             self._handle_update(body)
@@ -1757,6 +1765,18 @@ class DisplayHandler(BaseHTTPRequestHandler):
             self._send_json(500, {"ok": False, "reason": "agent update could not be installed"})
             return
         self._send_json(202, {"ok": True, "version": body["version"], "restarting": True})
+        timer = threading.Timer(0.5, _restart_agent)
+        timer.daemon = True
+        timer.start()
+
+    def _handle_restart(self, body: dict) -> None:
+        """Start the agent again with the same files: the same way as after a
+        self-update (restart-agent.ps1 with the user's environment)."""
+        if body != {}:
+            self.send_error(400)
+            return
+        logger.info("Agent restart requested")
+        self._send_json(202, {"ok": True, "version": agent_version(), "restarting": True})
         timer = threading.Timer(0.5, _restart_agent)
         timer.daemon = True
         timer.start()
