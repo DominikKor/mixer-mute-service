@@ -38,7 +38,7 @@ from fastapi import APIRouter, Body, Request
 from .actions import program_reference_error
 from .jsonstore import read_json, write_json_atomic
 from .responses import fail
-from .program_items import _ACTION_FIELDS, ProgramItemError, ProgramItemStore
+from .program_items import _ACTION_FIELDS, ProgramItemError, ProgramItemStore, log_shortcut_migration
 from .program_pdf import PdfImportError, assign_persons, validated_persons
 from .target_pcs import retarget_file_action
 
@@ -75,19 +75,26 @@ def _clean_name(name) -> str:
 
 
 class ProgramTemplateStore:
-    def __init__(self, path: Path) -> None:
+    def __init__(self, path: Path, shortcut_titles: Optional[dict] = None) -> None:
         self._path = path
         self._lock = asyncio.Lock()
         self._templates: List[dict] = []
+        migrated = []  # rows still saved with the old list of shortcuts
         for entry in read_json(path, list, default=[]):
             try:
-                self._templates.append({
-                    "id": str(entry["id"]),
-                    "name": _clean_name(entry["name"]),
-                    "rows": [_template_row(row, bool(row.get("song_slot"))) for row in entry["rows"]],
-                })
+                rows = [_template_row(row, bool(row.get("song_slot"))) for row in entry["rows"]]
+                self._templates.append({"id": str(entry["id"]), "name": _clean_name(entry["name"]), "rows": rows})
             except (KeyError, TypeError, TemplateError, ProgramItemError) as exc:
                 log.warning("Skipping invalid program template in %s: %s", path, exc)
+                continue
+            migrated += [(old, {**new, "id": entry["name"]}) for old, new in zip(entry["rows"], rows)
+                         if "shortcuts" in old]
+        self.migration = None
+        if migrated:
+            # As the program rows (app/program_items.py): once, then saved
+            # without the old list.
+            self.migration = log_shortcut_migration("Template row", migrated, shortcut_titles or {})
+            self._persist()
 
     def _persist(self) -> None:
         write_json_atomic(self._path, self._templates, ensure_ascii=False)

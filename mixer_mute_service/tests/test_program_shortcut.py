@@ -11,14 +11,17 @@ from contextlib import ExitStack
 from pathlib import Path
 from unittest.mock import patch
 
+from app.actions import with_shortcut
 from app.program_items import ProgramItemError, ProgramItemStore, has_own_actions
+from app.program_templates import ProgramTemplateStore
 
 from tests.helpers import app_client
 
 PROFILES = ("desktop_display:\n  enabled: true\n  profiles:\n"
             "    qr:\n      title: QR\n      kind: image\n      path: 'C:\\Bilder\\qr.png'\n"
             "    logo:\n      title: Logo\n      kind: image\n      path: 'C:\\Bilder\\logo.png'\n"
-            "    bild:\n      title: Bild\n      kind: image\n      path: 'C:\\Bilder\\bild.png'\n")
+            "    bild:\n      title: Bild\n      kind: image\n      path: 'C:\\Bilder\\bild.png'\n"
+            "groups:\n  Predigt:\n    channels: [1]\n")
 A, B, C = "a" * 32, "b" * 32, "c" * 32
 
 
@@ -79,7 +82,7 @@ class StoreTests(unittest.IsolatedAsyncioTestCase):
                 {"id": "new", "time": "09:40", "title": "Neu", "shortcut": C},
             ]), encoding="utf-8")
             with self.assertLogs("mixer.program", logging.INFO) as logs:
-                store = ProgramItemStore(path)
+                store = ProgramItemStore(path, {A: "Predigt", B: "Kollekte"})
             rows = {item["id"]: item for item in await store.list()}
             self.assertEqual({key: item["shortcut"] for key, item in rows.items()},
                              {"plain": None, "one": A, "two": A, "own": B, "new": C})
@@ -89,7 +92,7 @@ class StoreTests(unittest.IsolatedAsyncioTestCase):
             text = "\n".join(logs.output)
             self.assertIn("1 had several shortcuts", text)
             self.assertIn("1 had own steps and a shortcut", text)
-            self.assertIn(B, text, "the dropped shortcut is named")
+            self.assertIn(f"„Kollekte“ ({B})", text, "the dropped shortcut is named")
             saved = json.loads(path.read_text(encoding="utf-8"))
             self.assertTrue(all("shortcuts" not in entry for entry in saved))
             self.assertEqual([entry["shortcut"] for entry in saved], [None, A, A, B, C])
@@ -100,19 +103,70 @@ class StoreTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(path.read_text(encoding="utf-8"), before)
 
     def test_own_actions(self):
+        # The song is the row's own whatever its shortcut, so it does not count.
         self.assertFalse(has_own_actions({"group": "", "desktop": [], "camera_wait_seconds": 5.0,
-                                          "playback_description": "x"}))
+                                          "playback_description": "x", "song": "a.foil"}))
         for key, value in (("group", "Pult"), ("desktop", ["qr"]), ("cam2_scene", "X"), ("beamer", "hide"),
-                           ("song", "a.foil"), ("lyrics", "file:1.2.3.4|C:\\a.txt")):
+                           ("lyrics", "file:1.2.3.4|C:\\a.txt")):
             self.assertTrue(has_own_actions({key: value}), key)
+
+    def test_the_song_stays_the_rows(self):
+        item = {"title": "Lied", "song": "lied-12.foil", "group": "", "desktop": ["qr"]}
+        shortcut = {"title": "Band", "song": "anderes.foil", "group": "Band", "desktop": []}
+        ran = with_shortcut(item, shortcut)
+        self.assertEqual((ran["song"], ran["group"], ran["desktop"], ran["title"]),
+                         ("lied-12.foil", "Band", [], "Lied"))
+        self.assertIsNone(with_shortcut({**item, "song": None}, shortcut)["song"],
+                          "a shortcut's song never runs for a row")
+
+    async def test_deleted_shortcut_is_noted_on_the_row(self):
+        with tempfile.TemporaryDirectory() as name:
+            path = Path(name) / "program.json"
+            store = ProgramItemStore(path)
+            item = await store.create(row(shortcut=A))
+            self.assertIsNone(item["shortcut_deleted"])
+            await store.drop_shortcut(A, "Predigt")
+            noted = await ProgramItemStore(path).get(item["id"])
+            self.assertEqual((noted["shortcut"], noted["shortcut_deleted"]), (None, "Predigt"),
+                             "kept across a restart, so every device shows it")
+            copy = await store.duplicate(item["id"])
+            self.assertEqual(copy["shortcut_deleted"], "Predigt")
+            saved = await store.update(item["id"], row())
+            self.assertIsNone(saved["shortcut_deleted"], "saving the row from its editor clears the note")
+
+    async def test_template_migration_runs_once(self):
+        with tempfile.TemporaryDirectory() as name:
+            path = Path(name) / "templates.json"
+            texts = {"person": "", "playback_description": "", "translation_description": "", "lyrics_description": ""}
+            path.write_text(json.dumps([{"id": "t", "name": "Gottesdienst", "rows": [
+                {**texts, "time": "09:00", "title": "Begrüßung", "shortcuts": [A, B]},
+                {**texts, "time": "09:10", "title": "Lied", "desktop": ["qr"], "shortcuts": [B], "song_slot": True},
+                {**texts, "time": "09:20", "title": "Neu", "shortcut": C},
+            ]}]), encoding="utf-8")
+            with self.assertLogs("mixer.program", logging.INFO) as logs:
+                store = ProgramTemplateStore(path, {A: "Predigt", B: "Kollekte"})
+            template = await store.get("t")
+            self.assertEqual([r["shortcut"] for r in template["rows"]], [A, B, C])
+            self.assertEqual(store.migration, {"rows": 2, "several_shortcuts": ["Gottesdienst"],
+                                               "own_steps_and_shortcut": ["Gottesdienst"]})
+            text = "\n".join(logs.output)
+            self.assertIn("„Predigt“", text)
+            self.assertIn("„Kollekte“", text)
+            saved = json.loads(path.read_text(encoding="utf-8"))
+            self.assertTrue(all("shortcuts" not in r for r in saved[0]["rows"]))
+            before = path.read_text(encoding="utf-8")
+            self.assertIsNone(ProgramTemplateStore(path).migration)
+            self.assertEqual(path.read_text(encoding="utf-8"), before)
 
 
 class ApiTests(unittest.TestCase):
     def test_row_runs_its_shortcut_instead_of_its_own_fields(self):
         with app_client(PROFILES) as (client, _folder):
             shortcut = client.post("/shortcuts", json={"title": "Logo", "desktop": ["logo"], "beamer": "unhide"}).json()["shortcut"]
-            item = client.post("/program/items", json=row(desktop=["qr"], beamer="hide", shortcut=shortcut["id"])).json()["item"]
-            self.assertEqual((item["shortcut"], item["desktop"], item["beamer"]), (shortcut["id"], ["qr"], "hide"))
+            item = client.post("/program/items", json=row(desktop=["qr"], beamer="hide")).json()["item"]
+            item = client.put(f"/program/items/{item['id']}", json=row(desktop=["qr"], beamer="hide", shortcut=shortcut["id"])).json()["item"]
+            self.assertEqual((item["shortcut"], item["desktop"], item["beamer"]), (shortcut["id"], ["qr"], "hide"),
+                             "a shortcut added later keeps the row's own fields")
             recorder = Recorder()
             with recorder.patched():
                 played = client.post(f"/program/items/{item['id']}/play").json()
@@ -133,12 +187,76 @@ class ApiTests(unittest.TestCase):
             # Deleted: the row runs its own fields again.
             deleted = client.delete(f"/shortcuts/{shortcut['id']}").json()
             self.assertEqual(deleted["program_items"], 1)
+            fallen = {i["id"]: i for i in client.get("/program/items").json()}[item["id"]]
+            self.assertEqual((fallen["shortcut"], fallen["shortcut_deleted"]), (None, "Bild"),
+                             "every device sees that the row fell back")
             recorder.ran.clear()
             with recorder.patched():
                 played = client.post(f"/program/items/{item['id']}/play").json()
             self.assertTrue(played["ok"], played)
             self.assertEqual(recorder.ran, ["beamer-hide", "qr"])
             self.assertNotIn("shortcut", played)
+
+    def test_the_song_of_the_row_is_shown_not_the_shortcuts(self):
+        with app_client(PROFILES) as (client, _folder):
+            shortcut = client.post("/shortcuts", json={"title": "Lied", "song": "anderes.foil", "beamer": "unhide"}).json()["shortcut"]
+            item = client.post("/program/items", json=row(song="lied-12.foil", shortcut=shortcut["id"])).json()["item"]
+            self.assertEqual(item["song"], "lied-12.foil", "the song is kept when the row is created with a shortcut")
+            shown = []
+
+            async def fake_show_slide(_request, song, slide):
+                shown.append((song, slide))
+                return {"ok": True}
+
+            recorder = Recorder()
+            with recorder.patched(), patch("app.api.program.show_slide", fake_show_slide):
+                played = client.post(f"/program/items/{item['id']}/play").json()
+            self.assertTrue(played["ok"], played)
+            self.assertEqual((shown, recorder.ran), ([("lied-12.foil", 0)], ["beamer-unhide"]))
+
+    def test_new_row_with_a_shortcut_saves_no_prefilled_fields(self):
+        with app_client(PROFILES) as (client, _folder):
+            shortcut = client.post("/shortcuts", json={"title": "QR", "desktop": ["qr"]}).json()["shortcut"]
+            # The editor pre-fills the last row's group, then the shortcut hides it.
+            item = client.post("/program/items", json=row(group="Predigt", desktop=["logo"], song="a.foil",
+                                                          shortcut=shortcut["id"])).json()["item"]
+            self.assertEqual((item["group"], item["desktop"], item["song"]), ("", [], "a.foil"))
+            # Without a shortcut a new row keeps what it was given.
+            plain = client.post("/program/items", json=row(group="Predigt")).json()["item"]
+            self.assertEqual(plain["group"], "Predigt")
+
+    def test_mute_conflict_is_checked_before_play(self):
+        with app_client(PROFILES) as (client, _folder):
+            overall = "native-overall-gebet"  # an Overall key: it switches the mutes itself
+            shortcut = client.post("/shortcuts", json={"title": "QR", "desktop": ["qr"]}).json()["shortcut"]
+            refused = client.post("/shortcuts", json={"title": "X", "group": "Predigt", "playback": overall})
+            self.assertEqual(refused.status_code, 400, refused.text)
+            item = client.post("/program/items", json=row(shortcut=shortcut["id"])).json()["item"]
+            # The row's own fields are not checked while its shortcut runs...
+            saved = client.put(f"/program/items/{item['id']}",
+                               json=row(group="Predigt", playback=overall, shortcut=shortcut["id"]))
+            self.assertEqual(saved.status_code, 200, saved.text)
+            client.delete(f"/shortcuts/{shortcut['id']}")
+            # ...so once it falls back to them, play checks them first.
+            recorder = Recorder()
+            with recorder.patched():
+                answer = client.post(f"/program/items/{item['id']}/play")
+            self.assertEqual(answer.status_code, 409, answer.text)
+            self.assertIn("switches mutes", answer.json()["reason"])
+            self.assertEqual(recorder.ran, [])
+
+    def test_a_put_without_shortcut_keeps_it(self):
+        with app_client(PROFILES) as (client, _folder):
+            shortcut = client.post("/shortcuts", json={"title": "QR", "desktop": ["qr"]}).json()["shortcut"]
+            item = client.post("/program/items", json=row(shortcut=shortcut["id"])).json()["item"]
+            # A page from before: no "shortcut" key, an empty list.
+            old = client.put(f"/program/items/{item['id']}", json=row(title="Neu", shortcuts=[])).json()["item"]
+            self.assertEqual((old["title"], old["shortcut"]), ("Neu", shortcut["id"]))
+            old = client.put(f"/program/items/{item['id']}", json=row(title="Neu")).json()["item"]
+            self.assertEqual(old["shortcut"], shortcut["id"])
+            # A null "shortcut" removes it.
+            cleared = client.put(f"/program/items/{item['id']}", json=row(shortcut=None)).json()["item"]
+            self.assertIsNone(cleared["shortcut"])
 
     def test_checks_use_what_the_row_runs(self):
         with app_client(PROFILES) as (client, _folder):

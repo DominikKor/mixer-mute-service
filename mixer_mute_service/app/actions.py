@@ -27,7 +27,7 @@ from .display_agent import AgentError
 from .file_actions import is_file_action, not_found_reason, run_file_action, runs_from_network_share
 from .mission_spotlight import profile_path
 from .native_controls import NativeControlError
-from .program_items import ACTION_KEYS
+from .program_items import SHORTCUT_KEYS
 from .responses import Result, controller_result
 
 log = logging.getLogger("mixer.actions")
@@ -305,8 +305,8 @@ async def row_shortcut(request: Request, item: dict) -> Optional[dict]:
 def with_shortcut(item: dict, shortcut: dict) -> dict:
     """What a row with a shortcut runs: the shortcut's action fields instead
     of its own (linked: an edited shortcut changes every row using it); the
-    row keeps its time, title and person."""
-    return {**item, **{key: shortcut.get(key) for key in ACTION_KEYS}}
+    row keeps its time, title, person and song."""
+    return {**item, **{key: shortcut.get(key) for key in SHORTCUT_KEYS}}
 
 
 async def program_reference_error(request: Request, item: dict) -> Optional[str]:
@@ -318,7 +318,7 @@ async def program_reference_error(request: Request, item: dict) -> Optional[str]
         shortcut = await row_shortcut(request, item)
         if shortcut is None:
             return "unknown shortcut"
-        reason = await _reference_error(request, shortcut)
+        reason = await _reference_error(request, with_shortcut(item, shortcut))
         return f"shortcut {shortcut['title']}: {reason}" if reason else None
     return await _reference_error(request, item)
 
@@ -358,7 +358,7 @@ async def program_conflict_error(request: Request, item: dict) -> Optional[str]:
         shortcut = await row_shortcut(request, item)
         if shortcut is None:
             return None  # program_reference_error reports it
-        reason = await program_conflict_error(request, shortcut)
+        reason = await program_conflict_error(request, with_shortcut({**item, "shortcut": None}, shortcut))
         return f"shortcut {shortcut['title']}: {reason}" if reason else None
     if not item.get("group"):
         return None

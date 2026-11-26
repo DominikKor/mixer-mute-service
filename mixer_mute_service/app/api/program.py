@@ -28,7 +28,7 @@ from ..actions import (
 )
 from ..models import ProgramItemRequest, ShortcutRequest
 from ..native_controls import NativeControlError
-from ..program_items import ProgramItemError, validated_shortcut_id
+from ..program_items import ProgramItemError, validated_shortcut_id, without_own_actions
 from ..responses import fail, respond, unwrap
 from ..lights import apply_scene
 from ..songs import show_slide
@@ -127,8 +127,14 @@ async def create_program_item(body: ProgramItemRequest, request: Request):
     invalid = await _validate(body, request)
     if invalid:
         return invalid
+    data = body.model_dump()
+    if validated_shortcut_id(data):
+        # A new row with a shortcut: what the editor pre-filled in the hidden
+        # own fields (e.g. the last row's group) would run unseen if the
+        # shortcut is deleted, so it is not saved.
+        data = without_own_actions(data)
     try:
-        item = await request.app.state.program_items.create(body.model_dump())
+        item = await request.app.state.program_items.create(data)
     except ProgramItemError as exc:
         return fail(str(exc), 400)
     return {"ok": True, "item": item}
@@ -136,6 +142,12 @@ async def create_program_item(body: ProgramItemRequest, request: Request):
 
 @router.put("/program/items/{item_id}")
 async def update_program_item(item_id: str, body: ProgramItemRequest, request: Request):
+    if "shortcut" not in body.model_fields_set and not body.shortcuts:
+        # A page from before one shortcut per row sends no "shortcut" (and an
+        # empty list): the row keeps the one it has.
+        current = await request.app.state.program_items.get(item_id)
+        if current is not None:
+            body = body.model_copy(update={"shortcut": current.get("shortcut")})
     invalid = await _validate(body, request)
     if invalid:
         return invalid
@@ -252,10 +264,11 @@ async def delete_shortcut(shortcut_id: str, request: Request):
     store = _shortcut_store(request)
     if store is None:
         return fail("shortcuts unavailable", 503)
+    # Rows that used it run their own fields again; the answer says how many.
+    shortcut = await store.get(shortcut_id)
     if not await store.delete(shortcut_id):
         return fail("unknown shortcut", 404)
-    # Rows that used it run their own fields again; the answer says how many.
-    rows = await request.app.state.program_items.drop_shortcut(shortcut_id)
+    rows = await request.app.state.program_items.drop_shortcut(shortcut_id, shortcut["title"] if shortcut else "")
     return {"ok": True, "shortcut_id": shortcut_id, "deleted": True, "program_items": rows}
 
 
@@ -269,7 +282,7 @@ async def play_shortcut(shortcut_id: str, request: Request):
         shortcut = await store.get(shortcut_id)
         if shortcut is None:
             return fail("unknown shortcut", 404)
-        broken = await program_reference_error(request, shortcut)
+        broken = await program_reference_error(request, shortcut) or await program_conflict_error(request, shortcut)
         if broken:
             return fail(broken, 409, shortcut_id=shortcut_id)
         return await _run_steps(request, shortcut, {"shortcut_id": shortcut_id, "title": shortcut["title"]})
@@ -337,7 +350,9 @@ async def _play(item_id: str, request: Request):
         return fail("unknown program item", 404)
     # Refuse before anything happens instead of muting and then failing on a
     # deleted key halfway through.
-    broken = await program_reference_error(request, item)
+    # The mute conflict, too: a row that fell back to its own fields (its
+    # shortcut deleted) was last checked with the shortcut's.
+    broken = await program_reference_error(request, item) or await program_conflict_error(request, item)
     if broken:
         return fail(broken, 409, program_item_id=item_id)
     summary = {"program_item_id": item_id, "title": item["title"]}
