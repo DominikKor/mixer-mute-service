@@ -184,15 +184,18 @@ function initSections() {
 // --min-section-width in its CSS) gets the next wider one that holds it; the
 // width key shows the width it gets, the choice stays for wider screens.
 // Calm during a service: a section keeps the place it had (remembered per
-// view, also across reloads). While only contents change (program rows, song
-// text) it stays there and just moves up or down in its columns, unless
-// another place lets it start more than SECTION_RESCUE_PX higher (rare: a
-// big hole). After a user's change (opening or closing a section, order,
-// width) or while "Anordnen" is on, SECTION_STICK_PX is enough. A view in
-// which a section has no place yet (first load, the other iPad orientation,
-// a new width) settles for SECTION_SETTLE_MS while contents still arrive;
-// only places from settled packing are saved, so half-loaded contents never
-// fix a place. In the two-column view the width key keeps its own width
+// view, also across reloads). Outside "Anordnen" a change of contents
+// (program rows, song text, a Channels view, opening or closing a section)
+// NEVER changes a section's columns; it only moves up or down in them. A
+// section changes columns only by an arrange action (order, width, drag,
+// Standard), while "Anordnen" is on (when another place is more than
+// SECTION_STICK_PX higher) or while its view settles: a view in which a
+// section has no saved place yet (first load, the other iPad orientation, a
+// new width) keeps settling until it has seen its first full state (the
+// first mixer state, then SECTION_SETTLE_MS without any height change; at
+// most SECTION_SETTLE_MAX_MS); only then are its places saved, so
+// half-loaded contents never fix a place. A view with saved places keeps
+// them. In the two-column view the width key keeps its own width
 // (half or whole); the widths for wider screens stay as they are.
 // "Anordnen" shows in every section head: ⠿ to drag it to another place in
 // the order (finger or mouse, not in the one-column view), ◀ ▶ to move it
@@ -208,9 +211,11 @@ const SECTION_GRID_ROW_PX = 2;      // .page grid-auto-rows (app.css): placing u
 const SECTION_WIDTHS = [2, 3, 4, 6];  // ⅓, ½, ⅔, whole in grid columns
 const SECTION_WIDTH_LABELS = { 2: "⅓", 3: "½", 4: "⅔", 6: "ganz" };
 const SECTION_STICK_PX = 120;       // a better place must be this much higher
-const SECTION_RESCUE_PX = 300;      // ... and during a service this much
 const SECTION_THREE_MIN_PX = 1100;  // page width for thirds
-const SECTION_SETTLE_MS = 4000;     // after loading: contents still arrive
+const SECTION_OVERFLOW_PX = 8;      // content wider than its section by more: next wider width
+const SECTION_SETTLE_MS = 4000;     // settled: this long without a height change ...
+const SECTION_SETTLE_MAX_MS = 30000;  // ... or this long at most
+const SECTION_NO_STATE = CONFIRMED_STATE;  // core.js: the placeholder before the first mixer state
 const SECTION_HEIGHTS = {};         // section -> height in grid rows, measured by packSections
 let SECTION_MIN_SPAN = {};          // section -> grid columns its content needs now (measured)
 let SECTION_DEFAULT_ORDER = [];
@@ -219,8 +224,7 @@ let SECTION_WIDTH = {};             // section -> 2 | 3 | 4 | 6
 let SECTION_VIEW_WIDTH = {};        // view -> {section: width}: the width key's choice in that view ("two")
 let SECTION_PLACES = {};            // view -> {section: first grid column}, as placed now
 let SECTION_SAVED_PLACES = {};      // the same, as saved (only from settled packing)
-let SECTION_SETTLE = null;          // {view, until}: that view still settles
-let SECTION_FREE_UNTIL = 0;         // until then (performance.now) sections may change place
+let SECTION_SETTLE = null;          // {view, start, lastChange}: that view still settles
 let SECTION_DRAG = null;
 
 // The width of a section in a view, in grid columns.
@@ -352,13 +356,22 @@ function sectionPlacesMissing(order, places) {
 }
 
 // How a packing may move sections and whether its places are saved. Pure.
-//   dragging: everything stays (the dragged one moves by the drag);
-//   a user's action, "Anordnen" or a view that still settles: SECTION_STICK_PX;
-//   otherwise (contents changing during a service): SECTION_RESCUE_PX.
+//   an arrange action, "Anordnen" or a view that still settles: a section
+//   moves to a place more than SECTION_STICK_PX higher ("stick");
+//   otherwise (contents change during a service) and while dragging: every
+//   section keeps its columns ("keep").
 // Places are saved only when nothing is dragged and the view has settled.
 function sectionPackRule({ dragging = false, free = false, arranging = false, settling = false } = {}) {
-  const stick = dragging ? "keep" : free || arranging || settling ? "stick" : "rescue";
+  const stick = !dragging && (free || arranging || settling) ? "stick" : "keep";
   return { stick, save: !dragging && !settling };
+}
+
+// A settling view has seen its first full state: the first mixer state and
+// then SECTION_SETTLE_MS without a height change, or SECTION_SETTLE_MAX_MS
+// since it began. Pure.
+function sectionSettleDone({ now, start, lastChange, stateSeen }) {
+  if (now - start >= SECTION_SETTLE_MAX_MS) return true;
+  return !!stateSeen && now - lastChange >= SECTION_SETTLE_MS;
 }
 
 function sectionPanelsInOrder() {
@@ -378,7 +391,7 @@ function currentSectionView() {
 function sectionLayoutFor(order, view, { drop = null, stick = "stick" } = {}) {
   const places = { ...(SECTION_PLACES[view] || {}) };
   if (drop) delete places[drop];
-  const rows = (stick === "rescue" ? SECTION_RESCUE_PX : SECTION_STICK_PX) / SECTION_GRID_ROW_PX;
+  const rows = SECTION_STICK_PX / SECTION_GRID_ROW_PX;
   return layoutSections(order, section => sectionWidthIn(SECTION_WIDTH, SECTION_VIEW_WIDTH, view, section),
                         section => SECTION_HEIGHTS[section] || 1,
                         { view, places, stick: rows, keep: stick === "keep",
@@ -419,10 +432,6 @@ function initSectionOrder() {
     }
     key("sectionWidth", "", "Breite").addEventListener("click", () => cycleSectionWidth(section));
     panel.querySelector(".panel-head").appendChild(box);
-    // Opening or closing a section lets the others move into the space.
-    panel.querySelector(".section-toggle").addEventListener("click", () => {
-      SECTION_FREE_UNTIL = Math.max(SECTION_FREE_UNTIL, performance.now() + 600);
-    });
   }
   applySectionOrder();
   // Heights change all the time (sections open and close, program rows are
@@ -504,31 +513,40 @@ function keptInOrder(a, b) {
 function packSections({ free = false, animate = false } = {}) {
   const page = document.querySelector(".page");
   if (!page) return;
-  if (!STAGE.on) placeSections(page, free || performance.now() < SECTION_FREE_UNTIL, animate);
+  if (!STAGE.on) placeSections(page, free, animate);
   syncSectionMoveButtons();
 }
 
-// A view in which a section has no saved place yet settles for
-// SECTION_SETTLE_MS (once per page load and view: by the next time the
-// contents are there); at the end it is packed once more and its places
-// are saved.
+// A view in which a section has no saved place yet settles (once per page
+// load and view) until sectionSettleDone; meanwhile it is packed every
+// second, and the pack that finds it done saves its places. `changed`: the
+// heights just measured differ from the last ones.
 const SECTION_SETTLED_VIEWS = new Set();
-function sectionViewSettling(view) {
+function sectionViewSettling(view, changed) {
   const now = performance.now();
   if (view !== "one" && !SECTION_SETTLED_VIEWS.has(view)
       && sectionPlacesMissing(SECTION_ORDER, SECTION_SAVED_PLACES[view])) {
     SECTION_SETTLED_VIEWS.add(view);
-    SECTION_SETTLE = { view, until: now + SECTION_SETTLE_MS };
-    setTimeout(() => packSections(), SECTION_SETTLE_MS + 50);
+    SECTION_SETTLE = { view, start: now, lastChange: now };
+    const check = () => {
+      if (!SECTION_SETTLE || SECTION_SETTLE.view !== view) return;
+      packSections();
+      setTimeout(check, 1000);
+    };
+    setTimeout(check, 1000);
   }
-  return !!SECTION_SETTLE && SECTION_SETTLE.view === view && now < SECTION_SETTLE.until;
+  if (!SECTION_SETTLE || SECTION_SETTLE.view !== view) return false;
+  if (changed) SECTION_SETTLE.lastChange = now;
+  if (sectionSettleDone({ now, ...SECTION_SETTLE, stateSeen: CONFIRMED_STATE !== SECTION_NO_STATE })) {
+    SECTION_SETTLE = null;
+    return false;
+  }
+  return true;
 }
 
 function placeSections(page, free, animate) {
   const panels = sectionPanelsInOrder();
   const view = currentSectionView();
-  const rule = sectionPackRule({ dragging: !!SECTION_DRAG, free, settling: sectionViewSettling(view),
-                                 arranging: document.body.classList.contains("arranging") });
   const firsts = animate && !stageReducedMotion() ? new Map(panels.map(p => [p, p.getBoundingClientRect()])) : null;
   // Measuring must not move the page: the rows stay as they are (the page
   // keeps its height, Safari keeps the scroll place) and every section is
@@ -547,11 +565,16 @@ function placeSections(page, free, animate) {
   setSpans({});
   SECTION_MIN_SPAN = view === "one" ? {} : sectionMinSpans(page, panels);
   if (Object.keys(SECTION_MIN_SPAN).length) setSpans(SECTION_MIN_SPAN);
+  let changed = false;
   for (const panel of panels) {
     const margin = parseFloat(getComputedStyle(panel).marginTop) || 0;
-    SECTION_HEIGHTS[panel.dataset.section] = Math.max(1, Math.ceil((panel.offsetHeight + margin) / SECTION_GRID_ROW_PX));
+    const rows = Math.max(1, Math.ceil((panel.offsetHeight + margin) / SECTION_GRID_ROW_PX));
+    if (rows !== SECTION_HEIGHTS[panel.dataset.section]) changed = true;
+    SECTION_HEIGHTS[panel.dataset.section] = rows;
   }
   if (view === "one") return;
+  const rule = sectionPackRule({ dragging: !!SECTION_DRAG, free, settling: sectionViewSettling(view, changed),
+                                 arranging: document.body.classList.contains("arranging") });
   const layout = sectionLayoutFor(SECTION_ORDER, view, { stick: rule.stick });
   for (const panel of panels) {
     const place = layout[panel.dataset.section];
@@ -579,7 +602,9 @@ function sectionMinSpans(page, panels) {
   const min = {};
   for (const panel of panels) {
     const declared = parseFloat(getComputedStyle(panel).getPropertyValue("--min-section-width")) || 0;
-    const content = panel.scrollWidth > panel.clientWidth + 1 ? panel.scrollWidth + panel.offsetWidth - panel.clientWidth : 0;
+    // A few pixels (an edge, a rounding) do not count; the page clips them.
+    const over = panel.scrollWidth - panel.clientWidth;
+    const content = over > SECTION_OVERFLOW_PX ? panel.scrollWidth + panel.offsetWidth - panel.clientWidth : 0;
     const span = sectionMinSpan(Math.max(declared, content), col, gap);
     if (span) min[panel.dataset.section] = span;
   }

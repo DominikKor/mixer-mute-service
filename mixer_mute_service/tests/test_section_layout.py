@@ -26,9 +26,11 @@ except ImportError:  # pragma: no cover - only where quickjs is not installed
     quickjs = None
 
 APP_JS = Path(__file__).resolve().parent.parent / "app" / "static" / "js" / "app.js"
-CONSTANTS = ("SECTION_GRID_COLUMNS", "SECTION_GRID_ROW_PX", "SECTION_WIDTHS", "SECTION_STICK_PX", "SECTION_RESCUE_PX")
+CONSTANTS = ("SECTION_GRID_COLUMNS", "SECTION_GRID_ROW_PX", "SECTION_WIDTHS", "SECTION_STICK_PX",
+             "SECTION_SETTLE_MS", "SECTION_SETTLE_MAX_MS")
 FUNCTIONS = ("sectionSpan", "sectionMinSpan", "sectionStarts", "layoutSections", "sectionOrderAfterMove", "nextSectionWidth",
              "sectionArrangementFromPrefs", "sectionWidthIn", "sectionPlacesMissing", "sectionPackRule",
+             "sectionSettleDone",
              "keptInOrder")
 SECTIONS = ["desktop", "cameras", "channels", "program", "songs", "lights", "groups", "companion"]
 VIEWS = ("three", "two", "one")
@@ -44,7 +46,6 @@ class SectionLayoutTests(unittest.TestCase):
         cls.js = quickjs.Context()
         cls.js.eval("\n".join(parts))
         cls.stick = json.loads(cls.js.eval("JSON.stringify(SECTION_STICK_PX / SECTION_GRID_ROW_PX)"))
-        cls.rescue = json.loads(cls.js.eval("JSON.stringify(SECTION_RESCUE_PX / SECTION_GRID_ROW_PX)"))
 
     def call(self, expression):
         return json.loads(self.js.eval(f"JSON.stringify({expression})"))
@@ -127,40 +128,60 @@ class SectionLayoutTests(unittest.TestCase):
         self.assertEqual(self.layout(order, {**widths, "songs": 4}, heights, places={"songs": 3},
                                      keep=True)["songs"]["start"], 0)
 
-    def test_places_from_half_loaded_contents_do_not_stick(self):
-        # Loading: Channels is still short, Kameras and Licht go left under it.
+    def test_contents_change_never_moves_a_column_outside_arranging(self):
+        # During a service (no arrange action, "Anordnen" off, view settled)
+        # packing keeps every section's columns, whatever the contents do:
+        # Channels Kompakt <-> Voll, an empty Channels body for a moment, a
+        # long program, a section folded.
+        self.assertEqual(self.call("sectionPackRule({})"), {"stick": "keep", "save": True})
+        rng = random.Random(1032)
+        for case in range(120):
+            order = SECTIONS[:]
+            rng.shuffle(order)
+            widths = {s: rng.choice((2, 3, 4, 6)) for s in order}
+            heights = {s: rng.randint(20, 700) for s in order}
+            view = ("three", "two")[case % 2]
+            places = {s: box["start"] for s, box in self.layout(order, widths, heights, view).items()}
+            for _ in range(3):
+                changed = {s: rng.choice((h, rng.randint(10, 60), rng.randint(500, 1400))) for s, h in heights.items()}
+                kept = self.layout(order, widths, changed, view, places, keep=True)
+                self.assertEqual({s: kept[s]["start"] for s in order}, places, (order, changed))
+                self.assert_gallery(order, widths, changed, view, kept)
+        # The reviewer's case: Channels Voll -> Kompakt -> Voll moves nobody.
+        order, widths = ["channels", "program", "companion"], {"channels": 3, "program": 3, "companion": 3}
+        voll = {"channels": 900, "program": 200, "companion": 300}
+        places = {s: b["start"] for s, b in self.layout(order, widths, voll).items()}
+        for heights in ({**voll, "channels": 120}, {**voll, "channels": 0 + 1}, voll):
+            kept = self.layout(order, widths, heights, places=places, keep=True)
+            self.assertEqual({s: kept[s]["start"] for s in order}, places)
+
+    def test_a_view_settles_on_its_first_full_state(self):
+        # Loading: Channels still short, Kameras and Licht would go left under it.
         order = ["channels", "program", "cameras", "lights"]
         widths = {s: 3 for s in order}
-        loading = {"channels": 40, "program": 300, "cameras": 30, "lights": 200}
-        early = self.layout(order, widths, loading)
+        early = self.layout(order, widths, {"channels": 40, "program": 300, "cameras": 30, "lights": 200})
         self.assertEqual((early["cameras"]["start"], early["lights"]["start"]), (0, 0))
-        places = {s: early[s]["start"] for s in order}
-        # Loaded: Channels is 2,700 px (1,350 rows). Kept for good, they would
-        # leave a hole of 1,000+ px on the right; during a service a gain of
-        # more than SECTION_RESCUE_PX moves them, a little gain does not.
-        loaded = {**loading, "channels": 1350}
-        stuck = self.layout(order, widths, loaded, places=places, keep=True)
-        self.assertEqual(stuck["cameras"]["start"], 0)
-        rescued = self.layout(order, widths, loaded, places=places, stick=self.rescue)
-        self.assertEqual((rescued["cameras"]["start"], rescued["lights"]["start"]), (3, 3))
-        # A gain between both: moves while arranging, not during a service.
-        gain = (self.stick + self.rescue) // 2
-        small = {**loading, "channels": 100 + gain, "program": 100}
-        self.assertEqual(self.layout(order, widths, small, places=places, stick=self.rescue)["cameras"]["start"], 0)
-        self.assertEqual(self.layout(order, widths, small, places=places)["cameras"]["start"], 3)
-        # A view that lacks a place for any section settles first; its places
-        # are saved only once settled and never while dragging.
+        # Still settling ("stick"), the loaded heights move them; nothing is saved meanwhile.
+        loaded = self.layout(order, widths, {"channels": 1350, "program": 300, "cameras": 30, "lights": 200},
+                             places={s: early[s]["start"] for s in order})
+        self.assertEqual((loaded["cameras"]["start"], loaded["lights"]["start"]), (3, 3))
+        rule = lambda **kw: self.call(f"sectionPackRule({json.dumps(kw)})")  # noqa: E731
+        self.assertEqual(rule(settling=True), {"stick": "stick", "save": False})
+        self.assertEqual(rule(free=True), {"stick": "stick", "save": True})              # arrange action
+        self.assertEqual(rule(arranging=True), {"stick": "stick", "save": True})
+        self.assertEqual(rule(dragging=True, free=True), {"stick": "keep", "save": False})
+        # Done: the first mixer state, then quiet for SECTION_SETTLE_MS; at most SECTION_SETTLE_MAX_MS.
+        quiet, most = self.call("[SECTION_SETTLE_MS, SECTION_SETTLE_MAX_MS]")
+        done = lambda **kw: self.call(f"sectionSettleDone({json.dumps(kw)})")  # noqa: E731
+        self.assertFalse(done(now=quiet + 10, start=0, lastChange=0, stateSeen=False))   # no mixer state yet
+        self.assertFalse(done(now=quiet + 10, start=0, lastChange=20, stateSeen=True))   # heights still change
+        self.assertTrue(done(now=quiet + 10, start=0, lastChange=10, stateSeen=True))
+        self.assertTrue(done(now=most, start=0, lastChange=most - 1, stateSeen=False))
+        # Which views settle: those lacking a saved place for any section.
         missing = lambda places: self.call(f"sectionPlacesMissing({json.dumps(order)}, {json.dumps(places)})")  # noqa: E731
         self.assertTrue(missing(None))
         self.assertTrue(missing({"channels": 0, "program": 3, "cameras": 0}))
-        self.assertTrue(missing({**places, "lights": "x"}))
-        self.assertFalse(missing(places))
-        rule = lambda **kw: self.call(f"sectionPackRule({json.dumps(kw)})")  # noqa: E731
-        self.assertEqual(rule(), {"stick": "rescue", "save": True})                  # service, contents change
-        self.assertEqual(rule(settling=True), {"stick": "stick", "save": False})     # still loading
-        self.assertEqual(rule(free=True), {"stick": "stick", "save": True})          # user's action
-        self.assertEqual(rule(arranging=True, settling=True), {"stick": "stick", "save": False})
-        self.assertEqual(rule(dragging=True, free=True), {"stick": "keep", "save": False})
+        self.assertFalse(missing({s: early[s]["start"] for s in order}))
 
     def test_two_column_view_keeps_its_own_width(self):
         widths, view_widths = {"desktop": 6, "songs": 2}, {"two": {"songs": 6}}

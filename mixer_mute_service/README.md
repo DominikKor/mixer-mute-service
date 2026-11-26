@@ -60,10 +60,14 @@ sections stack under each other next to a tall one. Every section head shows
 ⠿ (drag it to another place, finger or mouse), ◀ ▶ (earlier / later in the
 order, as many steps as it takes for the page to change) and the width key
 (⅓ → ½ → ⅔ → whole). Below 1100 px page width (iPad upright) ⅓ and ½ show as
-half, ⅔ and whole as whole; below 900 px everything is one column. A section
-keeps its place while only contents change (program rows, song text), so the
-page stays calm during a service; opening or closing a section, a new order
-or width, and "Anordnen" itself let sections move into free space again. The
+half, ⅔ and whole as whole; below 900 px everything is one column. Outside
+"Anordnen" a change of contents (program rows, song text, the Channels view,
+opening or closing a section) never moves a section to other columns, so the
+page stays calm during a service; only an arrange action, "Anordnen" itself
+and the first full load of a view (places are saved once it has settled)
+place sections anew. What is inside a section follows the section's own
+width (CSS container queries), so ⅓ and ½ sections lay out their contents
+like a narrow screen. The
 arrangement is remembered per device, also sets the order of the Stage
 miniatures, and **Standard** restores the original one.
 

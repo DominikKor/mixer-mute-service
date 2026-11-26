@@ -329,6 +329,12 @@ body:not(.stage-on) .page {
   overflow-x: clip;
 }
 body:not(.stage-on) .page > .panel { grid-column: 1 / -1; min-width: 0; }
+/* Every section is a query container: what is laid out inside it follows the
+   section's own width (⅓, ½, ⅔, whole, the stage), not the window's
+   (@container section below; thresholds = the former window widths minus
+   the page's side padding). Inline-size containment only: menus, popovers
+   and fixed elements inside behave as before. */
+.panel[data-section] { container: section / inline-size; }
 @media (max-width: 900px) { body:not(.stage-on) .page { display: block; } }
 /* Desktop display keys: two-line keys with a readiness LED */
 .desktop-launch-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
@@ -347,7 +353,7 @@ body:not(.stage-on) .page > .panel { grid-column: 1 / -1; min-width: 0; }
 .camera-view iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
 .camera-unavailable { display: grid; place-items: center; min-height: 100%; padding: 20px; color: var(--lcd-dim); font: 600 12px/1.5 var(--mono); text-align: center; }
 .camera-controls[hidden] { display: none; }
-@media (max-width: 760px) { .camera-grid { grid-template-columns: minmax(0, 1fr); } }
+@container section (max-width: 712px) { .camera-grid { grid-template-columns: minmax(0, 1fr); } }
 /* PTZ controls under a camera named Cam1/Cam2: preset keys and hold-to-move
    keys (arrows for pan/tilt like a keyboard's arrow keys, zoom beside them) */
 .camera-controls { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px 12px; border-top: 1px solid #08090b; box-shadow: inset 0 1px 0 rgba(255,255,255,.04); }
@@ -649,10 +655,12 @@ button.section-toggle:active:not(:disabled) { transform: none; box-shadow: none;
 /* Mute group editor: compact cards. One line per group (display, Mute,
    Solo, "⋮"); the display opens the channels. Editing (descriptions, remove,
    add) only via ⋮ > Bearbeiten. */
-#persons { display: grid; gap: 10px; align-items: start; grid-template-columns: repeat(3, minmax(0, 1fr)); }
-/* Three side by side down to iPad portrait (the one-line head fits ~300 px) */
-@media (max-width: 899px) { #persons { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-@media (max-width: 599px) { #persons { grid-template-columns: minmax(0, 1fr); } }
+/* As many cards side by side as are at least 300 px wide (the one-line head
+   fits ~300 px), at most three; one per row in a narrow section. */
+#persons {
+  display: grid; gap: 10px; align-items: start;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, max(300px, calc((100% - 20px) / 3))), 1fr));
+}
 .person-card {
   min-width: 0; padding: 6px 4px 6px 6px; border-radius: var(--r-card); border: 1px solid #08090b;
   background: var(--panel-bg); box-shadow: var(--panel-shadow);
@@ -983,7 +991,7 @@ button.shortcut-load-item {
 .song-live.idle { grid-template-columns: 1fr; border-style: dashed; border-color: #353b46; background: rgba(0,0,0,.16); box-shadow: none; }
 .song-live.idle .song-live-title { color: var(--muted); font-weight: 600; }
 .song-live.idle .song-stage, .song-live.idle .song-controls, .song-live.idle .song-slides { display: none; }
-@media (max-width: 900px) { .song-live { grid-template-columns: 1fr; } }
+@container section (max-width: 852px) { .song-live { grid-template-columns: 1fr; } }
 .song-preview.blank::after {
   content: "Schwarz"; position: absolute; inset: 0; display: grid; place-items: center;
   font: 800 12px/1 var(--mono); letter-spacing: .2em; text-transform: uppercase; color: #4d5560;
@@ -1130,7 +1138,7 @@ button.program-play:hover:not(:disabled) { color: #fff; }
 button.program-go { min-width: 132px; min-height: 52px; font-size: 15px; }
 button.program-go:disabled { opacity: .45; animation: none; }
 .program-draft-row { box-shadow: var(--edit-ring), var(--panel-shadow); }
-@media (max-width: 900px) {
+@container section (max-width: 852px) {
   .program-table tr { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .program-table td.program-edit-cell, .program-table td.program-summary-cell, .program-table td.program-actions-cell { grid-area: auto; }
   .program-table td.program-summary-cell, .program-table td.pc-title, .program-table td.pc-lyrics,
@@ -1142,6 +1150,16 @@ button.program-go:disabled { opacity: .45; animation: none; }
   .program-actions { justify-content: flex-end; }
   .program-cue { flex-wrap: wrap; }
   button.program-go { flex: 1; }
+}
+/* A narrower section: the display gets the whole line (Weiter below it);
+   in a narrow one (a third) the clock and the due time on one line, what
+   comes next on its own line below, so its title keeps room. */
+@container section (max-width: 852px) {
+  .program-cue-lcd { flex: 1 1 100%; }
+}
+@container section (max-width: 640px) {
+  .program-cue-lcd { flex-wrap: wrap; row-gap: 6px; }
+  .program-cue-next { order: 1; flex: 1 1 100%; }
 }
 .pc-keys { display: flex; gap: 4px; }
 .pc-keys button { min-width: 44px; min-height: 44px; padding: 5px 9px; font-size: 11px; }
@@ -1308,7 +1326,7 @@ button.power-agent-shutdown:hover:not(:disabled) { color: #ff8576; filter: none;
 button.power-agent-shutdown:active:not(:disabled) { transform: none; box-shadow: none; }
 .power-off-status { min-height: 15px; color: var(--lcd-dim); font: 600 11px/1.4 var(--mono); }
 .power-off-status.bad { color: #ff8576; }
-@media (max-width: 760px) { .power-off-targets { grid-template-columns: repeat(auto-fill, minmax(124px, 1fr)); } }
+@container section (max-width: 712px) { .power-off-targets { grid-template-columns: repeat(auto-fill, minmax(124px, 1fr)); } }
 .beamer-state-current { margin-left: auto; color: var(--lcd-dim); font: 600 11px/1.35 var(--mono); }
 .companion-categories { display: grid; gap: 12px; }
 .companion-category {
@@ -1361,7 +1379,7 @@ button.companion-key[data-value]::after { content: attr(data-value); display: bl
 .companion-categories.editing button.companion-key { padding-right: 36px; cursor: context-menu; border-style: dashed; border-color: #4a5160; filter: saturate(.55); }
 .power-off-panel.editing .power-agent-shutdown { display: none; }
 .companion-create-dialog { width: min(520px, calc(100vw - 32px)); }
-@media (max-width: 760px) {
+@container section (max-width: 712px) {
   .companion-grid { grid-template-columns: repeat(auto-fill, minmax(124px, 1fr)); }
 }
 
@@ -1642,7 +1660,7 @@ button.light-pick-key {
 .light-pick-key .light-pick-name { flex-shrink: 0; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .light-pick-key .light-pick-now { min-width: 0; font: 700 11px/1 var(--mono); color: #8d96a3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 button.light-pick-key[aria-pressed="true"] .light-pick-now { color: #cfe2ff; }
-@media (max-width: 1100px) {
+@container section (max-width: 1052px) {
   .light-grid { grid-template-columns: minmax(0, 1fr); }
   .light-pick { grid-template-columns: minmax(0, 1fr); }
 }
