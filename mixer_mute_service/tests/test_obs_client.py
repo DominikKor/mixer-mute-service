@@ -23,8 +23,9 @@ class FakeObs:
     Echo (answers its data), Slow (answers after a random delay, so answers
     come out of order), Silent (never answers), Fail (rejected)."""
 
-    def __init__(self, port=0, password=None):
+    def __init__(self, port=0, password=None, login_delay=0.0):
         self.password = password
+        self.login_delay = login_delay   # seconds before Hello and before Identified
         self.connections = 0
         self.identified = []
         self.open = []
@@ -60,6 +61,7 @@ class FakeObs:
                 except Exception:  # noqa: BLE001 - client gone
                     pass
 
+        time.sleep(self.login_delay)
         hello = {"obsWebSocketVersion": "5.5.0", "rpcVersion": 1}
         if self.password:
             hello["authentication"] = {"challenge": "c" * 8, "salt": "s" * 8}
@@ -72,6 +74,7 @@ class FakeObs:
                 ws.close(4009, "Authentication failed")
                 return
         self.identified.append(identify)
+        time.sleep(self.login_delay)
         send({"op": 2, "d": {"negotiatedRpcVersion": 1}})
         for raw in ws:
             request = json.loads(raw)["d"]
@@ -186,6 +189,63 @@ class ObsClientTests(unittest.TestCase):
         client.close()
         with self.assertRaises(ObsError):
             client.batch([("Echo", 2)])
+
+
+class SlowObsTests(unittest.TestCase):
+    """An OBS that answers, but slowly: no caller waits longer than its
+    timeout (connecting included), however many ask at once, and close()
+    does not wait for a connect in progress."""
+
+    def _obs(self, login_delay):
+        obs = FakeObs(login_delay=login_delay)
+        self.addCleanup(obs.stop)
+        return obs
+
+    def _ask_at_once(self, client, callers):
+        def ask(n):
+            started = time.monotonic()
+            try:
+                return ("ok", client.batch([("Echo", {"n": n})]), time.monotonic() - started)
+            except ObsError as exc:
+                return ("error", str(exc), time.monotonic() - started)
+
+        with ThreadPoolExecutor(max_workers=callers) as pool:
+            return list(pool.map(ask, range(callers)))
+
+    def test_callers_give_up_after_their_timeout(self):
+        obs = self._obs(login_delay=0.8)          # login takes 1.6 s
+        client = ObsClient("127.0.0.1", obs.port, timeout=1.0)
+        self.addCleanup(client.close)
+        results = self._ask_at_once(client, 4)
+        self.assertTrue(all(kind == "error" for kind, _, _ in results), results)
+        self.assertTrue(all(took < 1.4 for _, _, took in results), results)
+        self.assertEqual(obs.connections, 1, "the callers share one connect")
+
+    def test_slow_login_within_the_timeout_is_shared(self):
+        obs = self._obs(login_delay=0.25)         # login takes 0.5 s
+        client = ObsClient("127.0.0.1", obs.port, timeout=1.0)
+        self.addCleanup(client.close)
+        results = self._ask_at_once(client, 6)
+        self.assertEqual([answer for _, answer, _ in results], [[{"echo": {"n": n}}] for n in range(6)])
+        self.assertTrue(all(took < 1.0 for _, _, took in results), results)
+        self.assertEqual(obs.connections, 1)
+
+    def test_close_returns_at_once_while_connecting(self):
+        obs = self._obs(login_delay=0.6)
+        client = ObsClient("127.0.0.1", obs.port, timeout=3.0)
+        outcome = []
+        caller = threading.Thread(target=lambda: outcome.append(self._ask_at_once(client, 1)[0]))
+        caller.start()
+        time.sleep(0.2)                           # the connect is in progress
+        started = time.monotonic()
+        client.close()
+        self.assertLess(time.monotonic() - started, 0.1)
+        caller.join(0.5)
+        self.assertFalse(caller.is_alive(), "the waiting caller is told at once")
+        self.assertEqual(outcome[0][0], "error")
+        time.sleep(1.5)                           # the login finishes: the socket is dropped
+        self.assertEqual(client.connections, 0)
+        self.assertEqual(obs.open, [])
 
 
 class ServiceUsesOneConnectionTests(unittest.TestCase):

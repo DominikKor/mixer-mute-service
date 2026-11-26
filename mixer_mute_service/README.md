@@ -250,8 +250,9 @@ The service keeps ONE WebSocket connection to OBS open (`app/obs_client.py`)
 for every key, program row, camera sequence and status query; OBS no longer
 reports a new client and a disconnect on every click. Requests from several
 places at once share it (answers matched by requestId), each waits at most
-3 s, and a request without an answer drops the connection so the next one
-connects anew. When OBS is gone, connecting is retried after 1, 2, 4 ... up
+3 s in all, connecting included (a connect runs in its own thread; callers
+only wait for it, and stopping the service does not), and a request without
+an answer drops the connection so the next one connects anew. When OBS is gone, connecting is retried after 1, 2, 4 ... up
 to 15 s; meanwhile requests fail at once with "OBS WebSocket unavailable".
 The connection closes when the service stops.
 
