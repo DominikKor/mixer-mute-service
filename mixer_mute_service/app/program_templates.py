@@ -14,8 +14,10 @@ POST   /program/templates {name, slots, replace}
                                               save the current program; slots
                                               are the ids of its song-slot rows
 DELETE /program/templates/{id}
-POST   /program/templates/{id}/apply {songs: [{song_id, text}], dry_run}
-                                              dry_run: only return the rows
+POST   /program/templates/{id}/apply {songs: [{song_id, text}], persons, dry_run}
+                                              dry_run: only return the rows;
+                                              persons: [{id, person}] from the
+                                              Ablauf PDF (app/program_pdf.py)
 POST   /songs/match {lines: [...]}            [{line, song_id, title, candidates}]
 """
 
@@ -37,6 +39,7 @@ from .actions import program_reference_error
 from .jsonstore import read_json, write_json_atomic
 from .responses import fail
 from .program_items import _ACTION_FIELDS, ProgramItemError, ProgramItemStore
+from .program_pdf import PdfImportError, assign_persons, validated_persons
 from .target_pcs import retarget_file_action
 
 router = APIRouter()
@@ -249,7 +252,9 @@ def _score(line: str, words: set, numbers: set, song: dict) -> int:
             name = _norm(book.get("name", "")).split()
             # "EG 331", "FJ3 123": the book's initials (digits kept)
             initials = "".join(w[0] if not w.isdigit() else w for w in name)
-            if not name or (words & set(name)) or any(w.startswith(initials) for w in words if initials):
+            # A bare number ("101" from the Ablauf PDF) counts for any book.
+            if (not name or words == numbers or (words & set(name))
+                    or any(w.startswith(initials) for w in words if initials)):
                 best = max(best, 90)
             else:
                 best = max(best, 40)
@@ -348,11 +353,16 @@ async def apply_template(template_id: str, request: Request, body: dict = Body(.
         if song_id or text.strip():
             cleaned.append({"song_id": song_id, "text": clean_line(text),
                             "title": library[song_id]["title"] if song_id else clean_line(text)})
-    rows = fill_template(template["rows"], cleaned)
+    try:
+        persons = validated_persons(body.get("persons") or [])
+    except PdfImportError as exc:
+        return fail(str(exc))
+    template_rows, unassigned = assign_persons(template["rows"], persons)
+    rows = fill_template(template_rows, cleaned)
     if len(rows) > MAX_ROWS:
         return fail(f"at most {MAX_ROWS} rows")
     if body.get("dry_run") is True:  # preview: the rows, nothing changed
-        return {"ok": True, "rows": sorted(rows, key=lambda row: row["time"])}
+        return {"ok": True, "rows": sorted(rows, key=lambda row: row["time"]), "unassigned": unassigned}
     try:
         items = await request.app.state.program_items.replace_all(rows)
     except ProgramItemError as exc:
@@ -364,5 +374,6 @@ async def apply_template(template_id: str, request: Request, body: dict = Body(.
         reason = await program_reference_error(request, item)
         if reason:
             warnings.append({"id": item["id"], "title": item["title"], "reason": reason})
-    log.info("Program template applied: %s (%s rows, %s songs)", template["name"], len(items), len(cleaned))
-    return {"ok": True, "items": items, "warnings": warnings}
+    log.info("Program template applied: %s (%s rows, %s songs, %s persons)",
+             template["name"], len(items), len(cleaned), sum(bool(p["person"]) for p in persons) - len(unassigned))
+    return {"ok": True, "items": items, "warnings": warnings, "unassigned": unassigned}
