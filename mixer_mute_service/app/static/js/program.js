@@ -868,6 +868,7 @@ function renderProgramItems() {
   $("program-empty").hidden = PROGRAM_ITEMS.length > 0 || PROGRAM_DRAFT;
   updateProgramCue();
   renderShortcuts();
+  renderSongDock();   // js/song-dock.js: verse keys at the running row
 }
 
 // ---- Shortcuts (app/shortcuts.py) -------------------------------------------

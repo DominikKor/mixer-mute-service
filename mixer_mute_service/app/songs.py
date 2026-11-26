@@ -21,6 +21,14 @@ POST /songs/next | /songs/prev    step through the current song; after the
 POST /songs/blank                 background only (song stays selected)
 POST /songs/hide                  close the song window
 POST /songs/create                a new song: written as .foil into the library
+
+Screens: the lyrics go to one or more screens at once ("targets": one PC
+and monitor each, at most one per PC: a display agent has one song window).
+Every show, blank and hide is sent to all of them in parallel; a screen
+that fails does not stop the others. Answers and /songs/live carry
+"screens" (per screen: ok, or the reason it failed). "target_ip" is the PC
+that holds the library; "monitor" (the first screen's) is kept for older
+pages and files: settings without "targets" mean that one screen.
 """
 
 from __future__ import annotations
@@ -31,11 +39,11 @@ import logging
 import re
 import time
 from pathlib import Path
-from typing import Literal, Optional, Tuple
+from typing import List, Literal, Optional, Tuple
 
 from fastapi import APIRouter, Body, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field, ValidationError, field_validator
+from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 
 from . import display_agent
 from .display_agent import AgentError
@@ -51,12 +59,28 @@ TITLE_SLIDE_KEY = "Titel"
 _COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 # C:\... or \\server\share\...
 _WINDOWS_PATH_RE = re.compile(r"^(?:[A-Za-z]:\\|\\\\[^\\]+\\[^\\]+)")
+DEFAULT_SONG_PC = "192.168.188.11"
+MAX_SONG_SCREENS = 4
+
+
+class SongTarget(BaseModel):
+    """One screen the lyrics are shown on: a PC's display agent and its monitor."""
+    ip: str
+    monitor: int = Field(2, ge=1, le=8)
+
+    @field_validator("ip")
+    @classmethod
+    def _ip(cls, value: str) -> str:
+        if not display_agent.allowed_target(value):
+            raise ValueError("ip must be a LAN address of a PC with the display service")
+        return value
 
 
 class SongSettings(BaseModel):
     library_path: str = Field("", max_length=260)
-    target_ip: str = "192.168.188.11"
-    monitor: int = Field(2, ge=1, le=8)
+    target_ip: str = DEFAULT_SONG_PC         # the PC with the library
+    monitor: int = Field(2, ge=1, le=8)      # the first screen's (older pages and files)
+    targets: List[SongTarget] = Field(min_length=1, max_length=MAX_SONG_SCREENS)
     fullscreen: bool = True
     font: str = Field("Verdana", min_length=1, max_length=60)
     # Text size in px on a 1080 px high screen, the same on every slide of a
@@ -75,6 +99,22 @@ class SongSettings(BaseModel):
     text_align: Literal["left", "center", "right"] = "center"
     # Below the slide, in grey, the first lines of the next slide where room is.
     show_next_preview: bool = True
+
+    @model_validator(mode="before")
+    @classmethod
+    def _one_screen(cls, data):
+        """Settings from before several screens: their PC and monitor are the one screen."""
+        if isinstance(data, dict) and "targets" not in data:
+            data = {**data, "targets": [{"ip": data.get("target_ip", DEFAULT_SONG_PC), "monitor": data.get("monitor", 2)}]}
+        return data
+
+    @model_validator(mode="after")
+    def _screens(self):
+        ips = [target.ip for target in self.targets]
+        if len(set(ips)) != len(ips):
+            raise ValueError("one screen per PC (a PC shows one song window)")
+        self.monitor = self.targets[0].monitor
+        return self
 
     @field_validator("library_path")
     @classmethod
@@ -120,6 +160,8 @@ class SongService:
         self.loaded_at: Optional[float] = library.get("loaded_at")
         self.errors: list = library.get("errors", []) if isinstance(library.get("errors"), list) else []
         self.live = {"song_id": None, "slide": 0, "blank": False}
+        # Per screen, how the last show/blank/hide went: [{ip, monitor, ok, reason?}].
+        self.screens: list = []
 
     def _load_settings(self) -> SongSettings:
         try:
@@ -130,6 +172,8 @@ class SongService:
 
     def save_settings(self, settings: SongSettings) -> None:
         write_json_atomic(self._settings_path, settings.model_dump(), ensure_ascii=False, indent=2)
+        if settings.targets != self.settings.targets:
+            self.screens = []
         self.settings = settings
 
     @staticmethod
@@ -224,7 +268,7 @@ class SongService:
     def _screen(self) -> dict:
         s = self.settings
         return {
-            "monitor": s.monitor, "fullscreen": s.fullscreen,
+            "monitor": s.targets[0].monitor, "fullscreen": s.fullscreen,   # monitor: per screen (_send_song)
             "style": {
                 "font": s.font, "font_size": s.font_size,
                 "text_color": s.text_color, "background_color": s.background_color,
@@ -261,10 +305,12 @@ def legacy_song_payloads(payload: dict) -> list:
     return out
 
 
-async def _call_agent(request: Request, path: str, payload: dict, timeout: float = 3) -> Tuple[dict, int]:
-    """(result, status) of a call to the display agent named in the song settings."""
+async def _call_agent(request: Request, path: str, payload: dict, timeout: float = 3,
+                      target: Optional[str] = None) -> Tuple[dict, int]:
+    """(result, status) of a call to a display agent: ``target``, or the PC
+    with the library."""
     cfg = request.app.state.cfg.desktop_display
-    target = request.app.state.songs.settings.target_ip
+    target = target or request.app.state.songs.settings.target_ip
     try:
         fallbacks = legacy_song_payloads(payload) if path == "/song" else []
         while True:
@@ -289,12 +335,51 @@ async def _call_agent(request: Request, path: str, payload: dict, timeout: float
         return exc.answer(), exc.status
 
 
+async def _send_song(request: Request, payload: dict) -> Tuple[bool, Tuple[dict, int]]:
+    """Send one /song request to every screen at once, each with its own
+    monitor (the agent fits the text to its own screen size). Returns
+    (any screen took it, the first failure or the last answer) and keeps the
+    per-screen outcome in ``service.screens``."""
+    service: SongService = request.app.state.songs
+    targets = list(service.settings.targets)
+
+    def for_screen(target: SongTarget) -> dict:
+        return payload if payload["action"] == "hide" else {**payload, "monitor": target.monitor}
+
+    answers = await asyncio.gather(*(
+        _call_agent(request, "/song", for_screen(target), target=target.ip) for target in targets))
+    screens, failure = [], None
+    for target, (result, status) in zip(targets, answers):
+        ok = status == 200 and result.get("ok") is not False
+        entry = {"ip": target.ip, "monitor": target.monitor, "ok": ok}
+        if not ok:
+            entry["reason"] = result.get("reason") or f"HTTP {status}"
+            failure = failure or (result, status)
+            log.warning("SONG %s not shown on %s monitor %s: %s", payload["action"], target.ip, target.monitor, entry["reason"])
+        screens.append(entry)
+    service.screens = screens
+    reached = any(entry["ok"] for entry in screens)
+    return reached, (failure or answers[-1])
+
+
+def _sent(service: SongService) -> dict:
+    """The answer after a show/blank/hide that reached at least one screen."""
+    failed = [entry for entry in service.screens if not entry["ok"]]
+    return {"ok": True, **_live_view(service), **({"failed": failed} if failed else {})}
+
+
+def _not_sent(service: SongService, answer: Tuple[dict, int]):
+    result, status = answer
+    return reply({**result, "screens": service.screens}, status)
+
+
 def _live_view(service: SongService) -> dict:
     live = dict(service.live)
     song_id = live["song_id"]
     live["song"] = {"id": song_id, **service.songs[song_id]} if song_id in service.songs else None
     # Slides as shown (with the title slide first when it is switched on).
     live["slide_count"] = len(service.slides(song_id)) if live["song"] else 0
+    live["screens"] = list(service.screens)
     return live
 
 
@@ -315,12 +400,12 @@ async def _show_locked(request: Request, song_id: str, slide: int):
     count = len(service.slides(song_id))
     if not 0 <= slide < count:
         return JSONResponse({"ok": False, "reason": "no such slide", "song_id": song_id}, 400)
-    result, status = await _call_agent(request, "/song", service.slide_payload(song_id, slide))
-    if status == 200 and result.get("ok") is not False:
+    reached, answer = await _send_song(request, service.slide_payload(song_id, slide))
+    if reached:
         service.live = {"song_id": song_id, "slide": slide, "blank": False}
         log.info("SONG show %r slide %s/%s", song_id, slide + 1, count)
-        return {"ok": True, **_live_view(service)}
-    return reply(result, status)
+        return _sent(service)
+    return _not_sent(service, answer)
 
 
 async def _blank(request: Request):
@@ -332,12 +417,12 @@ async def _blank(request: Request):
 async def _blank_locked(request: Request):
     """The caller holds ``service.lock``."""
     service: SongService = request.app.state.songs
-    result, status = await _call_agent(request, "/song", service.blank_payload())
-    if status == 200 and result.get("ok") is not False:
+    reached, answer = await _send_song(request, service.blank_payload())
+    if reached:
         service.live = {**service.live, "blank": True}
         log.info("SONG blank")
-        return {"ok": True, **_live_view(service)}
-    return reply(result, status)
+        return _sent(service)
+    return _not_sent(service, answer)
 
 
 @router.get("/songs/settings")
@@ -349,8 +434,12 @@ async def get_song_settings(request: Request):
 @router.post("/songs/settings")
 async def set_song_settings(request: Request, body: dict = Body(...)):
     service: SongService = request.app.state.songs
+    merged = {**service.settings.model_dump(), **body}
+    if "targets" not in body and "monitor" in body:
+        # An older page: its PC and monitor are the one screen.
+        del merged["targets"]
     try:
-        settings = SongSettings(**{**service.settings.model_dump(), **body})
+        settings = SongSettings(**merged)
     except (ValidationError, TypeError) as exc:
         first = exc.errors()[0] if isinstance(exc, ValidationError) and exc.errors() else {}
         reason = f"{'.'.join(str(p) for p in first.get('loc', ()))}: {first.get('msg', 'invalid settings')}".strip(": ")
@@ -446,12 +535,12 @@ async def song_blank(request: Request):
 async def song_hide(request: Request):
     service: SongService = request.app.state.songs
     async with service.lock:
-        result, status = await _call_agent(request, "/song", {"action": "hide"})
-        if status == 200 and result.get("ok") is not False:
+        reached, answer = await _send_song(request, {"action": "hide"})
+        if reached:
             service.live = {"song_id": None, "slide": 0, "blank": False}
             log.info("SONG hide")
-            return {"ok": True, **_live_view(service)}
-        return reply(result, status)
+            return _sent(service)
+        return _not_sent(service, answer)
 
 
 def _new_song_fields(body: dict) -> Tuple[str, str, list, list]:

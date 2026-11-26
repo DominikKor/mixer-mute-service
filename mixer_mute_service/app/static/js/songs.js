@@ -317,6 +317,8 @@ function songBooks(song) {
 }
 
 function renderSongLive() {
+  renderSongDock();   // js/song-dock.js: the same keys at the running program row
+  renderSongScreens();   // js/song-screens.js: where the lyrics go, which screen failed
   const wrap = $("song-live");
   const song = SONG_LIVE.song;
   wrap.classList.toggle("idle", !song);
@@ -384,8 +386,13 @@ async function songAction(path, body) {
   renderSongLive();
   try {
     const result = await api("POST", path, body);
-    if (!result.ok || result.data.ok === false) toast(`Lied: ${result.data.reason || "HTTP " + result.status}`, false);
-    else SONG_LIVE = result.data;
+    if (!result.ok || result.data.ok === false) {
+      const screens = songScreensFailedText(result.data.screens);
+      toast(`Lied: ${screens || result.data.reason || "HTTP " + result.status}`, false);
+    } else {
+      SONG_LIVE = result.data;
+      noteSongScreensFailed(result.data);   // shown on the others, not on these
+    }
   } finally {
     SONG_BUSY = false;
     renderSongLive();
