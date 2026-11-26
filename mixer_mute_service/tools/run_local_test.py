@@ -94,7 +94,9 @@ class FakeDevices:
 
     def shelly_rpc(self, host, method, params):
         if host in self.dead_hosts:
-            time.sleep(self.native.SHELLY_CONNECT_TIMEOUT)  # no connection, as a switched-off Shelly
+            # No connection, as a switched-off Shelly (switching tries twice).
+            attempts = 1 if method.endswith(".GetStatus") else self.native.SHELLY_SWITCH_CONNECT_ATTEMPTS
+            time.sleep(self.native.SHELLY_CONNECT_TIMEOUT * attempts)
             raise self.native.NativeControlError(f"Shelly {host} unreachable")
         time.sleep(self.shelly_delay)
         if method == "Switch.GetStatus":
