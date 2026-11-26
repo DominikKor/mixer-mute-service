@@ -864,6 +864,7 @@ function renderProgramItems() {
   updateProgramCue();
   renderShortcuts();
   renderSongDock();   // js/song-dock.js: verse keys at the running row
+  renderDocDock();    // js/doc-dock.js: page keys for a document at the running row
 }
 
 // ---- Shortcuts (app/shortcuts.py) -------------------------------------------

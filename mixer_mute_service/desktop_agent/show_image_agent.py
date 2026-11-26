@@ -414,9 +414,11 @@ def runs_from_network_share(target: Path) -> bool:
 
 
 def _launch_profile(profile: dict) -> None:
+    document = False
     try:
         path = Path(profile["path"])
         if profile["kind"] == "file" and _open_document(profile, path):
+            document = True  # its /display answer comes from the tk thread (or the cancel)
             return
         before = set(_visible_windows())
         mpv = _video_player(profile, path)
@@ -442,6 +444,8 @@ def _launch_profile(profile: dict) -> None:
             with _opened_lock:
                 _launching.pop(profile["id"], None)
                 _cancelled.discard(profile["id"])
+        if not document:
+            _finish_reply(profile, False)  # not shown by the agent (default app, failed)
 
 
 # -- videos in mpv -----------------------------------------------------------------
@@ -591,6 +595,37 @@ def _document_superseded(profile: dict) -> bool:
         return stamp is not None and _opened_stamps.get(profile_id) != stamp
 
 
+DOCUMENT_ACK_SECONDS = 15.0  # the longest a /display of a document waits for its first page
+
+
+class _DocumentReply:
+    """The /display answer of a document waits for this: set once its first
+    page is on screen (shown) or once it will not be (default app, closed)."""
+
+    def __init__(self) -> None:
+        self.done = threading.Event()
+        self.shown = False
+
+    def finish(self, shown: bool) -> None:
+        if not self.done.is_set():
+            self.shown = shown
+            self.done.set()
+
+
+def _document_reply(body: dict, target: Path) -> _DocumentReply | None:
+    """A reply to wait for when the agent will show this file as a document."""
+    if (body["kind"] != "file" or documents is None or documents.document_type(target) is None
+            or documents.pdfium() is None):
+        return None
+    return _DocumentReply()
+
+
+def _finish_reply(profile: dict, shown: bool) -> None:
+    reply = profile.get("reply")
+    if reply is not None:
+        reply.finish(shown)
+
+
 def _open_document(profile: dict, path: Path, window=None, pdf_for=None, pages_class=None) -> bool:
     """Prepare a document's first page (background thread) and hand it to
     the tk thread. False when it is no document or cannot be rendered here:
@@ -622,10 +657,12 @@ def _open_document(profile: dict, path: Path, window=None, pdf_for=None, pages_c
         pages.close()
         logger.info("Document %s (profile=%s) closed or started again while it was prepared; not shown",
                     path, profile["id"])
+        _finish_reply(profile, False)
         return True
     view = _DocumentView(profile, pages, size)
     logger.info("Document %s: %s pages, monitor %s, %sx%s", path, pages.count, view.monitor, size[0], size[1])
-    requests.put({"kind": "document", "id": profile["id"], "view": view, "image": image})
+    requests.put({"kind": "document", "id": profile["id"], "view": view, "image": image,
+                  "reply": profile.get("reply")})
     return True
 
 
@@ -2985,11 +3022,14 @@ class DisplayHandler(BaseHTTPRequestHandler):
         ):
             self.send_error(400)
             return
-        if body.get("keep_if_open") and (_keep_document(body["id"], body["path"], body.get("stamp"))
-                                         or _keep_open(body["id"], body.get("stamp"))):
+        kept_document = body.get("keep_if_open") and _keep_document(body["id"], body["path"], body.get("stamp"))
+        if kept_document or (body.get("keep_if_open") and _keep_open(body["id"], body.get("stamp"))):
             # The program's next row starts it again: its window stays as it is.
             logger.info("Profile %s kept open", body["id"])
-            self._send_json(202, {"ok": True, "profile": body["id"], "display": body["monitor"], "kept": True})
+            answer = {"ok": True, "profile": body["id"], "display": body["monitor"], "kept": True}
+            if kept_document:
+                answer["shown"] = True  # still on screen
+            self._send_json(202, answer)
             return
         program = body["kind"] == "program"
         try:
@@ -3013,8 +3053,16 @@ class DisplayHandler(BaseHTTPRequestHandler):
                 _launching[body["id"]] = time.monotonic() + LAUNCH_PENDING_SECONDS
                 _cancelled.discard(body["id"])
         # Profiles open the file the path resolved to ("*" filled in).
-        requests.put({**body, "path": str(target), "requested": body["path"]})
-        result = json.dumps({"ok": True, "profile": body["id"], "display": body["monitor"]}).encode()
+        reply = _document_reply(body, target)
+        requests.put({**body, "path": str(target), "requested": body["path"], **({"reply": reply} if reply else {})})
+        answer = {"ok": True, "profile": body["id"], "display": body["monitor"]}
+        if reply:
+            # A document: the answer comes once its first page is on screen
+            # (the service freezes the beamer after it), at most
+            # DOCUMENT_ACK_SECONDS; "shown": false when it is not (yet).
+            reply.done.wait(DOCUMENT_ACK_SECONDS)
+            answer["shown"] = reply.shown
+        result = json.dumps(answer).encode()
         self.send_response(202)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(result)))
@@ -3347,7 +3395,12 @@ def handle_request(root, image_label, canvas, profile: dict) -> None:
             logger.info("Image hidden profile=%s", profile["id"])
         _hide_document(profile["id"], stamp)
     elif profile["kind"] == "document":
-        _show_document(root, profile)
+        shown = False
+        try:
+            _show_document(root, profile)
+            shown = True
+        finally:
+            _finish_reply(profile, shown)
     elif profile["kind"] == "document-page":
         _show_document_page(profile)
     else:
@@ -3390,8 +3443,8 @@ def main() -> None:
     cached_tools()  # first search in the background, for /info
     if documents is not None and os.name == "nt":
         # The Update key runs no pip: a new requirement (pypdfium2) comes this way.
-        threading.Thread(target=documents.install_missing_requirements,
-                         args=(AGENT_DIR / "requirements.txt",), daemon=True).start()
+        threading.Thread(target=documents.install_missing_requirements, daemon=True, args=(
+            AGENT_DIR / "requirements.txt", agent_version(), agent_log_directory() / "pip-install.json")).start()
     # Local copies of the audio sources known from before (see above).
     threading.Thread(target=refresh_audio_cache, daemon=True).start()
     if RESTORED_ENV:

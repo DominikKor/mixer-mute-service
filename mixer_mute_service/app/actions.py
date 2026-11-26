@@ -247,9 +247,12 @@ async def show_profile(request: Request, profile_id: str) -> Result:
         payload["monitors"] = profile.monitors
     # A video plays in mpv on the right monitor if the agent finds mpv.exe
     # there (desktop_agent: its own choice, for every video).
+    # A document is answered once its first page is on screen (app/documents.py).
+    timeout = documents.DISPLAY_TIMEOUT_SECONDS if profile.kind == "file" and documents.is_document(
+        profile.path) else 3.0
     try:
         answer = await _tracked_start(request, profile_id, profile, lambda extra: display_agent.call(
-            cfg, profile.target_ip, "/display", {**payload, **extra}))
+            cfg, profile.target_ip, "/display", {**payload, **extra}, timeout=timeout))
     except AgentError as exc:
         if exc.agent_status == 503:
             return {"ok": False, "reason": await _no_file_reason(request, profile, payload["path"])}, 502

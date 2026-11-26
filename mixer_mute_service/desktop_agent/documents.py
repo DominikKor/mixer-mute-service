@@ -24,6 +24,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import importlib
+import json
 import logging
 import os
 import shutil
@@ -32,6 +33,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 from pathlib import Path, PureWindowsPath
 
 from PIL import Image
@@ -85,23 +87,65 @@ def pdfium():
     return _pdfium
 
 
-def install_missing_requirements(requirements: Path, run=None) -> bool | None:
-    """pip install -r requirements.txt when pypdfium2 is missing. None when
-    nothing was missing, else whether it is importable afterwards."""
+PIP_TIMEOUT_SECONDS = 600
+PIP_RETRY_SECONDS = 3600.0       # after a failed pip run (same agent version): one hour,
+PIP_RETRY_MAX_SECONDS = 86400.0  # doubling each time, up to a day
+# The last pip run for /info: {"state": "ok" | "failed" | "running" | "waiting" | "not needed", ...}
+install_status: dict = {"state": "not needed"}
+
+
+def _read_state(path: Path) -> dict:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def install_missing_requirements(requirements: Path, version: str, state_file: Path, run=None,
+                                 now=None) -> bool | None:
+    """pip install -r requirements.txt when pypdfium2 is missing (background,
+    with a timeout). Once per agent version; after a failure only again
+    after PIP_RETRY_SECONDS (doubling). None when nothing was run, else
+    whether pypdfium2 is importable afterwards. The outcome is logged and
+    kept in install_status (/info)."""
+    global install_status
     if pdfium() is not None:
+        install_status = {"state": "not needed"}
         return None
+    now = time.time() if now is None else now
+    state = _read_state(state_file)
+    if state.get("version") == version:
+        failures = int(state.get("failures") or 0)
+        if state.get("ok"):
+            # Installed for this version, yet not importable: not again until a new version.
+            install_status = {"state": "failed", "reason": "installed but not importable", "version": version}
+            return None
+        if failures:
+            wait = min(PIP_RETRY_MAX_SECONDS, PIP_RETRY_SECONDS * 2 ** (failures - 1))
+            if now < float(state.get("last") or 0) + wait:
+                install_status = {"state": "waiting", "failures": failures, "reason": state.get("reason", ""),
+                                  "retry_at": float(state.get("last") or 0) + wait}
+                logger.info("pypdfium2 missing; pip failed %s time(s) for %s, next try in %.0f s", failures,
+                            version, float(state.get("last") or 0) + wait - now)
+                return None
+    else:
+        failures = 0
     run = run or subprocess.run
     command = [sys.executable, "-m", "pip", "install", "--disable-pip-version-check", "-q", "-r", str(requirements)]
     logger.info("pypdfium2 missing: installing the agent's requirements (%s)", " ".join(command))
+    install_status = {"state": "running", "started": now}
+    reason = ""
     try:
-        finished = run(command, stdin=subprocess.DEVNULL, capture_output=True, timeout=600,
+        finished = run(command, stdin=subprocess.DEVNULL, capture_output=True, timeout=PIP_TIMEOUT_SECONDS,
                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        if finished.returncode != 0:
+            reason = f"pip exit {finished.returncode}: " + \
+                (finished.stderr or b"").decode("utf-8", "replace").strip()[-300:]
+    except subprocess.TimeoutExpired:
+        reason = f"pip took longer than {PIP_TIMEOUT_SECONDS} s"
     except (OSError, subprocess.SubprocessError) as exc:
-        logger.warning("pip could not be started: %s", exc)
-        return False
-    if finished.returncode != 0:
-        logger.warning("pip failed (%s): %s", finished.returncode,
-                       (finished.stderr or b"").decode("utf-8", "replace").strip()[-500:])
+        reason = f"pip could not be started: {exc}"
     # A user installation goes to a folder that may not have existed at start.
     try:
         user_site = site.getusersitepackages()
@@ -110,7 +154,21 @@ def install_missing_requirements(requirements: Path, run=None) -> bool | None:
     except Exception:  # noqa: BLE001 - only a second place to look
         pass
     available = pdfium() is not None
-    logger.info("pypdfium2 %s after pip", "available" if available else "still missing")
+    if available:
+        install_status = {"state": "ok", "version": version}
+        logger.info("pypdfium2 installed by pip")
+        record = {"version": version, "ok": True, "last": now}
+    else:
+        reason = reason or "pip ran, pypdfium2 still not importable"
+        failures += 1
+        install_status = {"state": "failed", "failures": failures, "reason": reason}
+        logger.warning("pypdfium2 still missing after pip (%s); documents open with their default app", reason)
+        record = {"version": version, "ok": False, "failures": failures, "last": now, "reason": reason}
+    try:
+        state_file.parent.mkdir(parents=True, exist_ok=True)
+        state_file.write_text(json.dumps(record), encoding="utf-8")
+    except OSError:
+        logger.exception("Could not note the pip result")
     return available
 
 
@@ -356,4 +414,4 @@ def valid_document_request(body) -> bool:
 def capabilities(find_soffice=None) -> dict:
     """For /info: what this agent can show documents with."""
     find_soffice = find_soffice or find_libreoffice
-    return {"pdf": pdfium() is not None, "libreoffice": find_soffice()}
+    return {"pdf": pdfium() is not None, "libreoffice": find_soffice(), "pip": dict(install_status)}

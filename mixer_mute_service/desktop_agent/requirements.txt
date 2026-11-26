@@ -1,2 +1,2 @@
 Pillow>=11
-pypdfium2>=4.30
+pypdfium2==5.15.2

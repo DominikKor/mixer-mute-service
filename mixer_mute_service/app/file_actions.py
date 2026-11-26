@@ -157,7 +157,8 @@ async def _run_document(request: Request, value: str, target: str, path: str) ->
         shown.forget(profile_id)
     try:
         result = await _tracked_start(request, profile_id, SimpleNamespace(kind="file", target_ip=target),
-                                      lambda extra: display_agent.call(cfg, target, "/display", {**payload, **extra}))
+                                      lambda extra: display_agent.call(cfg, target, "/display", {**payload, **extra},
+                                                                       timeout=documents.DISPLAY_TIMEOUT_SECONDS))
     except AgentError as exc:
         if exc.agent_status == 503:
             return {"ok": False, "reason": await no_file_reason(request, target, path), "file": name}, 502

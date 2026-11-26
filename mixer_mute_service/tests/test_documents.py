@@ -24,6 +24,8 @@ tkinter = require_tk()
 if tkinter is not None:
     from desktop_agent import show_image_agent as agent
 
+    agent._open_document_real = agent._open_document
+
 BEAMER_PC, STREAM_PC = "192.168.188.11", "192.168.188.20"
 ENV = {"DESKTOP_AGENT_TOKEN": "test-token"}
 PROFILES = (
@@ -180,15 +182,59 @@ class ConversionTests(unittest.TestCase):
 
     def test_pip_only_when_pdfium_is_missing(self):
         ran = []
-        with patch.object(documents, "pdfium", return_value=object()):
-            self.assertIsNone(documents.install_missing_requirements(Path("req.txt"), run=ran.append))
-        self.assertEqual(ran, [])
-        with patch.object(documents, "pdfium", return_value=None):
-            result = documents.install_missing_requirements(
-                Path("req.txt"), run=lambda command, **_k: ran.append(command) or Finished())
-        self.assertFalse(result)
-        self.assertEqual(ran[0][1:5], ["-m", "pip", "install", "--disable-pip-version-check"])
-        self.assertEqual(ran[0][-2:], ["-r", "req.txt"])
+        with tempfile.TemporaryDirectory() as name:
+            state = Path(name, "pip.json")
+            with patch.object(documents, "pdfium", return_value=object()):
+                self.assertIsNone(documents.install_missing_requirements(Path("req.txt"), "v1", state, run=ran.append))
+            self.assertEqual((ran, state.exists()), ([], False))
+            self.assertEqual(documents.install_status["state"], "not needed")
+
+    def test_pip_once_per_version_with_backoff(self):
+        ran = []
+
+        def pip(command, **kwargs):
+            ran.append(command)
+            self.assertEqual(kwargs["timeout"], documents.PIP_TIMEOUT_SECONDS)
+            return Finished(1, b"no network")
+
+        install = documents.install_missing_requirements
+        with tempfile.TemporaryDirectory() as name, patch.object(documents, "pdfium", return_value=None):
+            state = Path(name, "pip.json")
+            self.assertFalse(install(Path("req.txt"), "v1", state, run=pip, now=1000.0))
+            self.assertEqual(ran[0][1:5], ["-m", "pip", "install", "--disable-pip-version-check"])
+            self.assertEqual(ran[0][-2:], ["-r", "req.txt"])
+            self.assertEqual(documents.install_status["state"], "failed")
+            self.assertIn("no network", documents.install_status["reason"])
+            self.assertIsNone(install(Path("req.txt"), "v1", state, run=pip, now=1000.0 + 600))
+            self.assertEqual(documents.install_status["state"], "waiting")
+            self.assertEqual(len(ran), 1, "not on every start after a failure")
+            install(Path("req.txt"), "v1", state, run=pip, now=1000.0 + 3601)
+            self.assertEqual(len(ran), 2, "again after an hour")
+            self.assertIsNone(install(Path("req.txt"), "v1", state, run=pip, now=4601.0 + 3601))
+            self.assertEqual(len(ran), 2, "then after two hours")
+            install(Path("req.txt"), "v2", state, run=pip, now=4601.0 + 3601)
+            self.assertEqual(len(ran), 3, "a new agent version tries at once")
+
+    def test_pip_success_and_timeout(self):
+        modules = [None, object()]
+        with tempfile.TemporaryDirectory() as name, \
+                patch.object(documents, "pdfium", side_effect=lambda: modules.pop(0)):
+            state = Path(name, "pip.json")
+            self.assertTrue(documents.install_missing_requirements(
+                Path("r.txt"), "v1", state, run=lambda c, **k: Finished(), now=5.0))
+            self.assertEqual(documents.install_status, {"state": "ok", "version": "v1"})
+
+        def slow(command, **kwargs):
+            raise documents.subprocess.TimeoutExpired(command, kwargs["timeout"])
+
+        with tempfile.TemporaryDirectory() as name, patch.object(documents, "pdfium", return_value=None):
+            self.assertFalse(documents.install_missing_requirements(Path("r.txt"), "v1", Path(name, "s"), run=slow))
+            self.assertIn("longer than", documents.install_status["reason"])
+            self.assertIn("pip", documents.capabilities(lambda: None))
+
+    def test_the_requirement_is_pinned(self):
+        lines = (Path(documents.__file__).parent / "requirements.txt").read_text().split()
+        self.assertTrue(any(line.startswith("pypdfium2==") for line in lines), lines)
 
 
 @unittest.skipIf(documents.pdfium() is None, "pypdfium2 is not installed here")
@@ -335,6 +381,46 @@ class AgentDocumentTests(unittest.TestCase):
         self.assertTrue(agent._keep_document(DOC_PROFILE["id"], "c:\\predigt\\übersetzung*.pptx", "s2"))
         self.assertEqual((view.stamp, agent._opened_stamps[DOC_PROFILE["id"]], view.page), ("s2", "s2", 4))
         self.assertFalse(agent._keep_document("other", DOC_PROFILE["requested"], "s3"))
+
+    def test_the_start_is_answered_once_the_first_page_is_on_screen(self):
+        reply = agent._DocumentReply()
+        profile = {**DOC_PROFILE, "reply": reply}
+        agent._opened_stamps[DOC_PROFILE["id"]] = "s1"
+        self.open(profile)
+        self.assertFalse(reply.done.is_set(), "prepared, not yet on screen")
+        request = self.queue.get_nowait()
+        self.assertIs(request["reply"], reply)
+        with patch.object(agent, "_show_document"):
+            agent.handle_request(None, None, None, request)
+        self.assertEqual((reply.done.is_set(), reply.shown), (True, True))
+        failed = agent._DocumentReply()
+        with patch.object(agent, "_show_document", side_effect=RuntimeError("no window")):
+            with self.assertRaises(RuntimeError):
+                agent.handle_request(None, None, None, {**request, "reply": failed})
+        self.assertEqual((failed.done.is_set(), failed.shown), (True, False))
+
+    def test_not_shown_by_the_agent_answers_shown_false(self):
+        reply = agent._DocumentReply()
+        profile = {**DOC_PROFILE, "reply": reply, "path": "C:\\Predigt\\Text.docx"}
+
+        def no_office(_path):
+            raise documents.DocumentError("Office: not installed; LibreOffice: not installed")
+
+        with patch.object(agent, "_open_document", lambda p, path: agent.__dict__["_open_document_real"](
+                p, path, window=lambda m, f: (10, 10, 0, 0), pdf_for=no_office, pages_class=FakePages)), \
+                patch.object(agent, "_visible_windows", side_effect=RuntimeError("default app")), \
+                self.assertLogs(agent.logger, "WARNING"):
+            agent._launch_profile(profile)
+        self.assertEqual((reply.done.is_set(), reply.shown), (True, False))
+
+    def test_only_documents_wait_for_their_page(self):
+        with patch.object(documents, "pdfium", return_value=object()):
+            self.assertIsNotNone(agent._document_reply({"kind": "file"}, Path("C:/a/Predigt.pptx")))
+            self.assertIsNone(agent._document_reply({"kind": "file"}, Path("C:/a/Video.mp4")))
+            self.assertIsNone(agent._document_reply({"kind": "image"}, Path("C:/a/Bild.pdf")))
+        with patch.object(documents, "pdfium", return_value=None):
+            self.assertIsNone(agent._document_reply({"kind": "file"}, Path("C:/a/Predigt.pdf")),
+                              "opened with its default app: answered at once")
 
     def test_close_hides_it_by_profile_and_stamp(self):
         agent._opened_stamps[DOC_PROFILE["id"]] = "s2"

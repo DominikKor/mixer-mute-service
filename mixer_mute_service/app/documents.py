@@ -8,6 +8,11 @@ pages through them on request:
 POST /documents/{next|prev|first|last}   {"pc": ip} optional
 GET  /documents/current                  {"shown": bool, "pc", "title", "page", "pages"}
 
+Starting a document (/display) is answered once its first page is on screen,
+with "shown": true (the beamer freeze of a row comes after it), or after at
+most 15 s with "shown": false (a conversion still running, or the agent opened
+it with its default app). Older agents answer at once, without "shown".
+
 Without "pc" they go to the PC that showed a document last (one document per
 agent, a new one replaces it). An agent from before documents answers 404:
 the answer then says so.
@@ -39,6 +44,10 @@ DOCUMENT_SUFFIXES = {".pdf", ".ppt", ".pptx", ".pptm", ".pps", ".ppsx", ".ppsm",
                      ".doc", ".docx", ".docm", ".odt", ".rtf"}
 ACTIONS = ("next", "prev", "first", "last")
 DOCUMENT_TIMEOUT_SECONDS = 5.0  # the agent renders the page before it answers
+# A document's /display is answered once its first page is on screen ("shown":
+# true), after at most 15 s ("shown": false, e.g. a conversion still running;
+# desktop_agent DOCUMENT_ACK_SECONDS).
+DISPLAY_TIMEOUT_SECONDS = 20.0
 OLD_AGENT_REASON = "Der Display Service auf diesem PC ist zu alt zum Blättern; bitte aktualisieren."
 
 
