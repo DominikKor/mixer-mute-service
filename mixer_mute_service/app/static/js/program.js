@@ -1299,6 +1299,7 @@ $("program-import-file").addEventListener("change", async event => {
     }
     await loadProgramItems();
     toast(`${result.data.items.length} Programmpunkte importiert`, true);
+    for (const warning of result.data.warnings || []) toast(`${warning.title}: ${warning.reason}`, false);
   } finally {
     button.disabled = false;
   }

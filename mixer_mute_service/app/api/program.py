@@ -25,6 +25,7 @@ from ..actions import (
     run_profile,
 )
 from ..models import ProgramItemRequest, ShortcutRequest
+from ..program_file import Names, annotate, resolve
 from ..native_controls import NativeControlError
 from ..profile_stops import program_starts, stop_previous
 from ..program_items import ProgramItemError, unlink_shortcut
@@ -67,11 +68,13 @@ async def list_program_items(request: Request):
 @router.get("/program/export")
 async def export_program(request: Request):
     items = await request.app.state.program_items.list()
+    names = await Names.load(request)
     payload = {
         "format": _PROGRAM_FILE_FORMAT,
         "version": _PROGRAM_FILE_VERSION,
+        # The IDs stay; a readable name is put next to each (app/program_file.py).
         "items": [
-            {**{field: item.get(field) for field in _PROGRAM_FILE_FIELDS}, "hidden": item["hidden"]}
+            await annotate({**{field: item.get(field) for field in _PROGRAM_FILE_FIELDS}, "hidden": item["hidden"]}, names)
             for item in items
         ],
     }
@@ -93,6 +96,8 @@ async def import_program(request: Request, body: dict = Body(...)):
         return fail(f"at most {_MAX_PROGRAM_FILE_ITEMS} program items", 400)
 
     imported = []
+    warnings = []  # references that exist nowhere here (by ID or name): dropped
+    names = await Names.load(request)
     shortcuts = None  # read once, when a row refers to shortcuts
     for index, row in enumerate(rows):
         if not isinstance(row, dict):
@@ -108,6 +113,10 @@ async def import_program(request: Request, body: dict = Body(...)):
             if shortcuts is None:
                 shortcuts = {shortcut["id"]: shortcut for shortcut in await store.list()}
             row, _status = unlink_shortcut(f"Imported row {index + 1}", row, row, shortcuts, lambda merged: merged)
+        if not isinstance(row.get("desktop", []), list):
+            return fail(f"item {index + 1} has invalid fields", 400)
+        row, dropped = await resolve(row, names)
+        warnings += [{"item": index + 1, "title": str(row.get("title", "")), **entry} for entry in dropped]
         try:
             item = ProgramItemRequest.model_validate(row)
         except ValidationError:
@@ -121,7 +130,7 @@ async def import_program(request: Request, body: dict = Body(...)):
         items = await request.app.state.program_items.replace_all(imported, preserve_hidden=True)
     except ProgramItemError as exc:
         return fail(str(exc), 400)
-    return {"ok": True, "items": items}
+    return {"ok": True, "items": items, "warnings": warnings}
 
 
 @router.post("/program/items")
