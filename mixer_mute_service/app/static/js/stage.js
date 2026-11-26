@@ -148,8 +148,9 @@ function setStage(on, animate) {
   }
   const shown = STAGE.current && stagePanel(STAGE.current);
   placeStagePanels();
-  // Back on the page: pack first, so the flight ends in the right places.
-  if (!on) packSections();
+  // Back on the page: pack first, so the flight ends in the right places
+  // (on the stage this only sets the arrows for the one-column order).
+  packSections();
   if (on) layoutStage();
   else if (shown) {
     // Back in the long page, start at the section that was on stage.

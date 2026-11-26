@@ -176,8 +176,8 @@ function initSections() {
 // the i-th place from the left. On the page every section moves up as far as
 // its own columns allow (masonry), so short sections leave no empty space
 // under them; a row stays level when its sections would start less than
-// SECTION_LEVEL_PX apart, or when one of them would straddle a step of at
-// least that much (a third under two halves: no narrow empty strip). A
+// SECTION_LEVEL_PX apart. A section that straddles a step (a third under two
+// halves) starts under the step, the others in its row still move up. A
 // section never changes column for a few pixels.
 // The arrows follow what is on screen:
 //   ◀ ▶  swap with the neighbour in the row; a section alone in its row joins
@@ -279,7 +279,6 @@ function applySectionRows(before = null) {
     else stagePlace(page, bySection[section], next ? bySection[next] : null);
   }
   packSections();
-  syncSectionMoveButtons();
   if (STAGE.on) scheduleStageLayout();
 }
 
@@ -316,12 +315,12 @@ function layoutSectionRows(rows, heightOf, { single = false, level = 1 } = {}) {
       continue;
     }
     const span = cols / row.length;
-    const slots = row.map((_, i) => skyline.slice(i * span, (i + 1) * span));
-    const natural = slots.map(slot => Math.max(...slot));
+    // A section starts under the lowest bottom in its own columns; one that
+    // straddles a step starts under the step, the others still move up.
+    const natural = row.map((_, i) => Math.max(...skyline.slice(i * span, (i + 1) * span)));
     const highest = Math.max(...natural);
-    const straddles = slots.some(slot => Math.max(...slot) - Math.min(...slot) >= level);
     row.forEach((section, i) => {
-      put(section, i * span, span, straddles || highest - natural[i] < level ? highest : natural[i]);
+      put(section, i * span, span, highest - natural[i] < level ? highest : natural[i]);
     });
   }
   return layout;
@@ -391,10 +390,16 @@ function currentSectionLayout() {
 
 // Measure the sections and put them in their grid places (6 columns, 2 px
 // rows). Columns first: a section's height depends on its width. Not on the
-// stage; in the narrow one-column view only measured.
+// stage; in the narrow one-column view only measured. Then the arrows.
 function packSections() {
   const page = document.querySelector(".page");
-  if (!page || STAGE.on) return;
+  if (!page) return;
+  if (!STAGE.on) placeSections(page);
+  // What an arrow does depends on the layout: refresh after every packing.
+  syncSectionMoveButtons();
+}
+
+function placeSections(page) {
   const panels = sectionPanelsInOrder();
   const grid = getComputedStyle(page).display === "grid";
   const columns = grid ? currentSectionLayout() : {};

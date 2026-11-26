@@ -57,8 +57,9 @@ of two sections the first is the left half, the second the right half. On the
 page every section moves up as far as its own columns allow (masonry), so a
 short section (e.g. Mute Gruppen next to a long Programm) gets the following
 rows' sections under it; a row stays level when its sections would start less
-than 120 px apart, or when one of them would straddle such a step (thirds
-under halves). A section never changes column. The arrows follow the screen:
+than 120 px apart. A section that straddles a step (a third under two halves)
+starts under the step; the others in its row still move up. A section never
+changes column. The arrows follow the screen:
 ◀ ▶ swap a section with its neighbour in the row, and a section alone in its
 row joins the row above on the left (◀) or right (▶); ▲ ▼ swap a section with
 the one right above or below it (a whole-width section with the row above or

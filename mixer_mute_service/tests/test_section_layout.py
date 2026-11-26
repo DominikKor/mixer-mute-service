@@ -3,9 +3,9 @@ layoutSectionRows, sectionRowsAfterMove, keptInOrder), run in quickjs.
 
 The rows set width and column of every section; sections move up into the
 space under shorter ones (masonry) but never change column, a row stays level
-when its sections start less than SECTION_LEVEL_PX apart or one would straddle
-a step, and every arrow moves its section visibly in its direction: checked on
-many random arrangements and heights. Skips without quickjs; with
+when its sections start less than SECTION_LEVEL_PX apart, and every arrow
+moves its section visibly in its direction: checked on many random
+arrangements and heights. Skips without quickjs; with
 REQUIRE_TK=1 (CI) a missing quickjs is an error.
 """
 
@@ -79,11 +79,16 @@ class SectionLayoutTests(unittest.TestCase):
         self.assertEqual(layout["program"]["top"], layout["channels"]["top"])
         self.assertEqual(layout["program"]["top"], 100)
 
-    def test_thirds_under_halves_leave_no_strip(self):
+    def test_thirds_under_halves_only_the_straddling_one_waits(self):
+        # Songs straddles the step between the halves: it starts under Program;
+        # Groups still moves up under Channels, so no half column stays empty.
         rows = [["program", "channels"], ["lights", "songs", "groups"]]
         layout = self.layout(rows, {"program": 650, "channels": 125, "lights": 300, "songs": 60, "groups": 40})
-        self.assertEqual({layout[s]["top"] for s in ("lights", "songs", "groups")}, {650})
+        self.assertEqual([layout[s]["top"] for s in ("lights", "songs", "groups")], [650, 650, 125])
         self.assertEqual([layout[s]["start"] for s in ("lights", "songs", "groups")], [0, 2, 4])
+        rows = [["channels", "program"], ["lights", "songs", "groups"]]
+        layout = self.layout(rows, {"program": 650, "channels": 125, "lights": 300, "songs": 60, "groups": 40})
+        self.assertEqual([layout[s]["top"] for s in ("lights", "songs", "groups")], [125, 650, 650])
 
     def test_up_moves_up_and_leaves_the_other_column_alone(self):
         rows = [["program", "channels"], ["lights", "songs"]]
