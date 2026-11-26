@@ -650,9 +650,15 @@ scoop, Chocolatey, `Program Files`, `Program Files (x86)` und
 PATH) und der Installationsordner, den ein Installer in der Registry eintraegt
 (Programme und Features, Name mit „mpv“, ohne MPV.NET). Ein echtes `mpv.exe` geht immer vor MPV.NET (`mpvnet.exe`, auch wenn
 `MPV_PATH` darauf zeigt): MPV.NET startet langsam, und sein Steuerkanal
-antwortet nicht; es wird nur genommen, wenn sonst nichts da ist. Statt
+antwortet nicht; es wird nur genommen, wenn sonst nichts da ist. Dasselbe gilt
+fuer jedes Programm unter einem `WindowsApps`-Ordner (Store-Apps und ihre
+Aufruf-Aliasse). Die Registry wird in der 64- und der 32-Bit-Ansicht gelesen,
+`%ProgramFiles%` in den Eintraegen aufgeloest; `mpv_search` nennt sie immer,
+auch wenn kein Eintrag passt. Statt
 `mpv.com` (Konsolen-Huelle) wird das `mpv.exe` daneben gestartet. yt-dlp (fuer
-YouTube-Links) genauso, zuerst neben mpv. Startet der Agent ohne die Umgebung des Benutzers (nach dem Selbst-Update
+YouTube-Links) genauso, zuerst neben mpv. Ein Play nimmt den Pfad der letzten
+Suche im Hintergrund (hoechstens 5 Minuten alt, Datei noch vorhanden) und sucht
+nur sonst neu, damit mpv ohne Registry- und Ordnersuche startet. Startet der Agent ohne die Umgebung des Benutzers (nach dem Selbst-Update
 startet ihn Windows ueber WMI neu), uebernimmt er fehlende Benutzer- und
 System-Variablen und PATH-Eintraege beim Start aus der Registry. Findet er mpv
 nicht, nennt die Meldung die durchsuchten Orte; der Update-Dialog zeigt pro PC

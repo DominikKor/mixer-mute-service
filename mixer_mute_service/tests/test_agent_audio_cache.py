@@ -78,6 +78,7 @@ class CacheTestCase(unittest.TestCase):
             patch.object(agent, "mpv_log_path", return_value=base / "mpv-last.log"),
             patch.dict(agent._prefetch_failures, clear=True),
             patch.dict(agent._sources_checked, clear=True),
+            patch.dict(agent._tool_cache, at=0.0),
         ]
         for item in patches:
             item.start()
@@ -96,6 +97,7 @@ class CacheTestCase(unittest.TestCase):
         return command[-1], command
 
 
+
 @unittest.skipIf(tkinter is None, "this Python has no tkinter; the desktop agent needs it")
 class FileCopyTests(CacheTestCase):
     def test_first_play_uses_the_source_and_makes_a_copy_the_next_play_uses(self):
@@ -109,6 +111,15 @@ class FileCopyTests(CacheTestCase):
 
         played, _ = self.play(self.source)
         self.assertEqual(played, str(copy), "the second play is the local copy")
+
+    def test_play_starts_the_cached_mpv_without_searching(self):
+        mpv = self.cache.parent / "MPV Player" / "mpv.exe"
+        mpv.parent.mkdir(parents=True)
+        mpv.write_bytes(b"")
+        agent._tool_cache.update(at=agent.time.monotonic(), mpv=str(mpv))
+        with patch.object(agent, "_find_mpv", side_effect=AssertionError("searched before the start")):
+            _, command = self.play(self.source)
+        self.assertEqual(command[0], str(mpv))
 
     def test_a_changed_source_never_plays_the_old_copy(self):
         agent._prefetch_now(self.source)
