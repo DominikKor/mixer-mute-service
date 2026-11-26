@@ -116,7 +116,9 @@ function programSelect(field, label, value, options, placeholder) {
 }
 
 // A row without a group leaves the mutes alone and only runs its actions.
-const NO_PROGRAM_GROUP = "Keine Mutegruppe";
+// Such a row is marked red (field and summary chip): usually a group is
+// wanted, so a forgotten one should stand out. Shortcuts are not marked.
+const NO_PROGRAM_GROUP = "Keine Mute Gruppe";
 // A row without a light scene leaves the light as it is.
 const NO_PROGRAM_LIGHT = "Licht bleibt";
 
@@ -581,7 +583,7 @@ function buildProgramRow(item, draft = false, kind = draft ? "draft" : "program"
   if (!shortcut) edit("Uhrzeit", programInput("time", "Uhrzeit", item.time, "text", 5), "time");
   edit(shortcut ? "Name" : "Titel", programInput("title", "Titel", item.title, "text", 120), "title");
   if (!shortcut) edit("Person", programInput("person", "Person", item.person, "text", 80), "person");
-  edit("Mutegruppe", programSelect("group", "Mutegruppe", item.group, programGroupOptions(), NO_PROGRAM_GROUP), "group");
+  edit("Mute Gruppe", programSelect("group", "Mute Gruppe", item.group, programGroupOptions(), NO_PROGRAM_GROUP), "group");
   edit("Licht", programSelect("light", "Licht-Preset", item.light, programLightOptions(item.light), NO_PROGRAM_LIGHT), "light");
 
   for (const [field, label] of [["playback", "Playback"], ["translation", "Übersetzung"], ["lyrics", "Liedtext"]]) {
@@ -707,15 +709,20 @@ function renderProgramSummary(row, item) {
   summary.querySelector(".program-sum-time").textContent = item.time || "--:--";
   summary.querySelector(".program-sum-title").textContent = item.title || "Ohne Titel";
   summary.querySelector(".program-sum-person").textContent = item.person || "";
-  renderProgramChips(summary.querySelector(".program-sum-chips"), programChips(item));
+  renderProgramChips(summary.querySelector(".program-sum-chips"), programChips(item), !item.group);
   if (!summary.disabled) summary.title = row.classList.contains("program-open") ? "Zuklappen" : "Bearbeiten";
 }
 
-function renderProgramChips(box, chips) {
-  const sig = JSON.stringify(chips);
+// noGroup: the row has no mute group; a red chip comes first.
+function renderProgramChips(box, chips, noGroup = false) {
+  const sig = JSON.stringify([chips, noGroup]);
   if (box.dataset.sig === sig) return;
   box.dataset.sig = sig;
-  box.replaceChildren(...(chips.length ? chips.map(chip => {
+  const warn = noGroup ? [Object.assign(document.createElement("span"), {
+    className: "program-chip no-group", textContent: NO_PROGRAM_GROUP,
+    title: "Dieser Punkt schaltet keine Mute Gruppe – nur seine Aktionen laufen",
+  })] : [];
+  box.replaceChildren(...warn, ...(chips.length ? chips.map(chip => {
     const element = document.createElement("span");
     element.className = `program-chip ${chip.kind}`;
     const label = document.createElement("b");
