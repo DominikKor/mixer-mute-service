@@ -29,7 +29,7 @@ APP_JS = Path(__file__).resolve().parent.parent / "app" / "static" / "js" / "app
 CONSTANTS = ("SECTION_GRID_COLUMNS", "SECTION_GRID_ROW_PX", "SECTION_WIDTHS", "SECTION_STICK_PX",
              "SECTION_SETTLE_MS", "SECTION_SETTLE_MAX_MS")
 FUNCTIONS = ("sectionSpan", "sectionMinSpan", "sectionStarts", "layoutSections", "sectionOrderAfterMove", "nextSectionWidth",
-             "sectionArrangementFromPrefs", "sectionWidthIn", "sectionPlacesMissing", "sectionPackRule",
+             "sectionArrangementFromPrefs", "sectionWidthIn", "sectionPlacesMissing", "sectionPackRule", "sectionMinKeepingPlaces",
              "sectionSettleDone",
              "keptInOrder")
 SECTIONS = ["desktop", "cameras", "channels", "program", "songs", "lights", "groups", "companion"]
@@ -154,6 +154,28 @@ class SectionLayoutTests(unittest.TestCase):
         for heights in ({**voll, "channels": 120}, {**voll, "channels": 0 + 1}, voll):
             kept = self.layout(order, widths, heights, places=places, keep=True)
             self.assertEqual({s: kept[s]["start"] for s in order}, places)
+
+    def test_width_bump_keeps_the_column_outside_arranging(self):
+        order = ["program", "lights", "channels"]
+        widths = {"program": 2, "lights": 2, "channels": 2}
+        keep = lambda places, before, now: self.call(  # noqa: E731
+            f"sectionMinKeepingPlaces({json.dumps(order)}, s => ({json.dumps(widths)})[s], 'three', "
+            f"{json.dumps(places)}, {json.dumps(before)}, {json.dumps(now)})")
+        # Licht sits in the third at column 2; half would start at 0 or 3: it keeps the third.
+        self.assertEqual(keep({"program": 0, "lights": 2, "channels": 4}, {}, {"lights": 3}), {})
+        # At column 0 half still fits there: it gets wider in place.
+        self.assertEqual(keep({"program": 2, "lights": 0, "channels": 4}, {}, {"lights": 3}), {"lights": 3})
+        # Content got narrower again: half -> third would leave column 3 (thirds start at 0, 2, 4).
+        self.assertEqual(keep({"lights": 3}, {"lights": 3}, {}), {"lights": 3})
+        self.assertEqual(keep({"lights": 0}, {"lights": 3}, {}), {})
+        # No place yet (first packing, a new section): it takes the width it needs.
+        self.assertEqual(keep({}, {}, {"lights": 3}), {"lights": 3})
+        # Placed with the kept minimum, every section stays in its columns.
+        places = {"program": 0, "lights": 2, "channels": 4}
+        min_span = keep(places, {}, {"lights": 3, "channels": 6})
+        layout = self.layout(order, widths, {"program": 100, "lights": 300, "channels": 80}, places=places,
+                             keep=True, min_span=min_span)
+        self.assertEqual({s: layout[s]["start"] for s in order}, places)
 
     def test_a_view_settles_on_its_first_full_state(self):
         # Loading: Channels still short, Kameras and Licht would go left under it.

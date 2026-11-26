@@ -181,8 +181,10 @@ function initSections() {
 // "two" (narrower, e.g. iPad upright): ⅓ and ½ are half, ⅔ and whole are
 // whole; "one" (narrow window below 900 px, and the stage): one column in
 // order. A section whose content does not fit its chosen width (measured, or
-// --min-section-width in its CSS) gets the next wider one that holds it; the
-// width key shows the width it gets, the choice stays for wider screens.
+// --min-section-width in its CSS) gets the next wider one that holds it
+// (outside arranging only when its place still fits that width: a section
+// never changes columns by itself); the width key shows the width it gets,
+// the choice stays for wider screens.
 // Calm during a service: a section keeps the place it had (remembered per
 // view, also across reloads). Outside "Anordnen" a change of contents
 // (program rows, song text, a Channels view, opening or closing a section)
@@ -217,7 +219,8 @@ const SECTION_SETTLE_MS = 4000;     // settled: this long without a height chang
 const SECTION_SETTLE_MAX_MS = 30000;  // ... or this long at most
 const SECTION_NO_STATE = CONFIRMED_STATE;  // core.js: the placeholder before the first mixer state
 const SECTION_HEIGHTS = {};         // section -> height in grid rows, measured by packSections
-let SECTION_MIN_SPAN = {};          // section -> grid columns its content needs now (measured)
+let SECTION_MIN_SPAN = {};          // section -> grid columns its content gets now (measured)
+let SECTION_MIN_VIEW = null;        // the view SECTION_MIN_SPAN belongs to
 let SECTION_DEFAULT_ORDER = [];
 let SECTION_ORDER = [];             // sections in the user's order
 let SECTION_WIDTH = {};             // section -> 2 | 3 | 4 | 6
@@ -348,6 +351,21 @@ function sectionArrangementFromPrefs(prefs, known) {
 function sectionWidthIn(widths, viewWidths, view, section) {
   const own = viewWidths[view] && viewWidths[view][section];
   return own || widths[section];
+}
+
+// Outside arranging a section keeps its columns, also when its content
+// needs another width: a new minimum (`now`) counts only when the section's
+// place still fits the width it gives, else the one it had (`before`) stays.
+// Sections without a place take the new one. Pure.
+function sectionMinKeepingPlaces(order, widthOf, view, places, before, now) {
+  const min = {};
+  for (const section of order) {
+    const had = places[section], next = now[section] || 0;
+    const fits = !Number.isInteger(had) || sectionStarts(sectionSpan(widthOf(section), view, next)).includes(had);
+    const span = fits ? next : before[section] || 0;
+    if (span) min[section] = span;
+  }
+  return min;
 }
 
 // A view still has to find places when one of its sections has none. Pure.
@@ -563,7 +581,16 @@ function placeSections(page, free, animate) {
     if (view === "one") panel.style.gridRow = "";
   });
   setSpans({});
-  SECTION_MIN_SPAN = view === "one" ? {} : sectionMinSpans(page, panels);
+  const measured = view === "one" ? {} : sectionMinSpans(page, panels);
+  // Outside arranging (no arrange action, "Anordnen" off, the view settled)
+  // a new width may not move a section to other columns.
+  const keepColumns = view !== "one" && !free && !document.body.classList.contains("arranging")
+    && !(SECTION_SETTLE && SECTION_SETTLE.view === view);
+  SECTION_MIN_SPAN = keepColumns
+    ? sectionMinKeepingPlaces(SECTION_ORDER, section => sectionWidthIn(SECTION_WIDTH, SECTION_VIEW_WIDTH, view, section),
+                              view, SECTION_PLACES[view] || {}, SECTION_MIN_VIEW === view ? SECTION_MIN_SPAN : {}, measured)
+    : measured;
+  SECTION_MIN_VIEW = view;
   if (Object.keys(SECTION_MIN_SPAN).length) setSpans(SECTION_MIN_SPAN);
   let changed = false;
   for (const panel of panels) {
