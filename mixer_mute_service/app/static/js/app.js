@@ -185,10 +185,15 @@ function initSections() {
 // width key shows the width it gets, the choice stays for wider screens.
 // Calm during a service: a section keeps the place it had (remembered per
 // view, also across reloads). While only contents change (program rows, song
-// text, a window that keeps its view) it stays there and just moves up or
-// down in its columns. After a user's change (opening or closing a section,
-// order, width, a new view) or while "Anordnen" is on, it changes place
-// only when another one lets it start more than SECTION_STICK_PX higher.
+// text) it stays there and just moves up or down in its columns, unless
+// another place lets it start more than SECTION_RESCUE_PX higher (rare: a
+// big hole). After a user's change (opening or closing a section, order,
+// width) or while "Anordnen" is on, SECTION_STICK_PX is enough. A view in
+// which a section has no place yet (first load, the other iPad orientation,
+// a new width) settles for SECTION_SETTLE_MS while contents still arrive;
+// only places from settled packing are saved, so half-loaded contents never
+// fix a place. In the two-column view the width key keeps its own width
+// (half or whole); the widths for wider screens stay as they are.
 // "Anordnen" shows in every section head: ⠿ to drag it to another place in
 // the order (finger or mouse, not in the one-column view), ◀ ▶ to move it
 // earlier / later in the order (as many steps as it takes for the page to
@@ -203,6 +208,7 @@ const SECTION_GRID_ROW_PX = 2;      // .page grid-auto-rows (app.css): placing u
 const SECTION_WIDTHS = [2, 3, 4, 6];  // ⅓, ½, ⅔, whole in grid columns
 const SECTION_WIDTH_LABELS = { 2: "⅓", 3: "½", 4: "⅔", 6: "ganz" };
 const SECTION_STICK_PX = 120;       // a better place must be this much higher
+const SECTION_RESCUE_PX = 300;      // ... and during a service this much
 const SECTION_THREE_MIN_PX = 1100;  // page width for thirds
 const SECTION_SETTLE_MS = 4000;     // after loading: contents still arrive
 const SECTION_HEIGHTS = {};         // section -> height in grid rows, measured by packSections
@@ -210,7 +216,10 @@ let SECTION_MIN_SPAN = {};          // section -> grid columns its content needs
 let SECTION_DEFAULT_ORDER = [];
 let SECTION_ORDER = [];             // sections in the user's order
 let SECTION_WIDTH = {};             // section -> 2 | 3 | 4 | 6
-let SECTION_PLACES = {};            // view -> {section: first grid column}
+let SECTION_VIEW_WIDTH = {};        // view -> {section: width}: the width key's choice in that view ("two")
+let SECTION_PLACES = {};            // view -> {section: first grid column}, as placed now
+let SECTION_SAVED_PLACES = {};      // the same, as saved (only from settled packing)
+let SECTION_SETTLE = null;          // {view, until}: that view still settles
 let SECTION_FREE_UNTIL = 0;         // until then (performance.now) sections may change place
 let SECTION_DRAG = null;
 
@@ -293,31 +302,63 @@ function nextSectionWidth(width, view, min = 0) {
   return null;
 }
 
-// The saved arrangement: {order, widths}. Earlier versions kept rows (alone:
-// whole, two: halves, three: thirds) or only an order (whole). Unknown
-// sections are dropped, new ones come last, whole. Pure.
+// The saved arrangement: {order, widths, viewWidths}. Earlier versions kept
+// rows (alone: whole, two: halves, three: thirds; counted after unknown and
+// repeated names are dropped, a longer row split into threes) or only an
+// order (whole). Unknown sections are dropped, new ones come last, whole.
+// viewWidths: the two-column view's own choice, half (3) or whole (6). Pure.
 function sectionArrangementFromPrefs(prefs, known) {
-  let order = [], widths = {};
+  let order = [], widths = {}, viewWidths = {};
   const saved = prefs && prefs.sectionArrangement;
   if (saved && Array.isArray(saved.order)) {
     order = saved.order;
     widths = saved.widths && typeof saved.widths === "object" ? saved.widths : {};
+    viewWidths = saved.viewWidths && typeof saved.viewWidths === "object" ? saved.viewWidths : {};
   } else if (prefs && Array.isArray(prefs.sectionRows)) {
+    const taken = new Set();
     for (const row of prefs.sectionRows) {
-      if (!Array.isArray(row) || !row.length) continue;
-      for (const section of row) { order.push(section); widths[section] = SECTION_GRID_COLUMNS / Math.min(row.length, 3); }
+      if (!Array.isArray(row)) continue;
+      const clean = row.filter(section => known.includes(section) && !taken.has(section));
+      clean.forEach(section => taken.add(section));
+      for (let i = 0; i < clean.length; i += 3) {
+        const part = clean.slice(i, i + 3);
+        for (const section of part) { order.push(section); widths[section] = SECTION_GRID_COLUMNS / part.length; }
+      }
     }
   } else if (prefs && Array.isArray(prefs.sectionOrder)) {
     order = prefs.sectionOrder;
   }
-  const seen = new Set(), clean = [], cleanWidths = {};
+  const seen = new Set(), clean = [], cleanWidths = {}, two = {};
+  const ownTwo = viewWidths.two && typeof viewWidths.two === "object" ? viewWidths.two : {};
   for (const section of [...order, ...known]) {
     if (!known.includes(section) || seen.has(section)) continue;
     seen.add(section);
     clean.push(section);
     cleanWidths[section] = SECTION_WIDTHS.includes(widths[section]) ? widths[section] : SECTION_GRID_COLUMNS;
+    if (ownTwo[section] === 3 || ownTwo[section] === SECTION_GRID_COLUMNS) two[section] = ownTwo[section];
   }
-  return { order: clean, widths: cleanWidths };
+  return { order: clean, widths: cleanWidths, viewWidths: Object.keys(two).length ? { two } : {} };
+}
+
+// The width a section has chosen for `view`: the view's own choice, else its width. Pure.
+function sectionWidthIn(widths, viewWidths, view, section) {
+  const own = viewWidths[view] && viewWidths[view][section];
+  return own || widths[section];
+}
+
+// A view still has to find places when one of its sections has none. Pure.
+function sectionPlacesMissing(order, places) {
+  return order.some(section => !Number.isInteger((places || {})[section]));
+}
+
+// How a packing may move sections and whether its places are saved. Pure.
+//   dragging: everything stays (the dragged one moves by the drag);
+//   a user's action, "Anordnen" or a view that still settles: SECTION_STICK_PX;
+//   otherwise (contents changing during a service): SECTION_RESCUE_PX.
+// Places are saved only when nothing is dragged and the view has settled.
+function sectionPackRule({ dragging = false, free = false, arranging = false, settling = false } = {}) {
+  const stick = dragging ? "keep" : free || arranging || settling ? "stick" : "rescue";
+  return { stick, save: !dragging && !settling };
 }
 
 function sectionPanelsInOrder() {
@@ -334,11 +375,13 @@ function currentSectionView() {
   return page.clientWidth >= SECTION_THREE_MIN_PX ? "three" : "two";
 }
 
-function sectionLayoutFor(order, view, { drop = null, keep = false } = {}) {
+function sectionLayoutFor(order, view, { drop = null, stick = "stick" } = {}) {
   const places = { ...(SECTION_PLACES[view] || {}) };
   if (drop) delete places[drop];
-  return layoutSections(order, section => SECTION_WIDTH[section], section => SECTION_HEIGHTS[section] || 1,
-                        { view, places, stick: SECTION_STICK_PX / SECTION_GRID_ROW_PX, keep,
+  const rows = (stick === "rescue" ? SECTION_RESCUE_PX : SECTION_STICK_PX) / SECTION_GRID_ROW_PX;
+  return layoutSections(order, section => sectionWidthIn(SECTION_WIDTH, SECTION_VIEW_WIDTH, view, section),
+                        section => SECTION_HEIGHTS[section] || 1,
+                        { view, places, stick: rows, keep: stick === "keep",
                           minSpan: view === "one" ? {} : SECTION_MIN_SPAN });
 }
 
@@ -349,10 +392,9 @@ function initSectionOrder() {
   const saved = sectionArrangementFromPrefs(prefs, SECTION_DEFAULT_ORDER);
   SECTION_ORDER = saved.order;
   SECTION_WIDTH = saved.widths;
+  SECTION_VIEW_WIDTH = saved.viewWidths;
   SECTION_PLACES = prefs.sectionPlaces && typeof prefs.sectionPlaces === "object" ? prefs.sectionPlaces : {};
-  // Without remembered places the first seconds may still move sections
-  // (contents arrive); with them the page looks as it did right away.
-  if (!Object.keys(SECTION_PLACES).length) SECTION_FREE_UNTIL = performance.now() + SECTION_SETTLE_MS;
+  SECTION_SAVED_PLACES = SECTION_PLACES;
   for (const panel of panels) {
     const section = panel.dataset.section;
     const label = panel.querySelector(".section-toggle").textContent.trim();
@@ -393,6 +435,7 @@ function initSectionOrder() {
   toggle.addEventListener("change", () => {
     document.body.classList.toggle("arranging", toggle.checked);
     $("arrange-reset-btn").hidden = !toggle.checked;
+    $("arrange-hint").hidden = !toggle.checked;
     packSections();
   });
   $("arrange-reset-btn").addEventListener("click", () => {
@@ -400,7 +443,9 @@ function initSectionOrder() {
     const fresh = sectionArrangementFromPrefs({}, SECTION_DEFAULT_ORDER);
     SECTION_ORDER = fresh.order;
     SECTION_WIDTH = fresh.widths;
+    SECTION_VIEW_WIDTH = {};
     SECTION_PLACES = {};
+    SECTION_SAVED_PLACES = {};
     saveSectionArrangement();
     applySectionOrder(before, { animate: true });
   });
@@ -408,8 +453,8 @@ function initSectionOrder() {
 
 function saveSectionArrangement() {
   const p = loadUiPrefs();
-  p.sectionArrangement = { order: SECTION_ORDER, widths: SECTION_WIDTH };
-  p.sectionPlaces = SECTION_PLACES;
+  p.sectionArrangement = { order: SECTION_ORDER, widths: SECTION_WIDTH, viewWidths: SECTION_VIEW_WIDTH };
+  p.sectionPlaces = SECTION_SAVED_PLACES;
   delete p.sectionRows;
   delete p.sectionOrder;
   saveUiPrefs(p);
@@ -459,24 +504,45 @@ function keptInOrder(a, b) {
 function packSections({ free = false, animate = false } = {}) {
   const page = document.querySelector(".page");
   if (!page) return;
-  if (!STAGE.on) placeSections(page, free || performance.now() < SECTION_FREE_UNTIL
-                                  || document.body.classList.contains("arranging"), animate);
+  if (!STAGE.on) placeSections(page, free || performance.now() < SECTION_FREE_UNTIL, animate);
   syncSectionMoveButtons();
+}
+
+// A view in which a section has no saved place yet settles for
+// SECTION_SETTLE_MS (once per page load and view: by the next time the
+// contents are there); at the end it is packed once more and its places
+// are saved.
+const SECTION_SETTLED_VIEWS = new Set();
+function sectionViewSettling(view) {
+  const now = performance.now();
+  if (view !== "one" && !SECTION_SETTLED_VIEWS.has(view)
+      && sectionPlacesMissing(SECTION_ORDER, SECTION_SAVED_PLACES[view])) {
+    SECTION_SETTLED_VIEWS.add(view);
+    SECTION_SETTLE = { view, until: now + SECTION_SETTLE_MS };
+    setTimeout(() => packSections(), SECTION_SETTLE_MS + 50);
+  }
+  return !!SECTION_SETTLE && SECTION_SETTLE.view === view && now < SECTION_SETTLE.until;
 }
 
 function placeSections(page, free, animate) {
   const panels = sectionPanelsInOrder();
   const view = currentSectionView();
+  const rule = sectionPackRule({ dragging: !!SECTION_DRAG, free, settling: sectionViewSettling(view),
+                                 arranging: document.body.classList.contains("arranging") });
   const firsts = animate && !stageReducedMotion() ? new Map(panels.map(p => [p, p.getBoundingClientRect()])) : null;
-  // Measure with the rows let loose: with its old row kept, a section that no
-  // longer fits there would go into extra grid columns of another width and
-  // be measured wrong. First at the chosen widths: a section whose content
-  // is wider (or that sets --min-section-width) gets the next wider width
-  // that holds it; then the heights at the widths it gets.
+  // Measuring must not move the page: the rows stay as they are (the page
+  // keeps its height, Safari keeps the scroll place) and every section is
+  // put at the left edge with the width to measure; a definite column keeps
+  // it in the 6 grid columns (overlapping is fine meanwhile). First at the
+  // chosen widths: a section whose content is wider (or that sets
+  // --min-section-width) gets the next wider width that holds it; then the
+  // heights at the widths it gets. The scroll place is restored in case.
+  const scrollTop = window.scrollY;
   const setSpans = min => panels.forEach(panel => {
-    const span = sectionSpan(SECTION_WIDTH[panel.dataset.section], view, min[panel.dataset.section] || 0);
-    panel.style.gridColumn = view === "one" ? "" : `span ${span}`;
-    panel.style.gridRow = "";
+    const width = sectionWidthIn(SECTION_WIDTH, SECTION_VIEW_WIDTH, view, panel.dataset.section);
+    const span = sectionSpan(width, view, min[panel.dataset.section] || 0);
+    panel.style.gridColumn = view === "one" ? "" : `1 / span ${span}`;
+    if (view === "one") panel.style.gridRow = "";
   });
   setSpans({});
   SECTION_MIN_SPAN = view === "one" ? {} : sectionMinSpans(page, panels);
@@ -486,15 +552,17 @@ function placeSections(page, free, animate) {
     SECTION_HEIGHTS[panel.dataset.section] = Math.max(1, Math.ceil((panel.offsetHeight + margin) / SECTION_GRID_ROW_PX));
   }
   if (view === "one") return;
-  const layout = sectionLayoutFor(SECTION_ORDER, view, { keep: !free });
+  const layout = sectionLayoutFor(SECTION_ORDER, view, { stick: rule.stick });
   for (const panel of panels) {
     const place = layout[panel.dataset.section];
     panel.style.gridColumn = `${place.start + 1} / span ${place.span}`;
     panel.style.gridRow = `${place.top + 1} / span ${place.bottom - place.top}`;
   }
+  if (Math.abs(window.scrollY - scrollTop) > 1 && !SECTION_DRAG) window.scrollTo(window.scrollX, scrollTop);
   const places = Object.fromEntries(SECTION_ORDER.map(section => [section, layout[section].start]));
-  if (JSON.stringify(places) !== JSON.stringify(SECTION_PLACES[view] || {})) {
-    SECTION_PLACES = { ...SECTION_PLACES, [view]: places };
+  SECTION_PLACES = { ...SECTION_PLACES, [view]: places };
+  if (rule.save && JSON.stringify(places) !== JSON.stringify(SECTION_SAVED_PLACES[view] || {})) {
+    SECTION_SAVED_PLACES = { ...SECTION_SAVED_PLACES, [view]: places };
     saveSectionArrangement();
   }
   if (firsts) glideSections(firsts);
@@ -545,23 +613,33 @@ function moveSection(section, dir, button) {
   if (button && !button.disabled) button.focus({ preventScroll: true });
 }
 
+// In the two-column view the key sets that view's own width (half or
+// whole): the widths for wider screens are not touched.
 function cycleSectionWidth(section) {
   const view = currentSectionView();
-  const next = nextSectionWidth(SECTION_WIDTH[section], view, view === "one" ? 0 : SECTION_MIN_SPAN[section] || 0);
+  const width = sectionWidthIn(SECTION_WIDTH, SECTION_VIEW_WIDTH, view, section);
+  const next = nextSectionWidth(width, view, view === "one" ? 0 : SECTION_MIN_SPAN[section] || 0);
   if (!next) return;
-  SECTION_WIDTH = { ...SECTION_WIDTH, [section]: next };
+  if (view === "two") {
+    SECTION_VIEW_WIDTH = { ...SECTION_VIEW_WIDTH, two: { ...(SECTION_VIEW_WIDTH.two || {}), [section]: sectionSpan(next, "two") } };
+  } else {
+    SECTION_WIDTH = { ...SECTION_WIDTH, [section]: next };
+  }
   forgetSectionPlace(section);
   saveSectionArrangement();
   packSections({ free: true, animate: true });
 }
 
-// A section the user moved or resized looks for its best place again.
+// A section the user moved or resized looks for its best place again (in
+// every view; a view it has no place in settles when it is next shown).
 function forgetSectionPlace(section) {
-  SECTION_PLACES = Object.fromEntries(Object.entries(SECTION_PLACES).map(([view, places]) => {
+  const forget = all => Object.fromEntries(Object.entries(all).map(([view, places]) => {
     const rest = { ...places };
     delete rest[section];
     return [view, rest];
   }));
+  SECTION_PLACES = forget(SECTION_PLACES);
+  SECTION_SAVED_PLACES = forget(SECTION_SAVED_PLACES);
 }
 
 function syncSectionMoveButtons() {
@@ -576,7 +654,8 @@ function syncSectionMoveButtons() {
     if (width) {
       // The width as it is on screen; when the content needs more than the
       // chosen one, the title says so (the choice is kept for wider screens).
-      const min = view === "one" ? 0 : SECTION_MIN_SPAN[section] || 0, chosen = SECTION_WIDTH[section];
+      const min = view === "one" ? 0 : SECTION_MIN_SPAN[section] || 0;
+      const chosen = sectionWidthIn(SECTION_WIDTH, SECTION_VIEW_WIDTH, view, section);
       const span = sectionSpan(chosen, view, min), next = nextSectionWidth(chosen, view, min);
       const widened = span !== sectionSpan(chosen, view);
       width.textContent = SECTION_WIDTH_LABELS[span];
@@ -605,17 +684,19 @@ function startSectionDrag(panel, event) {
   SECTION_DRAG = { panel, handle, pointerId: event.pointerId, before: [...SECTION_ORDER],
                    grabX: event.clientX - rect.left, grabY: event.clientY - rect.top, target: null };
   panel.classList.add("section-dragging");
-  const move = e => { if (e.pointerId === SECTION_DRAG.pointerId) dragSectionTo(e.clientX, e.clientY); };
+  // Let go (pointerup), taken over by the system (pointercancel) or the key
+  // lost the pointer some other way (lostpointercapture, e.g. it was hidden):
+  // the drag always ends; only a real let-go keeps the new order.
+  const kinds = ["pointerup", "pointercancel", "lostpointercapture"];
+  const move = e => { if (SECTION_DRAG && e.pointerId === SECTION_DRAG.pointerId) dragSectionTo(e.clientX, e.clientY); };
   const end = e => {
-    if (e.pointerId !== SECTION_DRAG.pointerId) return;
+    if (!SECTION_DRAG || e.pointerId !== SECTION_DRAG.pointerId) return;
     handle.removeEventListener("pointermove", move);
-    handle.removeEventListener("pointerup", end);
-    handle.removeEventListener("pointercancel", end);
-    endSectionDrag(e.type === "pointercancel");
+    kinds.forEach(kind => handle.removeEventListener(kind, end));
+    endSectionDrag(e.type !== "pointerup");
   };
   handle.addEventListener("pointermove", move);
-  handle.addEventListener("pointerup", end);
-  handle.addEventListener("pointercancel", end);
+  kinds.forEach(kind => handle.addEventListener(kind, end));
 }
 
 function dragSectionTo(x, y) {
@@ -644,8 +725,8 @@ function dragSectionTo(x, y) {
   drag.panel.style.transform = `translate(${x - drag.grabX - home.left}px, ${y - drag.grabY - home.top}px)`;
 }
 
-// Let go: the new order is kept; a cancelled touch (the system took over)
-// puts the old one back.
+// Let go: the new order is kept; a cancelled drag (the system took over the
+// touch, the key lost the pointer) puts the old one back.
 function endSectionDrag(cancelled = false) {
   const drag = SECTION_DRAG;
   SECTION_DRAG = null;

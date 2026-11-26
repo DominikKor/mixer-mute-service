@@ -26,9 +26,10 @@ except ImportError:  # pragma: no cover - only where quickjs is not installed
     quickjs = None
 
 APP_JS = Path(__file__).resolve().parent.parent / "app" / "static" / "js" / "app.js"
-CONSTANTS = ("SECTION_GRID_COLUMNS", "SECTION_GRID_ROW_PX", "SECTION_WIDTHS", "SECTION_STICK_PX")
+CONSTANTS = ("SECTION_GRID_COLUMNS", "SECTION_GRID_ROW_PX", "SECTION_WIDTHS", "SECTION_STICK_PX", "SECTION_RESCUE_PX")
 FUNCTIONS = ("sectionSpan", "sectionMinSpan", "sectionStarts", "layoutSections", "sectionOrderAfterMove", "nextSectionWidth",
-             "sectionArrangementFromPrefs", "keptInOrder")
+             "sectionArrangementFromPrefs", "sectionWidthIn", "sectionPlacesMissing", "sectionPackRule",
+             "keptInOrder")
 SECTIONS = ["desktop", "cameras", "channels", "program", "songs", "lights", "groups", "companion"]
 VIEWS = ("three", "two", "one")
 
@@ -43,14 +44,16 @@ class SectionLayoutTests(unittest.TestCase):
         cls.js = quickjs.Context()
         cls.js.eval("\n".join(parts))
         cls.stick = json.loads(cls.js.eval("JSON.stringify(SECTION_STICK_PX / SECTION_GRID_ROW_PX)"))
+        cls.rescue = json.loads(cls.js.eval("JSON.stringify(SECTION_RESCUE_PX / SECTION_GRID_ROW_PX)"))
 
     def call(self, expression):
         return json.loads(self.js.eval(f"JSON.stringify({expression})"))
 
-    def layout(self, order, widths, heights, view="three", places=None, keep=False, min_span=None):
+    def layout(self, order, widths, heights, view="three", places=None, keep=False, min_span=None, stick=None):
+        stick = self.stick if stick is None else stick
         return self.call(f"layoutSections({json.dumps(order)}, s => ({json.dumps(widths)})[s], "
                          f"s => ({json.dumps(heights)})[s], {{ view: {json.dumps(view)}, "
-                         f"places: {json.dumps(places or {})}, stick: {self.stick}, keep: {json.dumps(keep)}, "
+                         f"places: {json.dumps(places or {})}, stick: {stick}, keep: {json.dumps(keep)}, "
                          f"minSpan: {json.dumps(min_span or {})} }})")
 
     def move(self, order, section, direction, widths, heights, view="three"):
@@ -124,6 +127,58 @@ class SectionLayoutTests(unittest.TestCase):
         self.assertEqual(self.layout(order, {**widths, "songs": 4}, heights, places={"songs": 3},
                                      keep=True)["songs"]["start"], 0)
 
+    def test_places_from_half_loaded_contents_do_not_stick(self):
+        # Loading: Channels is still short, Kameras and Licht go left under it.
+        order = ["channels", "program", "cameras", "lights"]
+        widths = {s: 3 for s in order}
+        loading = {"channels": 40, "program": 300, "cameras": 30, "lights": 200}
+        early = self.layout(order, widths, loading)
+        self.assertEqual((early["cameras"]["start"], early["lights"]["start"]), (0, 0))
+        places = {s: early[s]["start"] for s in order}
+        # Loaded: Channels is 2,700 px (1,350 rows). Kept for good, they would
+        # leave a hole of 1,000+ px on the right; during a service a gain of
+        # more than SECTION_RESCUE_PX moves them, a little gain does not.
+        loaded = {**loading, "channels": 1350}
+        stuck = self.layout(order, widths, loaded, places=places, keep=True)
+        self.assertEqual(stuck["cameras"]["start"], 0)
+        rescued = self.layout(order, widths, loaded, places=places, stick=self.rescue)
+        self.assertEqual((rescued["cameras"]["start"], rescued["lights"]["start"]), (3, 3))
+        # A gain between both: moves while arranging, not during a service.
+        gain = (self.stick + self.rescue) // 2
+        small = {**loading, "channels": 100 + gain, "program": 100}
+        self.assertEqual(self.layout(order, widths, small, places=places, stick=self.rescue)["cameras"]["start"], 0)
+        self.assertEqual(self.layout(order, widths, small, places=places)["cameras"]["start"], 3)
+        # A view that lacks a place for any section settles first; its places
+        # are saved only once settled and never while dragging.
+        missing = lambda places: self.call(f"sectionPlacesMissing({json.dumps(order)}, {json.dumps(places)})")  # noqa: E731
+        self.assertTrue(missing(None))
+        self.assertTrue(missing({"channels": 0, "program": 3, "cameras": 0}))
+        self.assertTrue(missing({**places, "lights": "x"}))
+        self.assertFalse(missing(places))
+        rule = lambda **kw: self.call(f"sectionPackRule({json.dumps(kw)})")  # noqa: E731
+        self.assertEqual(rule(), {"stick": "rescue", "save": True})                  # service, contents change
+        self.assertEqual(rule(settling=True), {"stick": "stick", "save": False})     # still loading
+        self.assertEqual(rule(free=True), {"stick": "stick", "save": True})          # user's action
+        self.assertEqual(rule(arranging=True, settling=True), {"stick": "stick", "save": False})
+        self.assertEqual(rule(dragging=True, free=True), {"stick": "keep", "save": False})
+
+    def test_two_column_view_keeps_its_own_width(self):
+        widths, view_widths = {"desktop": 6, "songs": 2}, {"two": {"songs": 6}}
+        width_in = lambda view, s: self.call(  # noqa: E731
+            f"sectionWidthIn({json.dumps(widths)}, {json.dumps(view_widths)}, {json.dumps(view)}, {json.dumps(s)})")
+        self.assertEqual((width_in("two", "songs"), width_in("three", "songs")), (6, 2))
+        self.assertEqual(width_in("two", "desktop"), 6)
+        # iPad upright: "ganz" -> half -> "ganz" is 6 -> 3 -> 6 in the view, landscape untouched.
+        seen, width = [], 6
+        for _ in range(2):
+            width = self.call(f"sectionSpan(nextSectionWidth({width}, 'two'), 'two')")
+            seen.append(width)
+        self.assertEqual(seen, [3, 6])
+        got = self.call(f"sectionArrangementFromPrefs({json.dumps({'sectionArrangement': {'order': ['songs'], 'widths': {'songs': 2}, 'viewWidths': {'two': {'songs': 6, 'desktop': 4, 'nope': 3}}}})}, "
+                        f"{json.dumps(SECTIONS)})")
+        self.assertEqual(got["viewWidths"], {"two": {"songs": 6}})       # 4 is no width of that view
+        self.assertEqual(got["widths"]["songs"], 2)
+
     def test_content_too_wide_gets_the_next_wider_width(self):
         span = lambda w, view, m: self.call(f"sectionSpan({w}, {json.dumps(view)}, {m})")  # noqa: E731
         self.assertEqual([span(2, "three", m) for m in (0, 2, 3, 4, 5, 6)], [2, 2, 3, 4, 6, 6])
@@ -169,6 +224,12 @@ class SectionLayoutTests(unittest.TestCase):
         self.assertEqual(got["order"], ["channels", "program", "lights", "songs", "groups", "desktop", "cameras",
                                         "companion"])
         self.assertEqual([got["widths"][s] for s in got["order"]], [3, 3, 2, 2, 2, 6, 6, 6])
+        # Unknown and repeated names do not count; a longer row is split into threes.
+        rows = [["channels", "nope"], ["program", "songs", "lights", "groups"], ["desktop", "channels", "cameras"]]
+        got = self.call(f"sectionArrangementFromPrefs({json.dumps({'sectionRows': rows})}, {json.dumps(known)})")
+        self.assertEqual([(s, got["widths"][s]) for s in got["order"][:7]],
+                         [("channels", 6), ("program", 2), ("songs", 2), ("lights", 2), ("groups", 6),
+                          ("desktop", 3), ("cameras", 3)])
         got = self.call(f"sectionArrangementFromPrefs({json.dumps({'sectionOrder': ['songs', 'desktop']})}, "
                         f"{json.dumps(known)})")
         self.assertEqual(got["order"][:3], ["songs", "desktop", "cameras"])

@@ -13,7 +13,7 @@
   <label class="compact-switch stage-switch" title="Stage: ein Bereich bildschirmfüllend, die anderen als Vorschau links">
     <input id="stage-toggle" type="checkbox" /><span class="track"></span>Stage
   </label>
-  <label class="compact-switch arrange-switch" title="Bereiche mit ◀ ▲ ▼ ▶ anordnen, auch nebeneinander (gilt für dieses Gerät)">
+  <label class="compact-switch arrange-switch" title="Bereiche anordnen: ⠿ ziehen, ◀ ▶ Reihenfolge, Breite antippen (gilt für dieses Gerät)">
     <input id="arrange-toggle" type="checkbox" /><span class="track"></span>Anordnen
   </label>
   <button id="arrange-reset-btn" type="button" class="arrange-reset" hidden title="Bereiche wieder in der ursprünglichen Reihenfolge">Standard</button>
@@ -27,6 +27,7 @@
     <span class="panic-guard"><button id="panic-btn" class="danger" title="Panic: sofort jedes Senden an das Pult sperren">Panic</button></span>
   </div>
 </header>
+<p id="arrange-hint" class="arrange-hint" hidden>Anordnen: <b>⠿</b> ziehen (Finger oder Maus) · <b>◀ ▶</b> früher / später in der Reihenfolge · <b>Breite</b> antippen (⅓ · ½ · ⅔ · ganz). Jeder Bereich rückt so weit nach oben, wie Platz ist. Gilt für dieses Gerät.</p>
 
 <div class="page">
 <section class="panel" data-section="desktop">

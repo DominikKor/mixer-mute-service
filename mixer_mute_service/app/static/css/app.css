@@ -1467,6 +1467,10 @@ body.arranging .section-move { display: flex; }
 .section-move [data-section-drag][hidden] { display: none; }
 body:not(.stage-on) .page > .panel.section-dragging { position: relative; z-index: 6; opacity: .92; cursor: grabbing; }
 button.arrange-reset { min-height: 44px; padding: 0 14px; font-size: 12px; }
+/* Visible help while "Anordnen" is on (no hover on the iPad). */
+.arrange-hint { margin: 10px var(--page-pad) 0; font-size: 12px; line-height: 1.5; color: #9aa4ae; }
+.arrange-hint[hidden] { display: none; }
+body.stage-on .arrange-hint { display: none; }
 /* Steuerung on stage: categories packed as tiles (big ones span several
    lanes, see layoutStageCompanion), slimmer keys (50 px, at least 44 px
    after fitting), so all keys fit one screen. */
