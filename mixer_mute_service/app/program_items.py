@@ -60,6 +60,9 @@ def validated_actions(data: dict) -> dict:
     if song is not None and (not isinstance(song, str) or len(song) > 200):
         raise ProgramItemError("song must be a song file name or empty")
     result["song"] = song or None
+    # Liedtext is a song or a file, not both: the song wins.
+    if result["song"]:
+        result["lyrics"] = None
     # Camera presets (app/camera_program.py): one per camera, or none.
     for cam in CAMERAS:
         value = data.get(f"{cam}_preset")
@@ -183,6 +186,9 @@ class ProgramItemStore:
             if not isinstance(entry, dict) or not isinstance(entry.get("id"), str):
                 log.warning("Skipping invalid program row in %s: %r", self._path, entry)
                 continue
+            if entry.get("song") and entry.get("lyrics"):
+                log.warning("Program row %s (%s): a song and a Liedtext file; the song stays, the file is dropped",
+                            entry.get("id"), entry.get("title"))
             try:
                 fields = self._validated_fields(entry)
             except ProgramItemError as exc:
