@@ -61,7 +61,7 @@ class AblaufApplyTests(unittest.TestCase):
         with app_client() as (client, _):
             client.app.state.songs.songs = dict(LIBRARY)
             put(client, "10:00", "Begrüßung", **SETTINGS)
-            slot = put(client, "10:05", "Lied", song="neu.foil", **SETTINGS)
+            slot = put(client, "10:05", "Lied 1", song="neu.foil", **SETTINGS)
             put(client, "10:30", "Predigt", **{**SETTINGS, "cam1_preset": 7})
             template = client.post("/program/templates", json={"name": "GD", "slots": [slot["id"]]}).json()["template"]
             # Changed in the program after the template was saved: must survive applying it.
@@ -76,13 +76,13 @@ class AblaufApplyTests(unittest.TestCase):
             after = {r["title"]: r for r in rows(client)}
             self.assertEqual(set(after), set(before))
             self.assertEqual((after["Begrüßung"]["person"], after["Predigt"]["person"]), ("Anna Leiterin", "J. Prediger"))
-            self.assertEqual(after["Lied"]["song"], "zweit.foil")
+            self.assertEqual(after["Lied 1"]["song"], "zweit.foil")
             for title, row in before.items():
                 for field in ("id", "time", "group", "light", "cam1_preset", "cam2_preset", "camera_wait_seconds",
                               "cam1_scene", "cam2_scene", "desktop", "beamer", "hidden", "last_played_at"):
                     self.assertEqual(after[title][field], row[field], (title, field))
-            self.assertEqual(after["Lied"]["cam1_preset"], 9)
-            self.assertEqual(after["Lied"]["desktop"], ["bild3"])
+            self.assertEqual(after["Lied 1"]["cam1_preset"], 9)
+            self.assertEqual(after["Lied 1"]["desktop"], ["bild3"])
             self.assertTrue(after["Predigt"]["hidden"])
             self.assertIsNotNone(after["Begrüßung"]["last_played_at"])
             self.assertEqual(client.get("/program/status").json()["current_id"], before["Begrüßung"]["id"])
@@ -92,7 +92,7 @@ class AblaufApplyTests(unittest.TestCase):
             client.app.state.songs.songs = dict(LIBRARY)
             put(client, "10:00", "Begrüßung")
             put(client, "10:02", "Technik-Check", person="Tom", cam1_preset=2)  # not in the template
-            slot = put(client, "10:05", "Lied", **SETTINGS)
+            slot = put(client, "10:05", "Lied 1", **SETTINGS)
             put(client, "10:20", "Gebet")
             put(client, "10:30", "Predigt", person="Alt")
             template = client.post("/program/templates", json={"name": "GD", "slots": [slot["id"]]}).json()["template"]
@@ -134,20 +134,20 @@ class AblaufApplyTests(unittest.TestCase):
             client.app.state.songs.songs = dict(LIBRARY)
             put(client, "10:00", "Begrüßung", **{**SETTINGS, "person": "Letzte Woche"})
             put(client, "10:10", "Predigt", person="Bleibt")
-            slot = put(client, "10:05", "Lied", **SETTINGS)
+            slot = put(client, "10:05", "Lied 1", **SETTINGS)
             template = client.post("/program/templates", json={"name": "GD", "slots": [slot["id"]]}).json()["template"]
             r = apply(client, template, [{"song_id": None, "text": "Unbekanntes Lied"}], [("begruessung1", "")])
             self.assertEqual(r.status_code, 200, r.text)
             titles = {r["title"]: r for r in rows(client)}
             self.assertEqual(titles["Begrüßung"]["person"], "")  # mapped by the order: last week's name is wrong
             self.assertEqual(titles["Predigt"]["person"], "Bleibt")  # not mapped: kept
-            row = titles["Lied: Unbekanntes Lied"]
+            row = titles["Lied 1: Unbekanntes Lied"]
             self.assertEqual((row["song"], row["cam1_preset"], row["light"]), (None, 3, "licht1"))
             # next week: the title goes back to the slot's name
             r = apply(client, template, [{"song_id": "neu.foil", "text": ""}])
             titles = {r["title"]: r for r in rows(client)}
-            self.assertEqual(titles["Lied"]["song"], "neu.foil")
-            self.assertEqual(titles["Lied"]["cam2_preset"], 5)
+            self.assertEqual(titles["Lied 1"]["song"], "neu.foil")
+            self.assertEqual(titles["Lied 1"]["cam2_preset"], 5)
 
     def test_without_songs_the_song_rows_stay(self):
         with app_client() as (client, _):
@@ -161,21 +161,21 @@ class AblaufApplyTests(unittest.TestCase):
         with app_client() as (client, _):
             client.app.state.songs.songs = dict(LIBRARY)
             put(client, "10:00", "Begrüßung")
-            slot = put(client, "10:05", "Lied", **SETTINGS)
+            slot = put(client, "10:05", "Lied 1", **SETTINGS)
             put(client, "10:30", "Predigt", **SETTINGS)
             template = client.post("/program/templates", json={"name": "GD", "slots": [slot["id"]]}).json()["template"]
             before = {r["title"]: r["id"] for r in rows(client)}
             r = apply(client, template, [{"song_id": "neu.foil", "text": ""}, {"song_id": "zweit.foil", "text": ""}])
             self.assertEqual(r.status_code, 200, r.text)
             result = rows(client)
-            self.assertEqual([x["title"] for x in result], ["Begrüßung", "Lied", "Lied", "Predigt"])
+            self.assertEqual([x["title"] for x in result], ["Begrüßung", "Lied 1", "Lied 2", "Predigt"])
             self.assertEqual([x["song"] for x in result[1:3]], ["neu.foil", "zweit.foil"])
             self.assertTrue(all(x["cam1_preset"] == 3 for x in result[1:]))
             self.assertEqual((result[0]["id"], result[1]["id"], result[3]["id"]),
-                             (before["Begrüßung"], before["Lied"], before["Predigt"]))
+                             (before["Begrüßung"], before["Lied 1"], before["Predigt"]))
             apply(client, template, [{"song_id": "neu.foil", "text": ""}])
             result = rows(client)
-            self.assertEqual([(x["title"], x["song"]) for x in result][1:3], [("Lied", "neu.foil"), ("Lied", None)])
+            self.assertEqual([(x["title"], x["song"]) for x in result][1:3], [("Lied 1", "neu.foil"), ("Lied 2", None)])
             self.assertEqual(len(result), 4)  # the extra row is not deleted
             self.assertEqual(by_title(client, "Predigt")["light"], "licht1")
 
@@ -244,9 +244,9 @@ class SongSlotAnchorTests(unittest.TestCase):
             self.assertEqual(found[before["Lied 1"]["id"]]["song"], "neu.foil")
             self.assertEqual(found[before["Lied 2"]["id"]]["song"], "zweit.foil")
             third = found[before["All eure Sorgen"]["id"]]
-            self.assertEqual((third["song"], third["title"]), (None, "All eure Sorgen: Dritte Nummer"))
-            for title in ("Lied 1", "Lied 2"):  # titles and settings stay
-                self.assertEqual(found[before[title]["id"]]["title"], title)
+            self.assertEqual((third["song"], third["title"]), (None, "Lied 3: Dritte Nummer"))
+            self.assertEqual([found[before[t]["id"]]["title"] for t in ("Lied 1", "Lied 2", "All eure Sorgen")],
+                             ["Lied 1", "Lied 2", "Lied 3: Dritte Nummer"])  # named by place, not by last time's song
             self.assertEqual([found[before[t]["id"]]["cam1_preset"] for t in ("Lied 1", "Lied 2", "All eure Sorgen")], [3, 4, 5])
             self.assertEqual(found[before["Begrüßung"]["id"]]["person"], "Anna")
             self.assertEqual([found[before[t]["id"]]["person"] for t in (
@@ -270,9 +270,9 @@ class SongSlotAnchorTests(unittest.TestCase):
             four = [{"song_id": "neu.foil", "text": ""}] * 3 + [{"song_id": "zweit.foil", "text": ""}]
             apply(client, template, four)
             after = rows(client)
-            self.assertEqual([x["title"] for x in after].count("All eure Sorgen"), 2)  # the 4th song: a copy of the last slot
-            extra = after[after.index(next(x for x in after if x["title"] == "All eure Sorgen")) + 1]
-            self.assertEqual((extra["title"], extra["song"], extra["hidden"]), ("All eure Sorgen", "zweit.foil", False))
+            self.assertEqual([x["title"] for x in after if x["title"].startswith("Lied")], ["Lied 1", "Lied 2", "Lied 3", "Lied 4"])
+            extra = next(x for x in after if x["title"] == "Lied 4")  # the 4th song: a row after the last slot
+            self.assertEqual((extra["song"], extra["hidden"]), ("zweit.foil", False))
             apply(client, template, four[:3])  # next time only three songs: the extra row stays, hidden
             after = rows(client)
             self.assertEqual(len(after), 13)
@@ -286,6 +286,78 @@ class SongSlotAnchorTests(unittest.TestCase):
             apply(client, template, four[:1])
             now = {x["title"]: x for x in rows(client)}
             self.assertEqual((now["Lied 2"]["song"], now["Lied 2"]["hidden"]), (None, False))
+
+    def test_text_song_keeps_its_number_and_text(self):
+        with app_client() as (client, _):
+            template = production_setup(client)
+            songs = [{"song_id": "neu.foil", "text": ""}] * 3 + [{"song_id": None, "text": "300"}]
+            apply(client, template, songs)
+            now = {x["title"]: x for x in rows(client)}
+            self.assertEqual(now["Lied 4: 300"]["song"], None)
+            self.assertEqual(now["Lied 4: 300"]["hidden"], False)
+            self.assertEqual(now["Lied 3"]["song"], "neu.foil")
+
+    def test_hint_does_not_count_a_hidden_extra_as_an_empty_slot(self):
+        with app_client() as (client, _):
+            template = production_setup(client)
+            four = [{"song_id": "neu.foil", "text": ""}] * 4
+            apply(client, template, four)
+            apply(client, template, four[:3])  # the 4th row stays, hidden
+            preview = lambda songs: client.post(f"/program/templates/{template['id']}/apply", json={
+                "dry_run": True, "songs": songs, "persons": []}).json()
+            self.assertEqual(preview(four[:3])["slots"], 3)  # three that can take a song, not four
+            self.assertEqual(preview(four)["slots"], 4)  # with a fourth song the extra row is used
+            self.assertEqual(preview([])["slots"], 3)
+
+    def test_only_song_like_rows_get_a_song(self):
+        with app_client() as (client, _):
+            template = production_setup(client)
+            # a row between the same anchors as the third slot: no song, no song title
+            put(client, "09:51", "Kinderansprache", cam1_preset=8)
+            apply(client, template, [{"song_id": "neu.foil", "text": ""}] * 3)
+            now = {x["title"]: x for x in rows(client)}
+            self.assertEqual((now["Kinderansprache"]["song"], now["Kinderansprache"]["cam1_preset"]), (None, 8))
+            self.assertEqual(now["Lied 3"]["song"], "neu.foil")
+        with app_client() as (client, _):  # alone between the anchors, with a slot there: still no song
+            client.app.state.songs.songs = dict(LIBRARY)
+            put(client, "10:00", "Begrüßung")
+            put(client, "10:05", "Kinderansprache")
+            put(client, "10:30", "Predigt")
+            template = client.post("/program/templates", json={"name": "GD", "slots": []}).json()["template"]
+            client.app.state.program_templates._templates[0]["rows"].insert(1, {
+                **client.app.state.program_templates._templates[0]["rows"][0], "title": "Lied 1", "song_slot": True})
+            apply(client, template, [{"song_id": "neu.foil", "text": ""}])
+            self.assertEqual(by_title(client, "Kinderansprache")["song"], None)
+            self.assertEqual(len(rows(client)), 4)  # the song became a new row
+
+    def test_eingangs_and_schlusslied_are_song_rows_and_keep_their_names(self):
+        with app_client() as (client, _):
+            client.app.state.songs.songs = dict(LIBRARY)
+            put(client, "10:00", "Begrüßung")
+            first = put(client, "10:05", "Eingangslied", cam1_preset=3)
+            put(client, "10:30", "Predigt")
+            last = put(client, "10:55", "Schlusslied", cam1_preset=4)
+            put(client, "11:00", "Segen")
+            template = client.post("/program/templates", json={"name": "GD", "slots": [first["id"], last["id"]]}).json()["template"]
+            apply(client, template, [{"song_id": "neu.foil", "text": ""}, {"song_id": "zweit.foil", "text": ""}])
+            now = {x["title"]: x for x in rows(client)}
+            self.assertEqual((now["Eingangslied"]["song"], now["Schlusslied"]["song"]), ("neu.foil", "zweit.foil"))
+            self.assertEqual((now["Eingangslied"]["cam1_preset"], now["Schlusslied"]["cam1_preset"]), (3, 4))
+            self.assertEqual(len(now), 5)
+
+    def test_template_stores_slots_as_lied_n(self):
+        with app_client() as (client, _):
+            client.app.state.songs.songs = dict(LIBRARY)
+            put(client, "10:00", "Begrüßung")
+            a = put(client, "10:05", "Above all", song="neu.foil")
+            put(client, "10:10", "Gebet")
+            b = put(client, "10:15", "Ach mein Herr Jesu", song="zweit.foil")
+            c = put(client, "10:20", "Eingangslied", song="neu.foil")
+            d = put(client, "10:25", "Lobpreis")  # no song, a name the user gave
+            t = client.post("/program/templates", json={"name": "GD", "slots": [a["id"], b["id"], c["id"], d["id"]]}).json()["template"]
+            self.assertEqual([r["title"] for r in t["rows"]], [
+                "Begrüßung", "Lied 1", "Gebet", "Lied 2", "Eingangslied", "Lobpreis"])
+            self.assertTrue(all(r["song"] is None for r in t["rows"] if r["song_slot"]))
 
     def test_anchors_missing_fall_back_to_the_titles(self):
         with app_client() as (client, _):

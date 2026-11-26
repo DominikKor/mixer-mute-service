@@ -180,9 +180,9 @@ def api(ghs_lib):
               [(i["title"], i["song"]) for i in items] == [
                   ("Begrüßung", None),
                   ("Lobpreis", "Gott_ du bist da.foil"),
-                  ("Lobpreis: Neues Lied", None),
-                  ("Lobpreis", "Dir sei Ehre.foil"),
-                  ("Lobpreis", "In Christus.foil"),
+                  ("Lobpreis: Neues Lied", None),  # rows the user named keep their name
+                  ("Lied 3", "Dir sei Ehre.foil"),  # extra songs are named by place
+                  ("Lied 4", "In Christus.foil"),
                   ("Predigt", None),
                   ("Segenslied", "Grosser Gott.foil"),
                   ("Ende", None),

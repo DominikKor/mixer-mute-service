@@ -141,6 +141,15 @@ class ProgramTemplateStore:
         if len(items) > MAX_ROWS:
             raise TemplateError(f"at most {MAX_ROWS} rows")
         rows = [_template_row(item, item["id"] in slot_ids) for item in items]
+        number = 0
+        for item, row in zip(items, rows):
+            if row["song_slot"]:
+                number += 1
+                # A slot is named by its place, not by the current song's title; a name the
+                # user gave the row ("Eingangslied", "Lobpreis") stays.
+                if _row_key(row["title"]) not in _PLAIN_SONG_TITLES and (
+                        item.get("song") or re.fullmatch(r"lied\d*", _row_key(row["title"]))):
+                    row["title"] = f"Lied {number}"
         async with self._lock:
             existing = next((t for t in self._templates if t["name"].casefold() == name.casefold()), None)
             if existing and not replace:
@@ -266,16 +275,31 @@ def _lcs_pairs(a: List[str], b: List[str]) -> dict:
     return pairs
 
 
+_PLAIN_SONG_TITLES = ("eingangslied", "schlusslied")
+
+
+def _song_title(key: str, slot_keys: set) -> bool:
+    """A row key that looks like a song row: "Lied N", Eingangs-/Schlusslied, a slot's title."""
+    return key in slot_keys or key in _PLAIN_SONG_TITLES or re.fullmatch(r"lied\d*", key) is not None
+
+
+def _renamable(title: str, slot_keys: set) -> bool:
+    """A slot row's title that is only a name by position or a stale song title
+    (not "Eingangslied" or what the user called the row)."""
+    key = _row_key(title)
+    return key not in _PLAIN_SONG_TITLES and (key in slot_keys or re.fullmatch(r"lied\d*", key) is not None)
+
+
 def song_rows(template_rows: List[dict], items: List[dict]) -> List[int]:
     """Indexes (in program order) of the program rows that are song slots.
 
     The template's slot titles are the songs of last time, so a slot is found
     by its anchors: the rows around it that are not slots and match a program
     row by title. The program rows between the same two anchors are the slot's
-    rows (paired in order). If there are more than slots, only those that look
-    like song rows count (a song, "Lied 2", the slot's title): the surplus are
-    the extra songs of an earlier load. Without an anchor on one side only the
-    song-like rows count.
+    rows (paired in order). Of the rows between them, only those that look
+    like song rows count: the surplus are the extra songs of an earlier load.
+    Always only song-like rows count: one with a song, titled "Lied N",
+    "Eingangslied" or "Schlusslied", or titled like a template slot.
     """
     keys = [_row_key(item["title"]) for item in items]
     fixed = [(i, _row_key(row["title"])) for i, row in enumerate(template_rows) if not row.get("song_slot")]
@@ -284,7 +308,7 @@ def song_rows(template_rows: List[dict], items: List[dict]) -> List[int]:
     taken = set(anchor.values())
 
     def song_like(j: int) -> bool:
-        return keys[j] in slot_keys or re.fullmatch(r"lied\d*", keys[j]) is not None or bool(items[j].get("song"))
+        return bool(items[j].get("song")) or _song_title(keys[j], slot_keys)
 
     found, i = [], 0
     while i < len(template_rows):
@@ -298,9 +322,7 @@ def song_rows(template_rows: List[dict], items: List[dict]) -> List[int]:
         after = min((t for t in anchor if t >= i), default=None)
         between = [j for j in range(anchor[before] + 1 if before is not None else 0,
                                     anchor[after] if after is not None else len(items)) if j not in taken]
-        if before is None or after is None or len(between) > i - start:
-            between = [j for j in between if song_like(j)]
-        found += between
+        found += [j for j in between if song_like(j)]  # a row like "Kinderansprache" never gets a song
     return found
 
 
@@ -319,7 +341,9 @@ def apply_order(items: List[dict], template_rows: List[dict], songs: List[dict],
     count, is then hidden so "Weiter" does not stop on it, and shown again when
     it gets a song) and the rest become copies of the last slot (or rows at the
     end if there is none). A song not in the library goes into the slot's title
-    ("Lied: text"). slots: how many song rows the program has.
+    (titled "Lied 4: text"); the slot rows and extra rows are named "Lied 1", "Lied 2"
+    ... by place, unless the user named a row ("Eingangslied"). slots: how many song
+    rows the program has that can take a song (hidden extras do not count).
     """
     slot_index = set(song_rows(template_rows, items))
     rows = [{**deepcopy(item), "song_slot": i in slot_index} for i, item in enumerate(items)]
@@ -333,24 +357,29 @@ def apply_order(items: List[dict], template_rows: List[dict], songs: List[dict],
             row["person"] = named[row["_point"]]
     slots = [row for row in rows if row["song_slot"]]
     added = []
+    slot_total = sum(bool(r.get("song_slot")) for r in template_rows)
     if songs:
+        slot_keys = {_row_key(r["title"]) for r in template_rows if r.get("song_slot")}
+
         def put(row: dict, song: dict, base: str) -> None:
             if song.get("song_id"):
                 row["song"], row["title"] = song["song_id"], base
             else:
                 row["song"], row["title"] = None, f"{base}: {song['text']}"[:120]
 
-        for row in slots:
-            row["song"], row["title"] = None, row["title"].split(":")[0].strip()
+        # The slot rows are named by their place: "Lied 1", "Lied 2" ... (not by last time's song).
+        for number, row in enumerate(slots, 1):
+            base = row["title"].split(":")[0].strip()
+            row["song"], row["title"] = None, f"Lied {number}" if _renamable(base, slot_keys) else base
         for row, song in zip(slots, songs):
             put(row, song, row["title"])
         for position, row in enumerate(slots):
-            if position >= sum(bool(r.get("song_slot")) for r in template_rows):  # an extra row of an earlier load
+            if position >= slot_total:  # an extra row of an earlier load
                 row["hidden"] = position >= len(songs)
-        for song in songs[len(slots):]:
+        for number, song in enumerate(songs[len(slots):], len(slots) + 1):
             if slots:
                 model = {k: v for k, v in deepcopy(slots[-1]).items() if k != "id"}
-                put(model, song, slots[-1]["title"].split(":")[0].strip())
+                put(model, song, f"Lied {number}")
                 model.update(person="", hidden=False)
             else:  # no slot: a plain row named after the song, at the end
                 model = {"time": rows[-1]["time"] if rows else "10:00", "person": "", "hidden": False,
@@ -360,11 +389,13 @@ def apply_order(items: List[dict], template_rows: List[dict], songs: List[dict],
         if added:
             at = rows.index(slots[-1]) + 1 if slots else len(rows)
             rows[at:at] = added
+    # a hidden extra row is no empty slot (the hint counts the rows that can take a song)
+    open_slots = sum(1 for position, row in enumerate(slots) if not (position >= slot_total and row.get("hidden")))
     spotlight = switch_spotlight(rows, mission, profiles or {})
     for row in rows:
         for key in ("_point", "song_slot"):
             row.pop(key, None)
-    return rows, unassigned, spotlight, len(slots)
+    return rows, unassigned, spotlight, open_slots
 
 
 # ---- Missionsbericht or Mission Spotlight ------------------------------------------
