@@ -24,22 +24,37 @@ function songFormSettings() {
   };
 }
 
+// The sample is laid out by the service with the form's (unsaved) look,
+// debounced while typing; the latest request wins.
+const SONG_SAMPLE = { seq: 0, timer: null };
+const SONG_SAMPLE_KEYS = ["targets", "fullscreen", "font", "font_size", "title_slide", "show_title",
+  "show_copyright", "text_align", "show_next_preview"];
+
 function renderSongSample() {
   const settings = songFormSettings();
   // The song on screen, or a fixed example: its title slide (if switched on)
   // and its first lyrics slide.
-  const song = SONG_LIVE.song || {
+  const live = SONG_LIVE.song;
+  const sample = {
     title: "Großer Gott, wir loben dich", copyright: "Text: Ignaz Franz 1771",
-    slides: [{ text: "Großer Gott, wir loben dich,\nHerr, wir preisen deine Stärke.\nVor dir neigt die Erde sich\nund bewundert deine Werke." },
-             { text: "Alles, was dich preisen kann,\nCherubim und Seraphinen" }],
+    slides: [{ key: "1", text: "Großer Gott, wir loben dich,\nHerr, wir preisen deine Stärke.\nVor dir neigt die Erde sich\nund bewundert deine Werke." },
+             { key: "2", text: "Alles, was dich preisen kann,\nCherubim und Seraphinen" }],
   };
   const titled = settings.title_slide;
   $("sg-show-title").disabled = titled;
   $("sg-show-title-wrap").classList.toggle("off", titled);
   $("sg-sample-title").hidden = !titled;
   $("sg-sample-title").parentElement.classList.toggle("single", !titled);
-  if (titled) renderSlide($("sg-sample-title"), songSlide(song, 0, settings), settings);
-  renderSlide($("sg-sample"), songSlide(song, titled ? 1 : 0, settings), settings);
+  const look = Object.fromEntries(SONG_SAMPLE_KEYS.map(key => [key, settings[key]]));
+  clearTimeout(SONG_SAMPLE.timer);
+  const seq = ++SONG_SAMPLE.seq;
+  SONG_SAMPLE.timer = setTimeout(async () => {
+    const laid = await fetchSongLayout(live ? { song_id: live.id } : { song: sample }, look);
+    if (seq !== SONG_SAMPLE.seq) return;
+    const song = laid || { ...(live || sample), shown: undefined, layout: undefined };
+    if (titled) renderSlide($("sg-sample-title"), songSlide(song, 0, settings), settings);
+    renderSlide($("sg-sample"), songSlide(song, titled ? 1 : 0, settings), settings);
+  }, 150);
 }
 
 function setSongAlign(align) {

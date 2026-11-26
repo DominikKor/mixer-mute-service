@@ -779,31 +779,45 @@ bleibt dabei unverändert groß und an seiner Stelle; nach der letzten Folie gib
 es keine Vorschau. Ein Anzeige-PC mit älterem Display-Agent bekommt die Folie
 ohne Vorschau und Ausrichtung, bis der Agent aktualisiert ist (die Update-Taste
 aktualisiert die Agents aller PCs).
-**Zeilen und Schriftgröße**: Alle Folien eines Liedes (auch die Titelfolie)
-haben auf einem Bildschirm dieselbe Schriftgröße: die eingestellte, oder – wenn
-eine Folie darin nicht passt – die größte, bei der jede Folie des Liedes passt,
-nie unter 40 px (bei 1080p). Dafür schickt der Service mit jeder Folie alle
-Folien des Liedes mit (`fit`); der Display-Agent rechnet die Größe für seinen
-Bildschirm aus (Auflösung, Seitenverhältnis, Schrift) und merkt sie sich, das
-Weiterschalten bleibt schnell. Verschiedene Bildschirme können so verschiedene
-Größen bekommen, jeder ist innerhalb eines Liedes gleich. Viele
-FoilPresenter-Dateien haben eine ganze Strophe in einer einzigen Zeile
-(FoilPresenter bricht selbst um). Solche Zeilen werden wie dort an Leerzeichen
-umgebrochen. Die eigenen Zeilen der Datei bleiben, wenn sie dafür höchstens
-15 % kleiner werden als mit Umbruch (das kann das ganze Lied etwas kleiner
-machen). Wiederholungszeichen (`|:` / `:|`) bleiben beim Umbruch an ihrem Wort.
-Passt eine Folie selbst in 40 px nicht (ganzes Lied auf einer Folie), zählt sie
-für die Größe des Liedes nicht mit: sie allein steht in 40 px, beginnt oben und
-endet am Rand ihres Felds (Titel und Copyright bleiben frei); der Agent schreibt
-das ins Log, die Vorschau auf der Seite markiert sie mit „zu lang“. Anzeige-PC
-und Vorschau auf der Seite rechnen gleich (`_song_size`/`_layout_slide` im
-Agent, `songFitSize`/`layoutSlide` in `js/songs.js`;
-`tests/test_slide_parity.py` vergleicht beide mit quickjs); auch die graue
-Vorschau der nächsten Folie wird umgebrochen. Ein älterer Display-Agent
-lehnt `fit` ab; der Service schickt die Folie dann ohne `fit` noch einmal, und
-jede Folie bekommt wie früher ihre eigene größte Größe, bis der Agent
-aktualisiert ist. Lieder mit mehr als 300 Folien oder sehr viel Text werden
-ebenfalls Folie für Folie bemessen.
+**Zeilen, Schriftgröße und geteilte Strophen** (`app/slide_layout.py`): Der
+Service setzt jedes Lied selbst, für jeden Bildschirm; Display-Agent und Seite
+zeichnen nur noch die Zeilen in der Größe, die er schickt (`layout`).
+1. Alle Folien eines Liedes haben auf einem Bildschirm **dieselbe
+   Schriftgröße**: möglichst die eingestellte.
+2. Eine Zeile der Datei, die zu breit ist (FoilPresenter-Dateien haben oft eine
+   ganze Strophe in einer Zeile), wird umgebrochen – bevorzugt nach Satzende,
+   dann nach Komma, Semikolon, Doppelpunkt oder Gedankenstrich, eine Zeile nie
+   mit „und“, „die“ & Co. am Ende, die Zeilen etwa gleich lang; wo Platz ist,
+   lieber eine Zeile mehr als ein Umbruch mitten in der Wendung. Zeilen der
+   Datei werden nie zusammengezogen; Wiederholungszeichen (`|:` / `:|`) bleiben
+   an ihrem Wort.
+3. Passt eine Folie nicht, wird **das ganze Lied** kleiner, höchstens um 18 %
+   (`SHRINK_LIMIT` = 0,82).
+4. Reicht das nicht, wird die Strophe auf **zwei oder mehr Folien geteilt**: an
+   einem Zeilenumbruch der Datei (am liebsten an einer Leerzeile oder nach einem
+   Satzende), in einer langen Zeile nach Satzende oder Komma, die Teile etwa
+   gleich lang. Die Teile heißen z. B. „2.1“ und „2.2“, zählen bei Weiter/Zurück,
+   in „Folie x/y“, bei den Tasten am Programmpunkt und bei Sprüngen wie eigene
+   Folien; Titel und Copyright stehen nur auf dem ersten Teil.
+5. Nur eine Folie, die sich nicht teilen lässt (die Titelfolie, ein riesiges
+   Wort), wird bis 40 px (bei 1080p) kleiner und notfalls unten abgeschnitten;
+   die Vorschau markiert sie mit „zu lang“. Sie zieht die übrigen Folien nicht
+   mit herunter.
+
+Die Breiten misst der Display-Agent: Der Service fragt ihn einmal je Schrift
+nach den Zeichenbreiten und der Fenstergröße seines Monitors (`/song/metrics`)
+und merkt sie sich; gesetzt wird im Service (in einem eigenen Thread, auch
+300 Folien in Bruchteilen einer Sekunde) und nur neu, wenn sich Lied,
+Einstellungen oder Breiten ändern. **Mehrere Bildschirme**: Geteilt wird für
+den Bildschirm, der die meisten Folien braucht – so zeigen alle dieselben
+Folien und bleiben im Takt; jeder bekommt dann seine eigene einheitliche Größe.
+Die Vorschau auf der Seite zeigt den ersten Bildschirm genau so, wie der Service
+ihn setzt (`tests/test_slide_parity.py`); Einstellungs- und Neues-Lied-Vorschau
+fragen dafür `POST /songs/layout`. **Ältere Display-Agents** kennen weder
+`/song/metrics` noch `layout`: Der Service schätzt die Breiten dann (Verdana,
+1920 × 1080) und teilt die Strophen damit, schickt die Folie ohne `layout` (der
+Agent passt sie wie früher selbst ein) und merkt sich das je PC für 10 Minuten,
+damit jede Folie nur eine Anfrage braucht.
 **Titelfolie** (Standard: an): Jedes Lied beginnt mit einer eigenen Folie, auf
 der der Titel in der Mitte steht und das Copyright darunter (mit dem Schalter
 *Copyright*). Sie ist Folie 0, die Liedfolien zählen ab 1; ein Programmpunkt

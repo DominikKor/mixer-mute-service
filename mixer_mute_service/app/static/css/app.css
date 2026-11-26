@@ -974,6 +974,7 @@ dialog.shortcut-dialog { width: min(1000px, calc(100vw - 32px)); }
 }
 .slide-title, .slide-copy { white-space: normal; padding: 0 6%; transform: translateY(-50%); }
 .slide-copy { white-space: pre-line; line-height: 1.2; }  /* lines as on the display PC */
+.slide-line.slide-plain { white-space: pre-wrap; line-height: 1.25; }  /* not laid out yet */
 .sg-samples { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 .sg-samples.single { grid-template-columns: minmax(0, 1fr); }
 .compact-switch.off { opacity: .45; }

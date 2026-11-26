@@ -85,6 +85,44 @@ class SongLibraryTests(unittest.TestCase):
         self.assertFalse(agent._valid_song_request({**new, "next": 5}))
         self.assertFalse(agent._valid_song_request({**new, "next": "x" * 8001}))
 
+    def test_layout_from_the_service(self):
+        layout = {"screen": [1920, 1080], "px": 66.2, "lines": ["Zeile 1", "Zeile 2"],
+                  "preview": {"px": 33.1, "lines": ["Nächste"]}}
+        self.assertTrue(agent._valid_song_request({**SHOW, "layout": layout}))
+        self.assertTrue(agent._valid_song_request({**SHOW, "layout": {**layout, "preview": None}}))
+        for bad in ({**layout, "px": 0}, {**layout, "px": True}, {**layout, "lines": "Zeile"},
+                    {**layout, "lines": ["x" * 2001]}, {**layout, "screen": [1920]}, {**layout, "screen": [1920.0, 1080]},
+                    {**layout, "preview": {"px": 30}}, {**layout, "extra": 1}, {k: v for k, v in layout.items() if k != "px"}):
+            with self.subTest(bad=str(bad)[:60]):
+                self.assertFalse(agent._valid_song_request({**SHOW, "layout": bad}))
+        self.assertFalse(agent._valid_song_request({**SHOW, "fit": []}))   # never shipped
+
+    def test_the_service_layout_is_drawn_as_it_is(self):
+        measure = lambda text, size: len(text) * size * 0.6  # noqa: E731
+        box_w, box_h = agent._slide_box(1920, 1080, True, False)
+        body = {**SHOW, "layout": {"screen": [1920, 1080], "px": 60.0, "lines": ["Eins", "Zwei"],
+                                   "preview": {"px": 30.0, "lines": ["Drei"]}}}
+        self.assertEqual(agent._slide_layout(measure, body, 1920, 1080, box_w, box_h),
+                         (60.0, ["Eins", "Zwei"], (30.0, ["Drei"])))
+        # Made for another window size: the slide is fitted here as before.
+        px, lines, _preview = agent._slide_layout(measure, body, 1280, 720, *agent._slide_box(1280, 720, True, False))
+        self.assertEqual(lines, SHOW["text"].split("\n"))
+        # A line far wider than the margin (the font measured differently) is wrapped all the same.
+        wide = {**body, "layout": {**body["layout"], "lines": ["Wort " * 80]}}
+        _px, lines, _ = agent._slide_layout(measure, wide, 1920, 1080, box_w, box_h)
+        self.assertGreater(len(lines), 1)
+        # Without a layout (an older service): fitted on the agent.
+        px, lines, _ = agent._slide_layout(measure, SHOW, 1920, 1080, box_w, box_h)
+        self.assertEqual((px, lines), (72.0, ["Zeile 1", "Zeile 2"]))
+
+    def test_metrics_requests(self):
+        good = {"font": "Verdana", "monitor": 2, "fullscreen": True, "chars": "abcäö "}
+        self.assertTrue(agent._valid_metrics_request(good))
+        for bad in ({**good, "font": ""}, {**good, "font": "a\nb"}, {**good, "monitor": 0}, {**good, "monitor": True},
+                    {**good, "fullscreen": 1}, {**good, "chars": ""}, {**good, "chars": "x" * 4001}, {**good, "extra": 1}):
+            with self.subTest(bad=bad):
+                self.assertFalse(agent._valid_metrics_request(bad))
+
     def test_preview_grey_and_room(self):
         self.assertEqual(agent._mix_color("#ffffff", "#000000", 0.45), "#737373")
         self.assertEqual(agent._mix_color("#000000", "#ffffff", 0.45), "#8c8c8c")
@@ -143,6 +181,41 @@ class SongRequestHandlerTests(unittest.TestCase):
         self.assertTrue(raw.startswith(b"HTTP/1.0 202"), raw[:40])
         self.assertEqual(raw.count(b"HTTP/1."), 1, "a second response followed the 202")
         self.assertEqual(requests.get_nowait()["action"], "hide")
+
+    def test_metrics_are_measured_on_the_tk_thread(self):
+        # The handler hands the measuring to the Tk loop (here a thread
+        # standing in for it) and answers with the window size and widths.
+        import json
+        import os
+        import queue
+        import threading
+        import urllib.request
+        from http.server import ThreadingHTTPServer
+        from unittest.mock import patch
+
+        token = "test-token"
+        jobs = queue.Queue()
+
+        def tk_loop():
+            job = jobs.get(timeout=5)
+            job["reply"].put([len(c) * 10 for c in job["chars"]])
+
+        body = json.dumps({"font": "Verdana", "monitor": 2, "fullscreen": True, "chars": "aäb"}).encode()
+        with patch.dict(os.environ, {"DESKTOP_AGENT_TOKEN": token}), patch.object(agent, "requests", jobs), \
+                patch.object(agent, "_song_window", return_value=(1920, 1080, 0, 0)):
+            server = ThreadingHTTPServer(("127.0.0.1", 0), agent.DisplayHandler)
+            threading.Thread(target=server.serve_forever, daemon=True).start()
+            threading.Thread(target=tk_loop, daemon=True).start()
+            try:
+                request = urllib.request.Request(
+                    f"http://127.0.0.1:{server.server_address[1]}/song/metrics", data=body, method="POST",
+                    headers={"X-Display-Token": token, "Content-Type": "application/json"})
+                with urllib.request.urlopen(request, timeout=5) as answer:
+                    result = json.loads(answer.read())
+            finally:
+                server.shutdown()
+                server.server_close()
+        self.assertEqual(result, {"ok": True, "width": 1920, "height": 1080, "ref": 100, "widths": [10, 10, 10]})
 
 if __name__ == "__main__":
     unittest.main()

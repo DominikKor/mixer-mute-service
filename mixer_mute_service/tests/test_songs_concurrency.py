@@ -27,7 +27,8 @@ class SongNextTests(unittest.IsolatedAsyncioTestCase):
 
         async def slow_agent(cfg, ip, path, payload, timeout=3.0):
             await asyncio.sleep(0.02)  # the display PC takes a moment
-            shown.append(payload)
+            if path == "/song":   # not the font widths (/song/metrics)
+                shown.append(payload)
             return {"ok": True}
 
         request = fake_request(service)
