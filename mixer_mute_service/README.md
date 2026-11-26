@@ -590,11 +590,12 @@ Service neu starten.
 
 **Mission Spotlight** (Schalter im Profil, `mission_spotlight: true`; fuer Bild,
 Datei und Audio): `path` ist dann ein Ordner. Beim Ausloesen nimmt der Service
-das Quartal des heutigen Datums und die Woche darin (Tag 1–7 des Quartals =
-Woche 01, Tag 8–14 = Woche 02 …) und schickt `<Ordner>\<Q>. Quartal\<WW>*`; der
+Jahr und Quartal des heutigen Datums und die Woche darin (Tag 1–7 des Quartals =
+Woche 01, Tag 8–14 = Woche 02 …) und schickt `<Ordner>\<JJJJ>_<Q>. Quartal\<WW>*`; der
 Agent nimmt die Datei, deren Name mit der zweistelligen Woche beginnt, z. B.
-`I:\Mission Spotlight\3. Quartal\01_Testvideo.mp4` (bei mehreren die neueste).
-Das Profilfenster zeigt das aktuelle Quartal und die Woche.
+`I:\Mission Spotlight\2026_3. Quartal\01_Testvideo.mp4` (bei mehreren die neueste;
+Ordner ohne Jahr, z. B. `3. Quartal`, werden nicht mehr beachtet).
+Das Profilfenster zeigt das aktuelle Jahr, Quartal und die Woche.
 
 **Platzhalter `*` in Pfaden:** In allen Pfaden (Profile, Datei-Aktionen im
 Programm, Liederbibliothek) steht `*` fuer einen unbekannten Teil eines Namens,
