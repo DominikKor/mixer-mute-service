@@ -23,6 +23,7 @@ Jeder Mute- oder Fader-Befehl schreibt Fader, Mute **und** Solo gleichzeitig. Ei
 
 - **Tests:** alle Dateien in `mixer_mute_service/tests/`, aus `mixer_mute_service` mit `python -m tests.<name>` (bzw. `python -m unittest discover -s tests -t . -v`). Neue Funktionen bekommen Tests.
 - **Kein Test, Skript oder Tool darf das echte Pult oder andere Geräte im LAN ansprechen.** Der Entwicklungs-Mac hängt oft im Mixer-Netz.
+- **Browser-Prüfungen nur mit `python -m tools.run_local_test`** (aus `mixer_mute_service`, Seite auf http://127.0.0.1:8770): Fake-Mischpult, Fake-Geräte (Licht, Beamer, Kameras, OBS, Display-Agenten) und die Netzwerksperre der Tests. Ein einfach gestarteter Testdienst fragt sonst z. B. alle 3 s die echten Shellys ab.
 - **Am Pult messen:** Wenn etwas am Pult nachgewiesen werden muss, nur lesend (Subscribe-Handshake, keine Befehle) und nur mit Zustimmung des Nutzers.
 - **Mehrere Sessions:** Jede arbeitet auf ihrem eigenen Branch. Eine Session führt zusammen, testet und pusht.
 

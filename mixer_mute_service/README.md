@@ -31,6 +31,20 @@ python -m app.main
 
 Then open **http://localhost:8765/** for the web UI.
 
+For trying the UI on a development machine, never start the service plainly
+(its device code has the real LAN hosts built in). Use the local test runner:
+
+```bash
+python -m tools.run_local_test     # http://127.0.0.1:8770
+```
+
+It starts `tools/fake_mixer.py` (answers like the console: state dump on the
+handshake, commands change its state, no echo), replaces every device
+(Shellys, Art-Net, beamer, VISCA, OBS, display agents) with a fake that logs
+"FAKE ..." lines, installs the tests' network guard (any non-loopback
+connection raises) and keeps its data in `local-test/` (ignored by git;
+delete it to start fresh).
+
 ## Web UI
 
 The service serves a single-page control panel at `/`, built for a 13-inch
