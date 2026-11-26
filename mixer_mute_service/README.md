@@ -911,13 +911,14 @@ alle anderen Bereiche auf- und zugeklappt und mit *Anordnen* platziert.
 Im Stage-Modus ist er ein eigener Bereich wie alle anderen. Nach
 der letzten Folie schaltet *Weiter* auf schwarz.
 **Am laufenden Programmpunkt**: Hat der laufende Programmpunkt ein Lied, fährt
-unter seiner Zeile eine schmale Leiste aus (`js/song-dock.js`): Zurück, je Folie
-ein Knopf (T, 1, R, 2 …; antippen = anzeigen), die erste Zeile der gezeigten
-Folie, Schwarz, Aus und ein großes Weiter. Sie steuert dasselbe Lied wie der Bereich
-Liedanzeige (gleiche Aufrufe, beide zeigen immer dasselbe). Ist ein anderes oder
-kein Lied auf dem Bildschirm, bleibt eine Zeile mit *Zeigen* (das Lied des
-Programmpunkts ab der ersten Folie); läuft ein anderer Programmpunkt, fährt sie
-wieder ein.
+über seiner Zeile eine Leiste aus dem oberen Rand heraus (`js/song-dock.js`):
+links eine kleine Vorschau dessen, was die Bildschirme zeigen (auch schwarz oder
+aus), rechts Zurück, je Folie ein Knopf (T, 1, R, 2 …; antippen = anzeigen),
+Aus, Schwarz und ein großes Weiter, dazu die erste Zeile der nächsten Folie. Sie
+steuert dasselbe Lied wie der Bereich Liedanzeige (gleiche Aufrufe, beide zeigen
+immer dasselbe). Ist ein anderes oder kein Lied auf dem Bildschirm, bleibt eine
+Zeile mit *Zeigen* (das Lied des Programmpunkts ab der ersten Folie); läuft ein
+anderer Programmpunkt, fährt sie wieder ein.
 
 Tastatur und Presenter (immer, solange die Seite offen ist; nicht beim Tippen in
 einem Feld oder bei offenem Dialog):

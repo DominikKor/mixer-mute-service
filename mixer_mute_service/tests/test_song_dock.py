@@ -4,7 +4,11 @@ Verifies: the page loads the script after songs.js and program.js (it uses
 their state and songAction) and its stylesheet; both redraws call it
 (renderProgramItems in program.js, renderSongLive in songs.js), so the dock
 and the Liedanzeige section show the same; every song path it sends to is a
-route of app/songs.py (no new server behaviour); the chip texts and the
+route of app/songs.py (no new server behaviour); the preview uses the
+Liedanzeige's slide drawing (no layout code of its own); the dock's keys take
+no taps for a moment after they appear (a second tap on PLAY must not land on
+"Schwarz" or "Weiter") and PLAY tapped here keeps its row in place; the chip
+texts and the
 first line of a slide (in quickjs; skipped where quickjs is missing, an error
 in CI with REQUIRE_TK=1).
 
@@ -62,6 +66,34 @@ class SongDockWiringTest(unittest.TestCase):
             self.assertIn(call, DOCK_JS)
 
 
+    def test_dock_keys_ignore_taps_right_after_they_appear(self):
+        # The click handler of the dock asks the guard before anything else.
+        handler = DOCK_JS[DOCK_JS.index('const button = event.target.closest("[data-song-dock]");'):]
+        guard = handler.index("songDockArmed(SONG_DOCK.armedAt, performance.now(), SONG_DOCK.guardMs)")
+        self.assertLess(guard, handler.index("songAction("))
+        self.assertLess(guard, handler.index("songNext()"))
+        # Armed when the drawer opens and when keys and "Zeigen" take turns.
+        self.assertIn("armSongDock(cell);", function_body(DOCK_JS, "openSongDock"))
+        self.assertIn("armSongDock(cell);", function_body(DOCK_JS, "renderSongDock"))
+        self.assertRegex(DOCK_JS, r"const SONG_DOCK_GUARD_MS = (\d+);")
+        self.assertGreaterEqual(int(re.search(r"const SONG_DOCK_GUARD_MS = (\d+);", DOCK_JS).group(1)), 500)
+
+    def test_play_here_keeps_the_row_in_place(self):
+        # PLAY taps are noted (capture phase) and the drawer then opens anchored on PLAY.
+        self.assertIn("SONG_DOCK.played = { id: play.dataset.programId", DOCK_JS)
+        render = function_body(DOCK_JS, "renderSongDock")
+        self.assertIn("songDockPlayedKey(target.row)", render)
+        self.assertIn("songDockKeepElement(play,", render)
+        self.assertIn("armSongDock(cell, SONG_DOCK_GUARD_PUSHED_MS)", render)   # could not stay: longer guard
+
+    def test_preview_reuses_the_slide_drawing(self):
+        # The same drawing as the Liedanzeige (songs.js), no layout code of its own.
+        self.assertIn("renderSlide(box,", DOCK_JS)
+        self.assertIn("songSlide(song,", DOCK_JS)
+        for own in ("fitSlideText", "wrapSlideLines", "measureText", "getContext"):
+            self.assertNotIn(own, DOCK_JS)
+
+
 @unittest.skipIf(quickjs is None, "quickjs not installed")
 class SongDockTextTest(unittest.TestCase):
     @classmethod
@@ -81,6 +113,16 @@ class SongDockTextTest(unittest.TestCase):
         self.assertEqual(self.chip({"key": "Bridge", "text": "a"}, 3), "Bri")
         self.assertEqual(self.chip({"key": "  ", "text": "a"}, 4), "5")   # no key: the slide number
         self.assertEqual(self.chip({"text": "a"}, 0), "1")
+
+    def test_guard_window(self):
+        js = quickjs.Context()
+        js.eval(re.search(r"const SONG_DOCK_GUARD_MS = \d+;", DOCK_JS).group(0) + function_body(DOCK_JS, "songDockArmed"))
+        self.assertFalse(js.eval("songDockArmed(1000, 1000)"))     # the second tap of a double tap
+        self.assertFalse(js.eval("songDockArmed(1000, 1599)"))
+        self.assertTrue(js.eval("songDockArmed(1000, 1600)"))
+        self.assertTrue(js.eval("songDockArmed(0, 5000)"))
+        self.assertFalse(js.eval("songDockArmed(1000, 2000, 1500)"))   # PLAY pushed away: longer
+        self.assertTrue(js.eval("songDockArmed(1000, 2500, 1500)"))
 
     def test_first_line(self):
         self.assertEqual(self.js.eval('songDockFirstLine({text: "\\n  Großer Gott,  \\nwir loben dich"})'), "Großer Gott,")
