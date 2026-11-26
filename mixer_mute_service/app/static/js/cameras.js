@@ -37,7 +37,7 @@ function renderCameraStreams(data) {
     const title = document.createElement("h3");
     title.className = "camera-card-title";
     title.textContent = camera.name;
-    const menu = menuButton(`${camera.name}: bearbeiten, Presets umbenennen oder entfernen`, `camera:${camera.id}`);
+    const menu = menuButton(`${camera.name}: bearbeiten, Presets umbenennen, Position speichern oder entfernen`, `camera:${camera.id}`);
     menu.dataset.cameraMenu = camera.id;
     head.append(title, menu);
     const view = document.createElement("div");
@@ -264,23 +264,42 @@ async function recallCameraPresetNumber(form) {
 }
 
 // ---- Aktuelle Position speichern -----------------------------------------
-// Number (the next free one is suggested) and name. The camera stores its
-// current position at that number, the service names it. A number that
-// already has a name here is only overwritten after asking.
-let CAMERA_PRESET_DIALOG = null;  // { cam, cameraName }
+// Number and name. Suggested is the lowest number that has no name here and
+// that nothing uses (program rows, shortcuts, templates, Steuerung keys such
+// as the Overall macros). The camera stores its current position at that
+// number, the service names it. A number with a name or a user is only
+// overwritten after asking. "No name in the app" is not "free": the camera
+// may hold a position there that Companion or the remote stored.
+let CAMERA_PRESET_DIALOG = null;  // { cam, cameraName, used: {number: [labels]} | null }
 
 function cameraPresetAt(cam, preset) {
   return (cameraPresetLists()[cam] || []).find(p => p.preset === preset) || null;
 }
 
+function cameraPresetUsers(preset) {
+  const used = CAMERA_PRESET_DIALOG && CAMERA_PRESET_DIALOG.used;
+  return (used && used[String(preset)]) || [];
+}
+
 function nextFreeCameraPreset(cam) {
-  const used = new Set((cameraPresetLists()[cam] || []).map(p => p.preset));
-  for (let n = CAMERA_PRESET_MIN; n <= CAMERA_PRESET_MAX; n++) if (!used.has(n)) return n;
+  const named = new Set((cameraPresetLists()[cam] || []).map(p => p.preset));
+  for (let n = CAMERA_PRESET_MIN; n <= CAMERA_PRESET_MAX; n++) {
+    if (!named.has(n) && !cameraPresetUsers(n).length) return n;
+  }
   return null;
 }
 
-function openCameraPresetDialog(cam, cameraName) {
-  CAMERA_PRESET_DIALOG = { cam, cameraName };
+// "A, B, C und 2 weitere"
+function cameraPresetUserList(users, limit = 4) {
+  const shown = users.slice(0, limit).join(", ");
+  return users.length > limit ? `${shown} und ${users.length - limit} weitere` : shown;
+}
+
+async function openCameraPresetDialog(cam, cameraName) {
+  const usage = await api("GET", `/cameras/${encodeURIComponent(cam)}/presets/usage`);
+  // Without the list the service still asks on saving (409 with its users).
+  const used = usage.ok && usage.data.ok !== false ? usage.data.used || {} : null;
+  CAMERA_PRESET_DIALOG = { cam, cameraName, used };
   const free = nextFreeCameraPreset(cam);
   $("camera-preset-title").textContent = `${cameraName}: aktuelle Position speichern`;
   $("camera-preset-number").value = free === null ? "" : String(free);
@@ -298,15 +317,20 @@ function updateCameraPresetHint() {
   const raw = $("camera-preset-number").value;
   const preset = cameraPresetNumber(raw);
   const existing = preset === null ? null : cameraPresetAt(state.cam, preset);
-  hint.classList.toggle("warn", Boolean(existing));
+  const users = preset === null ? [] : cameraPresetUsers(preset);
+  hint.classList.toggle("warn", Boolean(existing || users.length));
   if (preset === null) {
     hint.textContent = raw.trim() || nextFreeCameraPreset(state.cam) !== null
       ? `Nummer ${CAMERA_PRESET_MIN} bis ${CAMERA_PRESET_MAX} eingeben.`
-      : `Alle Nummern ${CAMERA_PRESET_MIN} bis ${CAMERA_PRESET_MAX} haben schon einen Namen. Eine wählen, um sie zu überschreiben.`;
-  } else if (existing) {
-    hint.textContent = `Nr. ${preset} ist „${cameraPresetLabel(existing.label)}“. Speichern fragt, ob überschrieben werden soll.`;
+      : `Alle Nummern ${CAMERA_PRESET_MIN} bis ${CAMERA_PRESET_MAX} haben einen Namen oder werden benutzt. Eine wählen, um sie zu überschreiben.`;
+  } else if (existing || users.length) {
+    const what = existing ? `Nr. ${preset} ist „${cameraPresetLabel(existing.label)}“` : `Nr. ${preset} hat in der App keinen Namen`;
+    const by = users.length ? `, benutzt von: ${cameraPresetUserList(users)}` : "";
+    hint.textContent = `${what}${by}. Speichern fragt, ob überschrieben werden soll.`;
   } else {
-    hint.textContent = `Nr. ${preset} ist frei. Die Kamera speichert dort ihre aktuelle Position.`;
+    hint.textContent = `Nr. ${preset} hat in der App keinen Namen und wird nirgends benutzt`
+      + `${state.used ? "" : " (Benutzung nicht geprüft)"}. Die Kamera speichert dort ihre aktuelle Position;`
+      + " was sie dort vielleicht schon hatte (Companion, Fernbedienung), wird ersetzt.";
   }
 }
 
@@ -328,7 +352,12 @@ async function saveCameraPreset(event) {
     const path = `/cameras/${encodeURIComponent(state.cam)}/presets`;
     let result = await api("POST", path, { preset, name });
     if (result.status === 409 && result.data.exists) {
-      const question = `Nr. ${preset} „${result.data.name}“ überschreiben? Die Kamera speichert dort ihre aktuelle Position.`;
+      // The service's answer: its name here and who uses the number
+      // (Overall keys, program rows, shortcuts, templates).
+      const users = result.data.users || [];
+      const what = result.data.name ? `Nr. ${preset} „${result.data.name}“` : `Nr. ${preset}`;
+      const by = users.length ? ` Benutzt von: ${cameraPresetUserList(users, 6)}.` : "";
+      const question = `${what} überschreiben?${by} Die Kamera speichert dort ihre aktuelle Position.`;
       if (!(await confirmDelete(saveKey, question, "Überschreiben"))) return;
       result = await api("POST", path, { preset, name, overwrite: true });
     }

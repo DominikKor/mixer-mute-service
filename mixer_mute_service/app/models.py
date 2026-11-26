@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from typing import List, Literal, Optional
 
-from pydantic import BaseModel, Field, StrictInt
+from pydantic import BaseModel, Field, StrictBool, StrictInt
 
 
 class GroupCreate(BaseModel):
@@ -71,7 +71,7 @@ class CameraPresetSaveRequest(BaseModel):
     preset: StrictInt = Field(ge=1, le=16)
     name: str = Field(max_length=58)
     # A number the app already names is only overwritten when asked for.
-    overwrite: bool = False
+    overwrite: StrictBool = False
 
 
 class CameraStreamRequest(BaseModel):

@@ -809,10 +809,7 @@ class NativeControlService:
         """The camera stores its current position as this preset number
         (overwriting what was there). Raises NativeControlError."""
         target, payload = _visca_preset(camera, preset, VISCA_PRESET_SET)
-        try:
-            await asyncio.to_thread(_visca_tcp, *target, payload)
-        except OSError as exc:
-            raise NativeControlError(f"VISCA preset store failed: {exc}") from exc
+        await asyncio.to_thread(_visca_tcp, *target, payload)  # raises NativeControlError
         return {"ok": True}
 
     async def press(self, action: dict) -> dict:

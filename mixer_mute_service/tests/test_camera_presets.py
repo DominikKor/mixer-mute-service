@@ -6,13 +6,15 @@ camera is contacted."""
 import asyncio
 import json
 import tempfile
+import time
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest import mock
 
 import app.native_controls as native_mod
 from app.companion_buttons import (
-    CAMERA_PRESET_MAX, CAMERA_PRESET_MIN, COMPANION_BUTTONS, CompanionButtonStore,
+    CAMERA_PRESET_MAX, CAMERA_PRESET_MIN, COMPANION_BUTTONS, CompanionButtonStore, clean_label,
 )
 from app.native_controls import NativeControlError, NativeControlService
 from tests.helpers import app_client
@@ -116,6 +118,54 @@ class SavedPresetStoreTests(unittest.TestCase):
         self.assertEqual(ids, {"native-cam1-preset-9"})
 
 
+class StoredDataTests(unittest.TestCase):
+    def setUp(self):
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        self.path = Path(folder.name) / "companion_buttons.json"
+
+    def test_malformed_saved_presets_drop_only_that_field(self):
+        store = CompanionButtonStore(self.path, COMPANION_BUTTONS)
+        category = asyncio.run(store.create_category("Gottesdienst"))
+        asyncio.run(store.set_camera_label("native-cam1-preset-1", "CAM1 Kanzel"))
+        for bad in (["native-cam1-preset-9"], "CAM1 Kanzel", 7, None):
+            data = json.loads(self.path.read_text())
+            data["saved_camera_presets"] = bad
+            self.path.write_text(json.dumps(data))
+            reloaded = CompanionButtonStore(self.path, COMPANION_BUTTONS)
+            snapshot = asyncio.run(reloaded.snapshot())
+            self.assertIn(category["id"], {c["id"] for c in snapshot["categories"]}, bad)
+            labels = {b["id"]: b["label"] for b in asyncio.run(reloaded.camera_buttons())}
+            self.assertEqual(labels["native-cam1-preset-1"], "CAM1 Kanzel", bad)
+            self.assertFalse(any(b.get("saved") for b in asyncio.run(reloaded.camera_buttons())))
+            self.assertEqual(list(self.path.parent.glob("*.corrupt*")), [])
+
+    def test_too_long_stored_labels_are_dropped(self):
+        CompanionButtonStore(self.path, COMPANION_BUTTONS)
+        data = json.loads(self.path.read_text())
+        data["camera_labels"] = {"native-cam1-preset-1": "CAM1 " + "x" * 60, "native-cam1-preset-2": "CAM1 Kurz"}
+        data["saved_camera_presets"] = {"native-cam1-preset-9": "CAM1 " + "y" * 60, "native-cam1-preset-10": "CAM1 Ok"}
+        self.path.write_text(json.dumps(data))
+        labels = {b["id"]: b["label"] for b in asyncio.run(CompanionButtonStore(self.path, COMPANION_BUTTONS).camera_buttons())}
+        self.assertEqual(labels["native-cam1-preset-1"], "CAM1 Pult nah")
+        self.assertEqual(labels["native-cam1-preset-2"], "CAM1 Kurz")
+        self.assertNotIn("native-cam1-preset-9", labels)
+        self.assertEqual(labels["native-cam1-preset-10"], "CAM1 Ok")
+
+    def test_clean_label_drops_control_and_bidi_characters(self):
+        self.assertEqual(clean_label("Kan\x00zel\u202e  links\t\n"), "Kanzel links")
+        self.assertEqual(clean_label("\u202eleknaK\u202c \u2066A\u2069\u200f\x07"), "leknaK A")
+        self.assertEqual(clean_label("Bühne · Mitte 👩\u200d👧"), "Bühne · Mitte 👩\u200d👧")   # ZWJ stays
+        self.assertEqual(clean_label("\x00\u202e"), "")
+        with self.assertRaises(ValueError):
+            clean_label(None)
+        with self.assertRaises(ValueError):
+            clean_label("x" * 65)
+        store = CompanionButtonStore(self.path, COMPANION_BUTTONS)
+        renamed = asyncio.run(store.set_camera_label("native-cam2-preset-1", "CAM2 \u202eKanzel\x00"))
+        self.assertEqual(renamed["label"], "CAM2 Kanzel")
+
+
 class CameraPresetRouteTests(unittest.TestCase):
     def setUp(self):
         visca = mock.patch.object(native_mod, "_visca_tcp")
@@ -190,6 +240,8 @@ class CameraPresetRouteTests(unittest.TestCase):
         r = self.client.post("/cameras/cam1/presets", json={"preset": 3, "name": "Flügel"})
         self.assertEqual(r.status_code, 409)
         self.assertEqual(r.json()["name"], "Klavier")
+        # The Overall keys that drive Cam 1 to 3 are named in the question.
+        self.assertEqual(r.json()["users"], ["Taste: Musik Klavier", "Taste: Instrumental"])
         r = self.client.post("/cameras/cam1/presets", json={"preset": 3, "name": "Flügel", "overwrite": True})
         self.assertEqual(r.status_code, 200)
         self.assertEqual(self.sent(), [(*CAM1, store(3))])
@@ -213,6 +265,67 @@ class CameraPresetRouteTests(unittest.TestCase):
         r = self.client.post("/cameras/cam1/presets", json={"preset": 9, "name": "Kanzel"})
         self.assertEqual(r.status_code, 503)
         self.assertEqual(self.labels(), before)
+
+    def test_unnamed_number_in_use_is_asked_first(self):
+        # A program row, a shortcut, a template row and a key ID: all count.
+        self.assertEqual(self.client.post("/program/items", json={
+            "time": "10:00", "title": "Predigt", "person": "", "group": "", "cam1_preset": 10,
+        }).status_code, 200)
+        self.assertEqual(self.client.post("/shortcuts", json={"title": "Taufe", "cam1_preset": 11}).status_code, 200)
+        self.client.post("/cameras/cam1/presets", json={"preset": 12, "name": "Chor"})
+        self.client.post("/program/items", json={
+            "time": "10:30", "title": "Chor", "person": "", "group": "", "playback": "native-cam1-preset-12",
+        })
+        self.assertEqual(self.client.post("/program/templates", json={"name": "Sonntag"}).status_code, 200)
+        self.sent()
+
+        used = self.client.get("/cameras/cam1/presets/usage").json()["used"]
+        self.assertEqual(used["10"], ["Programm: 10:00 Predigt", "Vorlage „Sonntag“: 10:00 Predigt"])
+        self.assertEqual(used["11"], ["Shortcut: Taufe"])
+        self.assertEqual(used["12"], ["Programm: 10:30 Chor", "Vorlage „Sonntag“: 10:30 Chor"])
+        self.assertIn("Taste: Predigt", used["1"])
+        self.assertNotIn("13", used)
+        self.assertNotIn("10", self.client.get("/cameras/cam2/presets/usage").json()["used"])
+        self.assertEqual(self.client.get("/cameras/cam9/presets/usage").status_code, 404)
+
+        r = self.client.post("/cameras/cam1/presets", json={"preset": 10, "name": "Kanzel"})
+        self.assertEqual(r.status_code, 409)
+        self.assertIsNone(r.json()["name"])                  # no name here, but in use
+        self.assertEqual(r.json()["users"], ["Programm: 10:00 Predigt", "Vorlage „Sonntag“: 10:00 Predigt"])
+        self.assertEqual(self.client.post("/cameras/cam1/presets", json={"preset": 11, "name": "X"}).status_code, 409)
+        self.assertEqual(self.sent(), [])
+        r = self.client.post("/cameras/cam1/presets", json={"preset": 10, "name": "Kanzel", "overwrite": True})
+        self.assertEqual(r.status_code, 200)
+        self.assertTrue(r.json()["overwritten"])
+        self.assertEqual(self.sent(), [(*CAM1, store(10))])
+        # Nothing uses 13 and it has no name: stored without a question.
+        self.assertEqual(self.client.post("/cameras/cam1/presets", json={"preset": 13, "name": "Y"}).status_code, 200)
+
+    def test_parallel_saves_to_one_number(self):
+        def slow_camera(*_args):
+            time.sleep(0.3)   # both requests arrive while the first one stores
+
+        self.visca.side_effect = slow_camera
+        with ThreadPoolExecutor(2) as pool:
+            answers = list(pool.map(
+                lambda name: self.client.post("/cameras/cam2/presets", json={"preset": 9, "name": name}),
+                ("Erster", "Zweiter")))
+        self.assertEqual(sorted(a.status_code for a in answers), [200, 409])
+        self.assertEqual(len(self.sent()), 1)
+        loser = next(a for a in answers if a.status_code == 409).json()
+        winner = next(a for a in answers if a.status_code == 200).json()
+        self.assertEqual(f"CAM2 {loser['name']}", winner["button"]["label"])
+
+    def test_names_are_cleaned_and_overwrite_is_strict(self):
+        r = self.client.post("/cameras/cam1/presets", json={"preset": 9, "name": "Kan\x00zel\u202e"})
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(self.labels()["native-cam1-preset-9"], "CAM1 Kanzel")
+        self.sent()
+        self.assertEqual(self.client.post("/cameras/cam1/presets", json={"preset": 10, "name": "\x00\u202e"}).status_code, 400)
+        for flag in ("true", 1, "yes"):
+            self.assertEqual(self.client.post("/cameras/cam1/presets",
+                                              json={"preset": 9, "name": "X", "overwrite": flag}).status_code, 422)
+        self.assertEqual(self.sent(), [])
 
     def test_rename_saved_preset(self):
         self.client.post("/cameras/cam1/presets", json={"preset": 14, "name": "Taufe"})

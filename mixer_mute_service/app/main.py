@@ -156,6 +156,8 @@ async def lifespan(app: FastAPI):
     app.state.program_pdf = _optional(
         app, "program PDF import", lambda: ProgramPdfStore(data_dir / "program_pdf.json"))
     camera_ptz = _optional(app, "camera pan/tilt", PanTiltControl)
+    # One preset save per camera at a time (app/api/cameras.py), per event loop.
+    app.state.camera_preset_locks = {}
     app.state.camera_ptz = camera_ptz
     app.state.native_controls = _optional(
         app, "native controls", lambda: NativeControlService(data_dir / "native_control_state.json"))

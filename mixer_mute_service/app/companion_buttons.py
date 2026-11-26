@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import unicodedata
 import uuid
 from copy import deepcopy
 from pathlib import Path
@@ -226,11 +227,31 @@ def _saved_preset_key(button_id: str) -> Optional[tuple]:
     return key
 
 
-def _clean_label(label) -> Optional[str]:
-    label = " ".join(label.split()) if isinstance(label, str) else None
-    if label is None or len(label) > 64:
-        raise ValueError("label must be text of at most 64 characters")
+# Bidirectional formatting characters: an override (U+202E) shows a name
+# reversed and can make one key look like another.
+_BIDI_CONTROLS = frozenset("\u061c\u200e\u200f\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069")
+MAX_LABEL_LENGTH = 64
+
+
+def clean_label(label) -> str:
+    """A camera key's name: whitespace runs become one space, control and
+    bidi formatting characters (NUL, U+202E, ...) are dropped. ValueError:
+    not text, or longer than MAX_LABEL_LENGTH."""
+    if not isinstance(label, str):
+        raise ValueError(f"label must be text of at most {MAX_LABEL_LENGTH} characters")
+    kept = "".join(
+        ch for ch in label
+        if ch.isspace() or (unicodedata.category(ch) != "Cc" and ch not in _BIDI_CONTROLS)
+    )
+    label = " ".join(kept.split())
+    if len(label) > MAX_LABEL_LENGTH:
+        raise ValueError(f"label must be text of at most {MAX_LABEL_LENGTH} characters")
     return label
+
+
+def _stored_label(value) -> bool:
+    """A label read from the file: text, not empty, not too long."""
+    return isinstance(value, str) and bool(value.strip()) and len(value) <= MAX_LABEL_LENGTH
 # Bump when catalog actions change; stored native keys then get the new action.
 # v3 added the keys below, v4 made the Overall macros switch the light on,
 # v5 added state-aware Beamer hide/unhide actions, v6 adds direct projector
@@ -367,7 +388,9 @@ class CompanionButtonStore:
                 raise ValueError("invalid camera labels")
             saved_presets = data.get("saved_camera_presets", {})
             if not isinstance(saved_presets, dict):
-                raise ValueError("invalid saved camera presets")
+                # Only this field is dropped; keys and categories stay.
+                log.error("Invalid saved camera presets in %s, dropped: %r", self._path, saved_presets)
+                saved_presets = {}
             if self._catalog_version < 2:
                 category_ids = {item["id"] for item in categories}
                 categories.extend(item for item in deepcopy(DEFAULT_CATEGORIES) if item["id"] not in category_ids)
@@ -424,11 +447,11 @@ class CompanionButtonStore:
             self._buttons = buttons
             self._camera_labels = {
                 key: value for key, value in camera_labels.items()
-                if key in CAMERA_BUTTON_IDS and isinstance(value, str) and value.strip()
+                if key in CAMERA_BUTTON_IDS and _stored_label(value)
             }
             self._saved_presets = {
                 key: value for key, value in saved_presets.items()
-                if _saved_preset_key(key) and isinstance(value, str) and value.strip()
+                if _saved_preset_key(key) and _stored_label(value)
             }
             if migrated:
                 self._persist()
@@ -485,7 +508,7 @@ class CompanionButtonStore:
         the catalog key's label, or a saved preset. ValueError: bad input."""
         if camera not in PRESET_CAMERAS or not valid_camera_preset(preset):
             raise ValueError("unknown camera or preset number")
-        label = _clean_label(label)
+        label = clean_label(label)
         if not label:
             raise ValueError("a preset needs a name")
         async with self._lock:
@@ -508,7 +531,7 @@ class CompanionButtonStore:
         saved = _saved_preset_key(button_id) is not None
         if button_id not in CAMERA_BUTTON_IDS and not (saved and button_id in self._saved_presets):
             raise KeyError(button_id)
-        label = _clean_label(label)
+        label = clean_label(label)
         async with self._lock:
             if saved:
                 if button_id not in self._saved_presets:
