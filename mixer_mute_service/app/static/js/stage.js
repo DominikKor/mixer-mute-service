@@ -11,6 +11,7 @@ const STAGE = { on: false, current: null, order: [], thumbs: {}, raf: 0, anims: 
 const STAGE_MIN_FIT = window.matchMedia && matchMedia("(pointer: coarse)").matches ? 0.85 : 0.6;
 const STAGE_ANIM_MS = 440;
 const STAGE_FADER_MAX = 300, STAGE_FADER_MIN = 96;
+const STAGE_THUMB_MIN = 40;       // smallest miniature (px high); below that the rail scrolls
 const STAGE_GUTTER = 56;          // free strip on the right of scrolling sections (matches --stage-gutter)
 
 // Programm and full-size channel strips keep their size and scroll on the
@@ -32,6 +33,12 @@ function initStage() {
   rail.id = "stage-rail";
   rail.className = "stage-rail";
   rail.setAttribute("aria-label", "Bereiche");
+  // The miniatures sit in a list inside the rail: centred while they fit,
+  // from the top and scrollable (finger, mouse) when they do not.
+  const list = document.createElement("div");
+  list.id = "stage-rail-list";
+  list.className = "stage-rail-list";
+  rail.appendChild(list);
   const main = document.createElement("main");
   main.id = "stage-main";
   main.className = "stage-main";
@@ -100,7 +107,7 @@ function stagePlace(parent, node, before = null) {
 // Put every section where it belongs for the current state.
 function placeStagePanels() {
   const page = document.querySelector(".page");
-  const main = $("stage-main"), rail = $("stage-rail");
+  const main = $("stage-main"), list = $("stage-rail-list");
   if (!STAGE.on) {
     for (const panel of STAGE.order) {
       panel.inert = false;
@@ -116,7 +123,7 @@ function placeStagePanels() {
   // Every section keeps its own thumb in the rail (in page order); the one
   // on stage is just hidden, so only that section ever changes parent.
   const thumbs = STAGE.order.map(panel => STAGE.thumbs[panel.dataset.section]);
-  if (thumbs.some((thumb, i) => rail.children[i] !== thumb)) thumbs.forEach(thumb => stagePlace(rail, thumb));
+  if (thumbs.some((thumb, i) => list.children[i] !== thumb)) thumbs.forEach(thumb => stagePlace(list, thumb));
   for (const panel of STAGE.order) {
     const section = panel.dataset.section;
     const thumb = STAGE.thumbs[section];
@@ -192,15 +199,22 @@ function layoutStage() {
     panel._stageFit = scrolls ? 1 : Math.max(STAGE_MIN_FIT, Math.min(1, H / ph));
     panel._stageHeight = ph;
   }
-  // Miniatures keep the stage's proportions and share the rail's height.
+  // Miniatures keep the stage's proportions and share the rail's height; at
+  // STAGE_THUMB_MIN they stop shrinking and the rail scrolls instead. Label
+  // and padding of a miniature are measured, not guessed.
   const n = STAGE.order.length - 1;
-  const labelH = 26, gap = 12;
+  const list = $("stage-rail-list");
+  const gap = parseFloat(getComputedStyle(list).rowGap) || 0;
+  const shown = list.querySelector(".stage-thumb:not([hidden])");
+  const extra = shown ? shown.offsetHeight - shown.firstElementChild.offsetHeight : 30;
   let tw = rail.clientWidth - 8;
   let th = tw * H / W;
-  const maxTh = (rail.clientHeight - n * labelH - (n - 1) * gap) / n;
-  if (th > maxTh) { th = Math.max(40, maxTh); tw = th * W / H; }
+  const maxTh = (rail.clientHeight - n * extra - (n - 1) * gap) / n;
+  if (th > maxTh) { th = Math.max(STAGE_THUMB_MIN, maxTh); tw = th * W / H; }
   rail.style.setProperty("--thumb-w", `${Math.floor(tw)}px`);
   rail.style.setProperty("--thumb-h", `${Math.floor(th)}px`);
+  // A scrolling rail keeps clipping during the fly animations (see app.css).
+  rail.classList.toggle("scrolls", list.offsetHeight > rail.clientHeight + 1);
   for (const panel of STAGE.order) applyStageTransform(panel, W, H, tw);
 }
 

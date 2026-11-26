@@ -71,7 +71,9 @@ miniatures, and **Standard** restores the original one.
 - **Stage** switch (next to the title, remembered per device): like Stage
   Manager, one section fills the screen and the others sit as live miniatures
   on the left; a tap on one flies it onto the stage. The page itself never
-  scrolls. Programm and the full-size channel strips (300 px faders, as many
+  scrolls. The miniatures share the left rail's full height; at 40 px they
+  stop shrinking and the rail scrolls instead (finger or mouse), so a low
+  window never cuts one off. Programm and the full-size channel strips (300 px faders, as many
   per row as fit) keep their size and scroll on the stage, with a free strip
   on the right to swipe with the finger; Programm's "Weiter" bar stays at the
   top. Everything else is laid out to fit the screen (compact channels as

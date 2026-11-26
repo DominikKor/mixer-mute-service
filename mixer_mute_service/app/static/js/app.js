@@ -249,7 +249,7 @@ function applySectionRows(moved = null) {
   const page = document.querySelector(".page");
   const place = section => {
     const next = order[order.indexOf(section) + 1];
-    if (STAGE.on) stagePlace($("stage-rail"), STAGE.thumbs[section], next ? STAGE.thumbs[next] : null);
+    if (STAGE.on) stagePlace($("stage-rail-list"), STAGE.thumbs[section], next ? STAGE.thumbs[next] : null);
     else stagePlace(page, bySection[section], next ? bySection[next] : null);
   };
   if (moved) place(moved);
