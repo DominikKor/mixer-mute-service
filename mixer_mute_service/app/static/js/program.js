@@ -1235,6 +1235,7 @@ function programPlayToast(result) {
   } else {
     const camera = result.data.camera && result.data.camera.message ? ` · ${result.data.camera.message}` : "";
     toast(`${title} gestartet · Verzögerung ${formatProgramDelay(result.data.delay_seconds)}${camera}`, true);
+    noteSongScreensFailed(result.data.song);   // js/song-screens.js: a lyrics screen that missed it
     // Switching follows in the background: ask for the outcome once it is due.
     const wait = result.data.camera && result.data.camera.switch_in_seconds;
     if (wait) setTimeout(checkCameraProgram, (wait + 4) * 1000);

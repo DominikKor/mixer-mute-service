@@ -1,12 +1,17 @@
 """Song lyrics on several screens (app/songs.py) with fake display agents.
 
 Verifies: settings from before several screens (one PC and monitor) load as
-a one-screen list, also when an older page saves "monitor" only; one screen
-per PC and 1..4 screens; every show, blank and hide goes to all screens in
+a one-screen list; an older page that saves "monitor" changes only the first
+screen (never drops the others); a bad or doubled screen in the file is
+dropped alone; readdressing a PC keeps the screens valid; one screen per PC
+and 1..4 screens; every show, blank and hide goes to all screens in
 parallel, each with its own monitor; one screen failing does not stop the
 others (the answer and /songs/live name it with its reason, the live state
-moves on), all failing leaves the live state alone; the library stays on its
-own PC. No request leaves the process (display_agent._post is replaced).
+moves on), all failing leaves the live state alone; a screen that HANGS
+costs a step at most the 1 s timeout once, then steps do not wait for it at
+all, three quick steps land in order on the live screen, and the hanging
+screen gets only the newest slide; the library stays on its own PC. No
+request leaves the process (display_agent._post is replaced).
 
 Run from mixer_mute_service:  python -m tests.test_song_screens
 """
@@ -15,6 +20,7 @@ import json
 import os
 import tempfile
 import threading
+import time
 import unittest
 import urllib.error
 from pathlib import Path
@@ -46,6 +52,7 @@ class FakeAgents:
     def __init__(self):
         self.calls = []
         self.down = set()
+        self.hang = set()       # IPs that never answer: each call waits for its timeout
         self.barrier = None
         self.lock = threading.Lock()
 
@@ -57,6 +64,9 @@ class FakeAgents:
             self.barrier.wait()
         if ip in self.down:
             raise urllib.error.URLError("down")
+        if ip in self.hang:
+            time.sleep(timeout)
+            raise TimeoutError("no answer")
         if url.endswith("/songs/library"):
             return {"ok": True, "files": [{"name": "Testlied.foil", "xml": SONG}], "truncated": False}
         return {"ok": True, "action": payload["action"]}
@@ -66,6 +76,17 @@ class FakeAgents:
 
 
 class MigrationTest(unittest.TestCase):
+    def test_bad_screen_in_file_is_dropped_alone(self):
+        with tempfile.TemporaryDirectory() as name:
+            folder = Path(name)
+            (folder / "song_display.json").write_text(json.dumps({
+                "library_path": "C:\\Lieder", "font": "Arial", "target_ip": ANZEIGE, "monitor": 2,
+                "targets": [{"ip": ANZEIGE, "monitor": 2}, {"ip": ANZEIGE, "monitor": 3},
+                            {"ip": "8.8.8.8", "monitor": 1}, {"ip": STREAMING, "monitor": 1}]}))
+            settings = SongService(folder).settings
+            self.assertEqual([(t.ip, t.monitor) for t in settings.targets], [(ANZEIGE, 2), (STREAMING, 1)])
+            self.assertEqual((settings.font, settings.library_path), ("Arial", "C:\\Lieder"))   # the rest kept
+
     def test_old_settings_file_is_one_screen(self):
         with tempfile.TemporaryDirectory() as name:
             folder = Path(name)
@@ -117,9 +138,29 @@ class ScreensTest(unittest.TestCase):
             "targets": [{"ip": ANZEIGE, "monitor": 2}, {"ip": STREAMING, "monitor": 1}]})
         self.assertEqual(r.status_code, 200, r.text)
 
-    def test_older_page_saving_monitor_sets_one_screen(self):
+    def test_older_page_changes_only_the_first_screen(self):
         r = self.client.put("/songs/settings", json={"target_ip": ANZEIGE, "monitor": 4})
-        self.assertEqual(r.json()["settings"]["targets"], [{"ip": ANZEIGE, "monitor": 4}])
+        self.assertEqual(r.json()["settings"]["targets"], [{"ip": ANZEIGE, "monitor": 4}, {"ip": STREAMING, "monitor": 1}])
+        r = self.client.put("/songs/settings", json={"target_ip": STREAMING, "monitor": 3})
+        self.assertEqual(r.status_code, 400)   # would put two screens on one PC: refused, nothing lost
+        self.assertEqual(len(self.client.get("/songs/settings").json()["targets"]), 2)
+
+    def test_readdressing_a_pc_keeps_valid_screens(self):
+        r = self.client.put("/target-pcs", json={"pcs": [
+            {"id": "streaming", "name": "Streaming PC", "ip": ANZEIGE},
+            {"id": "display", "name": "Anzeige PC", "ip": ANZEIGE}]})
+        if r.status_code == 200:   # the store may refuse two PCs on one address itself
+            targets = self.client.get("/songs/settings").json()["targets"]
+            self.assertEqual(len({t["ip"] for t in targets}), len(targets))
+        r = self.client.put("/target-pcs", json={"pcs": [
+            {"id": "streaming", "name": "Streaming PC", "ip": "192.168.188.21"},
+            {"id": "display", "name": "Anzeige PC", "ip": ANZEIGE}]})
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(self.client.get("/songs/settings").json()["targets"],
+                         [{"ip": ANZEIGE, "monitor": 2}, {"ip": "192.168.188.21", "monitor": 1}])
+        self.client.put("/target-pcs", json={"pcs": [
+            {"id": "streaming", "name": "Streaming PC", "ip": STREAMING},
+            {"id": "display", "name": "Anzeige PC", "ip": ANZEIGE}]})
 
     def test_one_screen_per_pc(self):
         r = self.client.put("/songs/settings", json={"targets": [{"ip": ANZEIGE, "monitor": 1}, {"ip": ANZEIGE, "monitor": 2}]})
@@ -159,11 +200,53 @@ class ScreensTest(unittest.TestCase):
         live = self.client.get("/songs/live").json()
         self.assertEqual(live["slide"], 1)
         self.assertEqual([(s["ip"], s["ok"]) for s in live["screens"]], [(ANZEIGE, True), (STREAMING, False)])
-        # Back up: the next step reaches it again and the report clears.
+        # Back up: the next step reaches it again (without waiting for it) and the report clears.
         self.agents.down.clear()
-        r = self.client.post("/songs/prev")
-        self.assertNotIn("failed", r.json())
+        self.client.post("/songs/prev")
+        deadline = time.monotonic() + 2
+        while not all(s["ok"] for s in self.client.get("/songs/live").json()["screens"]) and time.monotonic() < deadline:
+            time.sleep(0.02)
         self.assertTrue(all(s["ok"] for s in self.client.get("/songs/live").json()["screens"]))
+
+    def test_hanging_screen_never_holds_up_the_steps(self):
+        self.client.post("/songs/show", json={"song_id": "Testlied.foil", "slide": 0})
+        self.agents.hang.add(STREAMING)
+        self.agents.calls.clear()
+        started = time.monotonic()
+        r = self.client.post("/songs/show", json={"song_id": "Testlied.foil", "slide": 1})
+        self.assertLess(time.monotonic() - started, 1.25)   # once at most the timeout
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual([f["ip"] for f in r.json()["failed"]], [STREAMING])
+        timings, slides = [], [0, 1, 0]
+        for slide in slides:   # three quick taps
+            started = time.monotonic()
+            r = self.client.post("/songs/show", json={"song_id": "Testlied.foil", "slide": slide})
+            timings.append(time.monotonic() - started)
+            self.assertEqual((r.status_code, r.json()["slide"]), (200, slide))
+            self.assertEqual([f["ip"] for f in r.json()["failed"]], [STREAMING])
+        self.assertLess(max(timings), 0.3, timings)   # not waiting for the dead screen
+        shown = [p["text"] for ip, p in self.agents.song_calls() if ip == ANZEIGE]
+        self.assertEqual(shown, ["Zwei", "Eins", "Zwei", "Eins"])   # every step, in order
+        time.sleep(1.2)   # the hanging screen's own queue: only ever the newest slide
+        hung = [p["text"] for ip, p in self.agents.song_calls() if ip == STREAMING]
+        self.assertLess(len(hung), 4)
+        self.assertEqual(hung[-1], "Eins")
+        self.agents.hang.clear()
+
+    def test_quick_taps_at_once_all_count(self):
+        self.client.post("/songs/show", json={"song_id": "Testlied.foil", "slide": 0})
+        self.client.put("/songs/settings", json={"title_slide": True})
+        self.client.post("/songs/show", json={"song_id": "Testlied.foil", "slide": 0})
+        self.agents.calls.clear()
+        threads = [threading.Thread(target=self.client.post, args=("/songs/next",)) for _ in range(2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        self.assertEqual(self.client.get("/songs/live").json()["slide"], 2)   # two taps, two steps
+        shown = [p["text"] for ip, p in self.agents.song_calls() if ip == ANZEIGE]
+        self.assertEqual(shown[-1], "Zwei")
+        self.client.put("/songs/settings", json={"title_slide": False})
 
     def test_all_screens_down_leaves_the_live_state(self):
         self.client.post("/songs/show", json={"song_id": "Testlied.foil", "slide": 0})

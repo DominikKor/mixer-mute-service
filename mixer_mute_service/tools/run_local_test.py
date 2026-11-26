@@ -27,8 +27,8 @@ the connect timeout, then fails) and a delay for the others' answers.
 
     python -m tools.run_local_test --dead-agent 192.168.188.20
 
-plays a PC whose display agent is off (song lyrics on several screens: the
-others still update).
+plays a PC whose display agent is off: every call to it hangs until its
+timeout (song lyrics on several screens: the others must not wait).
 """
 
 from __future__ import annotations
@@ -173,7 +173,9 @@ class FakeDevices:
     def agent(self, url, token, payload, timeout):
         path = "/" + url.split("/", 3)[3]
         if url.split("/")[2].split(":")[0] in self.dead_agents:
-            raise OSError("fake display agent is off")
+            # A PC that is off: no answer at all until the timeout (not a quick refusal).
+            time.sleep(timeout)
+            raise TimeoutError("fake display agent is off")
         if path == "/info":
             from app.agent_download import agent_dir
             version_file = agent_dir() / "version.txt"

@@ -813,15 +813,20 @@ jeder Display-Agent zeigt sie also ohne Update.
 **Mehrere Bildschirme**: Unter *Liedtext zeigen auf* wird je PC ein Schalter
 (und dann dessen Monitor) gewählt, z. B. der Beamer am Anzeige-PC und ein Monitor
 am Streaming-PC (`targets`: bis zu 4, je PC einer – ein Display-Agent hat ein
-Liedfenster). Jede Folie, Schwarz und Aus geht gleichzeitig an alle; jeder Agent
-passt den Text an seinen eigenen Bildschirm an. Ist ein PC nicht erreichbar,
-zeigen die anderen trotzdem weiter: die Liedanzeige nennt ihn in Gelb mit Grund,
-die Leiste am Programmpunkt zeigt ⚠ (antippen nennt ihn), und beim ersten Mal
-kommt eine Meldung. Erst wenn kein Bildschirm erreichbar ist, bleibt die Folie
+Liedfenster). Jede Folie, Schwarz und Aus geht gleichzeitig an alle, je
+Bildschirm der Reihe nach; jeder Agent passt den Text an seinen eigenen
+Bildschirm an. Ein Schritt wartet höchstens 1 s und nie auf einen PC, der schon
+nicht geantwortet hat: der bekommt nur die jeweils neueste Folie, alle 5 s neu,
+bis er wieder antwortet (dann zeigt er gleich die aktuelle). Die Liedanzeige
+nennt ihn in Gelb mit Grund, die Leiste am Programmpunkt zeigt ⚠ (antippen nennt
+ihn), und beim ersten Mal kommt eine Meldung (auch beim Start eines
+Programmpunkts). Erst wenn kein Bildschirm erreichbar ist, bleibt die Folie
 stehen (502). Ältere Einstellungen (`target_ip` + `monitor`) gelten als ein
 Bildschirm; `target_ip` ist seither der PC mit der Bibliothek, `monitor` der
-des ersten Bildschirms. Im Test-Dienst spielt `--dead-agent IP` einen PC, dessen
-Agent aus ist.
+des ersten Bildschirms; eine ältere Seite ändert damit nur den ersten
+Bildschirm. Ein ungültiger oder doppelter Bildschirm in `song_display.json`
+fällt allein weg. Im Test-Dienst spielt `--dead-agent IP` einen PC, dessen
+Agent aus ist (jeder Aufruf hängt bis zum Timeout).
 
 Ein Programmpunkt bekommt sein Lied in der Spalte *Liedtext* („♪ Lied wählen“,
 Suche nach Titel oder Liederbuch-Nummer; eine eingetippte Nummer zeigt die Lieder
@@ -835,7 +840,7 @@ der letzten Folie schaltet *Weiter* auf schwarz.
 **Am laufenden Programmpunkt**: Hat der laufende Programmpunkt ein Lied, fährt
 unter seiner Zeile eine schmale Leiste aus (`js/song-dock.js`): Zurück, je Folie
 ein Knopf (T, 1, R, 2 …; antippen = anzeigen), die erste Zeile der gezeigten
-Folie, Schwarz und ein großes Weiter. Sie steuert dasselbe Lied wie der Bereich
+Folie, Schwarz, Aus und ein großes Weiter. Sie steuert dasselbe Lied wie der Bereich
 Liedanzeige (gleiche Aufrufe, beide zeigen immer dasselbe). Ist ein anderes oder
 kein Lied auf dem Bildschirm, bleibt eine Zeile mit *Zeigen* (das Lied des
 Programmpunkts ab der ersten Folie); läuft ein anderer Programmpunkt, fährt sie

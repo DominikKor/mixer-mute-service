@@ -11,6 +11,7 @@
 
 const MAX_SONG_SCREENS = 4;
 const SONG_SCREEN_MONITORS = [1, 2, 3, 4];
+const SONG_DEFAULT_MONITOR = 2;   // as the service (SongTarget.monitor)
 
 // The service's English reasons, as the operator should read them.
 const SONG_SCREEN_REASONS = {
@@ -126,7 +127,7 @@ function toggleSongTarget(ip, monitor = null) {
     songFormError(`Höchstens ${MAX_SONG_SCREENS} Bildschirme`);
     return;
   } else {
-    SONG_FORM_TARGETS.push({ ip, monitor: monitor || SONG_TARGET_LAST_MONITOR[ip] || 1 });
+    SONG_FORM_TARGETS.push({ ip, monitor: monitor || SONG_TARGET_LAST_MONITOR[ip] || SONG_DEFAULT_MONITOR });
     // In the order of the PCs (the first screen is the old "monitor").
     const order = songTargetPcs().map(pc => pc.ip);
     SONG_FORM_TARGETS.sort((a, b) => order.indexOf(a.ip) - order.indexOf(b.ip));

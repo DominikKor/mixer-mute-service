@@ -17,6 +17,7 @@ from ..config import DesktopProfileConfig, default_config_path
 from ..desktop_profiles import ProfileEditError, add_profile, delete_profile, duplicate_profile, update_profile
 from ..models import StagePreferenceRequest
 from ..responses import fail, reply
+from ..songs import SongSettings, clean_targets
 from ..target_pcs import TargetPcError
 
 router = APIRouter()
@@ -202,10 +203,16 @@ async def _move_targets(request: Request, moves: dict) -> dict:
     if songs is not None and ({songs.settings.target_ip} | {t.ip for t in songs.settings.targets}) & set(moves):
         async with songs.lock:
             current = songs.settings
-            targets = [t.model_copy(update={"ip": moves.get(t.ip, t.ip)}) for t in current.targets]
-            songs.save_settings(current.model_copy(update={
-                "target_ip": moves.get(current.target_ip, current.target_ip), "targets": targets}))
-        result["songs"] = True
+            # Validated again; two screens that end up on one PC become one.
+            targets = clean_targets([{**t.model_dump(), "ip": moves.get(t.ip, t.ip)} for t in current.targets])
+            try:
+                moved_songs = SongSettings(**{**current.model_dump(), "targets": targets,
+                                              "target_ip": moves.get(current.target_ip, current.target_ip)})
+            except (ValidationError, ValueError) as exc:
+                result["problems"].append(f"Liedanzeige: {exc}")
+            else:
+                songs.save_settings(moved_songs)
+                result["songs"] = True
     if state.power_control is not None:
         result["power"] = await state.power_control.retarget(moves)
     if state.program_items is not None:
