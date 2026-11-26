@@ -938,6 +938,11 @@ steuert dasselbe Lied wie der Bereich Liedanzeige (gleiche Aufrufe, beide zeigen
 immer dasselbe). Ist ein anderes oder kein Lied auf dem Bildschirm, bleibt eine
 Zeile mit *Zeigen* (das Lied des Programmpunkts ab der ersten Folie); läuft ein
 anderer Programmpunkt, fährt sie wieder ein.
+Wird ein Programmpunkt hier mit PLAY gestartet, bleibt PLAY unter dem Finger
+(die Seite oder die Stage scrollt um die Höhe der Leiste). Geht das nicht (Stage,
+deren Programm ganz hineinpasst), bleiben die Tasten der Leiste, die jetzt dort
+liegen, wo PLAY war, gelb markiert gesperrt, bis woanders getippt wird; ein
+zweites Tippen „auf PLAY“ löst nie Schwarz oder Weiter aus.
 
 Tastatur und Presenter (immer, solange die Seite offen ist; nicht beim Tippen in
 einem Feld oder bei offenem Dialog):
