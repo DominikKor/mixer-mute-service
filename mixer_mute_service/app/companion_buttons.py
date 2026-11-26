@@ -38,6 +38,13 @@ BUTTON_ALIASES = {
     "start": "native-obs-start",
     "ende": "native-obs-end",
 }
+# How those old keys came in the catalog (all in the OBS category): one the
+# user renamed or moved is kept as an own key (see _merge_duplicate_obs_keys).
+_OLD_DUPLICATE_LABELS = {
+    "cam1-live": "Cam 1 Live", "cam2-live-top": "Cam 2 Live", "cam2-live-bottom": "Cam 2 Live",
+    "pc2-live-top-left": "PC2 Live", "pc2-live-top-right": "PC2 Live", "cam1-toggle": "Cam1 ein/aus",
+    "start": "Start", "ende": "Ende",
+}
 
 _SHELLY_BUTTONS = [
     ("left", "Licht Links"), ("center-left", "Licht Mitte Links"),
@@ -262,10 +269,14 @@ def resolve_alias(button_id: str) -> str:
 
 
 def _merge_duplicate_obs_keys(buttons: List[dict]) -> List[dict]:
-    """v10: each old duplicate OBS key leaves Steuerung. If its native key is
-    gone (the user deleted it), the first old key becomes the native key in
-    its place, keeping its label and category. Own keys that point at an old
-    key point at the native one."""
+    """v10: each old duplicate OBS key leaves Steuerung, unless the user made
+    it their own:
+    - its native key is gone (the user deleted it): the first old key becomes
+      the native key in its place, keeping its label and category;
+    - the user renamed it or moved it to another category: it stays where it
+      is, with its label, as an own key that runs the native key;
+    - otherwise it is dropped (the native key is there).
+    Own keys that point at an old key point at the native one."""
     present = {button.get("id") for button in buttons}
     merged = []
     for button in buttons:
@@ -278,6 +289,11 @@ def _merge_duplicate_obs_keys(buttons: List[dict]) -> List[dict]:
             present.add(target)
             merged.append({**button, "id": target, "kind": "native",
                            "native_action": deepcopy(COMPANION_BUTTONS_BY_ID[target]["native_action"])})
+        elif (button.get("label") != _OLD_DUPLICATE_LABELS[button["id"]]
+              or button.get("category_id") != "obs"):
+            merged.append({"id": f"user-{uuid.uuid4().hex[:12]}", "label": button.get("label"),
+                           "category_id": button.get("category_id"),
+                           "kind": "companion", "target_button_id": target})
     return merged
 
 

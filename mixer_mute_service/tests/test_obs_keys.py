@@ -64,6 +64,36 @@ class DuplicateKeyTests(unittest.TestCase):
         self.assertIn("native-obs-transition-slower", ids)
         self.assertEqual(migrated["native_catalog_version"], 10)
 
+    def test_renamed_or_moved_old_key_stays_as_an_own_key(self):
+        categories = deepcopy(DEFAULT_CATEGORIES) + [{"id": "category-gd", "name": "Gottesdienst", "visible": True}]
+        stored = {"categories": categories, "native_catalog_version": 9, "buttons": [
+            deepcopy(COMPANION_BUTTONS_BY_ID["native-obs-end"]),
+            deepcopy(COMPANION_BUTTONS_BY_ID["native-obs-cam2-live"]),
+            deepcopy(COMPANION_BUTTONS_BY_ID["native-obs-start"]),
+            {**old_key("start"), "id": "ende", "label": "Schluss", "category_id": "category-gd",
+             "native_action": {"type": "obs-scene", "scene": "Ende (neu)"}},   # renamed and moved
+            old_key("cam2-live-top", label="Kamera hinten"),                     # renamed only
+            old_key("cam2-live-bottom", category="beamer"),                      # moved only
+            old_key("start"),                                                    # untouched: goes
+        ]}
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "buttons.json"
+            path.write_text(json.dumps(stored), encoding="utf-8")
+            store = CompanionButtonStore(path, COMPANION_BUTTONS)
+            migrated = json.loads(path.read_text(encoding="utf-8"))
+            own = [b for b in migrated["buttons"] if b["id"].startswith("user-")]
+            self.assertEqual([(b["label"], b["category_id"], b["kind"], b["target_button_id"]) for b in own], [
+                ("Schluss", "category-gd", "companion", "native-obs-end"),
+                ("Kamera hinten", "obs", "companion", "native-obs-cam2-live"),
+                ("Cam 2 Live", "beamer", "companion", "native-obs-cam2-live"),
+            ])
+            ids = {b["id"] for b in migrated["buttons"]}
+            self.assertFalse(ids & set(BUTTON_ALIASES), "no old ID left in Steuerung")
+            self.assertEqual(len([b for b in migrated["buttons"] if b["label"] == "Start"]), 1)
+            # Reloading keeps them (no second migration, no new IDs).
+            self.assertEqual(asyncio.run(CompanionButtonStore(path, COMPANION_BUTTONS).snapshot())["buttons"],
+                             asyncio.run(store.snapshot())["buttons"])
+
     def test_an_old_key_takes_the_place_of_a_deleted_native_key(self):
         migrated = self._migrate([old_key("pc2-live-top-left", label="Beamer-PC", category="beamer"),
                                   old_key("start")])
