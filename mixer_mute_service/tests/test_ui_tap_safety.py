@@ -231,6 +231,20 @@ class MenuBackdropTests(unittest.TestCase):
         self.assertTrue(self.val('ELEMENTS["menu-backdrop"].parent === dlg && ELEMENTS["action-menu"].parent === dlg'))
         self.assertTrue(self.val('ELEMENTS["menu-backdrop"].nextSibling === ELEMENTS["action-menu"]'))
 
+    def test_closing_a_dialog_closes_its_menu(self):
+        self.js.eval('var dlg = new El("dialog", BODY); dlg.dialog = true; var inner = new El("dots3", dlg); inner.button = true;')
+        self.js.eval('openActionMenu(inner, [{ label: "x", run: function () {} }])')
+        self.js.eval('fire("close", dlg)')   # Escape, Speichern or Abbrechen
+        self.assertTrue(self.val('OPEN_MENU === null && ELEMENTS["menu-backdrop"].hidden && ELEMENTS["action-menu"].hidden'))
+        self.assertEqual(self.val('inner.getAttribute("aria-expanded")'), "false")
+        # The page's next tap goes where it is aimed.
+        self.js.eval("tap(key)")
+        self.assertEqual(self.val("LOG"), ["mute"])
+        # A later close of the same dialog leaves a menu opened elsewhere alone.
+        self.open_menu()
+        self.js.eval('fire("close", dlg)')
+        self.assertTrue(self.val("OPEN_MENU !== null"))
+
     def test_nothing_in_the_way_without_a_menu(self):
         self.js.eval("tap(key); tap(slider); tap(panic)")
         self.assertEqual(self.val("LOG"), ["mute", "fader pointerdown", "fader click", "panic"])

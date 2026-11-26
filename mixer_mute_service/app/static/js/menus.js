@@ -88,6 +88,12 @@ function openTileMenu(trigger, menu) {
   backdrop.hidden = false;
   const r = trigger.getBoundingClientRect();
   OPEN_MENU = { menu, trigger, key: trigger.dataset.menuKey || null, top: r.top, left: r.left };
+  // The dialog closes (Escape, a save, a cancel key): its menu goes with it,
+  // else the menu would count as open with its backdrop out of sight.
+  if (host !== document.body) {
+    const opened = OPEN_MENU;
+    host.addEventListener("close", () => { if (OPEN_MENU === opened) closeTileMenu(); }, { once: true });
+  }
   menu._trigger = trigger;
   trigger.setAttribute("aria-expanded", "true");
   placeMenu(menu, trigger);
