@@ -602,6 +602,41 @@ def agent_account() -> dict:
     return {"agent_user": user, "agent_localappdata": os.environ.get("LOCALAPPDATA")}
 
 
+def _installed_locations(app: str) -> list:
+    """InstallLocation of every installed program whose name contains
+    ``app`` (HKLM and HKCU uninstall entries, 64 and 32 bit), MPV.NET left
+    out. Empty outside Windows."""
+    if os.name != "nt":
+        return []
+    import winreg
+
+    keys = ((winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"),
+            (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall"),
+            (winreg.HKEY_CURRENT_USER, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"))
+    locations = []
+    for root, key in keys:
+        try:
+            handle = winreg.OpenKey(root, key)
+        except OSError:
+            continue
+        with handle:
+            for index in range(1000):
+                try:
+                    sub = winreg.EnumKey(handle, index)
+                except OSError:
+                    break
+                try:
+                    with winreg.OpenKey(handle, sub) as entry:
+                        name = str(winreg.QueryValueEx(entry, "DisplayName")[0])
+                        location = str(winreg.QueryValueEx(entry, "InstallLocation")[0]).strip().strip('"')
+                except OSError:
+                    continue
+                lowered = name.lower()
+                if app.lower() in lowered and "mpv.net" not in lowered and location and location not in locations:
+                    locations.append(location)
+    return locations
+
+
 def find_tool(command: str, path_variable: str, app: str, pkg: str, *, near=(), env=None,
               exe=None, trace=None) -> tuple:
     """(path or None, [places searched]) for a program like mpv: the variable
@@ -649,6 +684,13 @@ def find_tool(command: str, path_variable: str, app: str, pkg: str, *, near=(), 
         candidate = Path(folder) / exe
         if take("next to mpv" if folder in near else "the agent folder", str(candidate),
                 candidate if candidate.is_file() else None):
+            return trace[-1]["found"], searched
+    # Installers record their folder (Inno: InstallLocation): right even
+    # when a new version installs somewhere else.
+    searched.append("installed programs (registry)")
+    for location in _installed_locations(app):
+        candidate = Path(location) / exe
+        if take("installed programs (registry)", str(candidate), candidate if candidate.is_file() else None):
             return trace[-1]["found"], searched
     defaults = {
         "LOCALAPPDATA": env.get("LOCALAPPDATA", ""),

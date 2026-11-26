@@ -116,6 +116,19 @@ class FindToolTests(unittest.TestCase):
                 self.assertEqual(Path(found), expected)
                 expected.unlink()
 
+    def test_install_location_from_the_registry(self):
+        """Robust against a new folder name: the installer's InstallLocation."""
+        expected = touch(self.root / "Somewhere" / "Video Player" / "mpv.exe")
+        with patch.object(agent, "_installed_locations", return_value=[str(expected.parent)]) as locations:
+            found, searched = self.find(self.env())
+        self.assertEqual(Path(found), expected)
+        locations.assert_called_with("mpv")
+        self.assertIn("installed programs (registry)", searched)
+
+    def test_no_registry_outside_windows(self):
+        with patch.object(agent.os, "name", "posix"):
+            self.assertEqual(agent._installed_locations("mpv"), [])
+
     def test_real_mpv_before_mpv_net(self):
         """MPV_PATH named MPV.NET's mpvnet.exe on the streaming PC: slow to
         start, and its control channel never answered. A real mpv.exe wins."""

@@ -627,7 +627,8 @@ Registry), der Agent-Ordner, WinGet (Links und Pakete, Benutzer und System),
 scoop, Chocolatey, `Program Files`, `Program Files (x86)` und
 `%LOCALAPPDATA%\Programs` (dort auch Ordner, deren Name „mpv“ enthaelt: winget
 `shinchiro.mpv` installiert nach `C:\Program Files\MPV Player` und setzt kein
-PATH). Ein echtes `mpv.exe` geht immer vor MPV.NET (`mpvnet.exe`, auch wenn
+PATH) und der Installationsordner, den ein Installer in der Registry eintraegt
+(Programme und Features, Name mit „mpv“, ohne MPV.NET). Ein echtes `mpv.exe` geht immer vor MPV.NET (`mpvnet.exe`, auch wenn
 `MPV_PATH` darauf zeigt): MPV.NET startet langsam, und sein Steuerkanal
 antwortet nicht; es wird nur genommen, wenn sonst nichts da ist. Statt
 `mpv.com` (Konsolen-Huelle) wird das `mpv.exe` daneben gestartet. yt-dlp (fuer
