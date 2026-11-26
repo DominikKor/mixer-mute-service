@@ -200,8 +200,9 @@ async function updateTemplatePreview() {
     li.append(time, title, song);
     list.appendChild(li);
   }
-  const extra = Math.max(0, songs.length - template.slot_count);
-  const empty = Math.max(0, template.slot_count - songs.length);
+  const slotCount = Number.isInteger(result.data.slots) ? result.data.slots : template.slot_count;  // the program's song rows
+  const extra = Math.max(0, songs.length - slotCount);
+  const empty = Math.max(0, slotCount - songs.length);
   const missing = songs.filter(s => !s.song_id).length;
   $("tp-hint").textContent = [
     extra ? `${extra} ${extra === 1 ? "Lied wird" : "Lieder werden"} nach dem letzten Liedplatz angehängt.` : "",

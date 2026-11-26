@@ -191,6 +191,130 @@ class AblaufApplyTests(unittest.TestCase):
             self.assertEqual(by_title(client, "Begrüßung")["person"], "Anna")
 
 
+# The production template and program (read-only look, 2026-11-26): the template's
+# slot titles are last time's songs, the program's song rows are "Lied 1", "Lied 2".
+PROD_TEMPLATE = [
+    ("Begrüßung", 0), ("Textlesung", 0), ("Above all", 1), ("Gebet im Knien", 0), ("Missionsbericht", 0),
+    ("Mission spotlight", 0), ("Missionsgaben", 0), ("Dankgebet Missionsgaben", 0), ("Ach mein Herr Jesu", 1),
+    ("Bibelgespräch", 0), ("All eure Sorgen", 1), ("Gebet", 0),
+]
+PROD_PROGRAM = [
+    ("Begrüßung", {}), ("Textlesung", {}), ("Lied 1", {"cam1_preset": 3}), ("Gebet im Knien", {}),
+    ("Missionsbericht", {"hidden": True}), ("Mission spotlight", {}), ("Missionsgaben", {}),
+    ("Dankgebet Missionsgaben", {}), ("Lied 2", {"cam1_preset": 4}), ("Bibelgespräch", {}),
+    ("All eure Sorgen", {"cam1_preset": 5}), ("Gebet", {"hidden": True}),
+]
+
+
+def production_setup(client):
+    """The production rows (times 09:00, 09:05 ...) and template, as the live program is built."""
+    client.app.state.songs.songs = dict(LIBRARY)
+    slots = []
+    for n, (title, extra) in enumerate(PROD_PROGRAM):
+        extra = dict(extra)
+        hidden = extra.pop("hidden", False)
+        row = put(client, f"09:{n * 5:02d}", title, **extra)
+        if hidden:
+            asyncio.run(client.app.state.program_items.set_hidden(row["id"], True))
+        if PROD_TEMPLATE[n][1]:
+            slots.append(row["id"])
+    # the template as it was saved: other slot titles (last time's songs) than the program rows have now
+    template = client.post("/program/templates", json={"name": "Gottesdienst", "slots": slots}).json()["template"]
+    store = client.app.state.program_templates
+    for row, (title, _) in zip(next(t for t in store._templates if t["id"] == template["id"])["rows"], PROD_TEMPLATE):
+        row["title"] = title
+    return template
+
+
+class SongSlotAnchorTests(unittest.TestCase):
+    def test_production_lists(self):
+        with app_client() as (client, _):
+            template = production_setup(client)
+            before = {r["title"]: r for r in rows(client)}
+            r = apply(client, template, [{"song_id": "neu.foil", "text": ""}, {"song_id": "zweit.foil", "text": ""},
+                                         {"song_id": None, "text": "Dritte Nummer"}],
+                      [("begruessung1", "Anna"), ("gebet_knie", "Karl"), ("missionsbericht", "Mission Spotlight"),
+                       ("missionsgaben", "Mia"), ("dankgebet", "Dora"), ("bibelgespraech", "Bea"),
+                       ("gebet_ende1", "Gero")])
+            self.assertEqual(r.status_code, 200, r.text)
+            after = rows(client)
+            self.assertEqual([x["id"] for x in after], [x["id"] for x in rows(client)])
+            self.assertEqual(len(after), 12, "no new rows: every song found its row")
+            found = {x["id"]: x for x in after}
+            self.assertEqual(found[before["Lied 1"]["id"]]["song"], "neu.foil")
+            self.assertEqual(found[before["Lied 2"]["id"]]["song"], "zweit.foil")
+            third = found[before["All eure Sorgen"]["id"]]
+            self.assertEqual((third["song"], third["title"]), (None, "All eure Sorgen: Dritte Nummer"))
+            for title in ("Lied 1", "Lied 2"):  # titles and settings stay
+                self.assertEqual(found[before[title]["id"]]["title"], title)
+            self.assertEqual([found[before[t]["id"]]["cam1_preset"] for t in ("Lied 1", "Lied 2", "All eure Sorgen")], [3, 4, 5])
+            self.assertEqual(found[before["Begrüßung"]["id"]]["person"], "Anna")
+            self.assertEqual([found[before[t]["id"]]["person"] for t in (
+                "Gebet im Knien", "Missionsgaben", "Dankgebet Missionsgaben", "Bibelgespräch", "Gebet")],
+                ["Karl", "Mia", "Dora", "Bea", "Gero"])
+            self.assertEqual(found[before["Mission spotlight"]["id"]]["hidden"], False)
+            self.assertEqual(found[before["Missionsbericht"]["id"]]["hidden"], True)
+            self.assertEqual(found[before["Gebet"]["id"]]["hidden"], True)  # a hidden row stays hidden
+
+    def test_preview_counts_the_programs_song_rows(self):
+        with app_client() as (client, _):
+            template = production_setup(client)
+            r = client.post(f"/program/templates/{template['id']}/apply", json={
+                "dry_run": True, "songs": [{"song_id": "neu.foil", "text": ""}], "persons": []})
+            self.assertEqual(r.json()["slots"], 3)
+            self.assertEqual(len(r.json()["rows"]), 12)
+
+    def test_extra_song_row_is_hidden_while_empty_and_shown_with_a_song(self):
+        with app_client() as (client, _):
+            template = production_setup(client)
+            four = [{"song_id": "neu.foil", "text": ""}] * 3 + [{"song_id": "zweit.foil", "text": ""}]
+            apply(client, template, four)
+            after = rows(client)
+            self.assertEqual([x["title"] for x in after].count("All eure Sorgen"), 2)  # the 4th song: a copy of the last slot
+            extra = after[after.index(next(x for x in after if x["title"] == "All eure Sorgen")) + 1]
+            self.assertEqual((extra["title"], extra["song"], extra["hidden"]), ("All eure Sorgen", "zweit.foil", False))
+            apply(client, template, four[:3])  # next time only three songs: the extra row stays, hidden
+            after = rows(client)
+            self.assertEqual(len(after), 13)
+            extra = next(x for x in after if x["id"] == extra["id"])
+            self.assertEqual((extra["song"], extra["hidden"]), (None, True))
+            self.assertEqual(client.get("/program/status").json()["next_id"], rows(client)[0]["id"])  # "Weiter" skips it
+            apply(client, template, four)
+            extra = next(x for x in rows(client) if x["id"] == extra["id"])
+            self.assertEqual((extra["song"], extra["hidden"]), ("zweit.foil", False))
+            # the template's own empty slots are not hidden
+            apply(client, template, four[:1])
+            now = {x["title"]: x for x in rows(client)}
+            self.assertEqual((now["Lied 2"]["song"], now["Lied 2"]["hidden"]), (None, False))
+
+    def test_anchors_missing_fall_back_to_the_titles(self):
+        with app_client() as (client, _):
+            client.app.state.songs.songs = dict(LIBRARY)
+            put(client, "10:00", "Lied 1", cam1_preset=3)
+            put(client, "10:10", "Technik-Check")
+            put(client, "10:20", "Lied 2", cam1_preset=4)
+            template = client.post("/program/templates", json={"name": "GD", "slots": [
+                r["id"] for r in rows(client) if r["title"].startswith("Lied")]}).json()["template"]
+            apply(client, template, [{"song_id": "neu.foil", "text": ""}, {"song_id": "zweit.foil", "text": ""}])
+            now = rows(client)
+            self.assertEqual([(x["title"], x["song"]) for x in now],
+                             [("Lied 1", "neu.foil"), ("Technik-Check", None), ("Lied 2", "zweit.foil")])
+
+    def test_a_row_between_the_anchors_that_is_no_song_is_left_alone(self):
+        with app_client() as (client, _):
+            client.app.state.songs.songs = dict(LIBRARY)
+            put(client, "10:00", "Begrüßung")
+            put(client, "10:02", "Technik-Check", cam1_preset=2)
+            put(client, "10:05", "Lied 1", cam1_preset=3)
+            put(client, "10:30", "Predigt")
+            template = client.post("/program/templates", json={"name": "GD", "slots": [
+                by_title(client, "Lied 1")["id"]]}).json()["template"]
+            apply(client, template, [{"song_id": "neu.foil", "text": ""}])
+            now = {x["title"]: x for x in rows(client)}
+            self.assertEqual((now["Technik-Check"]["song"], now["Lied 1"]["song"]), (None, "neu.foil"))
+            self.assertEqual(len(now), 4)
+
+
 class MissionSpotlightTests(unittest.TestCase):
     def setup_program(self, client, normal=True, spotlight="Mission Spotlight"):
         put(client, "10:00", "Begrüßung")
