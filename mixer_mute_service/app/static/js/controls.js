@@ -401,9 +401,13 @@ $("companion-categories").addEventListener("click", async (event) => {
     if (!result.ok || result.data.ok === false) toast(`${button.textContent}: ${result.data.reason || "HTTP " + result.status}`, false);
     else {
       const isBeamerMode = button.dataset.companionPress === "beamer-hide" || button.dataset.companionPress === "beamer-unhide";
-      if (isBeamerMode) {
+      // Beamer on/off also set the remembered state (a started beamer is un-hidden).
+      const isBeamerPower = button.dataset.companionPress === "beamer-power-on" || button.dataset.companionPress === "beamer-power-off";
+      if (isBeamerMode || isBeamerPower) {
         const state = await api("GET", "/beamer/state");
         renderBeamerState(state.ok ? state.data : null);
+      }
+      if (isBeamerMode) {
         toast(result.data.changed === false ? `${button.textContent}: bereits gesetzt, kein Toggle` : `${button.textContent}: ausgeführt`, true);
       } else {
         toast(`${button.textContent}: ausgeführt`, true);
