@@ -148,9 +148,11 @@ miniatures, and **Standard** restores the original one.
   started itself: a file handed to an app that was already running, e.g.
   a single-instance player, cannot be closed and is logged). A profile the
   new row starts again is sent again, and the agent decides: music that
-  still plays and a video window still open stay as they are (no new
-  fade-in, no reopened video), music that ended starts again, an image is
-  shown again. Music is never stopped on a PC where the new row starts
+  still plays and a video window an earlier row opened that is still open
+  stay as they are (no new fade-in, no reopened video), music that ended
+  starts again, an image is shown again; a window left open by hand is
+  opened again by the row. A start the agent did not answer in time is
+  stopped later by its profile alone. Music is never stopped on a PC where the new row starts
   audio itself (a profile or a file). Every start carries a stamp and a
   stop names the start it means, so the agent never lets a late stop end
   a newer start; no start waits for a stop. What the operator started by hand (a Desktop key,
@@ -625,6 +627,15 @@ Agent nimmt die Datei, deren Name mit der zweistelligen Woche beginnt, z. B.
 `I:\Mission Spotlight\2026_3.Quartal\01_Testvideo.mp4` (bei mehreren die neueste;
 Ordner ohne Jahr, z. B. `3.Quartal`, werden nicht mehr beachtet).
 Das Profilfenster zeigt das aktuelle Jahr, Quartal und die Woche.
+Videos (`.mp4`, `.mov`, `.mkv`, …; ein Datei-Profil wie Mission Spotlight
+oder eine Datei im Programmpunkt) spielt der Agent selbst in **mpv**, wenn er
+dort eine echte `mpv.exe` findet (nicht MPV.NET, keine Store-App): Vollbild per
+mpv (`--fs`) auf dem eingestellten Monitor, gewählt über dessen Gerätenamen
+(z. B. `\\.\DISPLAY2`, dieselbe Reihenfolge wie bei Bildern). Am Ende bleibt
+das letzte Bild stehen, bis der nächste Programmpunkt es schließt. So kennt der
+Agent das Fenster, schließt es, wenn das Programm weitergeht, und startet nie
+zwei Player für dasselbe Profil. Befehlszeile und Monitor stehen im Agent-Log.
+Ohne mpv (oder mit einem älteren Agent) öffnet die Standard-App das Video wie bisher.
 
 **Platzhalter `*` in Pfaden:** In allen Pfaden (Profile, Datei-Aktionen im
 Programm, Liederbibliothek) steht `*` fuer einen unbekannten Teil eines Namens,

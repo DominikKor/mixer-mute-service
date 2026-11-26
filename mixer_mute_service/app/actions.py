@@ -245,6 +245,8 @@ async def show_profile(request: Request, profile_id: str) -> Result:
         if profile.kind != "image":
             return {"ok": False, "reason": "several monitors are only possible for images"}, 400
         payload["monitors"] = profile.monitors
+    # A video plays in mpv on the right monitor if the agent finds mpv.exe
+    # there (desktop_agent: its own choice, for every video).
     try:
         answer = await _tracked_start(request, profile_id, profile, lambda extra: display_agent.call(
             cfg, profile.target_ip, "/display", {**payload, **extra}))
@@ -264,27 +266,35 @@ async def _tracked_start(request: Request, profile_id: str, profile, send) -> di
     """Send a profile's start (send(extra): the agent call, extra fields
     added) through the notes of app/profile_stops.py. A program row's start
     is noted once the agent accepted it (it stops when the program moves
-    on); one by hand takes the profile over (it keeps running). A program
-    row asks the agent to keep music that still plays and a video window
-    still open as they are. Never waits for a stop. Raises AgentError as
-    send()."""
+    on), or noted without its stamp when the agent did not answer in time;
+    one by hand takes the profile over (it keeps running). A program row
+    asks the agent to keep music that still plays as it is, and a video
+    window still open if an earlier program row opened it (one left open by
+    hand is opened again). An agent without these fields (stamp, keep)
+    gets the start without them. Never waits for a stop. Raises AgentError
+    as send()."""
     shown = _shown_profiles(request)
     if shown is None:
         return await send({})
+    by_program_row = program_row() is not None
+    keep_window = by_program_row and profile.kind == "file" and shown.program_has(profile_id)
     stamp = shown.starting(profile_id)
     extra = {"stamp": stamp}
-    if program_row() is not None:
-        if profile.kind == "audio":
-            extra["keep_if_playing"] = True
-        elif profile.kind == "file":
-            extra["keep_if_open"] = True
+    if by_program_row and profile.kind == "audio":
+        extra["keep_if_playing"] = True
+    if keep_window:
+        extra["keep_if_open"] = True
     try:
         answer = await send(extra)
     except AgentError as exc:
+        if exc.agent_status is None and exc.status == 502:
+            shown.timed_out(profile_id, profile.target_ip, profile.kind, stamp)
         if exc.agent_status != 400:
             raise
-        # An agent from before stamps: the start as it knows it.
-        log.warning("Agent %s is older than start stamps (update the desktop agent)", profile.target_ip)
+        # An agent from before start stamps rejects the extra fields (stamp,
+        # keep_if_playing / keep_if_open): the start as it knows it.
+        log.warning("Agent %s rejected %s; sent again without (update the desktop agent)",
+                    profile.target_ip, ", ".join(sorted(extra)))
         answer = await send({})
     if answer.get("ok") is not False:
         shown.accepted(profile_id, profile.target_ip, profile.kind, stamp)

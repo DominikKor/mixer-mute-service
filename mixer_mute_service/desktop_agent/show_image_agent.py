@@ -53,21 +53,24 @@ RESTORED_ENV: list = []
 STARTED_AT = time.time()
 
 
-def _monitor_areas(display_number: int) -> tuple[tuple[int, int, int, int], tuple[int, int, int, int]]:
-    """The monitor's full bounds and its work area (without the taskbar)."""
+def _monitors() -> list[tuple[tuple[int, int, int, int], tuple[int, int, int, int], str]]:
+    """All monitors as (full bounds, work area, device name such as
+    \\\\.\\DISPLAY2), sorted left to right, top to bottom: "monitor N" of a
+    profile is the N-th of them (images, windows and videos alike)."""
     if os.name != "nt":
         raise RuntimeError("This display agent is intended for Windows")
 
     import ctypes
     from ctypes import wintypes
 
-    class MONITORINFO(ctypes.Structure):
+    class MONITORINFOEXW(ctypes.Structure):
         _fields_ = [("cbSize", wintypes.DWORD), ("rcMonitor", wintypes.RECT),
-                    ("rcWork", wintypes.RECT), ("dwFlags", wintypes.DWORD)]
+                    ("rcWork", wintypes.RECT), ("dwFlags", wintypes.DWORD),
+                    ("szDevice", wintypes.WCHAR * 32)]
 
     user32 = ctypes.windll.user32
-    user32.GetMonitorInfoW.argtypes = [wintypes.HMONITOR, ctypes.POINTER(MONITORINFO)]
-    monitors: list[tuple[tuple[int, int, int, int], tuple[int, int, int, int]]] = []
+    user32.GetMonitorInfoW.argtypes = [wintypes.HMONITOR, ctypes.POINTER(MONITORINFOEXW)]
+    monitors: list[tuple[tuple[int, int, int, int], tuple[int, int, int, int], str]] = []
 
     @ctypes.WINFUNCTYPE(
         ctypes.c_int,
@@ -79,20 +82,34 @@ def _monitor_areas(display_number: int) -> tuple[tuple[int, int, int, int], tupl
     def callback(monitor, _dc, rect, _data):
         bounds = rect.contents
         full = (bounds.left, bounds.top, bounds.right, bounds.bottom)
-        info = MONITORINFO(cbSize=ctypes.sizeof(MONITORINFO))
+        info = MONITORINFOEXW(cbSize=ctypes.sizeof(MONITORINFOEXW))
         if user32.GetMonitorInfoW(monitor, ctypes.byref(info)):
             work = info.rcWork
-            monitors.append((full, (work.left, work.top, work.right, work.bottom)))
+            monitors.append((full, (work.left, work.top, work.right, work.bottom), info.szDevice))
         else:
-            monitors.append((full, full))
+            monitors.append((full, full, ""))
         return 1
 
     if not user32.EnumDisplayMonitors(None, None, callback, 0):
         raise OSError("Could not enumerate displays")
-    monitors.sort(key=lambda areas: (areas[0][0], areas[0][1]))
+    monitors.sort(key=lambda entry: (entry[0][0], entry[0][1]))
+    return monitors
+
+
+def _monitor_areas(display_number: int) -> tuple[tuple[int, int, int, int], tuple[int, int, int, int]]:
+    """The monitor's full bounds and its work area (without the taskbar)."""
+    monitors = _monitors()
     if display_number < 1 or display_number > len(monitors):
         raise RuntimeError(f"Display {display_number} not found; detected {len(monitors)}")
-    return monitors[display_number - 1]
+    return monitors[display_number - 1][:2]
+
+
+def monitor_device_name(display_number: int) -> str | None:
+    """The device name of "monitor N" (e.g. \\\\.\\DISPLAY2), None if unknown."""
+    monitors = _monitors()
+    if display_number < 1 or display_number > len(monitors):
+        raise RuntimeError(f"Display {display_number} not found; detected {len(monitors)}")
+    return monitors[display_number - 1][2] or None
 
 
 def monitor_bounds(display_number: int) -> tuple[int, int, int, int]:
@@ -282,6 +299,8 @@ def _place_loop(process_id, before, bounds, fullscreen, position, monitor, place
             # At once, so a /close coming while it settles finds it.
             if remember_as and _remember_if_own(remember_as, hwnd, process_id):
                 remembered.append(hwnd)
+                if _close_if_cancelled(remember_as):
+                    return
             target = _apply_placement(hwnd, bounds, fullscreen, position)
             if target:
                 placed[hwnd] = target
@@ -388,10 +407,14 @@ def _launch_profile(profile: dict) -> None:
     try:
         before = set(_visible_windows())
         path = Path(profile["path"])
+        mpv = _video_player(profile, path)
         if profile["kind"] == "program":
             process_id = subprocess.Popen(
                 [str(path), *profile["args"]], cwd=str(path.parent), shell=False
             ).pid
+        elif mpv:
+            _launch_video(mpv, path, profile, before)
+            return
         else:
             process_id = _shell_open_file(path)
         # A file's window (a video player, a document) can be closed again
@@ -402,6 +425,107 @@ def _launch_profile(profile: dict) -> None:
         )
     except Exception:
         logger.exception("Profile %s failed", profile["id"])
+    finally:
+        if profile["kind"] == "file":
+            with _opened_lock:
+                _launching.pop(profile["id"], None)
+                _cancelled.discard(profile["id"])
+
+
+# -- videos in mpv -----------------------------------------------------------------
+# A file profile (or a file in a row's field) that resolves to a video plays
+# in mpv started by the agent instead of the PC's default app, when a real
+# mpv.exe is there: the agent then owns the process, so its window is known
+# for keep_if_open and POST /close, and mpv itself puts it full screen on
+# the right monitor (picked by its device name, e.g. \\.\DISPLAY2, from the
+# same monitor list images use). The agent never moves or restyles mpv's
+# window: mpv would undo it, and it is not DPI aware. Without a real mpv.exe
+# (none, MPV.NET, a Store app), the default app as before.
+
+VIDEO_SUFFIXES = {".mp4", ".m4v", ".mov", ".mkv", ".avi", ".wmv", ".webm", ".mpg", ".mpeg", ".ts"}
+# A window not full screen: where on its monitor (mpv's own --geometry, in
+# percent of that screen).
+_MPV_POSITIONS = {"top-left": "0%:0%", "top-right": "100%:0%", "bottom-left": "0%:100%",
+                  "bottom-right": "100%:100%", "center": "50%:50%"}
+
+
+def _real_mpv(path: str | None) -> bool:
+    """mpv.exe itself: not MPV.NET (mpvnet.exe), not a Store app's alias."""
+    if not path:
+        return False
+    return PureWindowsPath(path).name.lower() == "mpv.exe" and "windowsapps" not in path.replace("/", "\\").lower()
+
+
+def _video_player(profile: dict, path: Path) -> str | None:
+    if profile["kind"] != "file" or path.suffix.lower() not in VIDEO_SUFFIXES:
+        return None
+    mpv = _play_mpv()
+    if _real_mpv(mpv):
+        return mpv
+    logger.warning("Video %s: no mpv.exe found (%s), opened with the default app instead", path, mpv)
+    return None
+
+
+def _video_command(mpv: str, path: Path, profile: dict, device: str | None = None) -> list:
+    """mpv for a video on the profile's monitor; it holds the last frame at
+    the end (keep-open) until POST /close or the next start ends it."""
+    command = [
+        mpv, "--no-config", "--force-window=yes", "--keep-open=yes", "--no-terminal", "--hwdec=auto-safe",
+        f"--title={profile['title']}", f"--log-file={agent_log_directory() / 'mpv-video.log'}",
+    ]
+    if device:
+        command += [f"--screen-name={device}"]
+        if profile["fullscreen"]:
+            command += ["--fs", f"--fs-screen-name={device}"]
+        else:
+            command += ["--autofit=50%", f"--geometry={_MPV_POSITIONS.get(profile['position'], '50%:50%')}"]
+    else:
+        # No device name: mpv's window starts on the monitor's rectangle (and
+        # goes full screen where it is).
+        try:
+            left, top, right, bottom = monitor_bounds(profile["monitor"])
+            command += [f"--geometry={right - left}x{bottom - top}+{left}+{top}"]
+        except Exception:  # noqa: BLE001 - mpv opens where it likes then
+            logger.exception("Monitor %s for the video not found", profile["monitor"])
+        if profile["fullscreen"]:
+            command += ["--fs"]
+    return command + ["--", str(path)]
+
+
+def _launch_video(mpv: str, path: Path, profile: dict, before: set) -> None:
+    """Start mpv for the video; an earlier one of the same profile ends
+    first (a start by hand, a double press: never two players)."""
+    profile_id = profile["id"]
+    _close_remembered(profile_id)
+    try:
+        device = monitor_device_name(profile["monitor"])
+    except Exception:  # noqa: BLE001 - the rectangle then (_video_command)
+        logger.exception("Monitor %s: no device name", profile["monitor"])
+        device = None
+    command = _video_command(mpv, path, profile, device)
+    logger.info("Video %s in mpv on monitor %s (%s): %s", path, profile["monitor"], device or "no device name",
+                subprocess.list2cmdline(command))
+    process = subprocess.Popen(
+        command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+    _remember_video_window(profile_id, process.pid, before)
+
+
+def _remember_video_window(profile_id: str, process_id: int, before: set, find=None, timeout: float = 20.0) -> None:
+    """Find mpv's window to remember it (for keep and close); it is never
+    placed by the agent."""
+    find = find or _find_window
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        hwnd = find(process_id, before)
+        if hwnd and _remember_if_own(profile_id, hwnd, process_id):
+            logger.info("Video window pid=%s hwnd=%s remembered for profile=%s", process_id, hwnd, profile_id)
+            _close_if_cancelled(profile_id)
+            return
+        time.sleep(0.25)
+    _remember_unknown(profile_id)
+    logger.warning("Video window of pid=%s (profile=%s) not found within %.0f s", process_id, profile_id, timeout)
 
 
 # -- closing what a profile opened (POST /close) ---------------------------------
@@ -421,18 +545,31 @@ _shown_image_stamp: str | None = None
 # stop or close names the start it means and is ignored once a newer start
 # (or a kept one) of that profile came in since.
 _opened_stamps: dict[str, str] = {}  # profile id -> stamp of its latest open (file kind)
+# A file profile being opened (until its launch is done): a second program
+# row in that time keeps it instead of opening it twice.
+_launching: dict[str, float] = {}  # profile id -> until (time.monotonic())
+# Closed (POST /close) while still being opened: its window is closed as
+# soon as it appears.
+_cancelled: set[str] = set()
+LAUNCH_PENDING_SECONDS = 25.0
 
 
 def _valid_stamp(value) -> bool:
     return isinstance(value, str) and 0 < len(value) <= 64 and value.replace("-", "").replace("_", "").isalnum()
 
 
-def _profile_window_open(profile_id: str, window_pid=None) -> bool:
-    """Whether a window the profile opened is still there (keep_if_open)."""
+def _keep_open(profile_id: str, stamp: str | None, window_pid=None) -> bool:
+    """keep_if_open: whether the profile's window is still there (or still
+    being opened); then it is kept and takes the new start's stamp. One
+    section under the lock, so a close cannot slip in between."""
     window_pid = window_pid or _window_process_id
     with _opened_lock:
-        windows = set(_opened_windows.get(profile_id, ()))
-    return any(window_pid(hwnd) == process_id for hwnd, process_id in windows)
+        opening = _launching.get(profile_id, 0.0) > time.monotonic()
+        if not opening and not any(window_pid(h) == pid for h, pid in _opened_windows.get(profile_id, ())):
+            return False
+        if stamp is not None:
+            _opened_stamps[profile_id] = stamp
+        return True
 
 
 def _remember_window(profile_id: str, hwnd: int, process_id: int, window_pid=None) -> None:
@@ -478,15 +615,35 @@ def _close_profile_windows(profile_id: str, window_pid=None, post_close=None, st
     """Ask the windows a profile opened to close (as their close button
     does). A window that is gone, or whose handle now belongs to another
     process, is left alone; so is everything when the close names an older
-    start than the latest open of the profile. Returns how many were asked."""
-    window_pid = window_pid or _window_process_id
-    post_close = post_close or _post_close
+    start than the latest open of the profile. A profile still being opened
+    is closed once its window appears. Returns how many were asked."""
     with _opened_lock:
         latest = _opened_stamps.get(profile_id)
         if stamp is not None and latest is not None and latest != stamp:
             logger.info("Close profile=%s ignored: opened again since", profile_id)
             return 0
         _opened_stamps.pop(profile_id, None)
+        if _launching.get(profile_id, 0.0) > time.monotonic():
+            _cancelled.add(profile_id)
+            logger.info("Close profile=%s: still opening, closed once its window is there", profile_id)
+    return _close_remembered(profile_id, window_pid, post_close)
+
+
+def _close_if_cancelled(profile_id: str, window_pid=None, post_close=None) -> bool:
+    """A close came while the profile was being opened: close it now."""
+    with _opened_lock:
+        if profile_id not in _cancelled:
+            return False
+        _cancelled.discard(profile_id)
+    _close_remembered(profile_id, window_pid, post_close)
+    return True
+
+
+def _close_remembered(profile_id: str, window_pid=None, post_close=None) -> int:
+    """WM_CLOSE to the profile's remembered windows still owned by their process."""
+    window_pid = window_pid or _window_process_id
+    post_close = post_close or _post_close
+    with _opened_lock:
         windows = _opened_windows.pop(profile_id, set())
         unknown = profile_id in _unknown_windows
         _unknown_windows.discard(profile_id)
@@ -2547,11 +2704,12 @@ class DisplayHandler(BaseHTTPRequestHandler):
         required = {
             "id", "title", "kind", "path", "args", "fullscreen", "monitor", "position"
         }
-        if not isinstance(body, dict) or set(body) - {"monitors", "keep_if_open", "stamp"} != required:
+        if not isinstance(body, dict) or set(body) - {"monitors", "keep_if_open", "stamp", "player"} != required:
             self.send_error(400)
             return
         if ("stamp" in body and not _valid_stamp(body["stamp"])) or (
-                "keep_if_open" in body and (body["keep_if_open"] is not True or body.get("kind") != "file")):
+                "keep_if_open" in body and (body["keep_if_open"] is not True or body.get("kind") != "file")) or (
+                "player" in body and (body["player"] != "mpv" or body.get("kind") != "file")):
             self.send_error(400)
             return
         if "monitors" in body and not _valid_monitors(body):
@@ -2573,11 +2731,8 @@ class DisplayHandler(BaseHTTPRequestHandler):
         ):
             self.send_error(400)
             return
-        if body.get("keep_if_open") and _profile_window_open(body["id"]):
+        if body.get("keep_if_open") and _keep_open(body["id"], body.get("stamp")):
             # The program's next row starts it again: its window stays as it is.
-            with _opened_lock:
-                if "stamp" in body:
-                    _opened_stamps[body["id"]] = body["stamp"]
             logger.info("Profile %s kept open", body["id"])
             self._send_json(202, {"ok": True, "profile": body["id"], "display": body["monitor"], "kept": True})
             return
@@ -2600,6 +2755,8 @@ class DisplayHandler(BaseHTTPRequestHandler):
                     _opened_stamps[body["id"]] = body["stamp"]
                 else:
                     _opened_stamps.pop(body["id"], None)
+                _launching[body["id"]] = time.monotonic() + LAUNCH_PENDING_SECONDS
+                _cancelled.discard(body["id"])
         # Profiles open the file the path resolved to ("*" filled in).
         requests.put({**body, "path": str(target)})
         result = json.dumps({"ok": True, "profile": body["id"], "display": body["monitor"]}).encode()

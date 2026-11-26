@@ -5,7 +5,8 @@ Only what a program row started counts (Play, "Weiter", the dock, Companion:
 app/api/program.py runs the row inside program_starts(row id)). The service
 notes each image, file and audio profile such a row started once the agent
 accepted it (programs such as OBS are never noted: they are never closed;
-a start without an answer is not noted). Whatever the operator starts by
+a start without an answer is noted too, without its stamp: see below).
+Whatever the operator starts by
 hand (a Desktop key, a shortcut key) is not noted and keeps running; a
 profile the program started becomes the operator's once its Desktop key is
 used by hand. Notes live in memory only: after a restart nothing is noted,
@@ -15,7 +16,9 @@ When a program row starts, everything noted that the new row does not start
 itself is stopped, in the background: the new row never waits for it. What
 the new row starts again it sends again; the agent leaves music that still
 plays ("keep_if_playing") and a video window still open ("keep_if_open") as
-they are, so nothing restarts; an image is simply shown again.
+they are, so nothing restarts; an image is simply shown again. A window is
+only kept for a profile an earlier program row started: one the operator
+left open by hand is opened again.
 
 - audio: the agent's normal stop with the profile's fade-out, naming the
   profile ("only_if"); never on a PC where the new row starts audio itself
@@ -27,8 +30,10 @@ they are, so nothing restarts; an image is simply shown again.
 Ordering without waiting: every start carries a stamp (a random id) that the
 agent keeps with the track, window or image. A stop names the stamp of the
 start it means, and the agent ignores it once a newer start (or a kept one)
-of that profile came in. A stop that did not reach the agent is noted again
-for the next row, unless the profile was started since.
+of that profile came in. A start the agent did not answer in time (it may
+have run all the same) is stopped by profile alone, so it cannot be left
+running. A stop that did not reach the agent is noted again for the next
+row, unless the profile was started since.
 
 Every stop has a short timeout. An agent that does not answer is marked
 down for DOWN_SECONDS and skipped meanwhile, so a PC that is off never holds
@@ -79,7 +84,8 @@ class ShownProfiles:
     """The desktop profiles program rows started that may still be showing."""
 
     def __init__(self) -> None:
-        self._shown: dict[str, tuple[str, str, str]] = {}  # profile id -> (target ip, kind, stamp)
+        # profile id -> (target ip, kind, stamp, confirmed: the agent answered)
+        self._shown: dict[str, tuple[str, str, str, bool]] = {}
         self._latest: dict[str, str] = {}  # profile id -> stamp of its latest start
         self._down_until: dict[str, float] = {}
         self._tasks: set = set()
@@ -102,16 +108,26 @@ class ShownProfiles:
         it replaced the audio (or the image) before, which is then no longer
         the program's to stop."""
         if kind in _ONE_PER_PC:
-            for other, (ip, other_kind, _stamp) in list(self._shown.items()):
+            for other, (ip, other_kind, *_rest) in list(self._shown.items()):
                 if other != profile_id and ip == target_ip and other_kind == kind:
                     del self._shown[other]
         if program_row() is not None and kind != "program" and self._latest.get(profile_id) == stamp:
-            self._shown[profile_id] = (target_ip, kind, stamp)
+            self._shown[profile_id] = (target_ip, kind, stamp, True)
+
+    def timed_out(self, profile_id: str, target_ip: str, kind: str, stamp: str) -> None:
+        """A program row's start the agent did not answer: it may have run.
+        Noted all the same; its stop names the profile only."""
+        if program_row() is not None and kind != "program" and self._latest.get(profile_id) == stamp:
+            self._shown[profile_id] = (target_ip, kind, stamp, False)
+
+    def program_has(self, profile_id: str) -> bool:
+        """An earlier program row started it and it was not stopped since."""
+        return profile_id in self._shown
 
     def audio_replaced(self, target_ip: str) -> None:
         """The music on that PC was stopped by hand or replaced by a file's
         (one track per PC): no program audio to stop there any more."""
-        for other, (ip, kind, _stamp) in list(self._shown.items()):
+        for other, (ip, kind, *_rest) in list(self._shown.items()):
             if ip == target_ip and kind == "audio":
                 del self._shown[other]
 
@@ -120,10 +136,10 @@ class ShownProfiles:
     # -- stops -------------------------------------------------------------
     def shown(self) -> dict:
         """Profile id -> (target ip, kind) of what program rows started."""
-        return {profile_id: (ip, kind) for profile_id, (ip, kind, _stamp) in self._shown.items()}
+        return {profile_id: (ip, kind) for profile_id, (ip, kind, *_rest) in self._shown.items()}
 
     def take(self, profile_id: str) -> tuple:
-        """Forget it (a stop goes out); returns (ip, kind, stamp)."""
+        """Forget it (a stop goes out); returns (ip, kind, stamp, confirmed)."""
         return self._shown.pop(profile_id)
 
     def restore(self, profile_id: str, noted: tuple) -> None:
@@ -190,7 +206,7 @@ async def _stop_all(state, tracker: ShownProfiles, stops: list) -> None:
 
 
 async def _stop_one(state, tracker: ShownProfiles, profile_id: str, noted: tuple) -> None:
-    target_ip, kind, stamp = noted
+    target_ip, kind, stamp, confirmed = noted
     if tracker.latest(profile_id) != stamp:
         log.info("Not stopping %s: started again meanwhile", profile_id)
         return
@@ -199,7 +215,9 @@ async def _stop_one(state, tracker: ShownProfiles, profile_id: str, noted: tuple
         tracker.restore(profile_id, noted)
         return
     try:
-        answer = await _send_stop(state, profile_id, target_ip, kind, stamp)
+        # A start without an answer: stopped by profile alone (the agent may
+        # not know its stamp).
+        answer = await _send_stop(state, profile_id, target_ip, kind, stamp if confirmed else None)
         log.info("Program moved on: %s %s on %s stopped (%s)", kind, profile_id, target_ip, answer)
     except AgentError as exc:
         if exc.agent_status is None and exc.status == 502:
@@ -214,13 +232,13 @@ async def _stop_one(state, tracker: ShownProfiles, profile_id: str, noted: tuple
             log.warning("Program moved on: %s on %s not stopped: %s", profile_id, target_ip, exc.reason)
 
 
-async def _send_stop(state, profile_id: str, target_ip: str, kind: str, stamp: str) -> dict:
+async def _send_stop(state, profile_id: str, target_ip: str, kind: str, stamp: Optional[str]) -> dict:
     from .actions import AUDIO_FADE_FULL_DB  # actions imports this module
 
     cfg = state.cfg.desktop_display
     if kind != "audio":
-        return await display_agent.call(cfg, target_ip, "/close", {"id": profile_id, "stamp": stamp},
-                                        timeout=CLOSE_TIMEOUT_SECONDS)
+        body = {"id": profile_id} if stamp is None else {"id": profile_id, "stamp": stamp}
+        return await display_agent.call(cfg, target_ip, "/close", body, timeout=CLOSE_TIMEOUT_SECONDS)
     profile = cfg.profiles.get(profile_id)
     payload = {"id": profile_id, "action": "stop", "path": None}
     if profile is not None and profile.fade:
@@ -228,8 +246,8 @@ async def _send_stop(state, profile_id: str, target_ip: str, kind: str, stamp: s
         payload["fade"] = {"db": AUDIO_FADE_FULL_DB, "seconds": profile.fade_seconds}
     try:
         # Only this profile's track, and only the start noted: never one started since.
-        return await display_agent.call(cfg, target_ip, "/audio", {**payload, "only_if": True, "stamp": stamp},
-                                        timeout=AUDIO_STOP_TIMEOUT_SECONDS)
+        targeted = {**payload, "only_if": True, **({} if stamp is None else {"stamp": stamp})}
+        return await display_agent.call(cfg, target_ip, "/audio", targeted, timeout=AUDIO_STOP_TIMEOUT_SECONDS)
     except AgentError as exc:
         if exc.agent_status != 400:
             raise
