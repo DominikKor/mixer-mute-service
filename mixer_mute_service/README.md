@@ -531,6 +531,25 @@ Eine gehaltene Pfeiltaste wiederholt ihre Richtung jede Sekunde; kommt 3 s
 lang weder Wiederholung noch Stop an (z. B. WLAN weg), stoppt der Dienst die
 Kamera selbst.
 
+Jede Preset-Taste zeigt ihre Nummer vor dem Namen („3 · Kanzel“), ebenso die
+Preset-Auswahl der Programmzeilen. Rechts neben „Presets“ fährt
+**Nr. [ ] Anfahren** jede Preset-Nummer 1 bis 16 an, auch eine ohne Namen in
+der App (`POST /cameras/{cam1|cam2}/preset/recall` mit `{"preset": 11}`;
+derselbe Weg wie eine Preset-Taste). „⋮“ der Kamera → **Aktuelle Position
+speichern** fragt Nummer und Name; vorbelegt ist die kleinste Nummer, die in
+der App keinen Namen hat und die nichts benutzt. Die Kamera speichert dort
+ihre aktuelle Position (VISCA `81 01 04 3F 01 pp FF`), der Dienst den Namen
+(`POST /cameras/{cam1|cam2}/presets` mit `{"preset", "name", "overwrite"}`).
+Hat die Nummer schon einen Namen oder benutzt sie eine Programmzeile, ein
+Shortcut, eine Vorlage oder eine Taste der Steuerung (z. B. eine
+Overall-Taste), antwortet der Dienst ohne `"overwrite": true` mit 409, dem
+Namen und der Liste `users`, und die Seite fragt, ob überschrieben werden
+soll (`GET /cameras/{cam1|cam2}/presets/usage` liefert diese Liste für alle
+Nummern). „In der App ohne Namen“ heißt nicht, dass die Kamera dort nichts
+gespeichert hat (Companion, Fernbedienung). Zwei gleichzeitige Speichervorgänge
+derselben Kamera laufen nacheinander. Nummern ohne Katalog-Taste stehen als
+`saved_camera_presets` in `companion_buttons.json`.
+
 Die Kamera-Tasten (Presets, Zoom) stehen seit Katalog-Version 7 nicht mehr in
 der Steuerung; eine bestehende `companion_buttons.json` wird beim Start
 umgestellt (umbenannte Presets behalten ihre Beschriftung im Kamera-Bereich).
@@ -1060,7 +1079,8 @@ sie.
 - **Kameras**: „⋮“ der Kamera → Presets umbenennen (Tasten gestrichelt); dann
   öffnet ein Tippen auf ein Preset den Namen, statt die Kamera zu bewegen.
   Gespeichert wird mit der Kamera davor („CAM1 Kanzel“), damit Programmzeilen
-  die Kameras unterscheiden; leer = Name aus dem Katalog.
+  die Kameras unterscheiden; leer = Name aus dem Katalog (ein selbst
+  gespeichertes Preset braucht einen Namen).
 
 Ein Umbenennen-Modus endet mit „Fertig“, wenn ein anderer beginnt, wenn sein
 Bereich zugeklappt wird, und von selbst nach 30 s ohne Umbenennen; danach

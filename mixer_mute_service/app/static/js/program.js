@@ -295,7 +295,11 @@ function programLegacyLabel(value) {
   const button = PROGRAM_BUTTONS.find(b => b.id === id);
   if (!button) return value;
   const category = PROGRAM_BUTTON_CATEGORIES[button.category_id];
-  return category ? `${category} · ${button.label}` : button.label;
+  const action = button.native_action || {};
+  // A camera preset: its number before the name ("CAM1 · 3 · Kanzel").
+  const label = action.type === "visca-preset"
+    ? `${action.camera.toUpperCase()} · ${action.preset} · ${cameraPresetLabel(button.label)}` : button.label;
+  return category ? `${category} · ${label}` : label;
 }
 
 // ---- OBS scene of a row ---------------------------------------------------
@@ -513,7 +517,7 @@ function programCameraPresets(cameraButtons) {
       }
     }
     presets[cam] = Array.from({ length: 16 }, (_, i) => i + 1).map(n => ({
-      value: String(n), label: `${camLabel} · ${named[n] ? `${named[n]} (${n})` : `Preset ${n}`}`,
+      value: String(n), label: `${camLabel} · ${n} · ${named[n] || "ohne Namen"}`,
     }));
   }
   return presets;
