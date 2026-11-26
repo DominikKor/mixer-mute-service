@@ -115,6 +115,12 @@ class SongLibraryTests(unittest.TestCase):
         px, lines, _ = agent._slide_layout(measure, SHOW, 1920, 1080, box_w, box_h)
         self.assertEqual((px, lines), (72.0, ["Zeile 1", "Zeile 2"]))
 
+    def test_a_value_it_refuses_is_not_an_unknown_field(self):
+        layout = {"screen": [1920, 1080], "px": 0, "lines": [], "preview": None}
+        self.assertTrue(agent._known_song_fields({**SHOW, "layout": layout}))      # 422: no demotion
+        self.assertFalse(agent._known_song_fields({**SHOW, "fit": []}))            # 400: an older form
+        self.assertFalse(agent._known_song_fields({**SHOW, "style": {**SHOW["style"], "shadow": 1}}))
+
     def test_metrics_requests(self):
         good = {"font": "Verdana", "monitor": 2, "fullscreen": True, "chars": "abcäö "}
         self.assertTrue(agent._valid_metrics_request(good))
@@ -215,7 +221,8 @@ class SongRequestHandlerTests(unittest.TestCase):
             finally:
                 server.shutdown()
                 server.server_close()
-        self.assertEqual(result, {"ok": True, "width": 1920, "height": 1080, "ref": 100, "widths": [10, 10, 10]})
+        self.assertEqual(result, {"ok": True, "width": 1920, "height": 1080, "ref": 100, "widths": [10, 10, 10],
+                                  "started_at": agent.STARTED_AT})
 
 if __name__ == "__main__":
     unittest.main()

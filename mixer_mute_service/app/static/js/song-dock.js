@@ -247,5 +247,5 @@ $("program-items").addEventListener("click", event => {
   else if (action === "next") songNext();
   else if (action === "blank") songBlankToggle();
   else if (action === "hide") songAction("/songs/hide");
-  else if (action === "slide") songAction("/songs/show", { song_id: target.item.song, slide: Number(button.dataset.slide) });
+  else if (action === "slide") songAction("/songs/show", { song_id: target.item.song, slide: Number(button.dataset.slide), ...songLiveRev(target.item.song) });
 });

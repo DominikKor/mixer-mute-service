@@ -9,7 +9,8 @@ settings (folder, PC, monitor, look) are shared by all songs.
 
 GET  /songs/settings              PUT|POST /songs/settings
 POST /songs/library/reload        read the library again from the display PC
-GET  /songs                       [{id, title, books, slide_count}]
+GET  /songs                       [{id, title, books, slide_count}] (slide_count: verses and
+                                  refrains in order, before long ones are split)
 GET  /songs/{song_id}             one song with all its slides
 GET  /songs/live[?have=<id>&rev=<n>]  what the screen shows: {song_id, slide, blank, song,
                                   slide_count, layout_rev} ("song" left out if the
@@ -19,7 +20,9 @@ GET  /songs/live[?have=<id>&rev=<n>]  what the screen shows: {song_id, slide, bl
                                   slide counts as two or more (song.shown, song.layout)
 POST /songs/layout                the layout of a song (or of an unsaved one) with the
                                   saved or given settings, for the page's previews
-POST /songs/show {song_id, slide} show a slide (unblanks)
+POST /songs/show {song_id, slide[, rev]}  show a slide (unblanks); rev: the layout_rev the
+                                  number counts in (a page with an older one lands on the
+                                  same verse part; an unknown one: 409)
 POST /songs/next | /songs/prev    step through the current song; after the
                                   last slide "next" blanks the screen
 POST /songs/blank                 background only (song stays selected)
@@ -43,8 +46,14 @@ slides where needed) with the font widths and window size the screen's
 display agent measures (POST /song/metrics), and sends each agent the lines
 and size to draw ("layout"). Display agents from before refuse that; they
 get the plain slide (and, older still, without preview and alignment) and
-fit it themselves, still with the service's split. What an agent refuses is
-remembered for AGENT_MEMORY_SECONDS, so it gets one request per slide.
+fit it themselves, still with the service's split. What an agent refuses
+(400: a field it does not know; 422 from a current agent is a refused value
+and changes nothing) is remembered for AGENT_MEMORY_SECONDS, so it gets one
+request per slide, and forgotten as soon as the agent answers with another
+start time (updated or restarted). Agents report the size of their song
+window with each slide: a changed resolution lays the song out again. When
+a layout changes while a song is on screen (settings, screens, library, font
+widths arriving), the live slide follows its verse part.
 """
 
 from __future__ import annotations
@@ -207,8 +216,16 @@ class SongService:
         self.layout_rev = 0
         # Font widths and window size per (ip, monitor, fullscreen, font) from the agents.
         self.metrics: dict = {}
-        # Per agent: what it could not do ("metrics", or the /song level it takes) and since when.
+        # Per agent: what it could not do ("metrics", or the /song level it
+        # takes), its start time and song window size, and since when.
         self.agent_memory: dict = {}
+        # Earlier slide lists per song: {song_id: {rev: shown}} (a page with
+        # an older numbering still lands on the slide it meant).
+        self.layout_history: dict = {}
+        # One layout worked out at a time (no stacked threads), previews in turn.
+        self.layout_lock = asyncio.Lock()
+        self.preview_lock = asyncio.Lock()
+        self.preview_latest: dict = {}
 
     def _load_settings(self) -> SongSettings:
         data = read_json(self._settings_path, dict, default={})
@@ -420,6 +437,36 @@ def _remembered(memory: dict, ip: str, what: str, seconds: float = AGENT_MEMORY_
     return entry[0]
 
 
+DEMOTIONS = ("song_level", "no_metrics", "metrics_failed")
+
+
+def note_agent(memory: dict, ip: str, answer) -> None:
+    """What a display agent's answer tells about it: its start time
+    ("started_at": an updated or restarted agent forgets what the old one
+    could not do, and its font widths are asked again) and the size of its
+    song window ("window", per monitor: a changed resolution lays the song
+    out again)."""
+    if not isinstance(answer, dict):
+        return
+    now = time.monotonic()
+    started = answer.get("started_at")
+    if isinstance(started, (int, float)) and not isinstance(started, bool):
+        before = memory.get((ip, "started_at"))
+        demoted = any((ip, what) in memory for what in DEMOTIONS)
+        if (before is not None and before[0] != started) or (before is None and demoted):
+            for what in DEMOTIONS:
+                memory.pop((ip, what), None)
+            generation = memory.get((ip, "generation"), (0, now))[0] + 1
+            memory[(ip, "generation")] = (generation, now)
+            log.info("Display agent %s (re)started: asking it for everything it can do again", ip)
+        memory[(ip, "started_at")] = (started, now)
+    window = answer.get("window")
+    if (isinstance(window, list) and len(window) == 3
+            and all(isinstance(v, int) and not isinstance(v, bool) for v in window)):
+        monitor, width, height = window
+        memory[(ip, "window", monitor)] = ((width, height), now)
+
+
 def _valid_metrics(answer, asked: str) -> bool:
     widths = answer.get("widths") if isinstance(answer, dict) else None
     return (
@@ -436,8 +483,19 @@ async def _screen_for(request: Request, target: "SongTarget", settings: "SongSet
     missing; else an estimate ("estimate": an agent from before /song/metrics
     or one that does not answer)."""
     service: SongService = request.app.state.songs
+    memory = service.agent_memory
     key = (target.ip, target.monitor, settings.fullscreen, settings.font)
     entry = service.metrics.get(key)
+    generation = memory.get((target.ip, "generation"), (0, 0))[0]
+    if entry is not None and entry.get("generation", 0) != generation:
+        entry = None   # an updated or restarted agent: measure again
+    if entry is not None:
+        window = memory.get((target.ip, "window", target.monitor))
+        if window is not None and window[1] > entry.get("at", 0) and window[0] != (entry["width"], entry["height"]):
+            # The agent's window has another size now (resolution changed).
+            log.info("Song window on %s monitor %s is now %sx%s", target.ip, target.monitor, *window[0])
+            entry = {**entry, "width": window[0][0], "height": window[0][1], "at": window[1]}
+            service.metrics[key] = entry
     missing = (chars - entry["metrics"].widths.keys()) if entry else (chars | set(BASE_CHARS))
     sender = service.senders.get(target.ip)
     # Never wait for a screen that is down (the step does not either).
@@ -461,10 +519,12 @@ async def _screen_for(request: Request, target: "SongTarget", settings: "SongSet
             service.agent_memory[(target.ip, "metrics_failed")] = (True, time.monotonic())
         else:
             if _valid_metrics(answer, asked):
+                note_agent(memory, target.ip, answer)
+                generation = memory.get((target.ip, "generation"), (0, 0))[0]
                 widths = {**(entry["metrics"].widths if entry else {}), **dict(zip(asked, answer["widths"]))}
                 default = sum(widths.values()) / len(widths) if widths else 60.0
                 entry = {"metrics": layout_engine.Metrics(widths, default), "width": answer["width"],
-                         "height": answer["height"]}
+                         "height": answer["height"], "generation": generation, "at": time.monotonic()}
                 service.metrics[key] = entry
             else:
                 log.warning("Display agent %s sent invalid font widths", target.ip)
@@ -508,31 +568,98 @@ async def plan_layout(request: Request, song_id: str, song: dict, settings: "Son
     }
 
 
-# Layouts kept (songs stepped through recently).
+# Layouts kept (songs stepped through recently), and older slide lists per song.
 MAX_LAYOUTS = 16
+MAX_HISTORY = 4
 
 
-async def ensure_layout(request: Request, song_id: str) -> dict:
-    """The song's layout with the current settings and font widths, worked
-    out again only when one of them changed. Keeps slides() and the
-    payloads in step. The caller holds ``service.lock``."""
-    service: SongService = request.app.state.songs
-    song, settings = service.songs[song_id], service.settings
+def _slide_place(shown: list, index: int) -> Tuple[int, int, int]:
+    """(source, part, parts) of slide ``index`` of a slide list (an unsplit
+    list: the slide itself, 1/1)."""
+    slide = shown[index]
+    return slide.get("source", index), slide.get("part", 1), slide.get("parts", 1)
+
+
+def remap_slide(old: list, new: list, index: int) -> int:
+    """The slide of ``new`` that shows what slide ``index`` of ``old``
+    showed: the same verse, the same part of it as far as there is one
+    (a verse now in 2 parts instead of 3: part 3 -> part 2)."""
+    if not new:
+        return 0
+    if not 0 <= index < len(old):
+        return min(max(index, 0), len(new) - 1)
+    source, part, parts = _slide_place(old, index)
+    same = [i for i in range(len(new)) if _slide_place(new, i)[0] == source]
+    if not same:
+        return min(index, len(new) - 1)
+    return same[min(len(same) - 1, (part - 1) * len(same) // max(parts, 1))]
+
+
+def _apply_layout(service: "SongService", song_id: str, plan: dict) -> dict:
+    """Keep a new layout of a song (the caller holds ``service.lock``): the
+    live slide (and the last one a screen showed) moved to where the same
+    verse part is now, the old numbering kept for pages that still use it."""
     old = service.layouts.get(song_id)
-    plan = await plan_layout(request, song_id, song, settings, old)
-    if plan is old:
-        return old
+    if old is not None and old["inputs"] == plan["inputs"] and old["metrics"] == plan["metrics"]:
+        return old   # laid out meanwhile by another call
+    old_shown = old["shown"] if old is not None else service.base_slides(song_id)
     service.layout_rev += 1
     plan["rev"] = service.layout_rev
+    history = service.layout_history.setdefault(song_id, {})
+    if old is not None:
+        history[old["rev"]] = old["shown"]
+        while len(history) > MAX_HISTORY:
+            history.pop(next(iter(history)))
     service.layouts.pop(song_id, None)
     service.layouts[song_id] = plan
     while len(service.layouts) > MAX_LAYOUTS:
-        service.layouts.pop(next(iter(service.layouts)))
+        dropped = next(iter(service.layouts))
+        service.layouts.pop(dropped)
+        service.layout_history.pop(dropped, None)
+    if service.live["song_id"] == song_id:
+        moved = remap_slide(old_shown, plan["shown"], service.live["slide"])
+        if moved != service.live["slide"]:
+            log.info("SONG %r: the live slide %s is slide %s in the new layout", song_id,
+                     service.live["slide"] + 1, moved + 1)
+        service.live = {**service.live, "slide": moved}
+    seq, confirmed_live, bodies = service.confirmed
+    if confirmed_live.get("song_id") == song_id:
+        service.confirmed = (seq, {**confirmed_live, "slide": remap_slide(old_shown, plan["shown"],
+                                                                          confirmed_live["slide"])}, bodies)
     split = [f"{s['key']}" for s in plan["shown"] if s.get("parts", 1) > 1]
     log.info("SONG layout %r: %s slides%s, size %s", song_id, len(plan["shown"]),
              f" (split: {', '.join(split)})" if split else "",
              ", ".join(f"{l['px']:.0f}px@{l['height']}" if l["px"] else "-" for l in plan["screens"]))
     return plan
+
+
+async def ensure_layout(request: Request, song_id: str, locked: bool = False) -> dict:
+    """The song's layout with the current settings and font widths, worked
+    out again only when one of them changed (one at a time, in a worker
+    thread, without the song lock: stepping never waits for a long song).
+    locked: the caller holds ``service.lock`` (then it is kept under it)."""
+    service: SongService = request.app.state.songs
+    async with service.layout_lock:
+        song, settings = service.songs[song_id], service.settings
+        old = service.layouts.get(song_id)
+        plan = await plan_layout(request, song_id, song, settings, old)
+    if plan is old:
+        return old
+    if song_id not in service.songs or service.songs[song_id] is not song or service.settings is not settings:
+        return plan   # changed meanwhile: the next call lays it out again
+    if locked:
+        return _apply_layout(service, song_id, plan)
+    async with service.lock:
+        return _apply_layout(service, song_id, plan)
+
+
+async def relayout_live(request: Request) -> None:
+    """Lay the live song out again (after settings, library or screens
+    changed): its slides may split differently; the live slide follows."""
+    service: SongService = request.app.state.songs
+    song_id = service.live["song_id"]
+    if song_id in service.songs:
+        await ensure_layout(request, song_id)
 
 
 async def _call_agent(request: Request, path: str, payload: dict, timeout: float = 3) -> Tuple[dict, int]:
@@ -555,8 +682,12 @@ async def _agent_call(cfg, target: str, path: str, payload: dict, timeout: float
         level = _remembered(memory, target, "song_level") or 0
         while True:
             try:
-                return await display_agent.call(cfg, target, path, levels[level], timeout), 200
+                answer = await display_agent.call(cfg, target, path, levels[level], timeout)
+                note_agent(memory, target, answer)
+                return answer, 200
             except AgentError as exc:
+                # 400: a field this agent does not know (an older version).
+                # A current agent says 422 for a value it refuses: no demotion.
                 following = next((n for n in range(level + 1, len(levels)) if levels[n] != levels[level]), None)
                 if exc.agent_status != 400 or following is None:
                     raise
@@ -777,17 +908,28 @@ def _live_view(service: SongService) -> dict:
     return live
 
 
-async def show_slide(request: Request, song_id: str, slide: int):
-    """Show one slide of a song (also used by program rows). Unblanks."""
-    return await _step(request, lambda service: _plan_show(request, service, song_id, slide))
+async def show_slide(request: Request, song_id: str, slide: int, rev: Optional[int] = None):
+    """Show one slide of a song (also used by program rows). Unblanks.
+    rev: the layout the slide number counts in (the page's), if known."""
+    service: SongService = request.app.state.songs
+    if song_id in service.songs:
+        await ensure_layout(request, song_id)   # outside the lock: the step only takes it then
+    return await _step(request, lambda service: _plan_show(request, service, song_id, slide, rev))
 
 
-async def _plan_show(request: Request, service: SongService, song_id: str, slide: int):
+async def _plan_show(request: Request, service: SongService, song_id: str, slide: int, rev: Optional[int] = None):
     song = service.songs.get(song_id)
     if song is None:
         reason = "song library not loaded" if not service.songs else "unknown song"
         return JSONResponse({"ok": False, "reason": reason, "song_id": song_id}, 409 if not service.songs else 404)
-    await ensure_layout(request, song_id)   # the split decides the slide numbers
+    plan = await ensure_layout(request, song_id, locked=True)   # the split decides the slide numbers
+    if rev is not None and rev != plan.get("rev"):
+        # The page counted in an older layout: the same verse part now.
+        older = service.layout_history.get(song_id, {}).get(rev)
+        if older is None:
+            return JSONResponse({"ok": False, "reason": "the song's slides changed; reload", "song_id": song_id,
+                                 **_live_view(service)}, 409)
+        slide = remap_slide(older, plan["shown"], slide)
     count = len(service.slides(song_id))
     if not 0 <= slide < count:
         return JSONResponse({"ok": False, "reason": "no such slide", "song_id": song_id}, 400)
@@ -822,12 +964,9 @@ async def set_song_settings(request: Request, body: dict = Body(...)):
         return JSONResponse({"ok": False, "reason": reason}, 400)
     async with service.lock:
         service.save_settings(settings)
-        live = service.live
-        if live["song_id"] in service.songs:
-            # The live song's slides may split differently now: keep the
-            # number in range (the next show sends the new layout).
-            await ensure_layout(request, live["song_id"])
-            live["slide"] = min(live["slide"], len(service.slides(live["song_id"])) - 1)
+    # The live song's slides may split differently now: the live slide
+    # follows its verse (the next step sends the new layout).
+    await relayout_live(request)
     return {"ok": True, "settings": settings.model_dump()}
 
 
@@ -843,10 +982,7 @@ async def reload_song_library(request: Request):
     songs, errors = await asyncio.to_thread(SongService.parse_library, result["files"])
     async with service.lock:
         summary = service.set_library(songs, errors)
-        live = service.live
-        if live["song_id"] in service.songs:
-            await ensure_layout(request, live["song_id"])
-            live["slide"] = min(live["slide"], len(service.slides(live["song_id"])) - 1)
+    await relayout_live(request)
     log.info("Song library loaded: %s songs, %s unreadable", summary["count"], len(summary["errors"]))
     return {**summary, "truncated": bool(result.get("truncated"))}
 
@@ -877,17 +1013,26 @@ async def song_live(request: Request, have: Optional[str] = None, rev: Optional[
 
 @router.post("/songs/show")
 async def song_show(request: Request, body: dict = Body(...)):
-    song_id, slide = body.get("song_id"), body.get("slide", 0)
+    song_id, slide, rev = body.get("song_id"), body.get("slide", 0), body.get("rev")
     if not isinstance(song_id, str) or not isinstance(slide, int) or isinstance(slide, bool):
         return JSONResponse({"ok": False, "reason": "song_id and slide required"}, 400)
-    return await show_slide(request, song_id, slide)
+    if rev is not None and (not isinstance(rev, int) or isinstance(rev, bool)):
+        return JSONResponse({"ok": False, "reason": "rev must be the layout_rev the slide number counts in"}, 400)
+    return await show_slide(request, song_id, slide, rev)
 
 
 # Next/back read the current slide under the lock: two quick presses step
 # two slides instead of both showing the same one.
 
+async def _prepare_live(request: Request) -> None:
+    """Lay the live song out before a step takes the lock."""
+    await relayout_live(request)
+
+
 @router.post("/songs/next")
 async def song_next(request: Request):
+    await _prepare_live(request)
+
     def plan(service: SongService):
         live = service.live
         if live["song_id"] not in service.songs:
@@ -903,6 +1048,8 @@ async def song_next(request: Request):
 
 @router.post("/songs/prev")
 async def song_prev(request: Request):
+    await _prepare_live(request)
+
     def plan(service: SongService):
         live = service.live
         if live["song_id"] not in service.songs:
@@ -1017,7 +1164,19 @@ async def song_layout(request: Request, body: dict = Body(...)):
             song_id, song = "", _layout_song(body)
     except (ValidationError, ValueError, TypeError) as exc:
         return JSONResponse({"ok": False, "reason": str(exc).splitlines()[0]}, 400)
-    plan = await plan_layout(request, song_id, song, settings)
+    if song_id and settings == service.settings:
+        plan = await ensure_layout(request, song_id)   # the stored layout (also what is shown)
+        return {"ok": True, "song": _song_view(song_id, song, plan, plan["shown"])}
+    # Previews in turn; a newer one from the same page makes an older one
+    # that still waits pointless (it would only be drawn over).
+    client = body.get("client") if isinstance(body.get("client"), str) else ""
+    if len(service.preview_latest) > 200:
+        service.preview_latest.clear()
+    service.preview_latest[client[:40]] = mine = service.preview_latest.get(client[:40], 0) + 1
+    async with service.preview_lock:
+        if service.preview_latest.get(client[:40]) != mine:
+            return JSONResponse({"ok": False, "reason": "superseded by a newer preview"}, 409)
+        plan = await plan_layout(request, song_id, song, settings)
     plan["rev"] = 0
     view = _song_view(song_id, song, plan, plan["shown"])
     view.pop("layout_rev", None)

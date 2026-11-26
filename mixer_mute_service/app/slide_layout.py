@@ -27,9 +27,16 @@ Rules, per screen:
    slide alone is drawn at most that small, cut at the bottom and marked
    "overflow".
 
-Several screens: the song is split for the screen that needs the most slides
-(the most constraining one), so all screens show the same slides and the
-verse keys stay in step; each screen then gets its own one size for them.
+Several screens: the song is split first for the screen that needs the most
+slides, then further wherever another screen still needs it, so all screens
+show the same slides (the verse keys stay in step) and none goes below its
+own shrink limit for a slide that can be split; each screen then gets its
+own one size for them.
+
+Speed: widths add up per character, wrapping that cannot fit is ruled out
+by a quick greedy count before the search for nicer breaks, and results are
+kept per Metrics object (options_memo, lines_memo): 300 long verses on three
+screens take about half a second, and a second time a few milliseconds.
 
 Constants shared with the drawing code: keep SLIDE_* and PREVIEW_* in sync
 with desktop_agent/show_image_agent.py and SLIDE/PREVIEW in
@@ -121,6 +128,10 @@ class Metrics:
         self.default = default
         self.source = source
         self._cache: Dict[str, float] = {}
+        # Layouts worked out with these widths (the same paragraph at the same
+        # size comes up again and again: sizes tried, splits, later layouts).
+        self.options_memo: Dict[tuple, dict] = {}
+        self.lines_memo: Dict[tuple, List[str]] = {}
 
     def ref_width(self, text: str) -> float:
         width = self._cache.get(text)
@@ -227,19 +238,24 @@ def word_units(paragraph: str) -> List[str]:
 
 def _letter_wrap(metrics: Metrics, paragraph: str, px: float, width: float) -> List[str]:
     """Greedy wrapping that also breaks words wider than a line between
-    letters (only for paragraphs with such a word)."""
-    out, line = [], ""
+    letters (only for paragraphs with such a word). Widths add up (the
+    character widths are summed), so a line's width is kept as it grows."""
+    out, line, line_w = [], "", 0.0
+    space = metrics.width(" ", px)
     for word in word_units(paragraph):
-        candidate = word if not line else f"{line} {word}"
-        if not line or metrics.width(candidate, px) <= width:
-            line = candidate
+        word_w = metrics.width(word, px)
+        if not line or line_w + space + word_w <= width:
+            line, line_w = (word, word_w) if not line else (f"{line} {word}", line_w + space + word_w)
         else:
             out.append(line)
-            line = word
+            line, line_w = word, word_w
+        if line_w <= width:
+            continue
         while len(line) > 1 and metrics.width(line, px) > width:
             cut = next((k for k in range(len(line) - 1, 0, -1) if metrics.width(line[:k], px) <= width), 1)
             out.append(line[:cut])
             line = line[cut:]
+        line_w = metrics.width(line, px)
     out.append(line)
     return out
 
@@ -248,11 +264,25 @@ def _letter_wrap(metrics: Metrics, paragraph: str, px: float, width: float) -> L
 EXTRA_LINES = 3
 
 
+MEMO_MAX = 50_000
+
+
 def _paragraph_options(metrics: Metrics, paragraph: str, px: float, width: float) -> Dict[int, tuple]:
     """{number of lines: (cost, lines)} of one line of the file: itself if
     it fits; else, for the fewest lines and a few more, the breaks with the
     lowest cost (after sentence ends, then clause ends, even line lengths,
     no lonely last word)."""
+    key = (paragraph, px, width)
+    found = metrics.options_memo.get(key)
+    if found is None:
+        found = _paragraph_options_uncached(metrics, paragraph, px, width)
+        if len(metrics.options_memo) >= MEMO_MAX:
+            metrics.options_memo.clear()
+        metrics.options_memo[key] = found
+    return found
+
+
+def _paragraph_options_uncached(metrics: Metrics, paragraph: str, px: float, width: float) -> Dict[int, tuple]:
     if metrics.width(paragraph, px) <= width:
         return {1: (0.0, [paragraph])}
     units = word_units(paragraph)
@@ -265,6 +295,16 @@ def _paragraph_options(metrics: Metrics, paragraph: str, px: float, width: float
     prefix = [0.0]
     for w in widths:
         prefix.append(prefix[-1] + w)
+    # Line counts beyond the fewest (greedy filling) + EXTRA_LINES are of no
+    # use: a state that cannot finish within that is dropped. The rest of the
+    # paragraph needs at least its width / the line width more lines.
+    most = len(_letter_wrap(metrics, paragraph, px, width)) + EXTRA_LINES
+    rest = [math.ceil((prefix[m] - prefix[j]) / width - 1e-9) for j in range(m + 1)]
+    # Cost of a break after each word (by its punctuation; short words cost more).
+    break_cost = []
+    for unit in units:
+        ending = _ending(unit)
+        break_cost.append(BREAK_COST[ending] + (SHORT_WORD_COST if ending == "word" and len(unit) <= SHORT_WORD else 0.0))
     # best[j][n]: cost of units[:j] in n lines ending in a break; how[j][n] the last line's start.
     best: List[Dict[int, float]] = [dict() for _ in range(m + 1)]
     how: List[Dict[int, int]] = [dict() for _ in range(m + 1)]
@@ -284,11 +324,10 @@ def _paragraph_options(metrics: Metrics, paragraph: str, px: float, width: float
             # The last line may be shorter, but not a lonely word.
             cost = SLACK_WEIGHT * slack * slack * (0.5 if j == m else 1.0)
             if j < m:
-                ending = _ending(units[j - 1])
-                cost += BREAK_COST[ending]
-                if ending == "word" and len(units[j - 1]) <= SHORT_WORD:
-                    cost += SHORT_WORD_COST
+                cost += break_cost[j - 1]
             for n, before in best[i].items():
+                if n + 1 + rest[j] > most:
+                    continue
                 total = before + cost
                 if total < best[j].get(n + 1, math.inf):
                     best[j][n + 1], how[j][n + 1] = total, i
@@ -327,10 +366,34 @@ def slide_lines(metrics: Metrics, text: str, px: float, width: float, box_h: flo
     """The lines of a slide: the best breaks of all its lines together that
     still fit into box_h (a line more for a better break only where there is
     room); where nothing fits, as few lines as possible."""
-    options = [_paragraph_options(metrics, paragraph, px, width) for paragraph in text.split("\n")]
+    key = (text, px, width, box_h)
+    found = metrics.lines_memo.get(key)
+    if found is None:
+        found = _slide_lines_uncached(metrics, text, px, width, box_h)
+        if len(metrics.lines_memo) >= MEMO_MAX:
+            metrics.lines_memo.clear()
+        metrics.lines_memo[key] = found
+    return list(found)
+
+
+def _greedy_lines(metrics: Metrics, text: str, px: float, width: float) -> List[str]:
+    """Lines filled one after the other: as few as possible, quickly (for
+    the grey preview, and to see whether a size can fit at all)."""
+    lines: List[str] = []
+    for paragraph in text.split("\n"):
+        lines.extend([paragraph] if metrics.width(paragraph, px) <= width
+                     else _letter_wrap(metrics, paragraph, px, width))
+    return lines
+
+
+def _slide_lines_uncached(metrics: Metrics, text: str, px: float, width: float, box_h: float) -> List[str]:
     budget = int((box_h + 1e-6) // (px * SLIDE_LINE)) if box_h != math.inf else 10 ** 6
-    if sum(min(o) for o in options) > budget:
-        return [line for o in options for line in o[min(o)][1]]
+    greedy = _greedy_lines(metrics, text, px, width)
+    if len(greedy) > budget:
+        # Not even the fewest lines fit (filling greedily gives the fewest):
+        # no need to look for nicer breaks.
+        return greedy
+    options = [_paragraph_options(metrics, paragraph, px, width) for paragraph in text.split("\n")]
     # Knapsack over the lines of the file: lowest cost within the line budget.
     states = {0: (0.0, [])}   # lines used -> (cost, chosen option per paragraph)
     for o in options:
@@ -354,6 +417,20 @@ def _sizes(max_px: float, floor_px: float) -> List[float]:
         sizes.append(px)
         px *= SIZE_STEP
     sizes.append(floor_px)
+    return sizes
+
+
+def _ladder(max_px: float, floor_px: float, min_px: float) -> List[float]:
+    """The sizes tried by a layout that may not split any more: the same
+    steps as _sizes() down to floor_px (always included: the shrink limit
+    itself is a size), then on down to min_px."""
+    sizes = _sizes(max_px, floor_px)
+    px = floor_px * SIZE_STEP
+    while px > min_px + 1e-9:
+        sizes.append(px)
+        px *= SIZE_STEP
+    if min_px < floor_px - 1e-9:
+        sizes.append(min_px)
     return sizes
 
 
@@ -445,18 +522,30 @@ def split_slide(metrics: Metrics, slide: SlideInput, px: float, width: float, he
     if _fits(slide_lines(metrics, slide.text, px, *first_box), px, first_box[1]):
         return [slide.text]
     pieces = _pieces(metrics, slide.text, px, *plain_box)
+    # Empty lines at the start or end would only make empty parts.
+    while pieces and not pieces[0].text.strip():
+        pieces.pop(0)
+    while pieces and not pieces[-1].text.strip():
+        pieces.pop()
     n = len(pieces)
+    if n == 0:
+        return [slide.text]
 
     part_lines: Dict[tuple, Optional[int]] = {}
 
     def lines_of(i: int, j: int) -> Optional[int]:
-        """Lines of pieces[i:j] as one slide, None if it does not fit."""
+        """Lines of pieces[i:j] as one slide: None if it does not fit, 0 if
+        it has no text (empty lines only: no slide of its own, but more
+        pieces may still fit with it)."""
         key = (i, j)
         if key not in part_lines:
             text = _join(pieces[i:j])
             box_w, box_h = first_box if i == 0 else plain_box
-            lines = slide_lines(metrics, text, px, box_w, box_h)
-            part_lines[key] = len(lines) if _fits(lines, px, box_h) and text.strip() else None
+            if not text.strip():
+                part_lines[key] = 0
+            else:
+                lines = slide_lines(metrics, text, px, box_w, box_h)
+                part_lines[key] = len(lines) if _fits(lines, px, box_h) else None
         return part_lines[key]
 
     # Fewest parts: greedy (a part never fits better with more in it).
@@ -485,6 +574,8 @@ def split_slide(metrics: Metrics, slide: SlideInput, px: float, width: float, he
                     if j - i > 1:
                         break  # longer parts fit even less
                     continue
+                if lines == 0:
+                    continue   # empty lines only: not a slide (a longer part may be one)
                 cost = best[i][k - 1] + BALANCE_WEIGHT * ((lines - target) / target) ** 2
                 if j < n:
                     cost += SPLIT_COST[pieces[j - 1].after]
@@ -521,23 +612,23 @@ def _limits(screen: Screen, set_px: float):
     return max_px, min_px, floor_px
 
 
-def split_song(screen: Screen, slides: List[SlideInput], set_px: float) -> List[ShownSlide]:
-    """The slides as shown on this screen: verses that do not fit even at
-    the shrink limit split (rule 4)."""
+def split_song(screen: Screen, slides: List[ShownSlide], set_px: float) -> List[ShownSlide]:
+    """The slides as shown on this screen: slides that do not fit even at
+    the shrink limit split (rule 4); the parts keep their source. Part
+    numbers are set by plan_song()."""
     max_px, _min_px, floor_px = _limits(screen, set_px)
     sizes = _sizes(max_px, floor_px)
     shown: List[ShownSlide] = []
-    for index, slide in enumerate(slides):
+    for slide in slides:
         box_w, box_h = slide_box(screen.width, screen.height, slide.title, slide.copyright)
         if not slide.splittable or _best_size(screen.metrics, slide.text, sizes, box_w, box_h) is not None:
-            shown.append(ShownSlide(slide.text, slide.title, slide.copyright, index, key=slide.key,
-                                    splittable=slide.splittable))
+            shown.append(slide)
             continue
-        parts = split_slide(screen.metrics, slide, floor_px, screen.width, screen.height)
-        for k, text in enumerate(parts):
+        source = SlideInput(slide.text, slide.title, slide.copyright, key=slide.key)
+        for k, text in enumerate(split_slide(screen.metrics, source, floor_px, screen.width, screen.height)):
             first = k == 0
-            shown.append(ShownSlide(text, slide.title and first, slide.copyright and first, index,
-                                    k + 1, len(parts), slide.key))
+            shown.append(ShownSlide(text, slide.title and first, slide.copyright and first, slide.source,
+                                    key=slide.key))
     return shown
 
 
@@ -549,7 +640,7 @@ def preview_layout(metrics: Metrics, lines: List[str], next_text: str, px: float
     if not next_text:
         return None
     pp = max(PREVIEW_SCALE * px, PREVIEW_MIN * height / 1080)
-    wrapped = slide_lines(metrics, next_text, pp, box_w)
+    wrapped = _greedy_lines(metrics, next_text, pp, box_w)
     free = (box_h - len(lines) * px * SLIDE_LINE) / 2 - PREVIEW_GAP * px
     count = min(len(wrapped), int(free // (pp * SLIDE_LINE)) if free > 0 else 0)
     return {"px": pp, "lines": wrapped[:count]} if count >= 1 else None
@@ -566,7 +657,7 @@ def lay_out(screen: Screen, shown: List[ShownSlide], set_px: float, previews: Li
     previews: per slide the text of the next-slide preview ("" for none)."""
     metrics = screen.metrics
     max_px, min_px, floor_px = _limits(screen, set_px)
-    sizes = _sizes(max_px, min_px)
+    sizes = _ladder(max_px, floor_px, min_px)
     boxes = [slide_box(screen.width, screen.height, s.title, s.copyright) for s in shown]
     own = [_best_size(metrics, s.text, sizes, *box) for s, box in zip(shown, boxes)]
     core = [px for px, s in zip(own, shown) if px is not None and (s.splittable or px >= floor_px - 1e-9)]
@@ -589,19 +680,28 @@ def lay_out(screen: Screen, shown: List[ShownSlide], set_px: float, previews: Li
 
 def plan_song(screens: List[Screen], slides: List[SlideInput], set_px: float, show_next: bool = True):
     """(shown slides, [ScreenLayout per screen]) of a song on all its screens.
-    The split comes from the screen that needs the most slides (ties: the
-    first of them), so all screens show the same slides."""
-    chosen: Optional[List[ShownSlide]] = None
-    for screen in screens:
-        shown = split_song(screen, slides, set_px)
-        if chosen is None or len(shown) > len(chosen):
-            chosen = shown
-    if chosen is None:
-        chosen = [ShownSlide(s.text, s.title, s.copyright, i, key=s.key, splittable=s.splittable)
-                  for i, s in enumerate(slides)]
+    Split first for the screen that needs the most slides on its own, then
+    the other screens split further whatever still does not fit them at their
+    shrink limit: all screens show the same slides (the verse keys stay in
+    step) and none goes below its shrink limit for a slide that can be split."""
+    base = [ShownSlide(s.text, s.title, s.copyright, i, key=s.key, splittable=s.splittable)
+            for i, s in enumerate(slides)]
+    alone = [split_song(screen, base, set_px) for screen in screens]
+    order = sorted(range(len(screens)), key=lambda i: -len(alone[i]))
+    shown = alone[order[0]] if screens else base
+    for index in order[1:]:
+        shown = split_song(screens[index], shown, set_px)
+    # Part numbers per source slide (1/1 when not split).
+    counts: Dict[int, int] = {}
+    for slide in shown:
+        counts[slide.source] = counts.get(slide.source, 0) + 1
+    seen: Dict[int, int] = {}
+    for slide in shown:
+        seen[slide.source] = seen.get(slide.source, 0) + 1
+        slide.part, slide.parts = seen[slide.source], counts[slide.source]
     previews = []
-    for index, slide in enumerate(chosen):
+    for index, slide in enumerate(shown):
         title_slide = not slides[slide.source].splittable
-        upcoming = chosen[index + 1].text if show_next and index + 1 < len(chosen) and not title_slide else ""
+        upcoming = shown[index + 1].text if show_next and index + 1 < len(shown) and not title_slide else ""
         previews.append(upcoming)
-    return chosen, [lay_out(screen, chosen, set_px, previews) for screen in screens]
+    return shown, [lay_out(screen, shown, set_px, previews) for screen in screens]

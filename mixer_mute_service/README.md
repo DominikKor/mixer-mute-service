@@ -847,16 +847,24 @@ Die Breiten misst der Display-Agent: Der Service fragt ihn einmal je Schrift
 nach den Zeichenbreiten und der Fenstergröße seines Monitors (`/song/metrics`)
 und merkt sie sich; gesetzt wird im Service (in einem eigenen Thread, auch
 300 Folien in Bruchteilen einer Sekunde) und nur neu, wenn sich Lied,
-Einstellungen oder Breiten ändern. **Mehrere Bildschirme**: Geteilt wird für
-den Bildschirm, der die meisten Folien braucht – so zeigen alle dieselben
-Folien und bleiben im Takt; jeder bekommt dann seine eigene einheitliche Größe.
+Einstellungen oder Breiten ändern; dabei bleibt die gezeigte Folie bei ihrer
+Strophe (aus „2.2“ wird z. B. „2“, nicht die nächste Strophe), und ein Sprung
+von einer Seite mit älterer Nummerierung (`rev`) landet auf dem gemeinten Teil.
+**Mehrere Bildschirme**: Geteilt wird zuerst für den Bildschirm, der die
+meisten Folien braucht, dann weiter, wo ein anderer es noch braucht – so
+zeigen alle dieselben Folien, bleiben im Takt und keiner wird kleiner als
+seine 18 %-Grenze; jeder bekommt seine eigene einheitliche Größe. Meldet ein
+Agent eine andere Fenstergröße (Auflösung geändert), wird neu gesetzt.
 Die Vorschau auf der Seite zeigt den ersten Bildschirm genau so, wie der Service
 ihn setzt (`tests/test_slide_parity.py`); Einstellungs- und Neues-Lied-Vorschau
 fragen dafür `POST /songs/layout`. **Ältere Display-Agents** kennen weder
 `/song/metrics` noch `layout`: Der Service schätzt die Breiten dann (Verdana,
 1920 × 1080) und teilt die Strophen damit, schickt die Folie ohne `layout` (der
 Agent passt sie wie früher selbst ein) und merkt sich das je PC für 10 Minuten,
-damit jede Folie nur eine Anfrage braucht.
+damit jede Folie nur eine Anfrage braucht – aber nur bei einer Absage wegen
+eines unbekannten Felds (400), und vergessen, sobald der Agent mit einer
+anderen Startzeit antwortet (aktualisiert oder neu gestartet). Die Liste der
+Lieder zählt Strophen und Refrains (`slide_count`), nicht die geteilten Folien.
 **Titelfolie** (Standard: an): Jedes Lied beginnt mit einer eigenen Folie, auf
 der der Titel in der Mitte steht und das Copyright darunter (mit dem Schalter
 *Copyright*). Sie ist Folie 0, die Liedfolien zählen ab 1; ein Programmpunkt

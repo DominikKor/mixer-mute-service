@@ -151,10 +151,22 @@ function songSlide(song, index, settings) {
   };
 }
 
+// A slide number of the live song counts in its layout: the jump says which
+// one ({rev}), so after a new layout (settings, screens) it still lands on the
+// verse part that was tapped. {} for another song.
+function songLiveRev(songId) {
+  const song = SONG_LIVE.song;
+  return song && song.layout_rev && (songId === undefined || songId === SONG_LIVE.song_id) ? { rev: song.layout_rev } : {};
+}
+
+// This page, for /songs/layout: a newer preview from it makes an older one
+// that still waits there pointless.
+const SONG_PAGE_ID = Math.random().toString(36).slice(2, 12);
+
 // The song laid out by the service with these (maybe unsaved) settings:
 // {song_id} or {song}; null when the service cannot answer.
 async function fetchSongLayout(request, settings) {
-  const result = await api("POST", "/songs/layout", { ...request, settings });
+  const result = await api("POST", "/songs/layout", { ...request, settings, client: SONG_PAGE_ID });
   return result.ok && result.data && result.data.ok ? result.data.song : null;
 }
 
@@ -254,7 +266,7 @@ function songBlankToggle() {
     songAction(SONG_LIVE.blank ? "/songs/hide" : "/songs/blank");
     return;
   }
-  if (SONG_LIVE.blank) songAction("/songs/show", { song_id: SONG_LIVE.song_id, slide: SONG_LIVE.slide });
+  if (SONG_LIVE.blank) songAction("/songs/show", { song_id: SONG_LIVE.song_id, slide: SONG_LIVE.slide, ...songLiveRev() });
   else songAction("/songs/blank");
 }
 
@@ -264,7 +276,7 @@ $("song-blank-btn").addEventListener("click", songBlankToggle);
 $("song-hide-btn").addEventListener("click", () => songAction("/songs/hide"));
 $("song-slides").addEventListener("click", event => {
   const button = event.target.closest("[data-song-slide]");
-  if (button && SONG_LIVE.song) songAction("/songs/show", { song_id: SONG_LIVE.song_id, slide: Number(button.dataset.songSlide) });
+  if (button && SONG_LIVE.song) songAction("/songs/show", { song_id: SONG_LIVE.song_id, slide: Number(button.dataset.songSlide), ...songLiveRev() });
 });
 $("song-choose-btn").addEventListener("click", event => openSongSearch(event.currentTarget, song => {
   if (song) songAction("/songs/show", { song_id: song.id, slide: 0 });
@@ -524,7 +536,7 @@ function syncSongPicker(wrap) {
   const button = wrap.querySelector(".song-pick-btn");
   button.classList.toggle("empty", !id);
   button.textContent = id ? `♪ ${song ? song.title : id.replace(/\.(foil|pptx)$/i, "")}` : "♪ Lied wählen";
-  button.title = id ? (song ? `${song.title} · ${song.slide_count} Folien` : "Lied nicht in der geladenen Bibliothek") : "Lied aus der FoilPresenter-Bibliothek";
+  button.title = id ? (song ? `${song.title} · ${song.slide_count} Strophen/Refrains` : "Lied nicht in der geladenen Bibliothek") : "Lied aus der FoilPresenter-Bibliothek";
 }
 
 let SONG_SEARCH = null;

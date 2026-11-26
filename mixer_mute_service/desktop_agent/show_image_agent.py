@@ -1766,6 +1766,18 @@ def _valid_layout(layout) -> bool:
     )
 
 
+SONG_KEYS = {"action", "monitor", "fullscreen", "style", "text", "title", "copyright", "next", "layout"}
+SONG_STYLE_KEYS = {"font", "font_size", "text_color", "background_color", "align"}
+
+
+def _known_song_fields(body) -> bool:
+    """Only fields this agent knows: a request it refuses all the same has a
+    value it does not take (422), not a newer field (400: the service then
+    sends an older form)."""
+    return (isinstance(body, dict) and set(body) <= SONG_KEYS
+            and (not isinstance(body.get("style"), dict) or set(body["style"]) <= SONG_STYLE_KEYS))
+
+
 def _valid_song_request(body) -> bool:
     if not isinstance(body, dict) or body.get("action") not in ("show", "blank", "hide"):
         return False
@@ -1925,6 +1937,9 @@ def _slide_box(width: float, height: float, title: bool, copyright: bool):
     return box_w, box_h
 
 
+_LAYOUT_MISMATCH_LOGGED: set = set()
+
+
 def _slide_layout(measure, body: dict, width: int, height: int, box_w: float, box_h: float):
     """(size, lines, preview) to draw: the service's layout where it was
     made for this window size (a line that would run past the margin is
@@ -1936,7 +1951,9 @@ def _slide_layout(measure, body: dict, width: int, height: int, box_w: float, bo
         lines = _wrap_lines(measure, layout["lines"], px, box_w + SLIDE_PAD_X * width)
         preview = layout["preview"]
         return px, lines, (preview["px"], preview["lines"]) if preview else None
-    if layout is not None:
+    if layout is not None and (tuple(layout["screen"]), width, height) not in _LAYOUT_MISMATCH_LOGGED:
+        # Once per size pair (the service lays out for the new size from the next slide on).
+        _LAYOUT_MISMATCH_LOGGED.add((tuple(layout["screen"]), width, height))
         logger.warning("Song layout made for %s, window is %sx%s: fitting the slide here",
                        layout["screen"], width, height)
     px, lines = _fit_text(measure, body["text"], body["style"]["font_size"] * height / 1080,
@@ -2180,10 +2197,21 @@ class DisplayHandler(BaseHTTPRequestHandler):
             return
         if self.path == "/song":
             if not _valid_song_request(body):
-                self.send_error(400)
+                if _known_song_fields(body):
+                    self._send_json(422, {"ok": False, "reason": "invalid song request"})
+                else:
+                    self.send_error(400)
                 return
             requests.put({"kind": "song", "id": "song", **body})
-            self._send_json(202, {"ok": True, "action": body["action"]})
+            answer = {"ok": True, "action": body["action"], "started_at": STARTED_AT}
+            if body["action"] != "hide":
+                try:
+                    # The window the slide is drawn in: the service lays out for this size.
+                    width, height, _x, _y = _song_window(body["monitor"], body["fullscreen"])
+                    answer["window"] = [body["monitor"], width, height]
+                except Exception:  # noqa: BLE001 - the slide is shown (or fails) on the Tk thread
+                    pass
+            self._send_json(202, answer)
             return
         if self.path == "/power":
             self._handle_power(body)
@@ -2297,7 +2325,8 @@ class DisplayHandler(BaseHTTPRequestHandler):
         if widths is None:
             self._send_json(503, {"ok": False, "reason": "the font could not be measured"})
             return
-        self._send_json(200, {"ok": True, "width": width, "height": height, "ref": METRICS_REF_PX, "widths": widths})
+        self._send_json(200, {"ok": True, "width": width, "height": height, "ref": METRICS_REF_PX, "widths": widths,
+                              "started_at": STARTED_AT})
 
     def _handle_song_library(self, body: dict) -> None:
         if not isinstance(body, dict) or set(body) != {"path"} or not isinstance(body["path"], str):
