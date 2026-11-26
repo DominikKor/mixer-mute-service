@@ -1,13 +1,18 @@
 """Licht: the stage (Art-Net zones), the room light (Shelly circuits) and
 light scenes.
 
-A scene is the light as it was when saved, but only for the lights chosen
-for it: any of the stage zones, the colour (warm and cold together) and
-room light circuits. Applying it sets only those; every other light stays
-as it is. A chosen circuit whose state was unknown when saving (it did not
-answer) is left out. Scenes saved before the choice existed hold all
-stage zones and the colour. Program rows name a scene in their "light"
-field; it is applied when the row starts.
+A scene (a "Preset" on the page) is the light as it was when saved, but only
+for the lights chosen for it: any of the stage lights (each with on/off,
+brightness and its own warm/cold colour) and room light circuits. Applying
+it sets only those; every other light stays as it is. A chosen circuit
+whose state was unknown when saving (it did not answer) is left out.
+Program rows name a scene in their "light" field; it is applied when the
+row starts. Scenes keep the order the user gives them.
+
+Scenes from before the lights were stored one by one ({"zones": {zone:
+level}, "warm", "cold"}) are read as: level > 0 on at that level, 0 off
+(keeping the light's level), the colour (if saved) for each of those
+lights, or for all lights if the scene held only the colour.
 
 The HTTP routes are in app/api/lights.py.
 """
@@ -27,6 +32,7 @@ from fastapi import Request
 from .jsonstore import read_json, write_json_atomic
 from .native_controls import (
     ARTNET_ZONES,
+    FIXTURE_KEYS,
     SHELLY_HOSTS,
     NativeControlError,
 )
@@ -49,31 +55,78 @@ def _level(value) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= 255
 
 
+def _clean_fixture(entry) -> dict:
+    """A stage light in a scene: on (bool), level, warm, cold; None (or
+    left out) keeps what the light has."""
+    if not isinstance(entry, dict) or any(key not in FIXTURE_KEYS for key in entry):
+        raise SceneError("a scene stage light is {on, level, warm, cold}")
+    fixture = {key: entry.get(key) for key in FIXTURE_KEYS}
+    if fixture["on"] is not None and not isinstance(fixture["on"], bool):
+        raise SceneError("a scene stage light's on must be true or false")
+    if any(fixture[key] is not None and not _level(fixture[key]) for key in ("level", "warm", "cold")):
+        raise SceneError("scene light values must be 0..255")
+    if all(value is None for value in fixture.values()):
+        raise SceneError("a scene stage light must set something")
+    return fixture
+
+
+def _legacy_fixtures(stage: dict) -> dict:
+    """{"zones": {zone: level}, "warm", "cold"} (one colour for all lights)
+    as stage lights."""
+    zones = stage.get("zones") or {}
+    if not isinstance(zones, dict) or any(z not in ARTNET_ZONES or not _level(v) for z, v in zones.items()):
+        raise SceneError("scene stage zones must be known zones with a level 0..255")
+    warm, cold = stage.get("warm"), stage.get("cold")
+    # The colour was one choice: warm and cold together, or neither.
+    if (warm is None) != (cold is None) or (warm is not None and not (_level(warm) and _level(cold))):
+        raise SceneError("scene needs warm and cold 0..255 together, or neither")
+    if not zones and warm is not None:
+        zones = dict.fromkeys(ARTNET_ZONES)  # colour only: every light, on/off as it is
+    return {zone: {"on": None if level is None else level > 0, "level": level or None, "warm": warm, "cold": cold}
+            for zone, level in zones.items()}
+
+
 def _clean_scene(entry: dict) -> dict:
     name = entry.get("name")
     name = name.strip() if isinstance(name, str) else ""
     if not name or len(name) > 40 or any(ord(c) < 32 for c in name):
         raise SceneError("scene name must contain 1 to 40 characters")
     stage = entry.get("stage") or {}
-    zones = stage.get("zones") or {}
-    if not isinstance(zones, dict) or any(z not in ARTNET_ZONES or not _level(v) for z, v in zones.items()):
-        raise SceneError("scene stage zones must be known zones with a level 0..255")
-    warm, cold = stage.get("warm"), stage.get("cold")
-    # The colour is one choice: warm and cold together, or neither.
-    if (warm is None) != (cold is None) or (warm is not None and not (_level(warm) and _level(cold))):
-        raise SceneError("scene needs warm and cold 0..255 together, or neither")
+    if not isinstance(stage, dict):
+        raise SceneError("scene stage must be {fixtures}")
+    if "fixtures" in stage:
+        fixtures = stage["fixtures"] or {}
+        if not isinstance(fixtures, dict) or any(z not in ARTNET_ZONES for z in fixtures):
+            raise SceneError("scene stage lights must be known zones")
+        fixtures = {zone: _clean_fixture(value) for zone, value in fixtures.items()}
+    else:
+        fixtures = _legacy_fixtures(stage)
     circuits = entry.get("circuits") or {}
     if not isinstance(circuits, dict) or any(
             target not in SHELLY_HOSTS or not isinstance(on, bool) for target, on in circuits.items()):
         raise SceneError("invalid room light circuit in scene")
-    if not zones and warm is None and not circuits:
+    if not fixtures and not circuits:
         raise SceneError("a scene must control at least one light")
     return {
         "id": str(entry.get("id") or uuid.uuid4().hex),
         "name": name,
-        "stage": {"zones": {k: zones[k] for k in ARTNET_ZONES if k in zones}, "warm": warm, "cold": cold},
+        "stage": {"fixtures": {k: fixtures[k] for k in ARTNET_ZONES if k in fixtures}},
         "circuits": {k: circuits[k] for k in SHELLY_HOSTS if k in circuits},
     }
+
+
+def scene_is_active(scene: dict, stage: dict, circuits: dict) -> bool:
+    """Whether the light is now as the scene sets it. A light that is (and
+    should be) off counts whatever level or colour it keeps; a circuit whose
+    state is unknown does not count against the scene."""
+    for zone, want in scene["stage"]["fixtures"].items():
+        now = stage["fixtures"][zone]
+        lit = now["on"] if want["on"] is None else want["on"]
+        if lit != now["on"]:
+            return False
+        if lit and any(want[key] is not None and want[key] != now[key] for key in ("level", "warm", "cold")):
+            return False
+    return all(circuits.get(target) in (None, on) for target, on in scene["circuits"].items())
 
 
 class LightSceneStore:
@@ -81,27 +134,54 @@ class LightSceneStore:
         self._path = path
         self._lock = asyncio.Lock()
         self._scenes: List[dict] = []
-        for entry in read_json(path, list, default=[]):
+        raw = read_json(path, list, default=[])
+        legacy = False
+        for entry in raw:
             try:
                 self._scenes.append(_clean_scene(entry))
             except (SceneError, AttributeError, TypeError) as exc:
                 log.warning("Skipping invalid light scene in %s: %s", path, exc)
+                continue
+            legacy = legacy or "fixtures" not in ((entry.get("stage") or {}) if isinstance(entry, dict) else {})
+        if legacy:
+            # Saved before the lights were stored one by one: the page showed
+            # the scenes by name, so that becomes their order.
+            self._scenes.sort(key=lambda s: s["name"].casefold())
+            try:
+                self._persist()
+                log.info("Light scenes in %s converted to stage lights one by one", path)
+            except OSError as exc:
+                log.warning("Could not save converted light scenes to %s: %s", path, exc)
 
     def _persist(self) -> None:
         write_json_atomic(self._path, self._scenes, ensure_ascii=False)
 
     async def list(self) -> List[dict]:
         async with self._lock:
-            return deepcopy(sorted(self._scenes, key=lambda s: s["name"].casefold()))
+            return deepcopy(self._scenes)
 
     async def get(self, scene_id: str) -> Optional[dict]:
         async with self._lock:
             return deepcopy(next((s for s in self._scenes if s["id"] == scene_id), None))
 
-    async def save(self, entry: dict, replace: bool = False) -> dict:
-        """Save a scene; an existing name only with replace=True (KeyError)."""
+    async def save(self, entry: dict, replace: bool = False, scene_id: Optional[str] = None) -> dict:
+        """Save a scene; an existing name only with replace=True (KeyError).
+        ``scene_id``: update that scene (its place and program rows stay; it
+        may get a new name): LookupError if unknown, KeyError if the name is
+        another scene's."""
         scene = _clean_scene(entry)
         async with self._lock:
+            if scene_id is not None:
+                target = next((s for s in self._scenes if s["id"] == scene_id), None)
+                if target is None:
+                    raise LookupError(scene_id)
+                if any(s is not target and s["name"].casefold() == scene["name"].casefold() for s in self._scenes):
+                    raise KeyError(scene["name"])
+                scene["id"] = scene_id
+                target.clear()
+                target.update(scene)
+                self._persist()
+                return deepcopy(scene)
             existing = next((s for s in self._scenes if s["name"].casefold() == scene["name"].casefold()), None)
             if existing and not replace:
                 raise KeyError(scene["name"])
@@ -127,6 +207,16 @@ class LightSceneStore:
             scene["name"] = new
             self._persist()
             return deepcopy(scene)
+
+    async def reorder(self, ids) -> List[dict]:
+        """New order: every scene id exactly once (ValueError otherwise)."""
+        async with self._lock:
+            by_id = {s["id"]: s for s in self._scenes}
+            if not isinstance(ids, list) or sorted(map(str, ids)) != sorted(by_id) or len(set(ids)) != len(ids):
+                raise ValueError("order must name every light scene once")
+            self._scenes = [by_id[i] for i in ids]
+            self._persist()
+            return deepcopy(self._scenes)
 
     async def delete(self, scene_id: str) -> bool:
         async with self._lock:
@@ -222,11 +312,12 @@ async def apply_scene(request: Request, scene_id: str) -> Tuple[dict, int]:
             errors.update(failed)
 
     async def stage_light() -> None:
-        stage = scene["stage"]
-        # Only the chosen stage parts; zones not named keep their level.
-        if stage["zones"] or stage["warm"] is not None:
+        # Only the chosen lights; the others keep what they have.
+        changes = {zone: {k: v for k, v in fixture.items() if v is not None}
+                   for zone, fixture in scene["stage"]["fixtures"].items()}
+        if changes:
             try:
-                await native.set_stage(stage["zones"], stage["warm"], stage["cold"])
+                await native.set_stage(changes)
             except (NativeControlError, OSError) as exc:
                 errors["stage"] = str(exc)
 
@@ -234,5 +325,6 @@ async def apply_scene(request: Request, scene_id: str) -> Tuple[dict, int]:
     if errors:
         log.warning("Light scene %r applied with errors: %s", scene["name"], errors)
         return {"ok": False, "reason": "light scene not fully applied", "scene": scene["name"], "errors": errors}, 502
+    state.light_last_scene = scene["id"]
     log.info("Light scene %r applied", scene["name"])
     return {"ok": True, "scene": scene["name"]}, 200

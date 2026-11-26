@@ -244,7 +244,8 @@ class CompanionParityTests(unittest.TestCase):
         # ValWarmGesamt 255, ValKaltGesamt 50, StartHelligkeit 255, Steps 50, FadeTimeBue 1000
         with tempfile.TemporaryDirectory() as folder:
             controls = NativeControlService(Path(folder) / "state.json")
-        self.assertEqual(controls._levels, {"warm": 255, "cold": 50, "start": 255, "steps": 50, "fade_ms": 1000})
+        self.assertEqual(controls._levels, {"start": 255, "steps": 50, "fade_ms": 1000})
+        self.assertEqual(controls.stage_state()["fixtures"]["left"], {"on": False, "level": 0, "warm": 255, "cold": 50})
 
 
 if __name__ == "__main__":

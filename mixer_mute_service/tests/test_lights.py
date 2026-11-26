@@ -280,7 +280,8 @@ class LightsApiTests(unittest.TestCase):
             "name": "Kanzel", "lights": {"zones": ["left"], "color": False, "circuits": ["light-front"]}})
         self.assertEqual(r.status_code, 200, r.text)
         scene = r.json()["scene"]
-        self.assertEqual(scene["stage"], {"zones": {"left": 90}, "warm": None, "cold": None})
+        # Each chosen light with its own colour ("color" of older pages is ignored).
+        self.assertEqual(scene["stage"], {"fixtures": {"left": {"on": True, "level": 90, "warm": 200, "cold": 40}}})
         self.assertEqual(scene["circuits"], {"light-front": True})
 
         # Everything else changes; applying sets only the chosen lights.
@@ -290,23 +291,22 @@ class LightsApiTests(unittest.TestCase):
         self.assertEqual(self.devices.zone_white("left"), 90)
         self.assertEqual(self.devices.zone_white("right"), 255)
         stage = self.client.get("/lights").json()["stage"]
-        self.assertEqual((stage["warm"], stage["cold"]), (10, 250))
+        self.assertEqual((stage["fixtures"]["left"]["warm"], stage["fixtures"]["left"]["cold"]), (200, 40))
+        self.assertEqual((stage["fixtures"]["right"]["warm"], stage["fixtures"]["right"]["cold"]), (10, 250))
+        self.assertEqual((stage["warm"], stage["cold"]), (None, None))  # the lights differ now
         self.assertTrue(self.devices.shelly["light-front"])
         self.assertFalse(self.devices.shelly["light-tech"])
 
         # Only the room light: the stage is not touched at all.
         room = self.client.post("/lights/scenes", json={
             "name": "Raum", "lights": {"circuits": ["light-tech"]}}).json()["scene"]
-        self.assertEqual(room["stage"], {"zones": {}, "warm": None, "cold": None})
+        self.assertEqual(room["stage"], {"fixtures": {}})
         frames = len(self.devices.frames)
         self.assertEqual(self.client.post(f"/lights/scenes/{room['id']}/apply").status_code, 200)
         self.assertEqual(len(self.devices.frames), frames)
 
-        # The colour alone: warm and cold, the zones keep their level.
-        color = self.client.post("/lights/scenes", json={"name": "Warm", "lights": {"color": True}}).json()["scene"]
-        self.assertEqual(color["stage"], {"zones": {}, "warm": 10, "cold": 250})
-
-        for bad in ({}, {"zones": ["nope"]}, {"circuits": ["x"]}, {"color": "ja"}, {"zones": "left"}, []):
+        # The colour is part of each light now: "colour only" chooses nothing.
+        for bad in ({}, {"color": True}, {"zones": ["nope"]}, {"circuits": ["x"]}, {"zones": "left"}, []):
             r = self.client.post("/lights/scenes", json={"name": "Falsch", "lights": bad})
             self.assertEqual(r.status_code, 400, bad)
         # A chosen circuit that does not answer is left out; alone it is no scene.
@@ -326,7 +326,11 @@ class LightsApiTests(unittest.TestCase):
         path = self.folder / "old_scenes.json"
         path.write_text(json.dumps([old]), encoding="utf-8")
         scenes = asyncio.run(LightSceneStore(path).list())
-        self.assertEqual(scenes, [old])
+        lit = {"on": True, "level": 50, "warm": 1, "cold": 2}
+        self.assertEqual(scenes, [{"id": "a", "name": "Alt", "stage": {"fixtures": {z: lit for z in native_mod.ARTNET_ZONES}},
+                                   "circuits": {"light-tech": True}}])
+        # Converted once, in the file too.
+        self.assertEqual(json.loads(path.read_text(encoding="utf-8")), scenes)
         for stage in ({"zones": {}, "warm": 1, "cold": None}, {"zones": {}, "warm": None, "cold": None}):
             with self.assertRaises(SceneError):
                 _clean_scene({"name": "x", "stage": stage, "circuits": {}})

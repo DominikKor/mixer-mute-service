@@ -11,6 +11,7 @@ import socket
 import struct
 import threading
 import time
+from copy import deepcopy
 from pathlib import Path
 from typing import Callable, Optional
 from urllib.error import URLError
@@ -56,10 +57,33 @@ BEAMER_COMMAND_FORMS = {
     "freeze": ("freeze", "Freeze"),
 }
 # Allowed range of each stored light setting.
-_LEVEL_BOUNDS = {
-    "warm": (0, 255), "cold": (0, 255), "start": (0, 255),
-    "steps": (5, 255), "fade_ms": (0, 60000),
-}
+_LEVEL_BOUNDS = {"start": (0, 255), "steps": (5, 255), "fade_ms": (0, 60000)}
+# A stage light's colour as Companion set it (ValWarmGesamt, ValKaltGesamt).
+DEFAULT_WARM, DEFAULT_COLD = 255, 50
+FIXTURE_KEYS = ("on", "level", "warm", "cold")
+
+
+def _dmx_value(value) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= 255
+
+
+def _new_fixture(level: int = 0, warm: int = DEFAULT_WARM, cold: int = DEFAULT_COLD) -> dict:
+    """One stage light: on/off, its brightness (kept while it is off, so
+    switching it on again brings it back), warm and cold white."""
+    return {"on": level > 0, "level": level, "warm": warm, "cold": cold}
+
+
+def check_fixture_change(change) -> dict:
+    """A change of one stage light: any of on (bool), level, warm, cold
+    (0..255). Returns it cleaned; NativeControlError when invalid."""
+    if not isinstance(change, dict) or not change or any(key not in FIXTURE_KEYS for key in change):
+        raise NativeControlError("a stage light change is {on, level, warm, cold}")
+    if "on" in change and not isinstance(change["on"], bool):
+        raise NativeControlError("on must be true or false")
+    for key in ("level", "warm", "cold"):
+        if key in change and not _dmx_value(change[key]):
+            raise NativeControlError("light values must be 0 to 255")
+    return dict(change)
 
 
 class NativeControlError(RuntimeError):
@@ -368,7 +392,10 @@ class NativeControlService:
         self._lock = asyncio.Lock()
         self._beamer_lock = asyncio.Lock()
         self._dmx = [0] * 512
-        self._levels = {"warm": 255, "cold": 50, "start": 255, "steps": 50, "fade_ms": 1000}
+        self._levels = {"start": 255, "steps": 50, "fade_ms": 1000}
+        # Every stage light on its own (on, level, warm, cold); the DMX frame
+        # is made from them (_render).
+        self._fixtures = {name: _new_fixture() for name in ARTNET_ZONES}
         self._beamer_hidden: Optional[bool] = None
         # Stage sending: one frame at a time (fade steps and the keepalive),
         # when the last one went out, and whether this service drives the
@@ -399,10 +426,29 @@ class NativeControlService:
         if data.get("stage_active") is True and not valid_dmx:
             log.warning("Art-Net: saved stage frame is invalid; stage keepalive waits for the next light command")
         levels = data.get("levels")
-        if isinstance(levels, dict):
-            for key, (low, high) in _LEVEL_BOUNDS.items():
-                if isinstance(levels.get(key), int):
-                    self._levels[key] = max(low, min(high, levels[key]))
+        if not isinstance(levels, dict):
+            levels = {}
+        for key, (low, high) in _LEVEL_BOUNDS.items():
+            if isinstance(levels.get(key), int):
+                self._levels[key] = max(low, min(high, levels[key]))
+        self._fixtures = self._load_fixtures(data.get("fixtures"), levels)
+
+    def _load_fixtures(self, saved, levels: dict) -> dict:
+        """The stage lights from the state file. A state from before they
+        were stored one by one (one warm/cold for all, the on/off level in
+        the DMX frame) becomes: each light on with its frame level or off,
+        and the shared colour."""
+        fixtures = {}
+        warm = levels.get("warm") if _dmx_value(levels.get("warm")) else DEFAULT_WARM
+        cold = levels.get("cold") if _dmx_value(levels.get("cold")) else DEFAULT_COLD
+        for name, zone in ARTNET_ZONES.items():
+            entry = saved.get(name) if isinstance(saved, dict) else None
+            if (isinstance(entry, dict) and isinstance(entry.get("on"), bool)
+                    and all(_dmx_value(entry.get(key)) for key in ("level", "warm", "cold"))):
+                fixtures[name] = {key: entry[key] for key in FIXTURE_KEYS}
+            else:
+                fixtures[name] = _new_fixture(self._dmx[zone["white"] - 1], warm, cold)
+        return fixtures
 
     def _persist_state(self) -> None:
         # A hardware command may already have run; a full disk must not turn
@@ -411,6 +457,7 @@ class NativeControlService:
             write_json_atomic(self._state_path, {
                 "dmx": self._dmx,
                 "stage_active": self._stage_active,
+                "fixtures": self._fixtures,
                 "levels": self._levels,
                 "beamer_hidden": self._beamer_hidden,
             })
@@ -478,11 +525,35 @@ class NativeControlService:
         each other instead of both starting from the same old frame.
         """
         async with self._lock:
-            target = compute(self._dmx.copy())
-            await self._fade_to(target, fade)
+            # compute() may change the lights' memory; if the fade fails,
+            # the stage still shows the old frame: so does the memory.
+            saved = deepcopy(self._fixtures), dict(self._levels)
+            try:
+                target = compute(self._dmx.copy())
+                await self._fade_to(target, fade)
+            except BaseException:
+                self._fixtures, self._levels = saved
+                raise
             self._dmx = target
             self._persist_state()
             return target
+
+    def _render(self, frame: list[int], zone_name: str) -> None:
+        """Write one stage light into the frame: brightness (0 while off),
+        warm and cold."""
+        zone, fixture = ARTNET_ZONES[zone_name], self._fixtures[zone_name]
+        frame[zone["white"] - 1] = fixture["level"] if fixture["on"] else 0
+        frame[zone["warm"] - 1] = fixture["warm"]
+        frame[zone["cold"] - 1] = fixture["cold"]
+
+    def _change_fixture(self, frame: list[int], zone_name: str, change: dict) -> None:
+        """Apply a checked change to one light. Switching on a light without
+        a brightness of its own brings it up to the start brightness."""
+        fixture = self._fixtures[zone_name]
+        fixture.update(change)
+        if fixture["on"] and change.get("on") is True and "level" not in change and fixture["level"] == 0:
+            fixture["level"] = self._levels["start"]
+        self._render(frame, zone_name)
 
     async def _fade_to(self, target: list[int], fade: bool = True) -> None:
         """Send the fade frames (one frame without fade). The caller holds
@@ -572,12 +643,13 @@ class NativeControlService:
         return True
 
     def _set_zone(self, frame: list[int], zone_name: str, white: int) -> None:
-        zone = ARTNET_ZONES.get(zone_name)
-        if zone is None:
+        """A light to a brightness (the keys' and older callers' way): above
+        0 it is on at that level; 0 switches it off and it keeps the level it
+        had, so switching it on again brings that back."""
+        if zone_name not in ARTNET_ZONES:
             raise NativeControlError("unknown Art-Net zone")
-        frame[zone["white"] - 1] = max(0, min(255, white))
-        frame[zone["warm"] - 1] = self._levels["warm"]
-        frame[zone["cold"] - 1] = self._levels["cold"]
+        white = max(0, min(255, white))
+        self._change_fixture(frame, zone_name, {"on": True, "level": white} if white > 0 else {"on": False})
 
     async def _adjust_setting(self, key: str, delta: int) -> int:
         low, high = _LEVEL_BOUNDS[key]
@@ -589,31 +661,50 @@ class NativeControlService:
     # -- Licht section: absolute values and the room light's state ----------
 
     def stage_state(self) -> dict:
-        """Stage zones (white 0..255) and the light settings as last sent.
-        Read without the lock: a fade in progress must not hold up a read."""
+        """The stage lights and the light settings as last sent. Read without
+        the lock: a fade in progress must not hold up a read.
+
+        "zones": what each light shows (0 while off), as before the lights
+        were stored one by one; "fixtures": on, level (kept while off), warm
+        and cold of each; "warm"/"cold": the colour all lights share, None
+        when they differ."""
+        fixtures = deepcopy(self._fixtures)
+        shared = {color: ({f[color] for f in fixtures.values()} or {None}) for color in ("warm", "cold")}
         return {
-            "zones": {name: self._dmx[zone["white"] - 1] for name, zone in ARTNET_ZONES.items()},
+            "zones": {name: f["level"] if f["on"] else 0 for name, f in fixtures.items()},
+            "fixtures": fixtures,
+            **{color: values.pop() if len(values) == 1 else None for color, values in shared.items()},
             **{key: self._levels[key] for key in _LEVEL_BOUNDS},
         }
 
     async def set_stage(self, zones: Optional[dict] = None, warm: Optional[int] = None,
                         cold: Optional[int] = None, fade: bool = True) -> dict:
-        """Fade the stage to absolute values; zones not named keep theirs.
-        fade=False jumps (a slider being dragged sends many small steps)."""
+        """Fade the stage lights to new values; lights not named keep theirs.
+
+        ``zones``: {zone: change}, a change is {on, level, warm, cold} (any
+        of them) or, as before, a number: above 0 on at that level, 0 off
+        (the light keeps its level for switching on again). ``warm`` and
+        ``cold``: for every light. fade=False jumps (a slider being dragged
+        sends many small steps)."""
         zones = zones or {}
-        if any(name not in ARTNET_ZONES for name in zones):
+        if not isinstance(zones, dict) or any(name not in ARTNET_ZONES for name in zones):
             raise NativeControlError("unknown Art-Net zone")
-        for value in [*zones.values(), warm, cold]:
-            if value is not None and (not isinstance(value, int) or isinstance(value, bool) or not 0 <= value <= 255):
+        changes = {}
+        for name, change in zones.items():
+            if isinstance(change, dict):
+                changes[name] = check_fixture_change(change)
+            elif _dmx_value(change):
+                changes[name] = {"on": True, "level": change} if change > 0 else {"on": False}
+            else:
                 raise NativeControlError("light values must be 0 to 255")
+        for value in (warm, cold):
+            if value is not None and not _dmx_value(value):
+                raise NativeControlError("light values must be 0 to 255")
+        colour = {key: value for key, value in (("warm", warm), ("cold", cold)) if value is not None}
 
         def compute(frame: list[int]) -> list[int]:
-            if warm is not None:
-                self._levels["warm"] = warm
-            if cold is not None:
-                self._levels["cold"] = cold
-            for name, zone in ARTNET_ZONES.items():
-                self._set_zone(frame, name, zones.get(name, frame[zone["white"] - 1]))
+            for name in ARTNET_ZONES:
+                self._change_fixture(frame, name, {**colour, **changes.get(name, {})})
             return frame
 
         await self._update_dmx(compute, fade)
@@ -707,8 +798,11 @@ class NativeControlService:
                 raise NativeControlError("unknown Art-Net zone")
 
             def toggle(frame: list[int]) -> list[int]:
-                is_off = frame[zone["white"] - 1] == 0
-                self._set_zone(frame, zone_name, self._levels["start"] if is_off else 0)
+                # On again at the level it had (the start level if it had none).
+                fixture = self._fixtures[zone_name]
+                is_off = not fixture["on"] or fixture["level"] == 0
+                self._change_fixture(frame, zone_name, {"on": True, "level": fixture["level"] or self._levels["start"]}
+                                     if is_off else {"on": False})
                 return frame
 
             target = await self._update_dmx(toggle)
@@ -759,13 +853,13 @@ class NativeControlService:
             delta = int(action.get("delta", 0))
 
             def recolor(frame: list[int]) -> list[int]:
-                self._levels[color] = max(0, min(255, self._levels[color] + delta))
-                for zone in ARTNET_ZONES.values():
-                    frame[zone[color] - 1] = self._levels[color]
+                # Every light by the same step (each light has its own colour).
+                for name, fixture in self._fixtures.items():
+                    self._change_fixture(frame, name, {color: max(0, min(255, fixture[color] + delta))})
                 return frame
 
             await self._update_dmx(recolor)
-            return {"ok": True, "level": self._levels[color]}
+            return {"ok": True, "level": self.stage_state()[color]}
 
         if action_type == "artnet-start-adjust":
             level = await self._adjust_setting("start", int(action.get("delta", 0)))

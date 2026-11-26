@@ -149,17 +149,18 @@
 <section class="panel" data-section="lights">
   <div class="panel-head">
     <button class="section-toggle" aria-expanded="true" aria-controls="lights-body">Licht</button>
-    <div class="panel-tools"><button id="light-scene-add" class="add-key" title="Gewählte Lichter, wie sie gerade sind, als Szene speichern"><svg class="plus-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 4v16M4 12h16"/></svg>Szene</button></div>
+    <div class="panel-tools"><button id="light-scene-add" class="add-key" title="Licht, wie es gerade ist, als Preset speichern"><svg class="plus-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 4v16M4 12h16"/></svg>Preset</button></div>
   </div>
   <div id="lights-body" class="panel-body">
     <div id="light-status" class="light-status" role="status" aria-live="polite" hidden></div>
     <div id="light-scene-create" class="light-block light-scene-create">
+      <div class="light-block-head"><span id="light-scene-create-title" class="light-block-title">Neues Preset</span></div>
       <div class="light-scene-create-row">
-        <input id="light-scene-name" class="rename-input" type="text" placeholder="Name der Szene, z. B. Predigt" autocomplete="off" maxlength="40" />
+        <input id="light-scene-name" class="rename-input" type="text" placeholder="Name, z. B. Predigt" autocomplete="off" maxlength="40" />
         <button id="light-scene-save" class="primary">Aktuelles Licht speichern</button>
         <button id="light-scene-cancel">Abbrechen</button>
       </div>
-      <div class="light-pick-hint">Welche Lichter gehören zur Szene? Nur diese werden gespeichert und beim Einblenden gesetzt, alle anderen bleiben, wie sie sind.</div>
+      <div class="light-pick-hint">Welche Lichter gehören dazu? Gespeichert wird jeder gewählte Scheinwerfer so, wie er gerade ist (an/aus, Helligkeit, Farbe), und jeder gewählte Raumlicht-Kreis. Alle anderen Lichter bleiben beim Abrufen, wie sie sind.</div>
       <div class="light-pick">
         <div class="light-pick-group">
           <div class="light-pick-head"><span class="light-block-title">Bühne</span><button type="button" class="light-pick-all" data-light-pick-all="stage">Alle</button></div>
@@ -171,22 +172,30 @@
         </div>
       </div>
     </div>
-    <div class="light-block">
-      <div class="light-block-head"><span class="light-block-title">Szenen</span><span class="light-block-hint">Antippen: Szene einblenden</span></div>
+    <div id="light-presets" class="light-block light-presets">
+      <div class="light-block-head">
+        <span class="light-block-title">Presets</span>
+        <span id="light-presets-hint" class="light-block-hint">Antippen blendet ein</span>
+        <div class="light-block-tools"><button type="button" id="light-presets-edit" class="light-all" aria-pressed="false">Bearbeiten</button></div>
+      </div>
       <div id="light-scenes" class="light-scenes"></div>
     </div>
     <div class="light-grid">
-      <div class="light-block">
+      <div class="light-block light-stage">
         <div class="light-block-head">
           <span class="light-block-title">Bühne</span>
           <div class="light-block-tools">
             <button type="button" id="light-stage-on" class="light-all">Alle an</button>
             <button type="button" id="light-stage-off" class="light-all">Alle aus</button>
+            <button type="button" id="light-link" class="light-all light-link" aria-pressed="false" title="Regler gemeinsam: Helligkeit und Farbe eines Scheinwerfers gelten für alle vier">Alle gleich</button>
           </div>
         </div>
-        <div id="light-faders" class="light-faders"></div>
-        <div class="light-block-head light-settings-head"><span class="light-block-title">Einstellungen</span></div>
-        <div id="light-settings" class="light-faders light-settings"></div>
+        <div id="light-fixtures" class="light-fixtures"></div>
+        <div class="light-settings-bar">
+          <button type="button" class="light-chip" data-light-setting="fade_ms" aria-expanded="false" aria-controls="light-setting-pop"><span class="light-chip-label">Übergang</span><span class="light-chip-value"></span></button>
+          <button type="button" class="light-chip" data-light-setting="start" aria-expanded="false" aria-controls="light-setting-pop"><span class="light-chip-label">Einschalten auf</span><span class="light-chip-value"></span></button>
+        </div>
+        <div id="light-setting-pop" class="light-setting-pop" hidden></div>
       </div>
       <div class="light-block">
         <div class="light-block-head">
