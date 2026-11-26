@@ -31,8 +31,8 @@ async function loadSongs() {
 
 // Slide layout. Keep in sync with _draw_slide() in
 // desktop_agent/show_image_agent.py, which draws the real screen.
-// minPx: smallest lyrics size on 1080 lines (never above the set largest
-// size); text that does not fit even then is wrapped, not shrunk further.
+// minPx: smallest lyrics size on 1080 lines (never above the set size);
+// text that does not fit even then is wrapped, not shrunk further.
 const SLIDE = { padX: 0.06, padY: 0.07, titleH: 0.12, copyH: 0.08, line: 1.25, minPx: 40 };
 // Next-slide preview: grey (text colour mixed into the background), at most
 // half the text size, never below 20 px on 1080 lines, only in the room under
@@ -125,23 +125,70 @@ function slideSizes(maxPx, minPx) {
   return sizes;
 }
 
-// {px, lines} of the lyrics: wrapped at the largest size where the text fits;
-// the file's own lines instead if they fit at OWN_LINES_KEEP of that size or
-// more (not below minPx); at minPx wrapped regardless. Same as _fit_text().
-function fitSlideText(measure, text, maxPx, minPx, boxW, boxH) {
+// The largest size where the lyrics fit, or null if not even at minPx:
+// wrapped at the largest size where the text fits; the file's own lines
+// instead if they fit at OWN_LINES_KEEP of that size or more. wrapSlideLines()
+// at that size gives the lines (the own ones where they fit). Same as _fit_size().
+function fitSlideSize(measure, text, maxPx, minPx, boxW, boxH) {
   const paragraphs = text.split("\n");
   minPx = Math.min(minPx, maxPx);
   const sizes = slideSizes(maxPx, minPx);
   const own = sizes.find(px => Math.max(...paragraphs.map(l => measure(l, px))) <= boxW
     && paragraphs.length * px * SLIDE.line <= boxH);
-  let wrapped = null;
-  for (const px of sizes) {
-    const lines = wrapSlideLines(measure, paragraphs, px, boxW);
-    if (lines.length * px * SLIDE.line <= boxH) { wrapped = { px, lines }; break; }
+  const wrapped = sizes.find(px => wrapSlideLines(measure, paragraphs, px, boxW).length * px * SLIDE.line <= boxH);
+  if (own !== undefined && (wrapped === undefined || own >= OWN_LINES_KEEP * wrapped)) return own;
+  return wrapped === undefined ? null : wrapped;
+}
+
+// {px, lines} of one slide on its own: at fitSlideSize(), at minPx wrapped
+// regardless where nothing fits. Same as _fit_text().
+function fitSlideText(measure, text, maxPx, minPx, boxW, boxH) {
+  let px = fitSlideSize(measure, text, maxPx, minPx, boxW, boxH);
+  if (px === null) px = Math.min(minPx, maxPx);
+  return { px, lines: wrapSlideLines(measure, text.split("\n"), px, boxW) };
+}
+
+// [boxW, boxH] of the lyrics: the screen less the margins and this slide's
+// title and copyright rows. Same as _slide_box().
+function slideBox(W, H, title, copyright) {
+  return [W - 2 * SLIDE.padX * W, H - 2 * SLIDE.padY * H - (title ? SLIDE.titleH * H : 0) - (copyright ? SLIDE.copyH * H : 0)];
+}
+
+// One text size for all slides of a song (fit: [{text, title, copyright}]):
+// the set size, or the largest one where every slide fits; slides that do not
+// fit even at minPx are left out (only they get the minPx fallback). null
+// when no slide fits. Same as _song_size() in the display agent.
+function songFitSize(measure, fit, maxPx, minPx, W, H) {
+  const sizes = fit.map(e => fitSlideSize(measure, e.text, maxPx, minPx, ...slideBox(W, H, e.title, e.copyright)))
+    .filter(px => px !== null);
+  return sizes.length ? Math.min(...sizes) : null;
+}
+
+// {px, lines, fits} of a slide at the song's size (songPx null: its own
+// largest size); at minPx wrapped and cut where it does not fit even there
+// (fits false). Same as _layout_slide().
+function layoutSlide(measure, text, songPx, maxPx, minPx, boxW, boxH) {
+  const own = fitSlideSize(measure, text, maxPx, minPx, boxW, boxH);
+  const paragraphs = text.split("\n");
+  if (own === null) {
+    const px = Math.min(minPx, maxPx);
+    return { px, lines: wrapSlideLines(measure, paragraphs, px, boxW), fits: false };
   }
-  if (own !== undefined && (!wrapped || own >= OWN_LINES_KEEP * wrapped.px)) return { px: own, lines: paragraphs };
-  if (wrapped) return wrapped;
-  return { px: minPx, lines: wrapSlideLines(measure, paragraphs, minPx, boxW) };
+  const px = songPx === null ? own : Math.min(own, songPx);
+  return { px, lines: wrapSlideLines(measure, paragraphs, px, boxW), fits: true };
+}
+
+// The song's size per preview size and look: the thumbnails of a song
+// measure it once (the display agent caches the same way).
+const SONG_FIT_CACHE = new Map();
+
+function cachedSongFitSize(measure, fit, settings, maxPx, minPx, W, H) {
+  const key = JSON.stringify([settings.font, maxPx, minPx, W, H, fit]);
+  if (!SONG_FIT_CACHE.has(key)) {
+    if (SONG_FIT_CACHE.size >= 64) SONG_FIT_CACHE.delete(SONG_FIT_CACHE.keys().next().value);
+    SONG_FIT_CACHE.set(key, songFitSize(measure, fit, maxPx, minPx, W, H));
+  }
+  return SONG_FIT_CACHE.get(key);
 }
 
 // How many lines fit above bottom (the text never runs into the copyright).
@@ -165,7 +212,8 @@ function songSlideFont(px, settings, bold = false) {
   return `${bold ? "700 " : ""}${px}px "${settings.font}", Verdana, sans-serif`;
 }
 
-// slide: {text, title, copyright, next, blank, align}
+// slide: {text, title, copyright, next, blank, align, fit}; fit (all slides of
+// the song, from songSlide()) gives every slide of the song the same size.
 function renderSlide(box, slide, settings) {
   const W = box.clientWidth, H = box.clientHeight;
   box.replaceChildren();
@@ -177,9 +225,18 @@ function renderSlide(box, slide, settings) {
   const padX = SLIDE.padX * W, padY = SLIDE.padY * H;
   const titleH = slide.title ? SLIDE.titleH * H : 0;
   const copyH = slide.copyright ? SLIDE.copyH * H : 0;
-  const boxW = W - 2 * padX, boxH = H - 2 * padY - titleH - copyH;
+  // Laid out on a 1080-line screen of the box's shape (as the display PC
+  // does on a 1080p screen), then scaled to the box: text measured at a
+  // thumbnail's 2 px is too rough, so every box breaks the lines the same way.
+  const k = H / 1080, VW = W / k, VH = 1080;
+  const [vBoxW, vBoxH] = slideBox(VW, VH, !!slide.title, !!slide.copyright);
   const measure = slideMeasure(ctx, settings);
-  const { px, lines } = fitSlideText(measure, slide.text, settings.font_size * H / 1080, SLIDE.minPx * H / 1080, boxW, boxH);
+  const maxPx = settings.font_size, minPx = SLIDE.minPx;
+  const songPx = slide.fit && slide.fit.length ? cachedSongFitSize(measure, slide.fit, settings, maxPx, minPx, VW, VH) : null;
+  const layout = layoutSlide(measure, slide.text, songPx, maxPx, minPx, vBoxW, vBoxH);
+  const { lines, fits } = layout, px = layout.px * k, boxH = vBoxH * k;
+  // Too long even at the smallest size: wrapped and cut, marked here.
+  box.classList.toggle("slide-overflow", !fits);
   const place = (el, top, font, color) => {
     el.style.top = `${top}px`;
     el.style.font = font;
@@ -197,8 +254,9 @@ function renderSlide(box, slide, settings) {
     el.textContent = line;
     place(el, top + i * px * SLIDE.line, songSlideFont(px, settings));
   });
-  const preview = slide.next
-    ? previewLayout(measure, lines, slide.next.split("\n"), px, boxW, boxH, H) : null;
+  const vPreview = slide.next
+    ? previewLayout(measure, lines, slide.next.split("\n"), layout.px, vBoxW, vBoxH, VH) : null;
+  const preview = vPreview && { px: vPreview.px * k, lines: vPreview.lines };
   if (preview) {
     const grey = mixColor(settings.text_color, settings.background_color, PREVIEW.mix);
     const previewTop = padY + titleH + boxH - preview.lines.length * preview.px * SLIDE.line;
@@ -233,21 +291,25 @@ function songDisplaySlides(song, settings) {
 // What the display PC shows for slide i: the title slide (title centred,
 // copyright below), else the lyrics with title and copyright on the first
 // slide (only without a title slide) and the next slide as preview.
+// fit: every slide's {text, title, copyright} for the song's one text size
+// (as the service sends it: SongService.fit_slides()).
 function songSlide(song, index, settings) {
   const slides = songDisplaySlides(song, settings);
-  const slide = slides[index];
-  if (!slide) return { blank: true };
-  if (slide.title_slide) {
-    return { text: slide.text, title: "", copyright: settings.show_copyright ? song.copyright : "", next: "", align: "center" };
-  }
-  const first = index === 0;
-  const upcoming = slides[index + 1];
-  return {
-    text: slide.text,
-    title: settings.show_title && first ? song.title : "",
-    copyright: settings.show_copyright && first ? song.copyright : "",
-    next: settings.show_next_preview !== false && upcoming ? upcoming.text : "",
+  if (!slides[index]) return { blank: true };
+  const parts = i => {
+    const slide = slides[i];
+    if (slide.title_slide) return { text: slide.text, title: "", copyright: settings.show_copyright ? song.copyright : "" };
+    const first = i === 0;
+    return {
+      text: slide.text,
+      title: settings.show_title && first ? song.title : "",
+      copyright: settings.show_copyright && first ? song.copyright : "",
+    };
   };
+  const fit = slides.map((_, i) => { const p = parts(i); return { text: p.text, title: !!p.title, copyright: !!p.copyright }; });
+  if (slides[index].title_slide) return { ...parts(index), next: "", align: "center", fit };
+  const upcoming = slides[index + 1];
+  return { ...parts(index), next: settings.show_next_preview !== false && upcoming ? upcoming.text : "", fit };
 }
 
 function songBooks(song) {

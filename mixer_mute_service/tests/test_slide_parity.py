@@ -33,7 +33,8 @@ if tkinter is not None:
     from desktop_agent import show_image_agent as agent
 
 SONGS_JS = Path(__file__).resolve().parent.parent / "app" / "static" / "js" / "songs.js"
-JS_NAMES = ("slideWordUnits", "wrapSlideLines", "slideSizes", "fitSlideText", "visibleSlideLines", "previewLayout")
+JS_NAMES = ("slideWordUnits", "wrapSlideLines", "slideSizes", "fitSlideSize", "fitSlideText", "slideBox",
+            "songFitSize", "layoutSlide", "visibleSlideLines", "previewLayout", "songDisplaySlides", "songSlide")
 
 TEXTS = [
     # Real stanzas: one line in the file, own lines, repeat marks, empty line.
@@ -116,6 +117,53 @@ class SlideParityTests(unittest.TestCase):
                 self.assertEqual(js_preview, None if preview is None else {"px": preview[0], "lines": preview[1]})
                 checked += 1
         self.assertEqual(checked, len(SCREENS) * len(TEXTS))
+
+    def test_one_size_per_song_matches_the_agent(self):
+        # Songs of the texts above: short and long verses, one far too long,
+        # with and without title/copyright rows on the first slide.
+        songs = [TEXTS[4:6], TEXTS[:3], TEXTS[3:8], [TEXTS[11], TEXTS[4]], [TEXTS[11]], TEXTS]
+        checked = 0
+        for width, height, *_ in SCREENS:
+            max_px, min_px = 72 * height / 1080, agent.SLIDE_MIN_PX * height / 1080
+            for texts in songs:
+                for first_rows in (False, True):
+                    fit = [{"text": t, "title": first_rows and i == 0, "copyright": first_rows and i == 0}
+                           for i, t in enumerate(texts)]
+                    song_px = agent._song_size(measure, fit, max_px, min_px, width, height)
+                    js_px = self.call(f"songFitSize(measure, {json.dumps(fit)}, {max_px}, SLIDE.minPx * {height} / 1080, "
+                                      f"{width}, {height})")
+                    self.assertEqual(js_px, song_px, (width, texts[0][:20]))
+                    for entry in fit:
+                        box_w, box_h = agent._slide_box(width, height, entry["title"], entry["copyright"])
+                        self.assertEqual(self.call(f"slideBox({width}, {height}, {json.dumps(entry['title'])}, "
+                                                   f"{json.dumps(entry['copyright'])})"), [box_w, box_h])
+                        px, lines, fits = agent._layout_slide(measure, entry["text"], song_px, max_px, min_px, box_w, box_h)
+                        js = self.call(f"layoutSlide(measure, {json.dumps(entry['text'])}, {json.dumps(song_px)}, "
+                                       f"{max_px}, SLIDE.minPx * {height} / 1080, {box_w}, {box_h})")
+                        self.assertEqual((js["px"], js["lines"], js["fits"]), (px, lines, fits))
+                        checked += 1
+        self.assertGreater(checked, 100)
+
+    def test_the_page_lays_out_the_same_slides_as_the_service_sends(self):
+        from app.songs import SongService, SongSettings
+        import tempfile
+        song = {"title": "Allein deine Gnade", "copyright": "Text: Test", "books": [],
+                "slides": [{"key": "Ref", "text": "Refrain"}, {"key": "1", "text": TEXTS[4]}, {"key": "2", "text": TEXTS[1]}]}
+        with tempfile.TemporaryDirectory() as directory:
+            service = SongService(Path(directory))
+            service.songs = {"a.foil": song}
+            for title_slide in (True, False):
+                for show_title in (True, False):
+                    for show_copyright in (True, False):
+                        service.settings = SongSettings(title_slide=title_slide, show_title=show_title,
+                                                        show_copyright=show_copyright)
+                        settings = json.dumps(service.settings.model_dump())
+                        for index in range(len(service.slides("a.foil"))):
+                            payload = service.slide_payload("a.foil", index)
+                            js = self.call(f"songSlide({json.dumps(song)}, {index}, {settings})")
+                            self.assertEqual({k: js[k] for k in ("text", "title", "copyright", "next", "fit")},
+                                             {k: payload[k] for k in ("text", "title", "copyright", "next", "fit")},
+                                             (title_slide, show_title, show_copyright, index))
 
     def test_word_units_and_letter_cuts_match(self):
         for paragraph in ("|: Alles ist eitel, du aber bleibst :|", "a  :| |: b", ":| allein", "Wort |:",

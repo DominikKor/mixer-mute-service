@@ -26,6 +26,7 @@ POST /songs/create                a new song: written as .foil into the library
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import re
 import time
@@ -58,7 +59,10 @@ class SongSettings(BaseModel):
     monitor: int = Field(2, ge=1, le=8)
     fullscreen: bool = True
     font: str = Field("Verdana", min_length=1, max_length=60)
-    # Largest text size in px on a 1080 px high screen; long slides get smaller.
+    # Text size in px on a 1080 px high screen, the same on every slide of a
+    # song. If one slide does not fit, the display agent makes the whole song
+    # smaller (down to a readable minimum). Earlier this was the largest size
+    # of each slide on its own; a saved value is taken over as it is.
     font_size: int = Field(72, ge=12, le=240)
     text_color: str = "#ffffff"
     background_color: str = "#000000"
@@ -172,30 +176,47 @@ class SongService:
             return [{"key": TITLE_SLIDE_KEY, "text": song["title"], "title_slide": True}, *song["slides"]]
         return song["slides"]
 
-    def slide_payload(self, song_id: str, slide: int) -> dict:
+    def _slide_parts(self, song_id: str, slide: int) -> Tuple[str, str, str]:
+        """(text, title, copyright) of a slide as shown. Same as songSlide()
+        in app/static/js/songs.js."""
         song, s = self.songs[song_id], self.settings
+        shown = self.slides(song_id)[slide]
+        if shown.get("title_slide"):
+            return song["title"], "", song["copyright"] if s.show_copyright else ""
+        # Title and copyright on the first lyrics slide only without a title slide.
+        first = slide == 0
+        return (shown["text"], song["title"] if s.show_title and first else "",
+                song["copyright"] if s.show_copyright and first else "")
+
+    def fit_slides(self, song_id: str) -> list:
+        """Every slide of the song as the display agent lays it out: it picks
+        one text size at which all of them fit (per screen, as only it knows
+        the screen and the font)."""
+        fit = []
+        for index in range(len(self.slides(song_id))):
+            text, title, copyright = self._slide_parts(song_id, index)
+            fit.append({"text": text, "title": bool(title), "copyright": bool(copyright)})
+        return fit
+
+    def slide_payload(self, song_id: str, slide: int) -> dict:
+        s = self.settings
         slides = self.slides(song_id)
+        text, title, copyright = self._slide_parts(song_id, slide)
+        screen = self._screen()
+        fit = self.fit_slides(song_id)
+        # A song too long for one request (the agent's limit) is sized slide
+        # by slide as before.
+        extra = {"fit": fit} if _fit_fits(fit) else {}
         if slides[slide].get("title_slide"):
             # Sent as an ordinary slide (the title as its text, always
             # centred), so every display agent version can show it.
-            screen = self._screen()
             screen["style"]["align"] = "center"
-            return {
-                "action": "show", **screen, "text": song["title"], "title": "",
-                "copyright": song["copyright"] if s.show_copyright else "", "next": "",
-            }
-        # Title and copyright on the first lyrics slide only without a title slide.
-        first = slide == 0
+            return {"action": "show", **screen, "text": text, "title": title,
+                    "copyright": copyright, "next": "", **extra}
         # After the last slide "next" goes dark, so there is nothing to preview.
         upcoming = slides[slide + 1]["text"] if s.show_next_preview and slide + 1 < len(slides) else ""
-        return {
-            "action": "show",
-            **self._screen(),
-            "text": slides[slide]["text"],
-            "title": song["title"] if s.show_title and first else "",
-            "copyright": song["copyright"] if s.show_copyright and first else "",
-            "next": upcoming,
-        }
+        return {"action": "show", **screen, "text": text, "title": title,
+                "copyright": copyright, "next": upcoming, **extra}
 
     def blank_payload(self) -> dict:
         return {"action": "blank", **self._screen(), "text": "", "title": "", "copyright": "", "next": ""}
@@ -212,13 +233,32 @@ class SongService:
         }
 
 
-def legacy_song_payload(payload: dict) -> dict:
-    """The /song request as display agents before the next-slide preview and
-    text alignment expect it (they refuse unknown keys)."""
-    legacy = {k: v for k, v in payload.items() if k != "next"}
-    if isinstance(legacy.get("style"), dict):
-        legacy["style"] = {k: v for k, v in legacy["style"].items() if k != "align"}
-    return legacy
+# The display agent takes at most 300 slides of up to 8000 characters in
+# "fit" and 256 KB per request; JSON escapes umlauts (\u00fc), hence the margin.
+FIT_MAX_SLIDES, FIT_MAX_CHARS = 300, 8000
+FIT_MAX_BYTES = 160_000
+
+
+def _fit_fits(fit: list) -> bool:
+    return (0 < len(fit) <= FIT_MAX_SLIDES and all(len(e["text"]) <= FIT_MAX_CHARS for e in fit)
+            and len(json.dumps(fit)) <= FIT_MAX_BYTES)
+
+
+def legacy_song_payloads(payload: dict) -> list:
+    """The /song request as older display agents expect it (they refuse
+    unknown keys), newest first: without "fit" (before one size per song: each
+    slide gets its own size), then also without the next-slide preview and
+    text alignment."""
+    out = []
+    without_fit = {k: v for k, v in payload.items() if k != "fit"}
+    if without_fit != payload:
+        out.append(without_fit)
+    oldest = {k: v for k, v in without_fit.items() if k != "next"}
+    if isinstance(oldest.get("style"), dict):
+        oldest["style"] = {k: v for k, v in oldest["style"].items() if k != "align"}
+    if oldest != without_fit:
+        out.append(oldest)
+    return out
 
 
 async def _call_agent(request: Request, path: str, payload: dict, timeout: float = 3) -> Tuple[dict, int]:
@@ -226,16 +266,19 @@ async def _call_agent(request: Request, path: str, payload: dict, timeout: float
     cfg = request.app.state.cfg.desktop_display
     target = request.app.state.songs.settings.target_ip
     try:
-        try:
-            return await display_agent.call(cfg, target, path, payload, timeout), 200
-        except AgentError as exc:
-            legacy = legacy_song_payload(payload) if path == "/song" else payload
-            if exc.agent_status != 400 or legacy == payload:
-                raise
-            # An older display agent: show the slide without preview/alignment
-            # rather than not at all, until the display service is updated.
-            log.warning("Display agent refused the song preview/alignment (old version?); sending the plain slide")
-            return await display_agent.call(cfg, target, path, legacy, timeout), 200
+        fallbacks = legacy_song_payloads(payload) if path == "/song" else []
+        while True:
+            try:
+                return await display_agent.call(cfg, target, path, payload, timeout), 200
+            except AgentError as exc:
+                if exc.agent_status != 400 or not fallbacks:
+                    raise
+                # An older display agent: show the slide without the newer
+                # parts (one size per song, preview, alignment) rather than
+                # not at all, until the display service is updated.
+                payload = fallbacks.pop(0)
+                log.warning("Display agent refused the song request (old version?); retrying without %s",
+                            "the song's slides (one size per song)" if "next" in payload else "preview/alignment")
     except AgentError as exc:
         if exc.agent_status == 409 and path == "/songs/save":
             return {"ok": False, "reason": "a song file with this name already exists in the library"}, 409

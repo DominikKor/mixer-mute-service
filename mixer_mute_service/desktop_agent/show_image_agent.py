@@ -1352,6 +1352,24 @@ def _save_song(path: str, name: str, xml: str) -> Path:
     return target
 
 
+# All slides of a song in "fit" (the text size is the same on all of them).
+MAX_FIT_SLIDES = 300
+SONG_REQUEST_BYTES = 262144
+
+
+def _valid_fit(fit) -> bool:
+    """"fit": every slide of the song as shown, [{text, title, copyright}]
+    (title/copyright: whether that slide shows them; they make its text box
+    smaller)."""
+    return (
+        isinstance(fit, list) and len(fit) <= MAX_FIT_SLIDES
+        and all(isinstance(entry, dict) and set(entry) == {"text", "title", "copyright"}
+                and isinstance(entry["text"], str) and len(entry["text"]) <= 8000
+                and type(entry["title"]) is bool and type(entry["copyright"]) is bool
+                for entry in fit)
+    )
+
+
 def _valid_song_request(body) -> bool:
     if not isinstance(body, dict) or body.get("action") not in ("show", "blank", "hide"):
         return False
@@ -1360,10 +1378,12 @@ def _valid_song_request(body) -> bool:
     style = body.get("style")
     base = {"action", "monitor", "fullscreen", "style", "text", "title", "copyright"}
     style_base = {"font", "font_size", "text_color", "background_color"}
-    # "next" (preview of the next slide) and style "align" are newer and
-    # optional, so an older service still works with this agent.
+    # "next" (preview of the next slide), "fit" (all slides of the song, for
+    # one text size) and style "align" are newer and optional, so an older
+    # service still works with this agent.
     return (
-        base <= set(body) <= base | {"next"}
+        base <= set(body) <= base | {"next", "fit"}
+        and _valid_fit(body.get("fit", []))
         and isinstance(body["monitor"], int) and not isinstance(body["monitor"], bool) and body["monitor"] >= 1
         and isinstance(body["fullscreen"], bool)
         and all(isinstance(body.get(k, ""), str) and len(body.get(k, "")) <= 8000
@@ -1383,8 +1403,8 @@ SLIDE_PAD_X, SLIDE_PAD_Y = 0.06, 0.07
 SLIDE_TITLE_H, SLIDE_COPY_H = 0.12, 0.08
 SLIDE_LINE = 1.25
 # Smallest lyrics size in px on a 1080 px high screen (never above the set
-# largest size): smaller is unreadable from the back. Text that does not fit
-# even then is wrapped, not shrunk further.
+# size): smaller is unreadable from the back. Text that does not fit even
+# then is wrapped, not shrunk further (and cut at the bottom).
 SLIDE_MIN_PX = 40
 # Preview of the next slide: grey (text colour mixed into the background),
 # at most half the slide's text size and never below 20 px on 1080 lines; only
@@ -1473,27 +1493,81 @@ def _slide_sizes(max_px: float, min_px: float):
         px *= 0.94
 
 
-def _fit_text(measure, text: str, max_px: float, min_px: float, box_w: float, box_h: float):
-    """(size, lines) of the lyrics: wrapped at the largest size where the text
-    fits; the file's own lines instead if they fit at OWN_LINES_KEEP of that
-    size or more (and not below min_px); at min_px wrapped regardless.
-    Same as fitSlideText() in app/static/js/songs.js."""
+def _fit_size(measure, text: str, max_px: float, min_px: float, box_w: float, box_h: float):
+    """The largest size where the lyrics fit, or None if they do not fit even
+    at min_px: wrapped at the largest size where the text fits; the file's own
+    lines instead if they fit at OWN_LINES_KEEP of that size or more.
+    _wrap_lines() at that size gives the lines (the own ones where they fit).
+    Same as fitSlideSize() in app/static/js/songs.js."""
     paragraphs = text.split("\n")
     min_px = min(min_px, max_px)
     own = next((px for px in _slide_sizes(max_px, min_px)
                 if max(measure(line, px) for line in paragraphs) <= box_w
                 and len(paragraphs) * px * SLIDE_LINE <= box_h), None)
-    wrapped = None
-    for px in _slide_sizes(max_px, min_px):
-        lines = _wrap_lines(measure, paragraphs, px, box_w)
-        if len(lines) * px * SLIDE_LINE <= box_h:
-            wrapped = (px, lines)
-            break
-    if own is not None and (wrapped is None or own >= OWN_LINES_KEEP * wrapped[0]):
-        return own, paragraphs
-    if wrapped is not None:
-        return wrapped
-    return min_px, _wrap_lines(measure, paragraphs, min_px, box_w)
+    wrapped = next((px for px in _slide_sizes(max_px, min_px)
+                    if len(_wrap_lines(measure, paragraphs, px, box_w)) * px * SLIDE_LINE <= box_h), None)
+    if own is not None and (wrapped is None or own >= OWN_LINES_KEEP * wrapped):
+        return own
+    return wrapped
+
+
+def _fit_text(measure, text: str, max_px: float, min_px: float, box_w: float, box_h: float):
+    """(size, lines) of one slide on its own: at _fit_size(), at min_px
+    wrapped regardless where nothing fits. Same as fitSlideText()."""
+    px = _fit_size(measure, text, max_px, min_px, box_w, box_h)
+    if px is None:
+        px = min(min_px, max_px)
+    return px, _wrap_lines(measure, text.split("\n"), px, box_w)
+
+
+def _slide_box(width: float, height: float, title: bool, copyright: bool):
+    """(box_w, box_h) of the lyrics: the screen less the margins and the
+    title and copyright rows of this slide. Same as slideBox()."""
+    box_w = width - 2 * SLIDE_PAD_X * width
+    box_h = (height - 2 * SLIDE_PAD_Y * height - (SLIDE_TITLE_H * height if title else 0)
+             - (SLIDE_COPY_H * height if copyright else 0))
+    return box_w, box_h
+
+
+def _song_size(measure, fit: list, max_px: float, min_px: float, width: float, height: float):
+    """One text size for all slides of a song on this screen: the set size,
+    or the largest one where every slide fits. Slides that do not fit even at
+    min_px are left out (they alone get the min_px fallback). None when no
+    slide fits. Same as songFitSize() in app/static/js/songs.js."""
+    sizes = [_fit_size(measure, entry["text"], max_px, min_px,
+                       *_slide_box(width, height, entry["title"], entry["copyright"]))
+             for entry in fit]
+    fitting = [px for px in sizes if px is not None]
+    return min(fitting) if fitting else None
+
+
+def _layout_slide(measure, text: str, song_px, max_px: float, min_px: float, box_w: float, box_h: float):
+    """(size, lines, fits) of a slide: at the song's size (song_px, None
+    without "fit" from the service: then the slide's own largest size), at
+    min_px wrapped and cut where it does not fit even there (fits False).
+    Same as layoutSlide()."""
+    own = _fit_size(measure, text, max_px, min_px, box_w, box_h)
+    if own is None:
+        px = min(min_px, max_px)
+        return px, _wrap_lines(measure, text.split("\n"), px, box_w), False
+    px = own if song_px is None else min(own, song_px)
+    return px, _wrap_lines(measure, text.split("\n"), px, box_w), True
+
+
+# The song's size per screen and look: stepping through the verses measures
+# the whole song only once. Small: songs change, screens and settings rarely.
+_SONG_SIZE_CACHE: dict = {}
+SONG_SIZE_CACHE_MAX = 32
+
+
+def _cached_song_size(measure, fit: list, font: str, max_px: float, min_px: float, width: int, height: int):
+    key = (font, max_px, min_px, width, height,
+           tuple((entry["text"], entry["title"], entry["copyright"]) for entry in fit))
+    if key not in _SONG_SIZE_CACHE:
+        if len(_SONG_SIZE_CACHE) >= SONG_SIZE_CACHE_MAX:
+            _SONG_SIZE_CACHE.pop(next(iter(_SONG_SIZE_CACHE)))
+        _SONG_SIZE_CACHE[key] = _song_size(measure, fit, max_px, min_px, width, height)
+    return _SONG_SIZE_CACHE[key]
 
 
 def _visible_lines(count: int, top: float, px: float, bottom: float) -> int:
@@ -1534,8 +1608,7 @@ def _draw_slide(canvas: tk.Canvas, width: int, height: int, body: dict) -> None:
     pad_x, pad_y = SLIDE_PAD_X * width, SLIDE_PAD_Y * height
     title_h = SLIDE_TITLE_H * height if body["title"] else 0
     copy_h = SLIDE_COPY_H * height if body["copyright"] else 0
-    box_w = width - 2 * pad_x
-    box_h = height - 2 * pad_y - title_h - copy_h
+    box_w, box_h = _slide_box(width, height, bool(body["title"]), bool(body["copyright"]))
     # x and anchors for the alignment: line tops ("n") and centred blocks
     x = {"left": pad_x, "center": width / 2, "right": width - pad_x}[align]
     top_anchor = {"left": "nw", "center": "n", "right": "ne"}[align]
@@ -1548,8 +1621,14 @@ def _draw_slide(canvas: tk.Canvas, width: int, height: int, body: dict) -> None:
             fonts[key] = tkfont.Font(family=style["font"], size=-key)
         return fonts[key].measure(text)
 
-    px, lines = _fit_text(measure, body["text"], style["font_size"] * height / 1080,
-                          SLIDE_MIN_PX * height / 1080, box_w, box_h)
+    max_px, min_px = style["font_size"] * height / 1080, SLIDE_MIN_PX * height / 1080
+    # One size for all slides of the song on this screen (with "fit" from
+    # the service; an older service sends one slide only: its own size).
+    song_px = (_cached_song_size(measure, body["fit"], style["font"], max_px, min_px, width, height)
+               if body.get("fit") else None)
+    px, lines, fits = _layout_slide(measure, body["text"], song_px, max_px, min_px, box_w, box_h)
+    if not fits:
+        logger.warning("Song slide too long for the screen even at the smallest size; wrapped and cut")
     font = tkfont.Font(family=style["font"], size=-max(1, round(px)))
     # Centred in the box; text taller than the box starts at its top.
     top = pad_y + title_h + max(0.0, (box_h - len(lines) * px * SLIDE_LINE) / 2)
@@ -1659,7 +1738,7 @@ class DisplayHandler(BaseHTTPRequestHandler):
 
         try:
             length = int(self.headers.get("Content-Length", "0"))
-            limit = {"/song": 32768, "/songs/save": MAX_SONG_FILE_BYTES + 8192,
+            limit = {"/song": SONG_REQUEST_BYTES, "/songs/save": MAX_SONG_FILE_BYTES + 8192,
                      "/update": MAX_UPDATE_BYTES}.get(self.path, 8192)
             if not 0 < length <= limit:
                 raise ValueError("invalid request size")

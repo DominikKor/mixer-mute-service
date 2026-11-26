@@ -64,13 +64,16 @@ class FakeAgent:
         self.calls = []
         self.fail = False
         self.old = False   # an agent from before the preview/alignment
+        self.no_fit = False  # an agent from before one size per song ("fit")
         self.files = []
 
     def __call__(self, url, token, payload, timeout):
         self.calls.append((url, token, payload))
         if self.fail:
             raise urllib.error.URLError("down")
-        if self.old and ("next" in payload or "align" in payload.get("style", {})):
+        if self.old and ("next" in payload or "align" in payload.get("style", {}) or "fit" in payload):
+            raise urllib.error.HTTPError(url, 400, "Bad Request", None, None)
+        if self.no_fit and "fit" in payload:
             raise urllib.error.HTTPError(url, 400, "Bad Request", None, None)
         if url.endswith("/songs/library"):
             return {"ok": True, "files": self.files, "truncated": False}
@@ -154,6 +157,11 @@ def main():
               and p["style"] == {"font": "Verdana", "font_size": 72, "text_color": "#ffff00",
                                  "background_color": "#000000", "align": "center"})
         check("next slide sent as preview", p["next"] == "Erste Strophe\nzweite Zeile")
+        check("all slides of the song sent for one text size (title/copyright on the first only)",
+              p["fit"] == [{"text": "Refrain", "title": True, "copyright": True},
+                           {"text": "Erste Strophe\nzweite Zeile", "title": False, "copyright": False},
+                           {"text": "Refrain", "title": False, "copyright": False},
+                           {"text": "Zweite Strophe", "title": False, "copyright": False}])
         check("live state", r.json()["song_id"] == "Allein deine Gnade.foil" and r.json()["slide"] == 0
               and r.json()["song"]["title"] == "Allein deine Gnade")
         client.post("/songs/next")
@@ -192,12 +200,21 @@ def main():
         n = len(agent.calls)
         r = client.post("/songs/show", json={"song_id": "Allein deine Gnade.foil", "slide": 1})
         retried = agent.calls[n:]
-        check("refused new format, plain slide shown instead", r.status_code == 200 and len(retried) == 2
-              and "next" not in retried[1][2] and "align" not in retried[1][2]["style"]
-              and retried[1][2]["text"] == "Erste Strophe\nzweite Zeile")
+        check("refused new format, plain slide shown instead", r.status_code == 200 and len(retried) == 3
+              and "fit" in retried[0][2] and "fit" not in retried[1][2] and "next" in retried[1][2]
+              and "next" not in retried[2][2] and "align" not in retried[2][2]["style"] and "fit" not in retried[2][2]
+              and retried[2][2]["text"] == "Erste Strophe\nzweite Zeile")
         r = client.post("/songs/blank")
         check("blank works on the old agent too", r.status_code == 200 and "next" not in agent.last())
         agent.old = False
+        agent.no_fit = True
+        n = len(agent.calls)
+        r = client.post("/songs/show", json={"song_id": "Allein deine Gnade.foil", "slide": 1})
+        retried = agent.calls[n:]
+        check("agent before one size per song: slide with preview, without fit", r.status_code == 200
+              and len(retried) == 2 and "fit" not in retried[1][2] and retried[1][2]["next"] == "Refrain"
+              and retried[1][2]["style"]["align"] == "center")
+        agent.no_fit = False
         client.post("/songs/show", json={"song_id": "Allein deine Gnade.foil", "slide": 2})
 
         print("== agent down ==")
@@ -253,9 +270,21 @@ def main():
         r = client.post(f"/program/items/{item_id}/play")
         check("a program row starts with the title slide", r.status_code == 200 and agent.last()["text"] == "Lobe den Herren"
               and agent.last()["title"] == "" and r.json()["song"]["slide"] == 0)
-        legacy = songs.legacy_song_payload(agent.last())
-        check("older display agents get it as a plain slide", "next" not in legacy and "align" not in legacy["style"]
+        without_fit, legacy = songs.legacy_song_payloads(agent.last())
+        check("older display agents get it without fit, then as a plain slide",
+              "fit" not in without_fit and without_fit["next"] == ""
+              and "next" not in legacy and "align" not in legacy["style"] and "fit" not in legacy
               and legacy["text"] == "Lobe den Herren")
+        check("title slide in fit: copyright off, no title row",
+              agent.last()["fit"][0] == {"text": "Lobe den Herren", "title": False, "copyright": False})
+
+        print("== too much for one request ==")
+        service = app.state.songs
+        service.songs["Riesig.foil"] = {"title": "Riesig", "copyright": "", "books": [], "titles": ["Riesig"],
+                                        "slides": [{"key": str(i), "text": "ü" * 7000} for i in range(30)]}
+        p = service.slide_payload("Riesig.foil", 1)
+        check("a song too big for the agent's limit is sized slide by slide (no fit)", "fit" not in p and p["text"] == "ü" * 7000)
+        del service.songs["Riesig.foil"]
 
     print(f"\n{PASS} passed, {FAIL} failed")
     raise SystemExit(1 if FAIL else 0)

@@ -769,8 +769,8 @@ Der Agent schickt dafür nur die XML-Teile der Folien (höchstens 200 Folien,
 
 In der Weboberfläche unter **Liedanzeige → Einstellungen…** (gilt für alle Lieder,
 gespeichert in `song_display.json`): Ordner auf dem Anzeige-PC, Anzeige-PC (IP),
-Monitor, Vollbild, Schrift, größte Schriftgröße (px bei 1080p, lange Folien werden
-kleiner), Text- und Hintergrundfarbe, Titel und Copyright auf der ersten Folie,
+Monitor, Vollbild, Schrift, Schriftgröße (px bei 1080p, gleich auf allen Folien
+eines Liedes, siehe unten), Text- und Hintergrundfarbe, Titel und Copyright auf der ersten Folie,
 Ausrichtung (links, mittig, rechts) und **Vorschau nächste Folie**: wo unter dem
 Text Platz bleibt, stehen dort in Grau (Textfarbe in den Hintergrund gemischt)
 die ersten Zeilen der nächsten Folie, höchstens halb so groß. Der Text selbst
@@ -778,20 +778,31 @@ bleibt dabei unverändert groß und an seiner Stelle; nach der letzten Folie gib
 es keine Vorschau. Ein Anzeige-PC mit älterem Display-Agent bekommt die Folie
 ohne Vorschau und Ausrichtung, bis der Agent aktualisiert ist (die Update-Taste
 aktualisiert die Agents aller PCs).
-**Zeilen und Schriftgröße**: Viele FoilPresenter-Dateien haben eine ganze
-Strophe in einer einzigen Zeile (FoilPresenter bricht selbst um). Solche Zeilen
-werden wie dort an Leerzeichen umgebrochen, in der größten Schrift, bei der der
-Text auf die Folie passt, nie unter 40 px (bei 1080p; nie mehr als die größte
-Schrift). Die eigenen Zeilen der Datei bleiben, wenn sie dafür höchstens 15 %
-kleiner werden als mit Umbruch – so springen die Folien eines Liedes nicht
-zwischen klein und groß. Wiederholungszeichen (`|:` / `:|`) bleiben beim
-Umbruch an ihrem Wort. Passt der Text selbst in 40 px nicht (ganzes Lied auf
-einer Folie), beginnt er oben und endet am Rand seines Felds; Titel und
-Copyright bleiben frei. Anzeige-PC und Vorschau auf der Seite rechnen gleich
-(`_fit_text` im Agent, `fitSlideText` in `js/songs.js`;
+**Zeilen und Schriftgröße**: Alle Folien eines Liedes (auch die Titelfolie)
+haben auf einem Bildschirm dieselbe Schriftgröße: die eingestellte, oder – wenn
+eine Folie darin nicht passt – die größte, bei der jede Folie des Liedes passt,
+nie unter 40 px (bei 1080p). Dafür schickt der Service mit jeder Folie alle
+Folien des Liedes mit (`fit`); der Display-Agent rechnet die Größe für seinen
+Bildschirm aus (Auflösung, Seitenverhältnis, Schrift) und merkt sie sich, das
+Weiterschalten bleibt schnell. Verschiedene Bildschirme können so verschiedene
+Größen bekommen, jeder ist innerhalb eines Liedes gleich. Viele
+FoilPresenter-Dateien haben eine ganze Strophe in einer einzigen Zeile
+(FoilPresenter bricht selbst um). Solche Zeilen werden wie dort an Leerzeichen
+umgebrochen. Die eigenen Zeilen der Datei bleiben, wenn sie dafür höchstens
+15 % kleiner werden als mit Umbruch (das kann das ganze Lied etwas kleiner
+machen). Wiederholungszeichen (`|:` / `:|`) bleiben beim Umbruch an ihrem Wort.
+Passt eine Folie selbst in 40 px nicht (ganzes Lied auf einer Folie), zählt sie
+für die Größe des Liedes nicht mit: sie allein steht in 40 px, beginnt oben und
+endet am Rand ihres Felds (Titel und Copyright bleiben frei); der Agent schreibt
+das ins Log, die Vorschau auf der Seite markiert sie mit „zu lang“. Anzeige-PC
+und Vorschau auf der Seite rechnen gleich (`_song_size`/`_layout_slide` im
+Agent, `songFitSize`/`layoutSlide` in `js/songs.js`;
 `tests/test_slide_parity.py` vergleicht beide mit quickjs); auch die graue
-Vorschau der nächsten Folie wird umgebrochen. Der Agent auf dem Anzeige-PC
-braucht dafür die neue Version.
+Vorschau der nächsten Folie wird umgebrochen. Ein älterer Display-Agent
+lehnt `fit` ab; der Service schickt die Folie dann ohne `fit` noch einmal, und
+jede Folie bekommt wie früher ihre eigene größte Größe, bis der Agent
+aktualisiert ist. Lieder mit mehr als 300 Folien oder sehr viel Text werden
+ebenfalls Folie für Folie bemessen.
 **Titelfolie** (Standard: an): Jedes Lied beginnt mit einer eigenen Folie, auf
 der der Titel in der Mitte steht und das Copyright darunter (mit dem Schalter
 *Copyright*). Sie ist Folie 0, die Liedfolien zählen ab 1; ein Programmpunkt
