@@ -1088,6 +1088,7 @@ dialog.template-dialog { width: min(980px, calc(100vw - 32px)); max-height: calc
   display: grid; grid-template-columns: 52px minmax(0, 1fr) minmax(0, 1fr); gap: 10px; align-items: center;
   min-height: 32px; padding: 4px 10px; border-radius: 5px; background: rgba(0,0,0,.18); font-size: 13px;
 }
+.tp-preview li.off { opacity: .45; }
 .tp-preview .tp-time { font: 700 12px/1 var(--mono); color: var(--lcd-text); }
 .tp-preview .tp-title, .tp-preview .tp-psong { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tp-preview .tp-psong { color: #9fd0ff; }

@@ -7,7 +7,7 @@
 // The songs come as text, one per line (or one by one from the library). The
 // service matches each line (POST /songs/match); a line it cannot place gets
 // a "Wählen" key. The preview is the service's own result (dry run), so what
-// is shown is exactly what "Programm ersetzen" writes.
+// is shown is exactly what applying writes.
 
 const TEMPLATES = { list: [], selected: null, matches: [], picked: new Map(), seq: 0, timer: null, persons: [] };
 const SLOT_TITLE_RE = /lied|lobpreis|song|worship|anbetung/i;
@@ -173,7 +173,7 @@ async function updateTemplatePreview() {
   const daySongs = new Set(songs.map(s => s.song_id).filter(Boolean));
   for (const row of result.data.rows) {
     const li = document.createElement("li");
-    if (row.song && daySongs.has(row.song)) li.className = "song";
+    li.className = [row.song && daySongs.has(row.song) ? "song" : "", row.hidden ? "off" : ""].filter(Boolean).join(" ");
     const time = document.createElement("span");
     time.className = "tp-time";
     time.textContent = row.time;
@@ -200,7 +200,9 @@ async function updateTemplatePreview() {
     empty ? `${empty} ${empty === 1 ? "Liedplatz bleibt" : "Liedplätze bleiben"} ohne Lied.` : "",
     missing ? `${missing} ohne Lied aus der Bibliothek (Text steht im Titel).` : "",
     unassigned.length ? `Ohne passenden Programmpunkt: ${unassigned.map(p => `${p.title} (${p.person})`).join(", ")}.` : "",
-    PROGRAM_ITEMS.length ? `Ersetzt das aktuelle Programm (${PROGRAM_ITEMS.length} Punkte).` : "",
+    result.data.mission === "spotlight" ? "Mission Spotlight: die Spotlight-Zeile wird gezeigt, der Missionsbericht ausgeblendet." : "",
+    result.data.mission === "normal" ? "Missionsbericht: mit Namen gezeigt, Mission Spotlight ausgeblendet." : "",
+    PROGRAM_ITEMS.length ? `Das aktuelle Programm (${PROGRAM_ITEMS.length} Punkte) behält alle Einstellungen; nur Personen und Lieder ändern sich.` : "",
   ].filter(Boolean).join(" ");
 }
 
@@ -340,7 +342,7 @@ $("tp-apply-btn").addEventListener("click", async event => {
   if (!template) return;
   // The same question as every other replace or delete: at the key, "Ersetzen" to go on.
   if (PROGRAM_ITEMS.length && !(await confirmDelete(button,
-    `Das aktuelle Programm (${PROGRAM_ITEMS.length} Punkte) durch die Vorlage „${template.name}“ ersetzen?`, "Ersetzen"))) return;
+    `Personen und Lieder der Vorlage „${template.name}“ ins aktuelle Programm (${PROGRAM_ITEMS.length} Punkte) übernehmen? Kamera-Presets, Licht und alle anderen Einstellungen bleiben; Zeilen, die nur im Programm stehen, entfallen.`, "Übernehmen"))) return;
   button.disabled = true;
   try {
     const result = await api("POST", `/program/templates/${encodeURIComponent(template.id)}/apply`, { songs: templateSongs(), persons: TEMPLATES.persons });
