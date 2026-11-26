@@ -862,7 +862,9 @@ weiter über `/companion/buttons/{id}/press` drücken.
   Shelly meldet (alle paar Sekunden gefragt); ein Kreis, der nicht antwortet,
   zeigt „Offline“ und wird über der Section genannt („Raumlicht nicht
   erreichbar: …“). Ein Shelly, der nicht im Netz ist, wird nach 1 s Verbindungsaufbau
-  aufgegeben (`SHELLY_CONNECT_TIMEOUT`); ein verbundener hat 2,5 s für die Antwort. Angetippt zeigt die Taste den
+  aufgegeben (`SHELLY_CONNECT_TIMEOUT`); ein verbundener hat 2,5 s für die Antwort.
+  Schalten versucht den Verbindungsaufbau ein zweites Mal (WLAN-Aussetzer; vor dem
+  Verbinden ist nichts gesendet, es schaltet also nie doppelt), Abfragen nicht. Angetippt zeigt die Taste den
   neuen Zustand sofort (die Lampe pulsiert), bis der Shelly ihn bestätigt; schlägt
   es fehl, kommt der echte Zustand zurück. Jeder Shelly wird für sich gefragt:
   `GET /lights` wartet höchstens 0,4 s und nie auf einen Kreis, der schon zuletzt

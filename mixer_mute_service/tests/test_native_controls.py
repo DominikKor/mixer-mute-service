@@ -318,6 +318,64 @@ class ShellyRpcTests(unittest.TestCase):
         self.assertEqual(timeouts, [native_controls.SHELLY_CONNECT_TIMEOUT])
         self.assertLessEqual(native_controls.SHELLY_CONNECT_TIMEOUT, 1.0)
 
+    def _flaky_connection(self, failures, timeouts):
+        """HTTPConnection whose first ``failures`` connects time out."""
+        import socket
+        from app import native_controls
+        real = native_controls.http.client.HTTPConnection
+        attempts = []
+
+        class Flaky(real):
+            def __init__(self, host, timeout):
+                timeouts.append(timeout)
+                super().__init__(host, timeout=timeout)
+
+            def connect(self):
+                attempts.append(self.host)
+                if len(attempts) <= failures:
+                    raise socket.timeout("timed out")
+                super().connect()
+
+        return patch.object(native_controls.http.client, "HTTPConnection", Flaky), attempts
+
+    def test_switching_tries_a_lost_connect_once_more(self):
+        from app import native_controls
+        timeouts = []
+        flaky, attempts = self._flaky_connection(1, timeouts)
+        with flaky:
+            self.assertEqual(native_controls._shelly_rpc(self.host, "Switch.Set", {"id": 0, "on": True}),
+                             {"was_on": False})
+        self.assertEqual(len(attempts), 2)
+        self.assertEqual(timeouts, [native_controls.SHELLY_CONNECT_TIMEOUT] * 2)
+        self.assertEqual(self.requests, [("/rpc/Switch.Set", {"id": 0, "on": True})])  # sent once
+
+    def test_switching_gives_up_after_the_second_connect(self):
+        from app import native_controls
+        flaky, attempts = self._flaky_connection(5, [])
+        with flaky:
+            with self.assertRaisesRegex(NativeControlError, "unreachable"):
+                native_controls._shelly_rpc(self.host, "Switch.Set", {"id": 0, "on": True})
+        self.assertEqual(len(attempts), native_controls.SHELLY_SWITCH_CONNECT_ATTEMPTS)
+        self.assertLessEqual(native_controls.SHELLY_SWITCH_CONNECT_ATTEMPTS * native_controls.SHELLY_CONNECT_TIMEOUT, 2.0)
+        self.assertEqual(self.requests, [])
+
+    def test_status_question_has_one_connect(self):
+        from app import native_controls
+        flaky, attempts = self._flaky_connection(1, [])
+        with flaky:
+            with self.assertRaisesRegex(NativeControlError, "unreachable"):
+                native_controls._shelly_rpc(self.host, "Switch.GetStatus", {"id": 0})
+        self.assertEqual(len(attempts), 1)
+
+    def test_no_retry_once_the_command_was_sent(self):
+        from app import native_controls
+        self.delay = 0.3
+        flaky, attempts = self._flaky_connection(0, [])
+        with flaky, patch("app.native_controls.SHELLY_TIMEOUT", 0.1):
+            with self.assertRaisesRegex(NativeControlError, "unreachable"):
+                native_controls._shelly_rpc(self.host, "Switch.Set", {"id": 0, "on": True})
+        self.assertEqual(len(attempts), 1)
+        self.assertEqual(len(self.requests), 1)
 
 if __name__ == "__main__":
     unittest.main()

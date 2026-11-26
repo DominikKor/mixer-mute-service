@@ -105,12 +105,32 @@ def _post_beamer_form(field: str, value: str) -> None:
 # is given up after a second, a slow answer still counts.
 SHELLY_CONNECT_TIMEOUT = 1.0
 SHELLY_TIMEOUT = 2.5
+# Switching gets a second connect attempt: a Shelly on Wi-Fi may lose one
+# or wake up slowly, and a tap should not fail for that. Nothing was sent
+# while the connect failed, so the retry can never switch twice. Status
+# questions keep one attempt: the page asks again anyway, and a dead
+# Shelly must hold up nothing.
+SHELLY_SWITCH_CONNECT_ATTEMPTS = 2
+
+
+def _shelly_connect(host: str, attempts: int) -> http.client.HTTPConnection:
+    for attempt in range(1, attempts + 1):
+        conn = http.client.HTTPConnection(host, timeout=SHELLY_CONNECT_TIMEOUT)
+        try:
+            conn.connect()
+            return conn
+        except OSError as exc:
+            conn.close()
+            if attempt == attempts:
+                raise NativeControlError(f"Shelly {host} unreachable") from exc
+            log.info("Shelly %s: connect failed (%s), trying again", host, exc)
+    raise NativeControlError(f"Shelly {host} unreachable")  # attempts < 1
 
 
 def _shelly_rpc(host: str, method: str, params: dict) -> dict:
-    conn = http.client.HTTPConnection(host, timeout=SHELLY_CONNECT_TIMEOUT)
+    attempts = 1 if method.endswith(".GetStatus") else SHELLY_SWITCH_CONNECT_ATTEMPTS
+    conn = _shelly_connect(host, attempts)
     try:
-        conn.connect()
         conn.sock.settimeout(SHELLY_TIMEOUT)
         conn.request("POST", f"/rpc/{method}", body=json.dumps(params).encode("utf-8"),
                      headers={"Content-Type": "application/json"})
