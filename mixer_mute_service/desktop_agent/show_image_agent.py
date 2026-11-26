@@ -1125,10 +1125,60 @@ def _valid_song_request(body) -> bool:
 SLIDE_PAD_X, SLIDE_PAD_Y = 0.06, 0.07
 SLIDE_TITLE_H, SLIDE_COPY_H = 0.12, 0.08
 SLIDE_LINE = 1.25
+# Smallest lyrics size in px on a 1080 px high screen (never above the set
+# largest size): smaller is unreadable from the back. Text that does not fit
+# even then is wrapped, not shrunk further.
+SLIDE_MIN_PX = 40
 # Preview of the next slide: grey (text colour mixed into the background),
 # at most half the slide's text size and never below 20 px on 1080 lines; only
 # in the room left under the centred text, which never moves for it.
 PREVIEW_SCALE, PREVIEW_MIN, PREVIEW_GAP, PREVIEW_MIX = 0.5, 20, 0.5, 0.45
+
+
+def _wrap_lines(measure, paragraphs: list[str], px: float, width: float) -> list[str]:
+    """Each line of the text, broken at spaces where it is wider than width
+    (like FoilPresenter, whose files often keep a whole stanza on one line).
+    A word wider than the line on its own is broken between letters.
+    measure(text, size) gives the width of text at that pixel size."""
+    out = []
+    for paragraph in paragraphs:
+        if measure(paragraph, px) <= width:
+            out.append(paragraph)
+            continue
+        line = ""
+        for word in paragraph.split(" "):
+            candidate = word if not line else f"{line} {word}"
+            if not line or measure(candidate, px) <= width:
+                line = candidate
+            else:
+                out.append(line)
+                line = word
+            while len(line) > 1 and measure(line, px) > width:
+                cut = max(1, next((k for k in range(len(line) - 1, 0, -1) if measure(line[:k], px) <= width), 1))
+                out.append(line[:cut])
+                line = line[cut:]
+        out.append(line)
+    return out
+
+
+def _fit_text(measure, text: str, max_px: float, min_px: float, box_w: float, box_h: float):
+    """(size, lines) of the lyrics. The text's own lines are kept as long as
+    they fit at min_px or larger; otherwise lines are wrapped at the largest
+    size where the wrapped text fits; at min_px it is wrapped regardless."""
+    paragraphs = text.split("\n")
+    min_px = min(min_px, max_px)
+    px = max_px
+    while px >= min_px:
+        if max(measure(line, px) for line in paragraphs) <= box_w and len(paragraphs) * px * SLIDE_LINE <= box_h:
+            return px, paragraphs
+        px *= 0.94
+    px = max_px
+    while px >= min_px:
+        lines = _wrap_lines(measure, paragraphs, px, box_w)
+        if len(lines) * px * SLIDE_LINE <= box_h:
+            return px, lines
+        px *= 0.94
+    return min_px, _wrap_lines(measure, paragraphs, min_px, box_w)
 
 
 def _mix_color(fg: str, bg: str, amount: float) -> str:
@@ -1140,19 +1190,17 @@ def _mix_color(fg: str, bg: str, amount: float) -> str:
 
 def _preview_layout(measure, lines: list[str], next_lines: list[str], px: float, box_w: float,
                     box_h: float, height: int):
-    """(size, lines) of the next-slide preview, or None if it does not fit.
-    measure(text, size) gives the width of text at that pixel size."""
+    """(size, lines) of the next-slide preview, or None if it does not fit:
+    half the text size (at least PREVIEW_MIN), its lines wrapped like the
+    lyrics, as many as fit under the text. measure(text, size) gives the
+    width of text at that pixel size."""
     if not next_lines:
         return None
-    min_px = PREVIEW_MIN * height / 1080
-    pp = PREVIEW_SCALE * px
-    while pp >= min_px and max(measure(line, pp) for line in next_lines) > box_w:
-        pp *= 0.94
-    if pp < min_px:
-        return None
+    pp = max(PREVIEW_SCALE * px, PREVIEW_MIN * height / 1080)
+    wrapped = _wrap_lines(measure, next_lines, pp, box_w)
     free = (box_h - len(lines) * px * SLIDE_LINE) / 2 - PREVIEW_GAP * px
-    count = min(len(next_lines), int(free // (pp * SLIDE_LINE)) if free > 0 else 0)
-    return (pp, next_lines[:count]) if count >= 1 else None
+    count = min(len(wrapped), int(free // (pp * SLIDE_LINE)) if free > 0 else 0)
+    return (pp, wrapped[:count]) if count >= 1 else None
 
 
 def _draw_slide(canvas: tk.Canvas, width: int, height: int, body: dict) -> None:
@@ -1171,22 +1219,24 @@ def _draw_slide(canvas: tk.Canvas, width: int, height: int, body: dict) -> None:
     x = {"left": pad_x, "center": width / 2, "right": width - pad_x}[align]
     top_anchor = {"left": "nw", "center": "n", "right": "ne"}[align]
     mid_anchor = {"left": "w", "center": "center", "right": "e"}[align]
-    lines = body["text"].split("\n")
-    px = style["font_size"] * height / 1080
-    while px > 8:
-        font = tkfont.Font(family=style["font"], size=-round(px))
-        if max(font.measure(line) for line in lines) <= box_w and len(lines) * px * SLIDE_LINE <= box_h:
-            break
-        px *= 0.94
-    font = tkfont.Font(family=style["font"], size=-max(8, round(px)))
-    top = pad_y + title_h + (box_h - len(lines) * px * SLIDE_LINE) / 2
+    fonts = {}
+
+    def measure(text: str, size: float) -> int:
+        key = max(1, round(size))
+        if key not in fonts:
+            fonts[key] = tkfont.Font(family=style["font"], size=-key)
+        return fonts[key].measure(text)
+
+    px, lines = _fit_text(measure, body["text"], style["font_size"] * height / 1080,
+                          SLIDE_MIN_PX * height / 1080, box_w, box_h)
+    font = tkfont.Font(family=style["font"], size=-max(1, round(px)))
+    # Centred in the box; text taller than the box starts at its top.
+    top = pad_y + title_h + max(0.0, (box_h - len(lines) * px * SLIDE_LINE) / 2)
     for i, line in enumerate(lines):
         canvas.create_text(x, top + i * px * SLIDE_LINE, text=line, anchor=top_anchor,
                            fill=style["text_color"], font=font, justify=align)
     next_text = body.get("next", "")
-    preview = _preview_layout(
-        lambda text, size: tkfont.Font(family=style["font"], size=-max(1, round(size))).measure(text),
-        lines, next_text.split("\n") if next_text else [], px, box_w, box_h, height)
+    preview = _preview_layout(measure, lines, next_text.split("\n") if next_text else [], px, box_w, box_h, height)
     if preview:
         pp, shown = preview
         preview_font = tkfont.Font(family=style["font"], size=-max(1, round(pp)))

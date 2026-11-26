@@ -684,6 +684,16 @@ bleibt dabei unverändert groß und an seiner Stelle; nach der letzten Folie gib
 es keine Vorschau. Ein Anzeige-PC mit älterem Display-Agent bekommt die Folie
 ohne Vorschau und Ausrichtung, bis der Agent aktualisiert ist (die Update-Taste
 aktualisiert die Agents aller PCs).
+**Zeilen und Schriftgröße**: Die Zeilenumbrüche aus der Datei bleiben, solange
+der Text mit ihnen in mindestens 40 px (bei 1080p; nie mehr als die größte
+Schrift) passt – dafür wird er höchstens kleiner. Viele FoilPresenter-Dateien
+haben eine ganze Strophe in einer einzigen Zeile (FoilPresenter bricht selbst
+um); solche Zeilen werden wie dort an Leerzeichen umgebrochen, in der größten
+Schrift, bei der der Text auf die Folie passt, nie unter 40 px. Passt selbst
+das nicht (ganzes Lied auf einer Folie), beginnt der Text oben. Anzeige-PC und
+Vorschau auf der Seite rechnen gleich (`_fit_text` im Agent, `fitSlideText` in
+`js/songs.js`); auch die graue Vorschau der nächsten Folie wird umgebrochen.
+Der Agent auf dem Anzeige-PC braucht dafür die neue Version.
 **Titelfolie** (Standard: an): Jedes Lied beginnt mit einer eigenen Folie, auf
 der der Titel in der Mitte steht und das Copyright darunter (mit dem Schalter
 *Copyright*). Sie ist Folie 0, die Liedfolien zählen ab 1; ein Programmpunkt

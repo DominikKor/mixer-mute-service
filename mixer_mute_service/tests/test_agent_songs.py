@@ -100,8 +100,11 @@ class SongLibraryTests(unittest.TestCase):
         # (900 - 540) / 2 - 36 = 144 px, three preview lines of 45 px.
         some = agent._preview_layout(measure, ["Z"] * 6, ["a", "b", "c", "d", "e"], 72, 1800, 900, 1080)
         self.assertEqual(some, (36, ["a", "b", "c"]))
-        # Too wide even at the smallest size, or nothing to preview: none.
-        self.assertIsNone(agent._preview_layout(measure, two_lines, ["x" * 400], 72, 1800, 900, 1080))
+        # A line wider than the slide is wrapped (no longer dropped), each
+        # piece fitting; nothing to preview: none.
+        size, wide = agent._preview_layout(measure, two_lines, ["x" * 400], 72, 1800, 900, 1080)
+        self.assertEqual(size, 36)
+        self.assertTrue(len(wide) >= 2 and all(measure(line, size) <= 1800 for line in wide))
         self.assertIsNone(agent._preview_layout(measure, two_lines, [], 72, 1800, 900, 1080))
 
 

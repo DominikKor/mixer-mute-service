@@ -31,7 +31,9 @@ async function loadSongs() {
 
 // Slide layout. Keep in sync with _draw_slide() in
 // desktop_agent/show_image_agent.py, which draws the real screen.
-const SLIDE = { padX: 0.06, padY: 0.07, titleH: 0.12, copyH: 0.08, line: 1.25 };
+// minPx: smallest lyrics size on 1080 lines (never above the set largest
+// size); text that does not fit even then is wrapped, not shrunk further.
+const SLIDE = { padX: 0.06, padY: 0.07, titleH: 0.12, copyH: 0.08, line: 1.25, minPx: 40 };
 // Next-slide preview: grey (text colour mixed into the background), at most
 // half the text size, never below 20 px on 1080 lines, only in the room under
 // the centred text (which never moves for it).
@@ -46,17 +48,63 @@ function mixColor(fg, bg, amount) {
   }).join("");
 }
 
-// {px, lines} of the next-slide preview, or null where it does not fit.
-function previewLayout(ctx, settings, lines, nextLines, px, boxW, boxH, H) {
+// Width of text at a pixel size in the slide font.
+function slideMeasure(ctx, settings) {
+  return (text, size) => { ctx.font = songSlideFont(size, settings); return ctx.measureText(text).width; };
+}
+
+// Each line of the text, broken at spaces where it is wider than width (like
+// FoilPresenter, whose files often keep a whole stanza on one line); a word
+// wider than the line on its own is broken between letters. Same as
+// _wrap_lines() in the display agent.
+function wrapSlideLines(measure, paragraphs, px, width) {
+  const out = [];
+  for (const paragraph of paragraphs) {
+    if (measure(paragraph, px) <= width) { out.push(paragraph); continue; }
+    let line = "";
+    for (const word of paragraph.split(" ")) {
+      const candidate = line ? `${line} ${word}` : word;
+      if (!line || measure(candidate, px) <= width) line = candidate;
+      else { out.push(line); line = word; }
+      while (line.length > 1 && measure(line, px) > width) {
+        let cut = line.length - 1;
+        while (cut > 1 && measure(line.slice(0, cut), px) > width) cut--;
+        out.push(line.slice(0, cut));
+        line = line.slice(cut);
+      }
+    }
+    out.push(line);
+  }
+  return out;
+}
+
+// {px, lines} of the lyrics: the text's own lines while they fit at minPx or
+// larger, else wrapped at the largest size that fits, at minPx regardless.
+// Same as _fit_text() in the display agent.
+function fitSlideText(measure, text, maxPx, minPx, boxW, boxH) {
+  const paragraphs = text.split("\n");
+  minPx = Math.min(minPx, maxPx);
+  for (let px = maxPx; px >= minPx; px *= 0.94) {
+    if (Math.max(...paragraphs.map(l => measure(l, px))) <= boxW && paragraphs.length * px * SLIDE.line <= boxH) {
+      return { px, lines: paragraphs };
+    }
+  }
+  for (let px = maxPx; px >= minPx; px *= 0.94) {
+    const lines = wrapSlideLines(measure, paragraphs, px, boxW);
+    if (lines.length * px * SLIDE.line <= boxH) return { px, lines };
+  }
+  return { px: minPx, lines: wrapSlideLines(measure, paragraphs, minPx, boxW) };
+}
+
+// {px, lines} of the next-slide preview, or null where it does not fit: half
+// the text size (at least PREVIEW.min), wrapped like the lyrics.
+function previewLayout(measure, lines, nextLines, px, boxW, boxH, H) {
   if (!nextLines.length) return null;
-  const minPx = PREVIEW.min * H / 1080;
-  let pp = PREVIEW.scale * px;
-  const widest = size => { ctx.font = songSlideFont(size, settings); return Math.max(...nextLines.map(l => ctx.measureText(l).width)); };
-  while (pp >= minPx && widest(pp) > boxW) pp *= 0.94;
-  if (pp < minPx) return null;
+  const pp = Math.max(PREVIEW.scale * px, PREVIEW.min * H / 1080);
+  const wrapped = wrapSlideLines(measure, nextLines, pp, boxW);
   const free = (boxH - lines.length * px * SLIDE.line) / 2 - PREVIEW.gap * px;
-  const count = Math.min(nextLines.length, free > 0 ? Math.floor(free / (pp * SLIDE.line)) : 0);
-  return count >= 1 ? { px: pp, lines: nextLines.slice(0, count) } : null;
+  const count = Math.min(wrapped.length, free > 0 ? Math.floor(free / (pp * SLIDE.line)) : 0);
+  return count >= 1 ? { px: pp, lines: wrapped.slice(0, count) } : null;
 }
 
 function songSlideFont(px, settings, bold = false) {
@@ -76,15 +124,8 @@ function renderSlide(box, slide, settings) {
   const titleH = slide.title ? SLIDE.titleH * H : 0;
   const copyH = slide.copyright ? SLIDE.copyH * H : 0;
   const boxW = W - 2 * padX, boxH = H - 2 * padY - titleH - copyH;
-  const lines = slide.text.split("\n");
-  const minPx = 8 * H / 1080;
-  let px = settings.font_size * H / 1080;
-  while (px > minPx) {
-    ctx.font = songSlideFont(px, settings);
-    if (Math.max(...lines.map(l => ctx.measureText(l).width)) <= boxW && lines.length * px * SLIDE.line <= boxH) break;
-    px *= 0.94;
-  }
-  px = Math.max(minPx, px);
+  const measure = slideMeasure(ctx, settings);
+  const { px, lines } = fitSlideText(measure, slide.text, settings.font_size * H / 1080, SLIDE.minPx * H / 1080, boxW, boxH);
   const place = (el, top, font, color) => {
     el.style.top = `${top}px`;
     el.style.font = font;
@@ -93,7 +134,8 @@ function renderSlide(box, slide, settings) {
     if (color) el.style.color = color;
     box.appendChild(el);
   };
-  const top = padY + titleH + (boxH - lines.length * px * SLIDE.line) / 2;
+  // Centred in the box; text taller than the box starts at its top.
+  const top = padY + titleH + Math.max(0, (boxH - lines.length * px * SLIDE.line) / 2);
   lines.forEach((line, i) => {
     const el = document.createElement("div");
     el.className = "slide-line";
@@ -101,7 +143,7 @@ function renderSlide(box, slide, settings) {
     place(el, top + i * px * SLIDE.line, songSlideFont(px, settings));
   });
   const preview = slide.next
-    ? previewLayout(ctx, settings, lines, slide.next.split("\n"), px, boxW, boxH, H) : null;
+    ? previewLayout(measure, lines, slide.next.split("\n"), px, boxW, boxH, H) : null;
   if (preview) {
     const grey = mixColor(settings.text_color, settings.background_color, PREVIEW.mix);
     const previewTop = padY + titleH + boxH - preview.lines.length * preview.px * SLIDE.line;
