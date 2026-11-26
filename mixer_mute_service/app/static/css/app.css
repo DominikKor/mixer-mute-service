@@ -1520,6 +1520,10 @@ button.light-circuit[data-state="on"] .light-lamp { background: #ffd45c; box-sha
 button.light-circuit[data-state="on"] .light-circuit-state { color: #ffd45c; }
 button.light-circuit[data-state="unknown"] { opacity: .65; }
 button.light-circuit[data-state="unknown"] .light-lamp { background: none; border: 1px dashed #6d7686; box-shadow: none; }
+/* Tapped, not yet confirmed by the Shelly: the new state shows, the lamp pulses. */
+button.light-circuit.pending .light-lamp { animation: light-pending .7s ease-in-out infinite alternate; }
+@keyframes light-pending { to { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) { button.light-circuit.pending .light-lamp { animation: none; opacity: .5; } }
 .light-block button.busy { opacity: .6; pointer-events: none; }
 /* New scene: name, then which lights belong to it (toggle keys, blue = chosen) */
 .light-scene-create { display: none; margin-bottom: 12px; }

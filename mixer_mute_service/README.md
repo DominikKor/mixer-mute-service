@@ -43,7 +43,9 @@ handshake, commands change its state, no echo), replaces every device
 (Shellys, Art-Net, beamer, VISCA, OBS, display agents) with a fake that logs
 "FAKE ..." lines, installs the tests' network guard (any non-loopback
 connection raises) and keeps its data in `local-test/` (ignored by git;
-delete it to start fresh).
+delete it to start fresh). `--dead-shelly light-front` plays a room light circuit that
+is off the network (each call hangs for the 1 s connect timeout, then fails), `--shelly-delay 0.3` slows
+the other fake Shellys' answers.
 
 ## Web UI
 
@@ -858,7 +860,16 @@ weiter über `/companion/buttons/{id}/press` drücken.
   meldet mit `"merging": true`, dass er zwei Quellen mischt.
 - **Raumlicht** (Shelly, 7 Kreise): An/Aus je Kreis mit dem Zustand, den der
   Shelly meldet (alle paar Sekunden gefragt); ein Kreis, der nicht antwortet,
-  zeigt „?“.
+  zeigt „Offline“ und wird über der Section genannt („Raumlicht nicht
+  erreichbar: …“). Ein Shelly, der nicht im Netz ist, wird nach 1 s Verbindungsaufbau
+  aufgegeben (`SHELLY_CONNECT_TIMEOUT`); ein verbundener hat 2,5 s für die Antwort. Angetippt zeigt die Taste den
+  neuen Zustand sofort (die Lampe pulsiert), bis der Shelly ihn bestätigt; schlägt
+  es fehl, kommt der echte Zustand zurück. Jeder Shelly wird für sich gefragt:
+  `GET /lights` wartet höchstens 0,4 s und nie auf einen Kreis, der schon zuletzt
+  nicht geantwortet hat, ein toter Kreis bremst also weder die Seite noch die
+  anderen. „Alle an/aus“ (auch die Steuerung-Tasten) schaltet alle gleichzeitig
+  und jeden Kreis, der antwortet; eine Szene schaltet Raumlicht und Bühne
+  gleichzeitig.
 - **Einstellungen**: Einschalthelligkeit, Übergang (0–10 s) und Dimmschritt
   (für die Heller/Dunkler-Tasten über Companion).
 - **Szenen**: *+ Szene* speichert das Licht, wie es gerade ist (Bühne, Warm/Kalt,
@@ -873,7 +884,7 @@ startet die Zeile nicht mehr („unknown light scene“), bis eine andere gewäh
 | GET | `/lights` | Bühne, Einstellungen, Raumlicht-Kreise, Szenen |
 | POST | `/lights/stage` `{"zones": {"left": 0..255}, "warm", "cold", "fade"}` | Bühne setzen (`fade: false` springt) |
 | PUT | `/lights/settings` `{"start", "steps", "fade_ms"}` | Einstellungen |
-| POST | `/lights/circuits` `{"states": {"light-front": true}}` | Raumlicht schalten |
+| POST | `/lights/circuits` `{"states": {"light-front": true}}` | Raumlicht schalten; Antwort `circuits`: Zustand aller Kreise |
 | GET | `/lights/scenes` | nur die Szenen |
 | POST | `/lights/scenes` `{"name", "replace"}` | aktuelles Licht als Szene speichern |
 | POST | `/lights/scenes/{id}/apply` | Szene einblenden |
