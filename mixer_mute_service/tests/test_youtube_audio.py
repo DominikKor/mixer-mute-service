@@ -43,6 +43,11 @@ class YoutubeProfileTests(unittest.TestCase):
             self.assertEqual(client.post("/desktop/profiles", json={**body, "id": "bild", "kind": "image"}).status_code, 200)
             kinds = {p["id"]: p["kind"] for p in client.get("/desktop/profiles").json()["profiles"]}
             self.assertEqual(kinds["bild"], "audio")
+            # Capitals in scheme or host: saved lower-cased, so the agent knows the link.
+            shouty = URL.replace("https://", "HTTPS://").replace("youtu", "YouTu")
+            self.assertEqual(client.post("/desktop/profiles", json={**body, "id": "laut", "path": shouty}).status_code, 200)
+            listed = {p["id"]: p for p in client.get("/desktop/profiles").json()["profiles"]}
+            self.assertEqual((listed["laut"]["path"], listed["laut"]["kind"]), (URL, "audio"))
             with mock.patch("app.display_agent.call", mock.AsyncMock(return_value={"ok": True, "playing": True})) as call:
                 r = client.post("/desktop/lobpreis/audio/play")
             self.assertEqual(r.status_code, 200, r.text)

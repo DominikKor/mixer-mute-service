@@ -23,10 +23,11 @@ from __future__ import annotations
 from pathlib import PureWindowsPath
 from typing import Optional
 
-from .youtube import is_youtube_url
+from .youtube import is_youtube_url, normalize_youtube_url
 
 IMAGE_EXTENSIONS = frozenset({
-    ".png", ".jpg", ".jpeg", ".jfif", ".gif", ".bmp", ".webp", ".tif", ".tiff", ".heic", ".svg", ".ico",
+    # Only what the display agent can open (Pillow): no .svg, no .heic (those are files).
+    ".png", ".jpg", ".jpeg", ".jfif", ".gif", ".bmp", ".webp", ".tif", ".tiff", ".ico",
 })
 AUDIO_EXTENSIONS = frozenset({
     ".mp3", ".wav", ".flac", ".m4a", ".aac", ".ogg", ".oga", ".opus", ".wma", ".aif", ".aiff", ".mka",
@@ -37,7 +38,7 @@ KINDS = ("image", "audio", "program", "file")
 
 def detect_kind(path: str, mission_spotlight: bool = False) -> Optional[str]:
     """The kind the path asks for, or None when it says nothing (no extension)."""
-    value = (path or "").strip()
+    value = normalize_youtube_url((path or "").strip())
     if is_youtube_url(value):
         return "audio"
     if mission_spotlight:

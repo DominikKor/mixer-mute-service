@@ -13,6 +13,7 @@ import unittest
 from pathlib import Path
 
 from app.profile_kind import detect_kind, profile_kind
+from app.youtube import normalize_youtube_url
 
 try:
     import quickjs
@@ -28,6 +29,10 @@ CASES = [
     (r"I:\Bilder\Gemeindegaben QR.png", False, "image"),
     (r"I:\Bilder\Foto.JPG", False, "image"),
     (r"I:\Bilder\Logo_*.webp", False, "image"),
+    (r"I:\Bilder\Logo.svg", False, "file"),       # the agent shows images with Pillow: no SVG
+    (r"I:\Bilder\Foto.HEIC", False, "file"),      # nor HEIC
+    ("HTTPS://WWW.YouTube.com/watch?v=dQw4w9WgXcQ", False, "audio"),   # capitals in scheme and host
+    ("https://YOUTU.BE/dQw4w9WgXcQ", False, "audio"),
     (r"I:\Musik\Hintergrundmusik.mp3", False, "audio"),
     (r"I:\Musik\Ansage_*.WAV", False, "audio"),
     ("https://youtu.be/dQw4w9WgXcQ", False, "audio"),
@@ -51,6 +56,16 @@ CASES = [
     (r"C:\Ordner\.hidden", False, None),
     ("", False, None),
 ]
+
+
+class NormaliseLinkTests(unittest.TestCase):
+    def test_scheme_and_host_lower_cased_for_youtube_only(self):
+        self.assertEqual(normalize_youtube_url("HTTPS://WWW.YouTube.com/watch?v=dQw4w9WgXcQ"),
+                         "https://www.youtube.com/watch?v=dQw4w9WgXcQ")
+        self.assertEqual(normalize_youtube_url("https://youtu.be/dQw4w9WgXcQ"), "https://youtu.be/dQw4w9WgXcQ")
+        self.assertEqual(normalize_youtube_url("HTTPS://Example.com/A"), "HTTPS://Example.com/A")
+        self.assertEqual(normalize_youtube_url(r"C:\Musik\A.mp3"), r"C:\Musik\A.mp3")
+        self.assertIsNone(normalize_youtube_url(None))
 
 
 class DetectKindTests(unittest.TestCase):
@@ -92,7 +107,7 @@ class PageAgreesTests(unittest.TestCase):
                   "PROFILE_FILE_LABELS", "PROFILE_KIND_LABELS")
         parts = [re.search(rf"(?ms)^const {name} = .*?;$", source).group(0) for name in consts]
         parts += [re.search(rf"(?ms)^function {name}\(.*?\n\}}\n", source).group(0)
-                  for name in ("isYoutubeUrl", "profileKindOf", "profileKindFor")]
+                  for name in ("isYoutubeUrl", "normalizeYoutubeUrl", "profileKindOf", "profileKindFor")]
         cls.js = quickjs.Context()
         cls.js.eval("\n".join(parts))
 
@@ -118,7 +133,15 @@ class PageAgreesTests(unittest.TestCase):
                 shown = self.call(f"profileKindFor({json.dumps(path)}, {json.dumps(spotlight)}, {json.dumps(old)})")
                 self.assertEqual(shown["kind"], profile_kind(path, spotlight, stored=old))
 
+    def test_same_link_normalisation_as_the_service(self):
+        for value in ("HTTPS://WWW.YouTube.com/watch?v=dQw4w9WgXcQ", "https://YOUTU.BE/dQw4w9WgXcQ",
+                      "https://youtu.be/dQw4w9WgXcQ", "HTTPS://Example.com/A", r"C:\Musik\A.mp3"):
+            with self.subTest(value=value):
+                self.assertEqual(self.call(f"normalizeYoutubeUrl({json.dumps(value)})"), normalize_youtube_url(value))
+
     def test_labels(self):
+        self.assertIn("Windows", self.call(r'profileKindOf("C:\Users\Public\Desktop\OBS.lnk", false).label'))
+        self.assertIn("Windows", self.call(r'profileKindOf("C:\Skripte\start.bat", false).label'))
         self.assertEqual(self.call(r'profileKindOf("D:\\Videos\\Intro.mp4", false).label'), "Video")
         self.assertEqual(self.call(r'profileKindOf("https://youtu.be/dQw4w9WgXcQ", false).label'), "YouTube-Audio")
 

@@ -17,7 +17,7 @@ const KIND_INFO = {
   image: { placeholder: "I:\\Bilder\\GemeindegabenQR.png",
            hint: "Bilddatei (PNG, JPG …) auf dem Ziel-PC. Der Desktop-Agent zeigt sie an; Esc blendet sie aus." },
   program: { placeholder: "C:\\Program Files\\App\\app.exe",
-             hint: "Pfad zur .exe auf dem Ziel-PC. Argumente werden einzeln und ohne Shell übergeben." },
+             hint: "Pfad zur .exe auf dem Ziel-PC (ein unbekannter Teil mit *, aber mit Endung: obs64*.exe). Argumente werden einzeln und ohne Shell übergeben." },
   file: { placeholder: "D:\\Folien\\Predigt.pptx",
           hint: "Beliebige Datei auf dem Ziel-PC – Windows öffnet sie mit der Standard-App (PowerPoint, PDF …)." },
   audio: { placeholder: "I:\\Musik\\Lied.mp3 oder https://youtu.be/…",
@@ -42,6 +42,13 @@ function isYoutubeUrl(value) {
   return value.length <= 500 && YOUTUBE_URL_RE.test(value);
 }
 
+// Capitals in scheme or host ("HTTPS://YouTube.com/…") lower-cased when that
+// makes a YouTube link, as the service does when saving (app/youtube.py).
+function normalizeYoutubeUrl(value) {
+  const lowered = value.replace(/^([A-Za-z]+:\/\/[^\/?#\s]*)/, m => m.toLowerCase());
+  return lowered !== value && isYoutubeUrl(lowered) ? lowered : value;
+}
+
 // ---- the kind comes from the path ---------------------------------------------
 // Same rules as the service (app/profile_kind.py, which decides on saving;
 // tests/test_profile_kind.py checks both agree): a YouTube link is audio,
@@ -49,7 +56,8 @@ function isYoutubeUrl(value) {
 // else a file (Windows opens it with its default app). A path without an
 // extension and a Mission Spotlight folder say nothing: an edited profile
 // keeps its kind, a new one is a file.
-const PROFILE_IMAGE_EXT = new Set([".png", ".jpg", ".jpeg", ".jfif", ".gif", ".bmp", ".webp", ".tif", ".tiff", ".heic", ".svg", ".ico"]);
+// Only what the display agent can show (Pillow): .svg and .heic are files.
+const PROFILE_IMAGE_EXT = new Set([".png", ".jpg", ".jpeg", ".jfif", ".gif", ".bmp", ".webp", ".tif", ".tiff", ".ico"]);
 const PROFILE_AUDIO_EXT = new Set([".mp3", ".wav", ".flac", ".m4a", ".aac", ".ogg", ".oga", ".opus", ".wma", ".aif", ".aiff", ".mka"]);
 const PROFILE_PROGRAM_EXT = new Set([".exe"]);
 // What a file profile opens, for the label only.
@@ -58,13 +66,14 @@ const PROFILE_FILE_LABELS = {
   ".m4v": "Video", ".mpg": "Video", ".mpeg": "Video", ".pdf": "PDF", ".ppt": "Präsentation",
   ".pptx": "Präsentation", ".pps": "Präsentation", ".ppsx": "Präsentation", ".odp": "Präsentation",
   ".doc": "Dokument", ".docx": "Dokument", ".odt": "Dokument", ".txt": "Text", ".xls": "Tabelle", ".xlsx": "Tabelle",
-  ".lnk": "Verknüpfung", ".url": "Internet-Verknüpfung", ".bat": "Skript", ".cmd": "Skript", ".html": "Webseite", ".htm": "Webseite",
+  ".lnk": "Verknüpfung (wird von Windows ausgeführt)", ".url": "Internet-Verknüpfung",
+  ".bat": "Skript (wird von Windows ausgeführt)", ".cmd": "Skript (wird von Windows ausgeführt)", ".html": "Webseite", ".htm": "Webseite",
 };
 const PROFILE_KIND_LABELS = { image: "Bild", audio: "Audio", program: "Programm", file: "Datei" };
 
 // {kind, label} the path asks for, or null when it says nothing (no extension).
 function profileKindOf(path, spotlight) {
-  const value = (path || "").trim();
+  const value = normalizeYoutubeUrl((path || "").trim());
   if (isYoutubeUrl(value)) return { kind: "audio", label: "YouTube-Audio" };
   if (spotlight) return null;  // a folder: the kind is not in the path
   const name = value.split(/[\\/]/).pop();
@@ -328,7 +337,7 @@ function openProfileDialog(profileId) {
 function readProfileForm() {
   const title = $("pf-title").value.trim();
   const id = $("pf-id").value.trim();
-  const path = $("pf-path").value.trim();
+  const path = normalizeYoutubeUrl($("pf-path").value.trim());
   const ip = $("pf-ip").value.trim();
   syncProfileForm();
   const kind = PROFILE_FORM.kind;
@@ -343,7 +352,7 @@ function readProfileForm() {
   }
   if (youtube && kind !== "audio") return profileFormError("Ein YouTube-Link spielt nur als Audio.", $("pf-path"));
   if (!youtube && !WIN_ABS_PATH_RE.test(path)) return profileFormError("Pfad: vollständiger Windows-Pfad, z. B. " + KIND_INFO[kind].placeholder.split(" oder ")[0] + (kind === "audio" ? ", oder ein YouTube-Link" : ""), $("pf-path"));
-  if (kind === "program" && !/(\.exe|\*)$/i.test(path)) return profileFormError("Ein Programm muss auf eine .exe zeigen (oder auf * enden).", $("pf-path"));
+  if (kind === "program" && !/(\.exe|\*)$/i.test(path)) return profileFormError("Ein Programm muss auf eine .exe zeigen, mit * z. B. obs64*.exe.", $("pf-path"));
   if (!IPV4_RE.test(ip)) return profileFormError("Bitte einen Ziel-PC wählen.", $("pf-ip"));
   // Only audio fades; other kinds keep the defaults (and config.yaml stays short).
   const fade = kind === "audio" && $("pf-fade").checked;

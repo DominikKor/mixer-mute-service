@@ -609,9 +609,12 @@ Weitere Profile erhalten eigene IDs und Ziel-IPs. `kind` ist `image`,
 `program`, `file` oder `audio`. Im Profilfenster wird die Art nicht mehr
 gewählt: der Dienst leitet sie beim Speichern aus dem Pfad ab
 (`app/profile_kind.py`), das Fenster zeigt sie vorher als „Erkannt: …“.
-Bildendungen ergeben `image`, Audioendungen und YouTube-Links `audio`, `.exe`
-`program`, alles andere `file` (Video, PDF, Folien, `.lnk`, `.bat`, `.url` …;
-Windows öffnet die Datei mit der Standard-App). Ein Pfad ohne Endung (z. B.
+Bildendungen, die der Agent zeigen kann (PNG, JPG, GIF, BMP, WebP, TIFF, ICO;
+nicht SVG und HEIC), ergeben `image`, Audioendungen und YouTube-Links `audio`
+(Groß-/Kleinschreibung von Schema und Host egal, gespeichert wird der Link
+klein), `.exe` `program`, alles andere `file` (Video, PDF, Folien, `.url` …;
+Windows öffnet die Datei mit der Standard-App, `.lnk`, `.bat` und `.cmd` führt
+es aus). Ein Pfad ohne Endung (z. B.
 `…\obs64*`) und ein Mission-Spotlight-Ordner sagen nichts: ein bestehendes
 Profil behält dann seine Art (Spotlight-Audio bleibt Audio, ein Programm wird
 mit Spotlight zu `file`), ein neues wird `file`. Ein
@@ -643,8 +646,9 @@ auch eines Ordners, z. B. `I:\Musik\Ansage_*.mp3`,
 `C:\Program Files\obs-studio*\bin\64bit\obs64.exe` oder
 `C:\Users\*\foilpresenter Bibliothek`. Der Display-Agent setzt ihn auf dem
 Ziel-PC ein; passen mehrere Eintraege, gilt der zuletzt geaenderte. Ein
-Programmpfad darf statt auf `.exe` auch auf `*` enden, dann kommen nur
-`.exe`-Dateien in Frage. Programme auf Netzlaufwerken bleiben auch mit `*`
+Programmpfad schreibt den Platzhalter vor der Endung (`obs64*.exe`), sonst wird
+er nicht als Programm erkannt; ein älteres Profil, das auf `*` endet, bleibt
+Programm, dann kommen nur `.exe`-Dateien in Frage. Programme auf Netzlaufwerken bleiben auch mit `*`
 gesperrt. Der Platzhalter braucht den aktuellen Display-Agent auf dem Ziel-PC;
 die Update-Taste aktualisiert die Display-Agents aller PCs mit und startet sie
 immer neu, auch wenn sie schon aktuell sind (dann über `POST /restart` am
