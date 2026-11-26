@@ -245,9 +245,12 @@ async def show_profile(request: Request, profile_id: str) -> Result:
         if profile.kind != "image":
             return {"ok": False, "reason": "several monitors are only possible for images"}, 400
         payload["monitors"] = profile.monitors
+    # Mission Spotlight videos play in mpv, which the agent controls (closing
+    # and keeping them work then); other files open in the PC's default app.
+    new_fields = {"player": "mpv"} if profile.kind == "file" and profile.mission_spotlight else None
     try:
         answer = await _tracked_start(request, profile_id, profile, lambda extra: display_agent.call(
-            cfg, profile.target_ip, "/display", {**payload, **extra}))
+            cfg, profile.target_ip, "/display", {**payload, **extra}), new_fields)
     except AgentError as exc:
         if exc.agent_status == 503:
             return {"ok": False, "reason": await _no_file_reason(request, profile, payload["path"])}, 502
@@ -260,27 +263,33 @@ def _shown_profiles(request: Request):
     return getattr(request.app.state, "shown_profiles", None)
 
 
-async def _tracked_start(request: Request, profile_id: str, profile, send) -> dict:
+async def _tracked_start(request: Request, profile_id: str, profile, send, new_fields: Optional[dict] = None) -> dict:
     """Send a profile's start (send(extra): the agent call, extra fields
     added) through the notes of app/profile_stops.py. A program row's start
     is noted once the agent accepted it (it stops when the program moves
-    on); one by hand takes the profile over (it keeps running). A program
-    row asks the agent to keep music that still plays and a video window
-    still open as they are. Never waits for a stop. Raises AgentError as
-    send()."""
+    on), or noted without its stamp when the agent did not answer in time;
+    one by hand takes the profile over (it keeps running). A program row
+    asks the agent to keep music that still plays as it is, and a video
+    window still open if an earlier program row opened it (one left open by
+    hand is opened again). new_fields: more fields only current agents know
+    (all of them are left out for an older agent). Never waits for a stop.
+    Raises AgentError as send()."""
     shown = _shown_profiles(request)
     if shown is None:
-        return await send({})
+        return await send(dict(new_fields or {}))
+    by_program_row = program_row() is not None
+    keep_window = by_program_row and profile.kind == "file" and shown.program_has(profile_id)
     stamp = shown.starting(profile_id)
-    extra = {"stamp": stamp}
-    if program_row() is not None:
-        if profile.kind == "audio":
-            extra["keep_if_playing"] = True
-        elif profile.kind == "file":
-            extra["keep_if_open"] = True
+    extra = {"stamp": stamp, **(new_fields or {})}
+    if by_program_row and profile.kind == "audio":
+        extra["keep_if_playing"] = True
+    if keep_window:
+        extra["keep_if_open"] = True
     try:
         answer = await send(extra)
     except AgentError as exc:
+        if exc.agent_status is None and exc.status == 502:
+            shown.timed_out(profile_id, profile.target_ip, profile.kind, stamp)
         if exc.agent_status != 400:
             raise
         # An agent from before stamps: the start as it knows it.

@@ -148,9 +148,11 @@ miniatures, and **Standard** restores the original one.
   started itself: a file handed to an app that was already running, e.g.
   a single-instance player, cannot be closed and is logged). A profile the
   new row starts again is sent again, and the agent decides: music that
-  still plays and a video window still open stay as they are (no new
-  fade-in, no reopened video), music that ended starts again, an image is
-  shown again. Music is never stopped on a PC where the new row starts
+  still plays and a video window an earlier row opened that is still open
+  stay as they are (no new fade-in, no reopened video), music that ended
+  starts again, an image is shown again; a window left open by hand is
+  opened again by the row. A start the agent did not answer in time is
+  stopped later by its profile alone. Music is never stopped on a PC where the new row starts
   audio itself (a profile or a file). Every start carries a stamp and a
   stop names the start it means, so the agent never lets a late stop end
   a newer start; no start waits for a stop. What the operator started by hand (a Desktop key,
@@ -625,6 +627,11 @@ Agent nimmt die Datei, deren Name mit der zweistelligen Woche beginnt, z. B.
 `I:\Mission Spotlight\2026_3.Quartal\01_Testvideo.mp4` (bei mehreren die neueste;
 Ordner ohne Jahr, z. B. `3.Quartal`, werden nicht mehr beachtet).
 Das Profilfenster zeigt das aktuelle Jahr, Quartal und die Woche.
+Videos eines Mission-Spotlight-Profils (`.mp4`, `.mov`, `.mkv`, …) spielt der
+Agent in **mpv** statt in der Standard-App: so kennt er das Fenster und kann es
+schließen, wenn das Programm weitergeht (oder stehen lassen, wenn der nächste
+Punkt dasselbe Video zeigt). Ohne mpv auf dem PC (oder mit einem älteren Agent)
+öffnet die Standard-App das Video wie bisher.
 
 **Platzhalter `*` in Pfaden:** In allen Pfaden (Profile, Datei-Aktionen im
 Programm, Liederbibliothek) steht `*` fuer einen unbekannten Teil eines Namens,

@@ -388,10 +388,17 @@ def _launch_profile(profile: dict) -> None:
     try:
         before = set(_visible_windows())
         path = Path(profile["path"])
+        mpv = _video_player(profile, path)
         if profile["kind"] == "program":
             process_id = subprocess.Popen(
                 [str(path), *profile["args"]], cwd=str(path.parent), shell=False
             ).pid
+        elif mpv:
+            process_id = subprocess.Popen(
+                _video_command(mpv, path, profile), stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            ).pid
+            logger.info("Video %s plays in mpv pid=%s", path, process_id)
         else:
             process_id = _shell_open_file(path)
         # A file's window (a video player, a document) can be closed again
@@ -402,6 +409,48 @@ def _launch_profile(profile: dict) -> None:
         )
     except Exception:
         logger.exception("Profile %s failed", profile["id"])
+    finally:
+        if profile["kind"] == "file":
+            with _opened_lock:
+                _launching.pop(profile["id"], None)
+
+
+# -- videos in mpv -----------------------------------------------------------------
+# A video file profile with "player": "mpv" (Mission Spotlight, app/actions.py)
+# plays in mpv started by the agent instead of the PC's default app: the
+# agent then owns the process, so its window is known for keep_if_open and
+# POST /close (the default app may hand the file to a running player whose
+# window the agent cannot tell apart). Without mpv, the default app it is.
+
+VIDEO_SUFFIXES = {".mp4", ".m4v", ".mov", ".mkv", ".avi", ".wmv", ".webm", ".mpg", ".mpeg", ".ts"}
+
+
+def _video_player(profile: dict, path: Path) -> str | None:
+    if profile["kind"] != "file" or profile.get("player") != "mpv" or path.suffix.lower() not in VIDEO_SUFFIXES:
+        return None
+    mpv = _find_mpv()
+    if not mpv:
+        logger.warning("Video %s: mpv not found, opened with the default app instead", path)
+    return mpv
+
+
+def _video_command(mpv: str, path: Path, profile: dict) -> list:
+    """mpv for a video: its window starts on the profile's monitor (the agent
+    then places it like any app's: full screen without a frame, or in its
+    corner); it ends with the video."""
+    command = [
+        mpv, "--no-config", "--force-window=yes", "--keep-open=no", "--no-terminal", "--hwdec=auto-safe",
+        f"--title={profile['title']}", f"--log-file={agent_log_directory() / 'mpv-video.log'}",
+    ]
+    try:
+        left, top, right, bottom = monitor_bounds(profile["monitor"])
+        if profile["fullscreen"]:
+            command += [f"--geometry={right - left}x{bottom - top}+{left}+{top}", "--no-border"]
+        else:
+            command += [f"--geometry=+{left + 40}+{top + 40}"]
+    except Exception:  # noqa: BLE001 - placed afterwards in any case
+        logger.exception("Monitor %s for the video not found", profile["monitor"])
+    return command + ["--", str(path)]
 
 
 # -- closing what a profile opened (POST /close) ---------------------------------
@@ -421,18 +470,28 @@ _shown_image_stamp: str | None = None
 # stop or close names the start it means and is ignored once a newer start
 # (or a kept one) of that profile came in since.
 _opened_stamps: dict[str, str] = {}  # profile id -> stamp of its latest open (file kind)
+# A file profile being opened (until its launch is done): a second program
+# row in that time keeps it instead of opening it twice.
+_launching: dict[str, float] = {}  # profile id -> until (time.monotonic())
+LAUNCH_PENDING_SECONDS = 25.0
 
 
 def _valid_stamp(value) -> bool:
     return isinstance(value, str) and 0 < len(value) <= 64 and value.replace("-", "").replace("_", "").isalnum()
 
 
-def _profile_window_open(profile_id: str, window_pid=None) -> bool:
-    """Whether a window the profile opened is still there (keep_if_open)."""
+def _keep_open(profile_id: str, stamp: str | None, window_pid=None) -> bool:
+    """keep_if_open: whether the profile's window is still there (or still
+    being opened); then it is kept and takes the new start's stamp. One
+    section under the lock, so a close cannot slip in between."""
     window_pid = window_pid or _window_process_id
     with _opened_lock:
-        windows = set(_opened_windows.get(profile_id, ()))
-    return any(window_pid(hwnd) == process_id for hwnd, process_id in windows)
+        opening = _launching.get(profile_id, 0.0) > time.monotonic()
+        if not opening and not any(window_pid(h) == pid for h, pid in _opened_windows.get(profile_id, ())):
+            return False
+        if stamp is not None:
+            _opened_stamps[profile_id] = stamp
+        return True
 
 
 def _remember_window(profile_id: str, hwnd: int, process_id: int, window_pid=None) -> None:
@@ -2469,11 +2528,12 @@ class DisplayHandler(BaseHTTPRequestHandler):
         required = {
             "id", "title", "kind", "path", "args", "fullscreen", "monitor", "position"
         }
-        if not isinstance(body, dict) or set(body) - {"monitors", "keep_if_open", "stamp"} != required:
+        if not isinstance(body, dict) or set(body) - {"monitors", "keep_if_open", "stamp", "player"} != required:
             self.send_error(400)
             return
         if ("stamp" in body and not _valid_stamp(body["stamp"])) or (
-                "keep_if_open" in body and (body["keep_if_open"] is not True or body.get("kind") != "file")):
+                "keep_if_open" in body and (body["keep_if_open"] is not True or body.get("kind") != "file")) or (
+                "player" in body and (body["player"] != "mpv" or body.get("kind") != "file")):
             self.send_error(400)
             return
         if "monitors" in body and not _valid_monitors(body):
@@ -2495,11 +2555,8 @@ class DisplayHandler(BaseHTTPRequestHandler):
         ):
             self.send_error(400)
             return
-        if body.get("keep_if_open") and _profile_window_open(body["id"]):
+        if body.get("keep_if_open") and _keep_open(body["id"], body.get("stamp")):
             # The program's next row starts it again: its window stays as it is.
-            with _opened_lock:
-                if "stamp" in body:
-                    _opened_stamps[body["id"]] = body["stamp"]
             logger.info("Profile %s kept open", body["id"])
             self._send_json(202, {"ok": True, "profile": body["id"], "display": body["monitor"], "kept": True})
             return
@@ -2522,6 +2579,7 @@ class DisplayHandler(BaseHTTPRequestHandler):
                     _opened_stamps[body["id"]] = body["stamp"]
                 else:
                     _opened_stamps.pop(body["id"], None)
+                _launching[body["id"]] = time.monotonic() + LAUNCH_PENDING_SECONDS
         # Profiles open the file the path resolved to ("*" filled in).
         requests.put({**body, "path": str(target)})
         result = json.dumps({"ok": True, "profile": body["id"], "display": body["monitor"]}).encode()
