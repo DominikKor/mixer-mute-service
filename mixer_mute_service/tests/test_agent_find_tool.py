@@ -10,6 +10,7 @@ import io
 import json
 import os
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -135,42 +136,190 @@ class WindowsEnvironmentTests(unittest.TestCase):
 
 
 @unittest.skipIf(tkinter is None, "this Python has no tkinter; the desktop agent needs it")
+class FakeHandler:
+    path = "/info"
+
+    def __init__(self):
+        self.wfile = io.BytesIO()
+        self.status = None
+        self.headers = {"X-Display-Token": "t", "Content-Length": "2"}
+        self.rfile = io.BytesIO(b"{}")
+
+    def send_response(self, status):
+        self.status = status
+
+    def send_header(self, *_args):
+        pass
+
+    def end_headers(self):
+        pass
+
+    def send_error(self, status, *_args):
+        self.status = status
+
+    def _send_json(self, status, result):
+        agent.DisplayHandler._send_json(self, status, result)
+
+
+def info():
+    handler = FakeHandler()
+    with patch.dict(os.environ, {"DESKTOP_AGENT_TOKEN": "t"}):
+        agent.DisplayHandler.do_POST(handler)
+    return handler.status, json.loads(handler.wfile.getvalue())
+
+
+@unittest.skipIf(tkinter is None, "this Python has no tkinter; the desktop agent needs it")
 class InfoTests(unittest.TestCase):
-    def test_info_reports_players_and_restored_variables(self):
-        class FakeHandler:
-            path = "/info"
+    """/info is asked every 30 s with a 2 s timeout: it must always answer
+    with the version, and never search in the request."""
 
-            def __init__(self):
-                self.wfile = io.BytesIO()
-                self.status = None
-                self.headers = {"X-Display-Token": "t", "Content-Length": "2"}
-                self.rfile = io.BytesIO(b"{}")
+    def setUp(self):
+        saved = dict(agent._tool_cache)
+        self.addCleanup(lambda: agent._tool_cache.update(saved))
+        agent._tool_refreshing.clear()
 
-            def send_response(self, status):
-                self.status = status
-
-            def send_header(self, *_args):
-                pass
-
-            def end_headers(self):
-                pass
-
-            def send_error(self, status, *_args):
-                self.status = status
-
-            def _send_json(self, status, result):
-                agent.DisplayHandler._send_json(self, status, result)
-
-        handler = FakeHandler()
-        with patch.dict(os.environ, {"DESKTOP_AGENT_TOKEN": "t"}), \
-                patch.object(agent, "_find_mpv", return_value=r"C:\Program Files\mpv\mpv.exe"), \
-                patch.object(agent, "_find_ytdlp", return_value=None), \
+    def test_reports_the_cached_players_and_restored_variables(self):
+        agent._tool_cache.update(at=agent.time.monotonic(), mpv=r"C:\Program Files\mpv\mpv.exe", ytdlp=None)
+        with patch.object(agent, "_find_mpv", side_effect=AssertionError("searched in the request")), \
                 patch.object(agent, "RESTORED_ENV", ["PATH", "MPV_PATH"]):
-            agent.DisplayHandler.do_POST(handler)
-        answer = json.loads(handler.wfile.getvalue())
-        self.assertEqual(handler.status, 200)
+            status, answer = info()
+        self.assertEqual(status, 200)
         self.assertEqual((answer["mpv"], answer["ytdlp"], answer["restored_env"]),
                          (r"C:\Program Files\mpv\mpv.exe", None, ["PATH", "MPV_PATH"]))
+
+    def test_version_comes_back_even_when_the_diagnosis_fails(self):
+        with patch.object(agent, "cached_tools", side_effect=RuntimeError("registry gone")):
+            status, answer = info()
+        self.assertEqual((status, answer["ok"], answer["version"]), (200, True, agent.agent_version()))
+        self.assertNotIn("mpv", answer)
+
+    def test_old_search_is_renewed_in_the_background(self):
+        agent._tool_cache.update(at=0.0, mpv=None, ytdlp=None)
+        found = threading.Event()
+
+        def slow_find():
+            found.set()
+            return r"C:\mpv\mpv.exe"
+
+        with patch.object(agent, "_find_mpv", side_effect=slow_find), \
+                patch.object(agent, "_find_ytdlp", return_value=None):
+            self.assertEqual(agent.cached_tools(), {"mpv": None, "ytdlp": None}, "answers at once")
+            self.assertTrue(found.wait(5))
+            for _ in range(100):
+                if agent._tool_cache["mpv"]:
+                    break
+                agent.time.sleep(0.02)
+        self.assertEqual(agent.cached_tools()["mpv"], r"C:\mpv\mpv.exe")
+
+    def test_a_failing_search_leaves_nothing_found(self):
+        with patch.object(agent, "_find_mpv", side_effect=OSError("access denied")):
+            agent.refresh_tool_cache()
+        self.assertEqual((agent._tool_cache["mpv"], agent._tool_cache["ytdlp"]), (None, None))
+
+
+@unittest.skipIf(tkinter is None, "this Python has no tkinter; the desktop agent needs it")
+class RestoreTests(unittest.TestCase):
+    def test_odd_registry_names_never_stop_the_start(self):
+        """A "(Standard)" value under HKCU\\Environment has an empty name;
+        os.environ refuses it (ValueError) and the agent never started."""
+        full = {"": "x", "A=B": "y", "BAD": "a\0b", "MPV_PATH": r"C:\mpv\mpv.exe"}
+        with patch.object(agent.os, "name", "nt"), patch.object(agent, "_windows_environment", return_value=full), \
+                patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("MPV_PATH", None)
+            self.assertEqual(agent.restore_user_environment(), ["MPV_PATH"])
+            self.assertEqual(os.environ["MPV_PATH"], r"C:\mpv\mpv.exe")
+
+    def test_machine_scope_never_gives_the_user_name(self):
+        env = agent._windows_environment(
+            {"Path": "/x"}, {"machine": {"USERNAME": "SYSTEM", "USERPROFILE": "/sys", "TEMPDIR": "/t"},
+                             "user": {"USERNAME": "beamer"}}, {})
+        self.assertEqual(env["USERNAME"], "beamer", "the user's own value")
+        self.assertNotIn("USERPROFILE", env, "not from the machine")
+        self.assertEqual(env["TEMPDIR"], "/t", "other machine variables are filled in")
+        env = agent._windows_environment({"Path": "/x"}, {"machine": {"USERNAME": "SYSTEM"}, "user": {}}, {})
+        self.assertNotIn("USERNAME", env)
+
+
+@unittest.skipIf(tkinter is None, "this Python has no tkinter; the desktop agent needs it")
+class RestartEndsMusicTests(unittest.TestCase):
+    """Every press of the Update key restarts the agent: a player left
+    running would be unknown to the new agent (no Stop, a second Play)."""
+
+    class FakeProcess:
+        def __init__(self):
+            self.returncode = None
+            self.terminated = False
+
+        def poll(self):
+            return self.returncode
+
+        def terminate(self):
+            self.terminated = True
+            self.returncode = 0
+
+        def wait(self, timeout=None):
+            return self.returncode
+
+        def kill(self):
+            self.returncode = -9
+
+    class FakeIpc:
+        def __init__(self):
+            self.volumes = []
+            self.closed = False
+
+        def command(self, *args):
+            if args[:2] == ("set_property", "volume"):
+                self.volumes.append(args[2])
+
+        def close(self):
+            self.closed = True
+
+    def tearDown(self):
+        agent._playback = None
+        agent._fading_out.clear()
+
+    def test_short_fade_out_then_end(self):
+        process, ipc = self.FakeProcess(), self.FakeIpc()
+        agent._playback = agent._Playback("music", process, ipc, {"db": 0.0, "seconds": 5})
+        with patch.object(agent, "FADE_STEP_SECONDS", 0.005):
+            self.assertTrue(agent.stop_audio_for_restart(0.05))
+        self.assertTrue(process.terminated and ipc.closed)
+        self.assertEqual(ipc.volumes, sorted(ipc.volumes, reverse=True), "only falling")
+        self.assertAlmostEqual(ipc.volumes[-1], agent.db_to_mpv_volume(agent.FADE_FLOOR_DB))
+        self.assertIsNone(agent._playback)
+
+    def test_without_control_channel_at_once(self):
+        process = self.FakeProcess()
+        fading = agent._Playback("old", self.FakeProcess(), None, None)
+        agent._fading_out.add(fading)
+        agent._playback = agent._Playback("music", process, None, None)
+        self.assertTrue(agent.stop_audio_for_restart())
+        self.assertTrue(process.terminated and fading.process.terminated)
+        self.assertEqual(agent._fading_out, set())
+        self.assertFalse(agent.stop_audio_for_restart(), "nothing left")
+
+    def test_restart_ends_the_music_first(self):
+        order = []
+        with patch.object(agent, "stop_audio_for_restart", side_effect=lambda: order.append("music")), \
+                patch.object(agent.os, "name", "posix"), \
+                patch.object(agent.subprocess, "Popen", side_effect=lambda *a, **k: order.append("start")), \
+                patch.object(agent.logging, "shutdown"), \
+                patch.object(agent.os, "_exit", side_effect=SystemExit):
+            with self.assertRaises(SystemExit):
+                agent._restart_agent()
+        self.assertEqual(order, ["music", "start"])
+
+    def test_restart_happens_even_if_ending_the_music_fails(self):
+        started = []
+        with patch.object(agent, "stop_audio_for_restart", side_effect=RuntimeError("mpv hangs")), \
+                patch.object(agent.os, "name", "posix"), \
+                patch.object(agent.subprocess, "Popen", side_effect=lambda *a, **k: started.append(True)), \
+                patch.object(agent.logging, "shutdown"), \
+                patch.object(agent.os, "_exit", side_effect=SystemExit):
+            with self.assertRaises(SystemExit):
+                agent._restart_agent()
+        self.assertEqual(started, [True])
 
 
 if __name__ == "__main__":

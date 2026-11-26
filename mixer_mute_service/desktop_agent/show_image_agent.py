@@ -447,6 +447,17 @@ def _known_folders() -> dict:
     return folders
 
 
+# Variables that belong to the signed-in user: never taken from the machine.
+_PER_USER_NAMES = {"USERNAME", "USERPROFILE", "USERDOMAIN", "USERDOMAIN_ROAMINGPROFILE",
+                   "HOMEDRIVE", "HOMEPATH", "LOCALAPPDATA", "APPDATA"}
+
+
+def _valid_variable_name(name: str) -> bool:
+    """A name os.environ accepts (a "(Standard)" value under HKCU\\Environment
+    has an empty name)."""
+    return bool(name) and "=" not in name and "\0" not in name
+
+
 def _expand(value: str, env: dict) -> str:
     """%NAME% as Windows expands it (names case-insensitive; unknown stay)."""
     return re.sub(r"%([^%]+)%", lambda m: env.get(m.group(1).upper(), m.group(0)), value)
@@ -465,9 +476,11 @@ def _windows_environment(process_env=None, registry=None, folders=None) -> dict:
         # WMI-started processes may point at the system profile instead.
         if value and (not current or "systemprofile" in current.lower()):
             env[name] = value
-    merged = {**registry.get("machine", {}), **registry.get("user", {})}
+    # HKLM holds e.g. USERNAME=SYSTEM: per-user names never come from there.
+    machine = {k: v for k, v in registry.get("machine", {}).items() if k not in _PER_USER_NAMES}
+    merged = {**machine, **registry.get("user", {})}
     for name, value in merged.items():
-        if name != "PATH" and name not in env:
+        if name != "PATH" and name not in env and _valid_variable_name(name):
             env[name] = _expand(value, env)
     paths, seen = [], set()
     for source in (env.get("PATH", ""), registry.get("machine", {}).get("PATH", ""),
@@ -490,10 +503,49 @@ def restore_user_environment() -> list:
     full = _windows_environment()
     changed = []
     for name, value in full.items():
-        if os.environ.get(name) != value:
+        if os.environ.get(name) == value or not _valid_variable_name(name) or "\0" in value:
+            continue
+        try:
             os.environ[name] = value
-            changed.append(name)
+        except (ValueError, OSError):
+            logger.warning("Could not take over the variable %r from the user's environment", name)
+            continue
+        changed.append(name)
     return sorted(changed)
+
+
+# /info reports the players found; that search reads the registry and globs
+# install folders, too slow and too risky for a request the service makes
+# every 30 s with a 2 s timeout. So it runs at start and in the background
+# when older than TOOL_CACHE_SECONDS; /info answers with the last result.
+TOOL_CACHE_SECONDS = 300.0
+_tool_cache = {"at": 0.0, "mpv": None, "ytdlp": None}
+_tool_cache_lock = threading.Lock()
+_tool_refreshing = threading.Event()
+
+
+def refresh_tool_cache() -> None:
+    try:
+        mpv = _find_mpv()
+        ytdlp = _find_ytdlp(mpv)
+    except Exception:  # noqa: BLE001 - a diagnosis must never break the agent
+        logger.exception("Searching mpv / yt-dlp failed")
+        mpv = ytdlp = None
+    with _tool_cache_lock:
+        _tool_cache.update(at=time.monotonic(), mpv=mpv, ytdlp=ytdlp)
+    _tool_refreshing.clear()
+
+
+def cached_tools() -> dict:
+    """{"mpv", "ytdlp"} from the last search; a search older than
+    TOOL_CACHE_SECONDS is started again in the background."""
+    with _tool_cache_lock:
+        snapshot = dict(_tool_cache)
+    stale = not snapshot["at"] or time.monotonic() - snapshot["at"] > TOOL_CACHE_SECONDS
+    if stale and not _tool_refreshing.is_set():
+        _tool_refreshing.set()
+        threading.Thread(target=refresh_tool_cache, daemon=True).start()
+    return {"mpv": snapshot["mpv"], "ytdlp": snapshot["ytdlp"]}
 
 
 # Where installers put a program. {exe}: the file name; {app}: the program's
@@ -522,7 +574,9 @@ def find_tool(command: str, path_variable: str, app: str, pkg: str, *, near=(), 
     agent's folder, ``near`` (folders to look in first, e.g. mpv's for yt-dlp)
     and the usual install places."""
     env = _windows_environment() if env is None else env
-    exe = exe or (f"{command}.exe" if os.name == "nt" else command)
+    # The agent runs on Windows: the files looked for are always "<name>.exe"
+    # (PATH is searched with shutil.which, which knows PATHEXT there).
+    exe = exe or f"{command}.exe"
     searched = []
     configured = env.get(path_variable, "").strip().strip('"')
     if configured:
@@ -974,8 +1028,36 @@ def _install_update(body: dict) -> None:
     logger.info("Agent files updated to %s (%s files)", body["version"], len(decoded))
 
 
+RESTART_FADE_SECONDS = 1.5
+
+
+def stop_audio_for_restart(seconds: float = RESTART_FADE_SECONDS) -> bool:
+    """End the music before this process ends: the new agent would not know a
+    player still running (Stop would not reach it, Play would start a second
+    one). With mpv's control channel a short fade-out, otherwise at once.
+    True if something was playing."""
+    global _playback
+    with _audio_lock:
+        playback, _playback = _playback, None
+        fading = list(_fading_out)
+        _fading_out.clear()
+    for old in fading:
+        old.terminate()
+    if playback is None:
+        return bool(fading)
+    if playback.ipc is not None and playback.process.poll() is None:
+        playback.ramp(FADE_FLOOR_DB, seconds)
+    playback.terminate()
+    logger.info("Audio ended for the agent restart profile=%s", playback.profile_id)
+    return True
+
+
 def _restart_agent() -> None:
     """Start the agent again (now with the new files) and end this process."""
+    try:
+        stop_audio_for_restart()
+    except Exception:  # noqa: BLE001 - the restart must happen anyway
+        logger.exception("Could not end the music before the restart")
     script = str(Path(__file__).resolve())
     started = False
     if os.name == "nt":
@@ -1582,16 +1664,17 @@ class DisplayHandler(BaseHTTPRequestHandler):
             self.send_error(400)
             return
         if self.path == "/info":
-            mpv = _find_mpv()
-            self._send_json(200, {
-                "ok": True, "version": agent_version(),
+            info = {"ok": True, "version": agent_version(),
+                    # POST /restart is there (the Update key restarts current
+                    # agents); this process's start time shows a restart happened.
+                    "restart": True, "started_at": STARTED_AT}
+            try:
                 # Remote diagnosis: which players this agent finds (None: not
                 # found), and what of the user's environment it filled in at start.
-                "mpv": mpv, "ytdlp": _find_ytdlp(mpv), "restored_env": RESTORED_ENV,
-                # POST /restart is there (the Update key restarts current agents),
-                # and this process's start time shows that a restart happened.
-                "restart": True, "started_at": STARTED_AT,
-            })
+                info.update(cached_tools(), restored_env=RESTORED_ENV)
+            except Exception:  # noqa: BLE001 - the version must always come back
+                logger.exception("/info diagnosis failed")
+            self._send_json(200, info)
             return
         if self.path == "/restart":
             self._handle_restart(body)
@@ -1934,8 +2017,9 @@ def main() -> None:
     global RESTORED_ENV
     try:
         RESTORED_ENV = restore_user_environment()
-    except OSError:
+    except Exception:  # noqa: BLE001 - the agent must start in any case
         logger.exception("Could not read the user's environment")
+    cached_tools()  # first search in the background, for /info
     if RESTORED_ENV:
         logger.info("Filled in from the user's environment: %s", ", ".join(RESTORED_ENV))
     if not os.environ.get("DESKTOP_AGENT_TOKEN"):
