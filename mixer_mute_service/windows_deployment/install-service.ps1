@@ -3,6 +3,9 @@
 param()
 
 $ErrorActionPreference = "Stop"
+# Windows PowerShell 5.1 draws a progress bar per block of every download or
+# archive step, which makes them many times slower: switched off.
+$ProgressPreference = "SilentlyContinue"
 Set-StrictMode -Version Latest
 
 $ServiceName = "MixerMuteService"

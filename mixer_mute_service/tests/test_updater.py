@@ -58,11 +58,31 @@ def main():
         r = client.post("/update/start")
         check("second start while running -> 409", r.status_code == 409 and runs == [1])
 
+        ends = []
+        updater._end_task = lambda: (ends.append(len(runs)) or (True, "SUCCESS"))
         old = time.time() - updater.STALE_SECONDS - 5
         os.utime(status_file, (old, old))
         check("stale run no longer active", client.get("/update/status").json()["active"] is False)
         r = client.post("/update/start")
         check("start allowed after a stale run", r.status_code == 200 and runs == [1, 1])
+        # Its task may still hang (a download without end); Windows ignores a
+        # second start of a running task, so it is ended before the new run.
+        check("hung task ended before the new run", ends == [1])
+        r = client.post("/update/start")
+        check("a live run is never ended", r.status_code == 409 and ends == [1])
+        old = time.time() - updater.STALE_SECONDS - 5
+        os.utime(status_file, (old, old))
+        updater._end_task = lambda: (_ for _ in ()).throw(OSError("schtasks missing"))
+        r = client.post("/update/start")
+        check("a failing end does not stop the new run", r.status_code == 200 and runs == [1, 1, 1])
+        updater._end_task = lambda: (ends.append(len(runs)) or (True, "SUCCESS"))
+        st = json.loads(status_file.read_text())
+        st.update(state="failed")
+        status_file.write_text(json.dumps(st))
+        os.utime(status_file, (old, old))
+        n = len(ends)
+        client.post("/update/start")
+        check("a finished (failed) run is not ended", len(ends) == n)
 
         # The script reports its result in the same file (here: written by hand).
         st = json.loads(status_file.read_text())

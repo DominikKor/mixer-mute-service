@@ -5,6 +5,9 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+# Windows PowerShell 5.1 draws a progress bar per block of every download or
+# archive step, which makes them many times slower: switched off.
+$ProgressPreference = "SilentlyContinue"
 Set-StrictMode -Version Latest
 
 $DeploymentDirectory = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -94,7 +97,7 @@ Copy-Item -Path (Join-Path $BuiltApplication "*") -Destination $ReleaseDirectory
 
 Write-Host "Downloading the pinned WinSW $WinSwVersion service wrapper..."
 $WinSwDestination = Join-Path $ReleaseDirectory "MixerMuteServiceService.exe"
-Invoke-WebRequest -UseBasicParsing -Uri $WinSwUrl -OutFile $WinSwDestination
+Invoke-WebRequest -UseBasicParsing -Uri $WinSwUrl -OutFile $WinSwDestination -TimeoutSec 120
 $DownloadedSha256 = (Get-FileHash -Algorithm SHA256 $WinSwDestination).Hash.ToLowerInvariant()
 if ($DownloadedSha256 -ne $WinSwSha256) {
     Remove-Item -Force $WinSwDestination

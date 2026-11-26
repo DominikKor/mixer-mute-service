@@ -35,6 +35,17 @@ param(
 
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
+# Windows PowerShell 5.1 redraws a progress bar for every block of a download
+# (Invoke-WebRequest) or archive (Expand-Archive): 10-50x slower, and as a task
+# without a console a 28 MB release seemed to hang for minutes.
+$ProgressPreference = "SilentlyContinue"
+
+# Every web request has a time limit and a retry, so a stalled connection
+# fails with a message instead of waiting for ever (the update task itself
+# is stopped by Windows after 15 minutes).
+$ApiTimeoutSeconds = 30
+$DownloadTimeoutSeconds = 240
+$WebAttempts = 2
 
 # Re-launch elevated: installing the Windows service needs Administrator rights.
 $Principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
@@ -188,6 +199,33 @@ function Get-HttpStatus($ErrorRecord) {
     try { return [int]$Response.Value.StatusCode } catch { return 0 }
 }
 
+# One web request with a time limit; a connection or timeout error is tried
+# again once. HTTP refusals (401/403/404) are not retried. Each try is
+# written to the log (and the status file, so the service sees the run is
+# alive), with size and time of a finished download.
+function Invoke-WebWithRetry([scriptblock]$Request, [string]$What, [string]$OutFile = "") {
+    for ($Attempt = 1; $Attempt -le $WebAttempts; $Attempt++) {
+        $Started = Get-Date
+        try {
+            $Result = & $Request
+            $Seconds = ((Get-Date) - $Started).TotalSeconds
+            if ($OutFile) {
+                $Megabytes = (Get-Item -LiteralPath $OutFile).Length / 1MB
+                Write-Host ("  {0}: {1:N1} MB in {2:N0} s" -f $What, $Megabytes, $Seconds)
+            }
+            return $Result
+        }
+        catch {
+            $Code = Get-HttpStatus $_
+            $Seconds = ((Get-Date) - $Started).TotalSeconds
+            if ($Code -in 401, 403, 404 -or $Attempt -eq $WebAttempts) { throw }
+            Write-Host ("  {0}: try {1} of {2} failed after {3:N0} s ({4}); trying again..." -f $What, $Attempt, $WebAttempts, $Seconds, $_.Exception.Message)
+            Write-Status "running" ("{0}: try {1} of {2}..." -f $What, ($Attempt + 1), $WebAttempts) $script:FromTag $script:ToTag
+            Start-Sleep -Seconds 5
+        }
+    }
+}
+
 # ---- update ------------------------------------------------------------------
 
 function Invoke-Update {
@@ -201,6 +239,8 @@ function Invoke-Update {
 
     $InstalledTagFile = Join-Path $InstallDirectory "release-tag.txt"
     $InstalledTag = if (Test-Path $InstalledTagFile) { (Get-Content -Path $InstalledTagFile -Raw).Trim() } else { "" }
+    $script:FromTag = $InstalledTag
+    $script:ToTag = ""
     Write-Status "running" "Checking for a new version..." $InstalledTag
 
     if ($ResetToken -and (Test-Path $TokenFile)) { Remove-Item -Force $TokenFile }
@@ -217,7 +257,10 @@ function Invoke-Update {
 
     Write-Host "Checking the latest release of $Repo..." -ForegroundColor Cyan
     try {
-        $Release = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases/latest" -Headers $Headers
+        $ReleaseUri = "https://api.github.com/repos/$Repo/releases/latest"
+        $Release = Invoke-WebWithRetry {
+            Invoke-RestMethod -Uri $ReleaseUri -Headers $Headers -TimeoutSec $ApiTimeoutSeconds
+        } "Release information"
     }
     catch {
         $Code = Get-HttpStatus $_
@@ -236,6 +279,7 @@ function Invoke-Update {
     if ($NewToken) { Save-Token $Token }
 
     $Tag = $Release.tag_name
+    $script:ToTag = $Tag
     Write-Host "  installed: $(if ($InstalledTag) { $InstalledTag } else { 'unknown' })"
     Write-Host "  latest:    $Tag"
     if ($InstalledTag -eq $Tag -and -not $Force) {
@@ -259,8 +303,14 @@ function Invoke-Update {
         $SumPath = "$ZipPath.sha256"
         Write-Status "running" "Downloading $Tag..." $InstalledTag $Tag
         Write-Host "Downloading $AssetName ($Tag)..."
-        Invoke-WebRequest -UseBasicParsing -Uri $Zip.url -Headers $DownloadHeaders -OutFile $ZipPath
-        Invoke-WebRequest -UseBasicParsing -Uri $Sum.url -Headers $DownloadHeaders -OutFile $SumPath
+        $ZipUri = $Zip.url
+        $SumUri = $Sum.url
+        Invoke-WebWithRetry {
+            Invoke-WebRequest -UseBasicParsing -Uri $ZipUri -Headers $DownloadHeaders -OutFile $ZipPath -TimeoutSec $DownloadTimeoutSeconds
+        } "Download $AssetName" $ZipPath | Out-Null
+        Invoke-WebWithRetry {
+            Invoke-WebRequest -UseBasicParsing -Uri $SumUri -Headers $DownloadHeaders -OutFile $SumPath -TimeoutSec $ApiTimeoutSeconds
+        } "Download checksum" $SumPath | Out-Null
 
         $Expected = (Get-Content -Path $SumPath -Raw).Trim().ToLowerInvariant()
         $Actual = (Get-FileHash -Algorithm SHA256 $ZipPath).Hash.ToLowerInvariant()
@@ -269,6 +319,7 @@ function Invoke-Update {
         }
         Write-Host "Checksum OK."
 
+        Write-Host "Unpacking..."
         Expand-Archive -Path $ZipPath -DestinationPath $Work -Force
         $Updater = Join-Path $Work "MixerMuteService-Windows-x64\update-static.ps1"
         if (-not (Test-Path $Updater)) { throw "update-static.ps1 not found in the release." }

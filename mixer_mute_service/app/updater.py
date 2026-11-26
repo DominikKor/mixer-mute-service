@@ -6,6 +6,11 @@ the scheduled task "MixerMuteServiceUpdate" (registered by install-service.ps1,
 runs update-from-github.ps1 -NonInteractive as SYSTEM). The script keeps that
 file and logs/update.log current; GET /update/status serves both, so the page
 can show progress before the service restarts and the result after it is back.
+
+A run that stopped touching its status for STALE_SECONDS is taken as dead
+(e.g. a download that hung). The task may still be running then, and Windows
+ignores a second start of a running task ("IgnoreNew") without an error, so a
+new click would do nothing: the start first ends such a task.
 """
 
 from __future__ import annotations
@@ -133,6 +138,19 @@ def _run_task() -> Tuple[bool, str]:
     return proc.returncode == 0, _decode(proc.stdout + proc.stderr).strip()
 
 
+def _end_task() -> Tuple[bool, str]:
+    proc = subprocess.run(
+        ["schtasks", "/End", "/TN", UPDATE_TASK],
+        capture_output=True, timeout=15,
+    )
+    return proc.returncode == 0, _decode(proc.stdout + proc.stderr).strip()
+
+
+def _is_stale(status: Optional[dict]) -> bool:
+    """A run that says it is going but has shown no sign of life for long."""
+    return bool(status) and status.get("state") in ACTIVE_STATES and not _is_active(status)
+
+
 def _is_active(status: Optional[dict]) -> bool:
     if not status or status.get("state") not in ACTIVE_STATES:
         return False
@@ -167,8 +185,19 @@ async def _start():
     available, reason = _support_check()
     if not available:
         return JSONResponse({"ok": False, "reason": reason}, 409)
-    if _is_active(_read_status()):
+    status = _read_status()
+    if _is_active(status):
         return JSONResponse({"ok": False, "reason": "an update is already running"}, 409)
+    if _is_stale(status):
+        # Its task may still hang (a download without an end); Windows would
+        # ignore the new start while it runs. End it first.
+        try:
+            ended, output = await asyncio.to_thread(_end_task)
+        except Exception as exc:  # noqa: BLE001 - try the new run anyway
+            ended, output = False, f"{type(exc).__name__}: {exc}"
+        log.warning("stale update run %s (%s, no sign of life for %.0f min): end task -> %s %s",
+                    status.get("run_id"), status.get("message"), (_status_age() or 0) / 60,
+                    "ok" if ended else "failed", output)
 
     run_id = uuid.uuid4().hex
     _write_status("requested", run_id, "Update requested")
