@@ -817,13 +817,26 @@ Bibliothek ist, steht als Text im Titel. Die Vorschau zeigt das Programm genau s
 wie es danach aussieht. **Programm ersetzen** (zweimal tippen) ersetzt das ganze
 Programm und setzt den Ablauf zurück.
 
+**Gottesdienstablauf-PDF**: **PDF importieren** liest das ausgefüllte Formular
+„Gottesdienstablauf“ (AcroForm-Textfelder `Lied1`…`Lied6`, `Textlesung`,
+`Predigt`, `Begrüßung1.Stunde`, …). Die Lieder kommen in die Liedzeilen (eine
+reine Nummer wie `101` findet das Lied, wenn sie nur in einem Liederbuch
+vorkommt), die Personen in die Vorlagenzeilen mit passendem Titel – in der
+Reihenfolge des Ablaufs, Liedplätze ausgenommen. Personen ohne passende Zeile
+nennt die Vorschau. Der letzte Import bleibt gespeichert (`program_pdf.json`)
+und steht als **Zuletzt empfangen** bereit; so kann auch ein anderes Programm
+das PDF schicken, z. B.
+`curl -X POST --data-binary @Gottesdienstablauf-20261126.pdf -H "Content-Type: application/pdf" "http://192.168.188.20:8765/program/pdf?filename=Gottesdienstablauf-20261126.pdf"`.
+
 | Methode | Pfad | |
 |---|---|---|
 | GET | `/program/templates` | Vorlagen |
 | POST | `/program/templates` `{"name", "slots", "replace"}` | aktuelles Programm speichern (`slots`: IDs der Liedplatz-Zeilen) |
 | DELETE | `/program/templates/{id}` | Vorlage löschen |
-| POST | `/program/templates/{id}/apply` `{"songs": [{"song_id", "text"}], "dry_run"}` | anwenden (`dry_run`: nur Vorschau) |
+| POST | `/program/templates/{id}/apply` `{"songs": [{"song_id", "text"}], "persons": [{"id", "person"}], "dry_run"}` | anwenden (`dry_run`: nur Vorschau; `persons` aus dem PDF-Import) |
 | POST | `/songs/match` `{"lines"}` | Liedzeilen in der Bibliothek suchen |
+| POST | `/program/pdf?filename=` (Body: PDF, max. 5 MB) | Gottesdienstablauf-PDF einlesen und als letzten Import speichern |
+| GET | `/program/pdf` | letzter Import (`songs`, `points`, `date`) oder `null` |
 
 ## Licht
 

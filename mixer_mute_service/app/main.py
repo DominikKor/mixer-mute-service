@@ -41,6 +41,7 @@ from .target_pcs import TargetPcStore
 from .proxy import ProxyServer
 from .request_guard import refusal
 from .program_items import ProgramItemStore
+from .program_pdf import ProgramPdfStore
 from .shortcuts import ShortcutStore
 from .program_templates import ProgramTemplateStore
 from .api import router
@@ -148,6 +149,8 @@ async def lifespan(app: FastAPI):
     app.state.songs = _optional(app, "songs", lambda: SongService(data_dir))
     app.state.program_templates = _optional(
         app, "program templates", lambda: ProgramTemplateStore(data_dir / "program_templates.json"))
+    app.state.program_pdf = _optional(
+        app, "program PDF import", lambda: ProgramPdfStore(data_dir / "program_pdf.json"))
     camera_ptz = _optional(app, "camera pan/tilt", PanTiltControl)
     app.state.camera_ptz = camera_ptz
     app.state.native_controls = _optional(

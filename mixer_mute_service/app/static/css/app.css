@@ -1013,6 +1013,9 @@ dialog.template-dialog { width: min(980px, calc(100vw - 32px)); max-height: calc
 .tp-columns { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 14px; align-items: start; }
 #tp-songs { min-height: 190px; font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
 #tp-add-song { align-self: flex-start; min-height: 44px; }
+.tp-pdf { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.tp-pdf button { min-height: 44px; padding: 0 14px; }
+.tp-preview .tp-person { color: #8d96a3; font-weight: 400; }
 .tp-matches, .tp-preview { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
 .tp-match {
   display: grid; grid-template-columns: 24px minmax(0, 1fr) auto; align-items: center; gap: 4px 10px;

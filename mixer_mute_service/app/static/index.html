@@ -348,6 +348,13 @@
     <div id="tp-apply" class="tp-panel" role="tabpanel" aria-labelledby="tp-tab-apply">
       <div class="pf-field"><span class="pf-label" id="tp-list-label">Vorlage</span>
         <div id="tp-list" class="tp-list" role="radiogroup" aria-labelledby="tp-list-label"></div></div>
+      <div class="pf-field"><span class="pf-label">Gottesdienstablauf (PDF) – Lieder und Personen übernehmen</span>
+        <div class="tp-pdf">
+          <button type="button" id="tp-pdf-btn">PDF importieren</button>
+          <input id="tp-pdf-file" type="file" accept="application/pdf,.pdf" hidden />
+          <button type="button" id="tp-pdf-last" hidden></button>
+          <span id="tp-pdf-status" class="pf-hint" aria-live="polite"></span>
+        </div></div>
       <div class="tp-columns">
         <div class="pf-field">
           <label class="pf-label" for="tp-songs">Lieder – ein Lied pro Zeile (Titel oder Liederbuch-Nummer)</label>

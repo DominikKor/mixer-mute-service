@@ -9,7 +9,7 @@
 // a "Wählen" key. The preview is the service's own result (dry run), so what
 // is shown is exactly what "Programm ersetzen" writes.
 
-const TEMPLATES = { list: [], selected: null, matches: [], picked: new Map(), seq: 0, timer: null };
+const TEMPLATES = { list: [], selected: null, matches: [], picked: new Map(), seq: 0, timer: null, persons: [] };
 const SLOT_TITLE_RE = /lied|lobpreis|song|worship|anbetung/i;
 
 function songById(id) { return SONG_INDEX.get(id) || null; }
@@ -187,13 +187,14 @@ async function updateTemplatePreview() {
   }
   const songs = templateSongs();
   const seq = TEMPLATES.seq;
-  const result = await api("POST", `/program/templates/${encodeURIComponent(template.id)}/apply`, { dry_run: true, songs });
+  const result = await api("POST", `/program/templates/${encodeURIComponent(template.id)}/apply`, { dry_run: true, songs, persons: TEMPLATES.persons });
   if (seq !== TEMPLATES.seq || template.id !== TEMPLATES.selected) return;
   list.replaceChildren();
   if (!result.ok || !Array.isArray(result.data.rows)) {
     $("tp-hint").textContent = result.data.reason || `Vorschau nicht möglich (HTTP ${result.status})`;
     return;
   }
+  const unassigned = Array.isArray(result.data.unassigned) ? result.data.unassigned : [];
   const daySongs = new Set(songs.map(s => s.song_id).filter(Boolean));
   for (const row of result.data.rows) {
     const li = document.createElement("li");
@@ -204,6 +205,12 @@ async function updateTemplatePreview() {
     const title = document.createElement("span");
     title.className = "tp-title";
     title.textContent = row.title;
+    if (row.person) {
+      const person = document.createElement("span");
+      person.className = "tp-person";
+      person.textContent = ` · ${row.person}`;
+      title.appendChild(person);
+    }
     const song = document.createElement("span");
     song.className = "tp-psong";
     song.textContent = row.song ? `♪ ${songById(row.song)?.title || row.song}` : "";
@@ -217,6 +224,7 @@ async function updateTemplatePreview() {
     extra ? `${extra} ${extra === 1 ? "Lied wird" : "Lieder werden"} nach dem letzten Liedplatz angehängt.` : "",
     empty ? `${empty} ${empty === 1 ? "Liedplatz bleibt" : "Liedplätze bleiben"} ohne Lied.` : "",
     missing ? `${missing} ohne Lied aus der Bibliothek (Text steht im Titel).` : "",
+    unassigned.length ? `Ohne passenden Programmpunkt: ${unassigned.map(p => `${p.title} (${p.person})`).join(", ")}.` : "",
     PROGRAM_ITEMS.length ? `Ersetzt das aktuelle Programm (${PROGRAM_ITEMS.length} Punkte).` : "",
   ].filter(Boolean).join(" ");
 }
@@ -263,6 +271,51 @@ function templateError(id, message) {
   $(id).textContent = message || "";
 }
 
+// ---- Gottesdienstablauf PDF: songs into the song lines, persons into the rows ----
+
+function ablaufLabel(ablauf) {
+  const date = ablauf.date ? new Date(`${ablauf.date}T12:00:00`).toLocaleDateString("de-DE") : "";
+  return date || ablauf.filename || "PDF";
+}
+
+function useAblauf(ablauf) {
+  TEMPLATES.persons = ablauf.points.map(p => ({ id: p.id, person: p.person }));
+  TEMPLATES.picked.clear();
+  $("tp-songs").value = ablauf.songs.join("\n");
+  const named = ablauf.points.filter(p => p.person).length;
+  $("tp-pdf-status").textContent = `Ablauf ${ablaufLabel(ablauf)}: ${ablauf.songs.length} Lieder, ${named} Personen übernommen.`;
+  matchTemplateSongs();
+}
+
+function showLastAblauf(ablauf) {
+  const button = $("tp-pdf-last");
+  button.hidden = !ablauf;
+  if (!ablauf) return;
+  button.textContent = `Zuletzt empfangen: ${ablaufLabel(ablauf)}`;
+  button.onclick = () => useAblauf(ablauf);
+}
+
+async function importAblaufPdf(file) {
+  $("tp-pdf-status").textContent = "PDF wird gelesen …";
+  templateError("tp-apply-error", "");
+  let res, data = {};
+  try {
+    res = await fetch(`/program/pdf?filename=${encodeURIComponent(file.name)}`, {
+      method: "POST", headers: { "Content-Type": "application/pdf" }, body: await file.arrayBuffer(),
+    });
+    data = await res.json();
+  } catch (_) {
+    res = res || { ok: false, status: 0 };
+  }
+  if (!res.ok || !data || !data.ablauf) {
+    $("tp-pdf-status").textContent = "";
+    templateError("tp-apply-error", `PDF-Import: ${(data && data.reason) || (res.status ? `HTTP ${res.status}` : "Dienst nicht erreichbar")}`);
+    return;
+  }
+  showLastAblauf(data.ablauf);
+  useAblauf(data.ablauf);
+}
+
 async function openTemplateDialog() {
   closeSongSearch();
   templateError("tp-apply-error", "");
@@ -270,8 +323,11 @@ async function openTemplateDialog() {
   $("tp-songs").value = "";
   TEMPLATES.matches = [];
   TEMPLATES.picked.clear();
+  TEMPLATES.persons = [];
+  $("tp-pdf-status").textContent = "";
   $("template-dialog").showModal();
-  await Promise.all([loadSongs(), loadProgramItems()]);
+  const [pdf] = await Promise.all([api("GET", "/program/pdf"), loadSongs(), loadProgramItems()]);
+  showLastAblauf(pdf.ok ? pdf.data.ablauf : null);
   await loadTemplates();
   $("tp-name").value = TEMPLATES.list.find(t => t.id === TEMPLATES.selected)?.name || "";
   templateTab(!TEMPLATES.list.length);
@@ -279,6 +335,12 @@ async function openTemplateDialog() {
 }
 
 $("program-template-btn").addEventListener("click", openTemplateDialog);
+$("tp-pdf-btn").addEventListener("click", () => $("tp-pdf-file").click());
+$("tp-pdf-file").addEventListener("change", event => {
+  const file = event.currentTarget.files[0];
+  event.currentTarget.value = "";
+  if (file) importAblaufPdf(file);
+});
 $("tp-tab-apply").addEventListener("click", () => templateTab(false));
 $("tp-tab-save").addEventListener("click", () => templateTab(true));
 $("template-dialog").querySelectorAll(".tp-close").forEach(b => b.addEventListener("click", () => $("template-dialog").close()));
@@ -304,7 +366,7 @@ $("tp-apply-btn").addEventListener("click", async event => {
   if (PROGRAM_ITEMS.length && !armKey(button, `Wirklich ersetzen? (${PROGRAM_ITEMS.length} Punkte)`)) return;
   button.disabled = true;
   try {
-    const result = await api("POST", `/program/templates/${encodeURIComponent(template.id)}/apply`, { songs: templateSongs() });
+    const result = await api("POST", `/program/templates/${encodeURIComponent(template.id)}/apply`, { songs: templateSongs(), persons: TEMPLATES.persons });
     if (!result.ok || result.data.ok === false) {
       templateError("tp-apply-error", result.data.reason || `HTTP ${result.status}`);
       return;
