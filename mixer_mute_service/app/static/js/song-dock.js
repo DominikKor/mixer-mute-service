@@ -34,6 +34,41 @@ const SONG_DOCK_GUARD_MS = 600;
 // Longer when the drawer had to push the PLAY key just tapped away (a stage
 // whose program fits and so cannot scroll): a re-tap there lands on the drawer.
 const SONG_DOCK_GUARD_PUSHED_MS = 1500;
+
+// Where the drawer could not keep PLAY in place (a stage whose program fits
+// and so cannot scroll), its keys that now cover PLAY's old place stay
+// inactive -- marked, with a note -- until the next tap somewhere else: a
+// re-tap "on PLAY", however late, never blanks or steps the song.
+function songDockOverlaps(a, b) {
+  return a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
+}
+
+function shieldSongDock(rect) {
+  const pad = 6;   // a finger lands a little off
+  SONG_DOCK.shield = rect ? { left: rect.left - pad, top: rect.top - pad, right: rect.right + pad, bottom: rect.bottom + pad } : null;
+  if (SONG_DOCK.cell) applySongDockShield(SONG_DOCK.cell);
+}
+
+function applySongDockShield(cell) {
+  const shield = SONG_DOCK.shield;
+  let any = false;
+  cell.querySelectorAll(".sd-main button").forEach(button => {
+    const on = !!shield && !!button.offsetParent && songDockOverlaps(button.getBoundingClientRect(), shield);
+    button.classList.toggle("sd-shield", on);
+    any = any || on;
+  });
+  cell.classList.toggle("shielded", any);
+}
+
+// A tap anywhere else lifts it; taps where PLAY was (also between the keys)
+// and on a marked key do not.
+document.addEventListener("pointerdown", event => {
+  const shield = SONG_DOCK.shield;
+  if (!shield) return;
+  const point = { left: event.clientX, right: event.clientX + 1, top: event.clientY, bottom: event.clientY + 1 };
+  if (songDockOverlaps(point, shield) || (event.target.closest && event.target.closest(".sd-shield"))) return;
+  shieldSongDock(null);
+}, true);
 // PLAY tapped on a row this long ago still counts as "just played here".
 const SONG_DOCK_PLAYED_MS = 15000;
 
@@ -82,6 +117,7 @@ function buildSongDock() {
     + `<button type="button" class="sd-next program-play" data-song-dock="next" title="Nächste Folie (Bild ab, →, Leertaste); nach der letzten: schwarz"><span class="sd-next-text">Weiter</span>${ICON_DOCK_NEXT}</button>`
     + `</div>`
     + `<div class="sd-next-line"><span class="sd-next-label">Nächste Folie</span><span class="sd-line"></span></div>`
+    + `<div class="sd-shield-note" role="status">Hier lag PLAY – die markierte Taste geht erst nach einem Tipp woanders</div>`
     + `<div class="song-dock-off"><span class="sd-note">${ICON_DOCK_NOTE}</span><span class="sd-off-text"></span>`
     + `<button type="button" class="sd-show" data-song-dock="show" title="Das Lied dieses Programmpunkts ab der ersten Folie zeigen">Zeigen</button></div>`
     + `</div></div>`;
@@ -237,6 +273,7 @@ function closeSongDock(instant = false) {
   const cell = SONG_DOCK.cell;
   if (!cell) return;
   SONG_DOCK.cell = null;
+  SONG_DOCK.shield = null;
   if (SONG_DOCK.observer) { SONG_DOCK.observer.disconnect(); SONG_DOCK.observer = null; }
   const row = cell.parentElement;
   const remove = () => {
@@ -339,7 +376,9 @@ function renderSongDock() {
       // Played here: the old drawer goes and the new one comes at once, and
       // the page scrolls so PLAY stays under the finger (the drawer appears
       // above it, never under a second tap).
+      const at = play.getBoundingClientRect();
       const kept = songDockKeepElement(play, () => { closeSongDock(true); cell = openSongDock(target.row, true); });
+      shieldSongDock(kept ? null : at);
       if (!kept) armSongDock(cell, SONG_DOCK_GUARD_PUSHED_MS);
     } else {
       if (cell) closeSongDock();
@@ -362,6 +401,7 @@ function renderSongDock() {
     show.hidden = !known;
     show.disabled = SONG_BUSY;
     renderSongDockPreview(cell);
+    applySongDockShield(cell);
     return;
   }
 
@@ -402,6 +442,7 @@ function renderSongDock() {
   blankKey.disabled = SONG_BUSY;
   cell.querySelector(".sd-hide").disabled = SONG_BUSY;
   strip.querySelectorAll(".sd-chip").forEach(chip => { chip.disabled = SONG_BUSY; });
+  applySongDockShield(cell);
 }
 
 // PLAY on a row (before program.js starts it): remember it for the drawer.
@@ -414,6 +455,10 @@ $("program-items").addEventListener("click", event => {
   const button = event.target.closest("[data-song-dock]");
   if (!button || !button.closest(".song-dock")) return;
   if (!songDockArmed(SONG_DOCK.armedAt, performance.now(), SONG_DOCK.guardMs)) return;   // just appeared: a tap meant for what was there
+  if (button.classList.contains("sd-shield")) {   // PLAY lay here: a tap elsewhere first
+    toast("Diese Taste liegt, wo eben PLAY war – erst woanders tippen, dann geht sie", false);
+    return;
+  }
   const target = songDockTarget();
   if (!target) return;
   const action = button.dataset.songDock;
