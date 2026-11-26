@@ -86,6 +86,19 @@ class SongDockWiringTest(unittest.TestCase):
         self.assertIn("songDockKeepElement(play,", render)
         self.assertIn("armSongDock(cell, SONG_DOCK_GUARD_PUSHED_MS)", render)   # could not stay: longer guard
 
+    def test_keys_over_a_pushed_play_wait_for_a_tap_elsewhere(self):
+        handler = DOCK_JS[DOCK_JS.index('const button = event.target.closest("[data-song-dock]");'):]
+        shield = handler.index('button.classList.contains("sd-shield")')
+        self.assertLess(shield, handler.index("songAction("))
+        self.assertLess(shield, handler.index("songNext()"))
+        render = function_body(DOCK_JS, "renderSongDock")
+        self.assertIn("shieldSongDock(kept ? null : at);", render)
+        self.assertEqual(render.count("applySongDockShield(cell);"), 2)   # both states
+        # Lifted by a pointerdown outside PLAY's old place and the marked keys only.
+        self.assertIn('event.target.closest(".sd-shield")', DOCK_JS)
+        self.assertIn("songDockOverlaps(point, shield)", DOCK_JS)
+        self.assertIn("SONG_DOCK.shield = null;", function_body(DOCK_JS, "closeSongDock"))
+
     def test_preview_reuses_the_slide_drawing(self):
         # The same drawing as the Liedanzeige (songs.js), no layout code of its own.
         self.assertIn("renderSlide(box,", DOCK_JS)
@@ -123,6 +136,14 @@ class SongDockTextTest(unittest.TestCase):
         self.assertTrue(js.eval("songDockArmed(0, 5000)"))
         self.assertFalse(js.eval("songDockArmed(1000, 2000, 1500)"))   # PLAY pushed away: longer
         self.assertTrue(js.eval("songDockArmed(1000, 2500, 1500)"))
+
+    def test_overlap(self):
+        js = quickjs.Context()
+        js.eval(function_body(DOCK_JS, "songDockOverlaps"))
+        box = "{left: 100, top: 100, right: 200, bottom: 150}"
+        self.assertTrue(js.eval(f"songDockOverlaps({box}, {{left: 190, top: 140, right: 300, bottom: 200}})"))
+        self.assertFalse(js.eval(f"songDockOverlaps({box}, {{left: 200, top: 100, right: 300, bottom: 150}})"))   # touching
+        self.assertFalse(js.eval(f"songDockOverlaps({box}, {{left: 0, top: 160, right: 400, bottom: 200}})"))
 
     def test_first_line(self):
         self.assertEqual(self.js.eval('songDockFirstLine({text: "\\n  Großer Gott,  \\nwir loben dich"})'), "Großer Gott,")
