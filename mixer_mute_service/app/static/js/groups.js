@@ -634,17 +634,9 @@ function addPersonChannel(personId, ch) {
   renderPersons(true);
 }
 
-const ICON_SLIDERS = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M6 4v6M6 14v6M12 4v2M12 10v10M18 4v10M18 18v2"/><circle cx="6" cy="12" r="2"/><circle cx="12" cy="8" r="2"/><circle cx="18" cy="16" r="2"/></svg>`;
-const ICON_COPY = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/></svg>`;
-const ICON_CHECK = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg>`;
-const ICON_X = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg>`;
-const ICON_TRASH = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6"/></svg>`;
-
 // While a group's small fader is held, the cards must not be redrawn: that
 // would drop the slider out from under the finger (iPad) or the mouse.
 let PERSON_SLIDER_ACTIVE = false;
-// The group whose "⋮" menu is open (the cards are redrawn every second).
-let PERSON_MENU_ID = null;
 // Groups in edit mode (⋮ > Bearbeiten): channel descriptions, remove and add.
 const PERSON_EDITING = new Set();
 
@@ -660,7 +652,7 @@ function renderPersons(force = false) {
 
 function buildPersonsHtml() {
   const list = loadPersons();
-  if (!list.length) return `<div class="muted-text">Noch keine Mute Gruppen. Oben erstellen.</div>`;
+  if (!list.length) return `<div class="empty-state">Noch keine Mute Gruppe. Mit „+ Mute Gruppe“ anlegen oder „Aus Pult-Status…“ übernehmen.</div>`;
   let html = "";
   const chans = LAST_STATE.channels || {};
   const allChNums = Object.keys(chans).map(Number).sort((a, b) => a - b);
@@ -752,11 +744,11 @@ function buildPersonsHtml() {
         </div>
         <button data-action="person-mute" data-pid="${pid}" class="key-mute person-key">Mute</button>
         <button data-action="person-solo" data-pid="${pid}" class="key-solo person-key">Solo</button>
-        <button class="person-menu-btn" data-person-menu="${pid}" title="${escapeAttr(person.name)}: bearbeiten, umbenennen, Use All, Kanal-Einstellungen, duplizieren, löschen" aria-label="${escapeAttr(person.name)}: weitere Aktionen" aria-haspopup="menu" aria-expanded="${PERSON_MENU_ID === person.id}">${ICON_DOTS}</button>
+        ${menuButtonHtml(`${person.name}: bearbeiten, umbenennen, Use All, Kanal-Einstellungen, duplizieren, löschen`, `person:${person.id}`, `data-person-menu="${pid}"`)}
       </div>
       <div class="person-body${open ? "" : " collapsed"}">
       ${assignedChs.length ? `<div class="person-channels">${rows}</div>`
-        : `<div class="muted-text person-empty">Keine Kanäle zugewiesen.${editing ? "" : " Über ⋮ › Bearbeiten hinzufügen."}</div>`}
+        : `<div class="muted-text person-empty">Keine Kanäle zugewiesen.${editing ? "" : " Über ⋮ › Kanäle bearbeiten hinzufügen."}</div>`}
       ${addSelect}
       </div>
     </div>`;
@@ -784,39 +776,25 @@ function setPersonsHtml(wrap, html) {
 }
 
 // ---- group menu ("⋮") -------------------------------------------------------
-// One shared menu, placed under the dots of the card it was opened from
-// (looks and works like the desktop tiles' menu).
+// The cards are redrawn every second; the menu finds the card's new "⋮" by
+// its key (person:<id>).
 
-function openPersonMenu(trigger) {
-  closePersonMenu();
-  const menu = $("person-menu");
-  PERSON_MENU_ID = trigger.dataset.personMenu;
-  const person = loadPersons().find(p => p.id === PERSON_MENU_ID);
-  menu.querySelector('[data-menu-action="edit"] span').textContent =
-    PERSON_EDITING.has(PERSON_MENU_ID) ? "Bearbeiten beenden" : "Bearbeiten";
-  menu.querySelector('[data-menu-action="use-all"]').disabled =
-    !person || !Object.values(person.channels || {}).some(e => e.fader_hex);
-  trigger.setAttribute("aria-expanded", "true");
-  menu.hidden = false;
-  const r = trigger.getBoundingClientRect();
-  const w = menu.offsetWidth, h = menu.offsetHeight;
-  const left = Math.min(Math.max(8, r.right - w), innerWidth - w - 8);
-  const top = r.bottom + 4 + h > innerHeight - 8 ? Math.max(8, r.top - h - 4) : r.bottom + 4;
-  menu.style.left = `${left}px`;
-  menu.style.top = `${top}px`;
-  menu.querySelector("button").focus({ preventScroll: true });
-}
-
-function closePersonMenu(refocus = false) {
-  const menu = $("person-menu");
-  if (menu.hidden) return;
-  menu.hidden = true;
-  const trigger = document.querySelector(`[data-person-menu][aria-expanded="true"]`);
-  if (trigger) {
-    trigger.setAttribute("aria-expanded", "false");
-    if (refocus) trigger.focus();
-  }
-  PERSON_MENU_ID = null;
+function personMenuItems(personId) {
+  const person = loadPersons().find(p => p.id === personId);
+  if (!person) return [];
+  const hasFaders = Object.values(person.channels || {}).some(e => e.fader_hex);
+  return [
+    { label: PERSON_EDITING.has(personId) ? "Bearbeiten beenden" : "Kanäle bearbeiten", icon: ICON_EDIT_LIST, run: () => togglePersonEditing(personId) },
+    { label: "Umbenennen", icon: ICON_PENCIL, run: () => startRenamePerson(personId, person.name) },
+    "-",
+    { label: "Use All – gespeicherte Fader", icon: ICON_FADERS_USE, disabled: !hasFaders, run: () => useAllPersonFaders(personId) },
+    { label: "Kanal-Einstellungen", icon: ICON_SLIDERS, run: () => openSettingsDialog(personId) },
+    { label: "Duplizieren", icon: ICON_COPY, run: () => duplicatePerson(personId) },
+    "-",
+    { label: "Löschen", icon: ICON_TRASH, danger: true, run: anchor => {
+      confirmDelete(anchor, `Mute Gruppe „${person.name}“ löschen?`).then(ok => { if (ok) deletePerson(personId); });
+    } },
+  ];
 }
 
 // Edit mode opens the card; leaving it keeps the card as it was before.
@@ -828,44 +806,5 @@ function togglePersonEditing(personId) {
 
 $("persons").addEventListener("click", (event) => {
   const trigger = event.target.closest("button[data-person-menu]");
-  if (!trigger) return;
-  if (trigger.getAttribute("aria-expanded") === "true") closePersonMenu();
-  else openPersonMenu(trigger);
+  if (trigger) toggleActionMenu(trigger, () => personMenuItems(trigger.dataset.personMenu));
 });
-$("person-menu").addEventListener("click", (event) => {
-  const item = event.target.closest("button[data-menu-action]");
-  if (!item) return;
-  const personId = PERSON_MENU_ID;
-  // The card's "⋮" key anchors the delete question once the menu is gone.
-  const trigger = document.querySelector('[data-person-menu][aria-expanded="true"]');
-  closePersonMenu();
-  if (!personId) return;
-  if (item.dataset.menuAction === "edit") togglePersonEditing(personId);
-  else if (item.dataset.menuAction === "rename") {
-    const person = loadPersons().find(p => p.id === personId);
-    if (person) startRenamePerson(personId, person.name);
-  }
-  else if (item.dataset.menuAction === "use-all") useAllPersonFaders(personId);
-  else if (item.dataset.menuAction === "settings") openSettingsDialog(personId);
-  else if (item.dataset.menuAction === "duplicate") duplicatePerson(personId);
-  else if (item.dataset.menuAction === "delete" && trigger) {
-    const person = loadPersons().find(p => p.id === personId);
-    const label = person ? `Mute Gruppe „${person.name}“ löschen?` : "Diese Mute Gruppe löschen?";
-    confirmDelete(trigger, label).then(ok => { if (ok) deletePerson(personId); });
-  }
-});
-$("person-menu").addEventListener("keydown", (event) => {
-  const items = [...$("person-menu").querySelectorAll("button")];
-  const i = items.indexOf(document.activeElement);
-  if (event.key === "Escape") { event.preventDefault(); closePersonMenu(true); }
-  else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-    event.preventDefault();
-    items[(i + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length].focus();
-  } else if (event.key === "Tab") closePersonMenu();
-});
-// Close on any click elsewhere, and when the page scrolls or resizes.
-document.addEventListener("pointerdown", (event) => {
-  if (!event.target.closest("#person-menu, [data-person-menu]")) closePersonMenu();
-});
-window.addEventListener("scroll", () => closePersonMenu(), { passive: true });
-window.addEventListener("resize", () => closePersonMenu());

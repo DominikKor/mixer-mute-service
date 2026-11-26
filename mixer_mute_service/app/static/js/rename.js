@@ -1,20 +1,10 @@
-// Mixer Mute Service UI (rename.js): Renaming in place: a pencil key next to
-// a name turns the name into a text field (Enter or leaving the field saves,
-// Escape cancels). Used by Licht, Steuerung (categories, Alles ausschalten)
-// and the program templates.
+// Mixer Mute Service UI (rename.js): Renaming in place: "Umbenennen" in an
+// item's "⋮" menu (or a tap in a rename mode) turns the name into a text
+// field (Enter or leaving the field saves, Escape cancels). Used by Licht,
+// Kameras, Steuerung (keys, categories, Alles ausschalten) and the program
+// templates.
 // Classic script: all files share one global scope and load in the order
 // of index.html; main.js runs last and starts everything.
-
-// The pencil: a 44 x 44 px key (style: button.rename-btn).
-function renamePencil(label) {
-  const button = document.createElement("button");
-  button.type = "button";
-  button.className = "rename-btn";
-  button.innerHTML = "&#9998;";
-  button.title = `${label} umbenennen`;
-  button.setAttribute("aria-label", button.title);
-  return button;
-}
 
 // Show a text field in `slot` (its other contents are hidden meanwhile).
 // save(name) gets the trimmed new name; an empty name is passed on too when
