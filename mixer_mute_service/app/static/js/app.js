@@ -179,8 +179,16 @@ function initSections() {
 // The rows are kept in the UI prefs; read in order they also give the order
 // of the stage miniatures. Only the moved section changes place in the page
 // (moving a section reloads the camera videos in it).
+// The rows set each section's width (alone: full, two: half, three: a third)
+// and the order. On the page the sections are packed like masonry: in that
+// order each one goes where it can start highest (the shortest column, the
+// left one on a tie), so short sections leave no empty space under them.
+// Packing only sets grid places; no section moves in the page for it.
 
 const SECTION_ROW_MAX = 3;
+const SECTION_GRID_COLUMNS = 6;
+const SECTION_GRID_ROW_PX = 2;  // .page grid-auto-rows (app.css): packing unit
+let SECTION_PACK_RAF = 0;
 let SECTION_DEFAULT_ORDER = [];
 let SECTION_ROWS = [];  // [[section, ...], ...]: rows top to bottom, sections left to right
 
@@ -213,6 +221,9 @@ function initSectionOrder() {
     panel.querySelector(".panel-head").appendChild(box);
   }
   applySectionRows();
+  const packer = new ResizeObserver(schedulePackSections);
+  panels.forEach(panel => packer.observe(panel));
+  packer.observe(document.querySelector(".page"));
   const toggle = $("arrange-toggle");
   toggle.addEventListener("change", () => {
     document.body.classList.toggle("arranging", toggle.checked);
@@ -254,16 +265,46 @@ function applySectionRows(moved = null) {
   };
   if (moved) place(moved);
   else [...order].reverse().forEach(place);
-  // Grid of 6 columns: one section spans 6, two 3 each, three 2 each.
-  SECTION_ROWS.forEach((sections, r) => {
-    const span = 6 / sections.length;
-    sections.forEach((section, i) => {
-      bySection[section].style.gridRow = String(r + 1);
-      bySection[section].style.gridColumn = `${1 + i * span} / span ${span}`;
-    });
-  });
+  packSections();
   syncSectionMoveButtons();
   if (STAGE.on) scheduleStageLayout();
+}
+
+// Masonry on the page's grid (6 columns, 2 px rows): in row order every section
+// takes its width (6 / sections in its row) where it can start highest,
+// aligned to its width (halves at column 1 or 4, thirds at 1, 3 or 5),
+// left first on a tie. Not on the stage and not in the narrow one-column view.
+function packSections() {
+  const page = document.querySelector(".page");
+  if (!page || STAGE.on) return;
+  const bySection = Object.fromEntries(sectionPanelsInOrder().map(panel => [panel.dataset.section, panel]));
+  const grid = getComputedStyle(page).display === "grid";
+  const heights = new Array(SECTION_GRID_COLUMNS).fill(0);
+  for (const row of SECTION_ROWS) {
+    const span = SECTION_GRID_COLUMNS / row.length;
+    for (const section of row) {
+      const panel = bySection[section];
+      if (!panel) continue;
+      if (!grid) { panel.style.gridRow = panel.style.gridColumn = ""; continue; }
+      const margin = parseFloat(getComputedStyle(panel).marginTop) || 0;
+      const rows = Math.max(1, Math.ceil((panel.offsetHeight + margin) / SECTION_GRID_ROW_PX));
+      let start = 0, top = Infinity;
+      for (let c = 0; c + span <= SECTION_GRID_COLUMNS; c += span) {
+        const at = Math.max(...heights.slice(c, c + span));
+        if (at < top) { top = at; start = c; }
+      }
+      panel.style.gridColumn = `${start + 1} / span ${span}`;
+      panel.style.gridRow = `${top + 1} / span ${rows}`;
+      for (let c = start; c < start + span; c++) heights[c] = top + rows;
+    }
+  }
+}
+
+// Heights change all the time (sections open and close, rows are added,
+// the window is resized): pack again once per frame.
+function schedulePackSections() {
+  if (SECTION_PACK_RAF) return;
+  SECTION_PACK_RAF = requestAnimationFrame(() => { SECTION_PACK_RAF = 0; packSections(); });
 }
 
 // The rows after moving `section` in `dir`, or null when it cannot move that way.

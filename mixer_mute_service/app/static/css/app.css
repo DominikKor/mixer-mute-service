@@ -306,8 +306,11 @@ dialog.settings-dialog { width: min(1180px, calc(100vw - 32px)); }
 
 /* Page layout: three collapsible sections (Desktop, Channels, Mute Gruppen) */
 .page { margin: 0; padding: 0 var(--page-pad) 48px; }
-/* Sections in rows of up to three side by side ("Anordnen", js/app.js sets each section's place) */
-body:not(.stage-on) .page { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); column-gap: 18px; align-items: start; }
+/* Sections up to three side by side ("Anordnen"), packed like masonry: js/app.js
+   (packSections) sets each section's columns and its range of 2 px rows. */
+body:not(.stage-on) .page {
+  display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); grid-auto-rows: 2px; column-gap: 18px; align-items: start;
+}
 body:not(.stage-on) .page > .panel { grid-column: 1 / -1; min-width: 0; }
 @media (max-width: 900px) { body:not(.stage-on) .page { display: block; } }
 /* Desktop display keys: two-line keys with a readiness LED */

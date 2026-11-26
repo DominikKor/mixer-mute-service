@@ -55,7 +55,12 @@ header) shows ◀ ▲ ▼ ▶ in every section head. Sections sit in rows, up to
 side by side (single column below 900 px width): ◀ ▶ swap a section with its
 neighbour in the row, and a section alone in its row joins the row above on
 the left (◀) or right (▶); ▲ ▼ give a section sharing a row a row of its own
-above or below, and move one alone past the row above or below. The
+above or below, and move one alone past the row above or below. Rows set
+width and order; on the page the sections are packed like masonry: each one,
+in that order, moves up into the column that is shortest at that point, so a
+short section (e.g. Mute Gruppen next to a long Programm) leaves no empty
+space below it. A section alone in its row keeps the full width and so comes
+below everything above it. The
 arrangement is remembered per device, also sets the order of the Stage
 miniatures, and **Standard** restores the original one.
 
