@@ -217,7 +217,7 @@ function pickProgramAction(button) {
   openSongSearch(button, song => {
     if (!song) return;
     songInput.value = song.id;
-    if (!programSongOnly(link)) control.value = "";  // a song or a file, not both
+    control.value = "";  // a song or a file, not both (a linked row's own file, too)
     syncSongPicker(link.querySelector(".song-picker"));
     syncProgramAction(link);
     const title = button.closest("tr").querySelector('[data-program-field="title"]');
@@ -434,7 +434,9 @@ function changeProgramDesktop(button) {
   // Keep the focus on the moved profile's key (or on "+").
   const focus = (earlier && box.querySelector(`[data-choice-earlier="${CSS.escape(earlier)}"]`))
     || (earlier && box.querySelector(`[data-choice-remove="${CSS.escape(earlier)}"]`))
-    || box.querySelector(".program-desktop-add:not([hidden])");
+    || box.querySelector(".program-desktop-add:not([hidden])")
+    // The last profile added: "+" is gone, so the new profile's ✕.
+    || (button.dataset.choiceAdd && box.querySelector(`[data-choice-remove="${CSS.escape(button.dataset.choiceAdd)}"]`));
   if (focus) focus.focus({ preventScroll: true });
   hidden.dispatchEvent(new Event("change", { bubbles: true }));
 }
@@ -482,7 +484,9 @@ function syncProgramLinked(row) {
   const chips = box.querySelector(".program-sum-chips");
   chips.hidden = !shortcut;
   // The shortcut's configuration; the song is the row's (shown in its own field).
-  if (shortcut) renderProgramChips(chips, programChips({ ...shortcut, song: null }));
+  // With a song of its own, the shortcut's Liedtext file does not run (a song or a file).
+  const ownSong = row.querySelector('[data-program-field="song"]');
+  if (shortcut) renderProgramChips(chips, programChips({ ...shortcut, song: null, lyrics: ownSong && ownSong.value ? null : shortcut.lyrics }));
   const lyrics = row.querySelector("td.pc-lyrics");
   if (lyrics) lyrics.dataset.label = id ? "Lied · gehört zum Programmpunkt" : "Liedtext";
   row.querySelectorAll('.program-action-link[data-action-field="lyrics"]').forEach(syncProgramAction);
@@ -686,7 +690,7 @@ function programChips(item) {
   if (item.shortcut) {
     const shortcut = PROGRAM_SHORTCUTS.find(entry => entry.id === item.shortcut);
     if (!shortcut) return [{ kind: "warn", label: "Shortcut", text: "gelöscht – startet nicht" }];
-    return [{ kind: "shortcut", label: "Shortcut", text: shortcut.title }, ...programChips({ ...shortcut, song: item.song })];
+    return [{ kind: "shortcut", label: "Shortcut", text: shortcut.title }, ...programChips({ ...shortcut, song: item.song, lyrics: item.song ? null : shortcut.lyrics })];
   }
   if (item.shortcut_deleted) add("warn", "Shortcut", `„${item.shortcut_deleted}“ gelöscht – läuft mit eigenen Einstellungen`);
   if (item.group) add("group", "Gruppe", item.group);
@@ -1383,7 +1387,7 @@ onProgramEditors("click", event => {
 onProgramEditors("change", event => {
   const link = event.target.closest(".program-action-link");
   if (link) syncProgramAction(link);
-  if (event.target.matches('[data-program-field="shortcut"]')) syncProgramLinked(event.target.closest("tr"));
+  if (event.target.matches('[data-program-field="shortcut"], [data-program-field="song"]')) syncProgramLinked(event.target.closest("tr"));
 });
 // The scene list is asked again when a scene is about to be chosen (OBS may have started since).
 onProgramEditors("focusin", event => {

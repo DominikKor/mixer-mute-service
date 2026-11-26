@@ -305,8 +305,12 @@ async def row_shortcut(request: Request, item: dict) -> Optional[dict]:
 def with_shortcut(item: dict, shortcut: dict) -> dict:
     """What a row with a shortcut runs: the shortcut's action fields instead
     of its own (linked: an edited shortcut changes every row using it); the
-    row keeps its time, title, person and song."""
-    return {**item, **{key: shortcut.get(key) for key in SHORTCUT_KEYS}}
+    row keeps its time, title, person and song. Liedtext is a song or a
+    file, not both: with a song of its own the shortcut's file does not run."""
+    ran = {**item, **{key: shortcut.get(key) for key in SHORTCUT_KEYS}}
+    if item.get("song"):
+        ran["lyrics"] = None
+    return ran
 
 
 async def program_reference_error(request: Request, item: dict) -> Optional[str]:

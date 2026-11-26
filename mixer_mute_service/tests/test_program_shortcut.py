@@ -110,6 +110,31 @@ class StoreTests(unittest.IsolatedAsyncioTestCase):
                            ("lyrics", "file:1.2.3.4|C:\\a.txt")):
             self.assertTrue(has_own_actions({key: value}), key)
 
+    async def test_a_song_or_a_lyrics_file_not_both(self):
+        with tempfile.TemporaryDirectory() as name:
+            path = Path(name) / "program.json"
+            store = ProgramItemStore(path)
+            lyrics = "file:192.168.188.11|C:\\Texte\\lied.txt"
+            both = await store.create(row(song="lied-12.foil", lyrics=lyrics, shortcut=A))
+            self.assertEqual((both["song"], both["lyrics"]), ("lied-12.foil", None),
+                             "a hidden own Liedtext file is not saved next to a song")
+            only_file = await store.create(row(lyrics=lyrics))
+            self.assertEqual(only_file["lyrics"], lyrics)
+            # A row saved before with both: the song stays, and the log says so.
+            path.write_text(json.dumps([{**row(song="a.foil", lyrics=lyrics), "id": "old", "playback_description": "",
+                                         "translation_description": "", "lyrics_description": ""}]), encoding="utf-8")
+            with self.assertLogs("mixer.program", logging.WARNING):
+                old = await ProgramItemStore(path).get("old")
+            self.assertEqual((old["song"], old["lyrics"]), ("a.foil", None))
+
+    def test_the_rows_song_wins_over_the_shortcuts_lyrics_file(self):
+        lyrics = "file:192.168.188.11|C:\\Texte\\lied.txt"
+        shortcut = {"title": "Lied", "song": None, "lyrics": lyrics, "group": "Band"}
+        ran = with_shortcut({"title": "Lied 12", "song": "lied-12.foil", "lyrics": None}, shortcut)
+        self.assertEqual((ran["song"], ran["lyrics"], ran["group"]), ("lied-12.foil", None, "Band"))
+        ran = with_shortcut({"title": "Ansage", "song": None, "lyrics": None}, shortcut)
+        self.assertEqual((ran["song"], ran["lyrics"]), (None, lyrics), "without a song the shortcut's file runs")
+
     def test_the_song_stays_the_rows(self):
         item = {"title": "Lied", "song": "lied-12.foil", "group": "", "desktop": ["qr"]}
         shortcut = {"title": "Band", "song": "anderes.foil", "group": "Band", "desktop": []}
@@ -196,6 +221,30 @@ class ApiTests(unittest.TestCase):
             self.assertTrue(played["ok"], played)
             self.assertEqual(recorder.ran, ["beamer-hide", "qr"])
             self.assertNotIn("shortcut", played)
+
+    def test_play_runs_the_song_not_also_the_shortcuts_lyrics_file(self):
+        with app_client(PROFILES) as (client, _folder):
+            lyrics = "file:127.0.0.1|C:\\Texte\\lied.txt"
+            shortcut = client.post("/shortcuts", json={"title": "Lied", "lyrics": lyrics}).json()["shortcut"]
+            with_song = client.post("/program/items", json=row(song="lied-12.foil", shortcut=shortcut["id"])).json()["item"]
+            without = client.post("/program/items", json=row(title="Ansage", shortcut=shortcut["id"])).json()["item"]
+            shown, files = [], []
+
+            async def fake_show_slide(_request, song, slide):
+                shown.append(song)
+                return {"ok": True}
+
+            async def fake_run_action(_request, value):
+                files.append(value)
+                return {"ok": True}, 200
+
+            with patch("app.api.program.show_slide", fake_show_slide), \
+                    patch("app.api.program.run_action", fake_run_action):
+                first = client.post(f"/program/items/{with_song['id']}/play").json()
+                second = client.post(f"/program/items/{without['id']}/play").json()
+            self.assertTrue(first["ok"] and second["ok"], (first, second))
+            self.assertEqual((shown, files), (["lied-12.foil"], [lyrics]),
+                             "the song alone for the row with a song, the file for the one without")
 
     def test_the_song_of_the_row_is_shown_not_the_shortcuts(self):
         with app_client(PROFILES) as (client, _folder):

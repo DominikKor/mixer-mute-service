@@ -118,7 +118,8 @@ miniatures, and **Standard** restores the original one.
 - **Programm**: a cue list with planned time, title, person, mute group
   (optional: a row without one changes no mutes), light scene, a file each
   for playback and translation, for lyrics a song *or* a file (small keys
-  "Lied" / "Datei", ✕ removes it), camera presets with an OBS scene per
+  "Lied" / "Datei", ✕ removes it; a row saved with both keeps the song,
+  and a row's own song also wins over its shortcut's file), camera presets with an OBS scene per
   camera, desktop profiles (only the chosen ones show, numbered in the
   order they run, ✕ removes one, ‹ moves one earlier, **+** adds another
   at the end), and the
