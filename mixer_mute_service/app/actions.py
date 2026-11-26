@@ -24,7 +24,8 @@ from . import display_agent
 from .camera_program import CAMERAS, DEFAULT_WAIT_SECONDS
 from .companion_buttons import CATALOG_ONLY_IDS, COMPANION_BUTTONS_BY_ID, resolve_alias
 from .display_agent import AgentError
-from .file_actions import is_file_action, not_found_reason, run_file_action, runs_from_network_share
+from .file_actions import (PLAYER_FAILURE_PREFIX, is_file_action, no_file_reason, run_file_action,
+                           runs_from_network_share, spotlight_search)
 from .mission_spotlight import profile_path
 from .native_controls import NativeControlError
 from .responses import Result, controller_result
@@ -219,6 +220,12 @@ def network_program(kind: str, path: str) -> bool:
     return runs_from_network_share(path, may_be_program=kind == "program")
 
 
+async def _no_file_reason(request: Request, profile, path: str) -> str:
+    """Why a profile's file was not found; Mission Spotlight names its week."""
+    spotlight = spotlight_search() if profile.mission_spotlight else None
+    return await no_file_reason(request, profile.target_ip, path, spotlight)
+
+
 async def show_profile(request: Request, profile_id: str) -> Result:
     """Show an image, start a program or open a file on the profile's PC."""
     profile = _profile(request, profile_id)
@@ -241,7 +248,7 @@ async def show_profile(request: Request, profile_id: str) -> Result:
         return await display_agent.call(cfg, profile.target_ip, "/display", payload), 200
     except AgentError as exc:
         if exc.agent_status == 503:
-            return {"ok": False, "reason": not_found_reason(payload["path"])}, 502
+            return {"ok": False, "reason": await _no_file_reason(request, profile, payload["path"])}, 502
         return exc.answer(), exc.status
 
 
@@ -266,6 +273,12 @@ async def control_audio(request: Request, profile_id: str, action: str) -> Resul
     except AgentError as exc:
         if exc.agent_status is None:
             return exc.answer(), exc.status
+        if exc.agent_status == 503 and action == "play":
+            # The agent says why the player did not start; anything else at 503
+            # means the file is missing there.
+            agent_reason = (exc.body or {}).get("reason")
+            if not (isinstance(agent_reason, str) and agent_reason.startswith(PLAYER_FAILURE_PREFIX)):
+                return {"ok": False, "reason": await _no_file_reason(request, profile, payload["path"])}, 502
         if exc.body is not None:
             return exc.body, exc.agent_status
         reason = "display agent rejected the audio request"

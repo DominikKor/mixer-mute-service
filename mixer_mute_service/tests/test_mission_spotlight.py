@@ -25,22 +25,22 @@ class QuarterWeekTests(unittest.TestCase):
 
     def test_path(self):
         self.assertEqual(mission_spotlight.spotlight_path("I:\\Spotlight\\", date(2026, 7, 2)),
-                         "I:\\Spotlight\\2026_3. Quartal\\01*")
+                         "I:\\Spotlight\\2026_3.Quartal\\01*")
         self.assertEqual(mission_spotlight.spotlight_path("I:\\Spotlight", date(2026, 11, 14)),
-                         "I:\\Spotlight\\2026_4. Quartal\\07*")
+                         "I:\\Spotlight\\2026_4.Quartal\\07*")
         self.assertEqual(mission_spotlight.spotlight_path("I:\\Spotlight", date(2026, 11, 26)),
-                         "I:\\Spotlight\\2026_4. Quartal\\09*")
+                         "I:\\Spotlight\\2026_4.Quartal\\09*")
         self.assertEqual(mission_spotlight.spotlight_path("I:\\Spotlight", date(2027, 1, 3)),
-                         "I:\\Spotlight\\2027_1. Quartal\\01*")
+                         "I:\\Spotlight\\2027_1.Quartal\\01*")
         self.assertEqual(mission_spotlight.spotlight_path("I:\\Spotlight", date(2026, 12, 31)),
-                         "I:\\Spotlight\\2026_4. Quartal\\14*")
+                         "I:\\Spotlight\\2026_4.Quartal\\14*")
         plain = DesktopProfileConfig(title="Bild", kind="image", path="I:\\a.png")
         self.assertEqual(mission_spotlight.profile_path(plain), "I:\\a.png")
 
     def test_current_info_has_the_year(self):
         self.assertEqual(mission_spotlight.current(date(2026, 11, 26)),
-                         {"year": 2026, "quarter": 4, "week": 9, "subfolder": "2026_4. Quartal", "file_prefix": "09"})
-        self.assertEqual(mission_spotlight.current(date(2027, 1, 1))["subfolder"], "2027_1. Quartal")
+                         {"year": 2026, "quarter": 4, "week": 9, "subfolder": "2026_4.Quartal", "file_prefix": "09"})
+        self.assertEqual(mission_spotlight.current(date(2027, 1, 1))["subfolder"], "2027_1.Quartal")
 
     def test_validation(self):
         validate_profile(DesktopProfileConfig(title="MS", kind="file", path="I:\\Spotlight", mission_spotlight=True))
@@ -62,7 +62,7 @@ class ApiTests(unittest.TestCase):
             today = mission_spotlight.current()
             self.assertEqual(listed["mission_spotlight"], today)
             self.assertTrue(listed["profiles"][0]["mission_spotlight"])
-            expected = f"I:\\Spotlight\\{today['year']}_{today['quarter']}. Quartal\\{today['file_prefix']}*"
+            expected = f"I:\\Spotlight\\{today['year']}_{today['quarter']}.Quartal\\{today['file_prefix']}*"
             self.assertEqual(listed["profiles"][0]["resolved_path"], expected)
             with mock.patch("app.display_agent.call", mock.AsyncMock(return_value={"ok": True})) as call:
                 r = client.post("/desktop/spotlight/open")
@@ -70,6 +70,37 @@ class ApiTests(unittest.TestCase):
             payload = call.call_args.args[3]
             self.assertEqual(payload["path"], expected)
             self.assertNotIn("mission_spotlight", payload, "the agent refuses unknown keys")
+
+    def test_not_found_names_pc_week_and_only_a_really_old_agent(self):
+        from app.display_agent import AgentError
+        today = mission_spotlight.current()
+        searched = f"(Woche {today['file_prefix']}, {today['quarter']}. Quartal {today['year']})"
+        for kind in ("file", "audio"):
+            for version, old in (("1.2.1-237", False), ("1.2.1-134", True), (None, True)):
+                async def fake(cfg, target, route, payload, **kwargs):
+                    if route == "/info":
+                        if version is None:
+                            raise AgentError("unknown", 502, agent_status=404)
+                        return {"version": version}
+                    if route == "/audio":
+                        raise AgentError("missing", 502, agent_status=503,
+                                         body={"ok": False, "reason": "Configured audio file is not available"})
+                    raise AgentError("missing", 502, agent_status=503)
+                with app_client(DESKTOP, env={"MS_TEST_TOKEN": "t"}) as (client, folder):
+                    body = {"id": "spotlight", "title": "Mission Spotlight", "kind": kind, "path": "I:\\Spotlight",
+                            "target_ip": "192.168.188.11", "mission_spotlight": True}
+                    self.assertEqual(client.post("/desktop/profiles", json=body).status_code, 200)
+                    with mock.patch("app.display_agent.call", fake):
+                        url = "/desktop/spotlight/audio/play" if kind == "audio" else "/desktop/spotlight/open"
+                        r = client.post(url)
+                    self.assertEqual(r.status_code, 502, r.text)
+                    reason = r.json()["reason"]
+                    label = f"{kind} {version}"
+                    self.assertTrue(reason.startswith(f"Keine Datei „{today['file_prefix']}…“ in I:\\Spotlight\\"
+                                                      f"{today['subfolder']} auf dem "), (label, reason))
+                    self.assertIn(searched, reason, label)
+                    self.assertNotIn("*", reason.replace("„*“", ""), label)
+                    self.assertEqual("älter als v1.2.1-135" in reason, old, (label, reason))
 
 
 if __name__ == "__main__":
