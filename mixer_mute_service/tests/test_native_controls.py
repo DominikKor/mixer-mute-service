@@ -232,27 +232,6 @@ class NativeControlTests(unittest.IsolatedAsyncioTestCase):
             await fade
         self.assertTrue(result["changed"])
 
-    def test_obs_waits_are_bounded(self):
-        from app import native_controls
-
-        waits = []
-
-        class SilentObs:
-            def __enter__(self):
-                return self
-
-            def __exit__(self, *exc):
-                return False
-
-            def recv(self, timeout=None):
-                waits.append(timeout)
-                raise TimeoutError()
-
-        with patch("websockets.sync.client.connect", return_value=SilentObs()):
-            with self.assertRaisesRegex(NativeControlError, "OBS WebSocket unavailable"):
-                native_controls._obs_request("127.0.0.1", 4455, "GetVersion")
-        self.assertTrue(waits and all(w is not None and 0 < w <= native_controls.OBS_TIMEOUT_SECONDS for w in waits))
-
     async def test_failed_beamer_toggle_does_not_change_state(self):
         await self.controls.set_beamer_state(True)
         with patch.object(self.controls, "_toggle_beamer", new_callable=AsyncMock,

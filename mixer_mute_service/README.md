@@ -233,9 +233,18 @@ Steuerung; program rows, shortcuts and own keys that name an old ID
 OBS's transition time in 50 ms steps (50 ms to 20 s); the keys show the
 current value. As on the Companion buttons, a key whose scene is on air in
 OBS is red, one in the preview (studio mode) green. The page asks
-`GET /obs/status` every 1.5 s; one OBS query (one connection) serves every
-page for a second, and while OBS does not answer no key is coloured and OBS
-is asked only every 5 s.
+`GET /obs/status` every 1.5 s; one OBS query serves every page for a
+second, and while OBS does not answer no key is coloured and OBS is asked
+only every 5 s.
+
+The service keeps ONE WebSocket connection to OBS open (`app/obs_client.py`)
+for every key, program row, camera sequence and status query; OBS no longer
+reports a new client and a disconnect on every click. Requests from several
+places at once share it (answers matched by requestId), each waits at most
+3 s, and a request without an answer drops the connection so the next one
+connects anew. When OBS is gone, connecting is retried after 1, 2, 4 ... up
+to 15 s; meanwhile requests fail at once with "OBS WebSocket unavailable".
+The connection closes when the service stops.
 
 | Method | Path | Purpose |
 | ------ | ---- | ------- |

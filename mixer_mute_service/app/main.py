@@ -9,6 +9,7 @@ or:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import sys
@@ -36,7 +37,7 @@ from .groups import GroupStore
 from .mixer_client import MixerClient
 from .lights import CircuitCache, LightSceneStore
 from .names import NameStore
-from .native_controls import NativeControlService
+from .native_controls import NativeControlService, close_obs_clients
 from .power_control import PowerControlStore
 from .target_pcs import TargetPcStore
 from .proxy import ProxyServer
@@ -210,6 +211,7 @@ async def lifespan(app: FastAPI):
             camera_program.cancel()
         if app.state.native_controls is not None:
             await app.state.native_controls.stop_keepalive()
+        await asyncio.to_thread(close_obs_clients)
         try:
             await client.stop()
         finally:

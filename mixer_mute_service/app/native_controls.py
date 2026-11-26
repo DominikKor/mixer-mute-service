@@ -3,18 +3,14 @@
 from __future__ import annotations
 
 import asyncio
-import base64
-import hashlib
 import http.client
 import json
 import logging
-import os
 import select
 import socket
 import struct
 import threading
 import time
-import uuid
 from pathlib import Path
 from typing import Callable, Optional
 from urllib.error import URLError
@@ -22,6 +18,7 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from .jsonstore import read_json, write_json_atomic
+from .obs_client import ObsClient, ObsError
 
 log = logging.getLogger("mixer.native_controls")
 
@@ -283,55 +280,37 @@ def _obs_request(host: str, port: int, request_type: str, request_data: Optional
 
 
 def _obs_batch(host: str, port: int, requests: list) -> list:
-    """Several requests, one after the other, on one fresh OBS WebSocket
-    connection: [(request_type, request_data), ...] -> their response data,
-    None for a request OBS rejected (e.g. the preview scene outside studio
-    mode). Every wait is bounded: a stuck OBS must not block a worker thread
-    for good. Raises NativeControlError when OBS is unreachable."""
+    """Several requests, one after the other, over the service's lasting OBS
+    connection (app/obs_client.py): [(request_type, request_data), ...] ->
+    their response data, None for a request OBS rejected (e.g. the preview
+    scene outside studio mode). Raises NativeControlError when OBS cannot be
+    asked."""
     try:
-        from websockets.sync.client import connect
+        return obs_client(host, port).batch(requests)
+    except ObsError as exc:
+        raise NativeControlError(str(exc)) from exc
 
-        password = os.environ.get("OBS_WEBSOCKET_PASSWORD", "")
-        deadline = time.monotonic() + OBS_TIMEOUT_SECONDS
 
-        def recv():
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise TimeoutError("OBS did not answer in time")
-            return json.loads(ws.recv(timeout=remaining))
+_OBS_CLIENTS: dict = {}
+_OBS_CLIENTS_LOCK = threading.Lock()
 
-        with connect(f"ws://{host}:{port}", open_timeout=OBS_TIMEOUT_SECONDS, close_timeout=1) as ws:
-            hello = recv()
-            authentication = hello.get("d", {}).get("authentication")
-            identify = {"op": 1, "d": {"rpcVersion": 1}}
-            if authentication:
-                if not password:
-                    raise NativeControlError("OBS WebSocket password is required")
-                secret = base64.b64encode(hashlib.sha256((password + authentication["salt"]).encode()).digest()).decode()
-                identify["d"]["authentication"] = base64.b64encode(
-                    hashlib.sha256((secret + authentication["challenge"]).encode()).digest()
-                ).decode()
-            ws.send(json.dumps(identify))
-            if recv().get("op") != 2:
-                raise NativeControlError("OBS WebSocket identification failed")
-            answers = []
-            for request_type, request_data in requests:
-                request_id = uuid.uuid4().hex
-                ws.send(json.dumps({
-                    "op": 6,
-                    "d": {"requestType": request_type, "requestId": request_id, "requestData": request_data or {}},
-                }))
-                while True:
-                    response = recv()
-                    if response.get("op") == 7 and response.get("d", {}).get("requestId") == request_id:
-                        break
-                status = response["d"].get("requestStatus", {})
-                answers.append((response["d"].get("responseData") or {}) if status.get("result") else None)
-            return answers
-    except NativeControlError:
-        raise
-    except Exception as exc:
-        raise NativeControlError("OBS WebSocket unavailable") from exc
+
+def obs_client(host: str, port: int) -> ObsClient:
+    """The one lasting connection to the OBS at host:port."""
+    with _OBS_CLIENTS_LOCK:
+        client = _OBS_CLIENTS.get((host, port))
+        if client is None:
+            client = _OBS_CLIENTS[(host, port)] = ObsClient(host, port, timeout=OBS_TIMEOUT_SECONDS)
+        return client
+
+
+def close_obs_clients() -> None:
+    """Close the OBS connections (service shutdown)."""
+    with _OBS_CLIENTS_LOCK:
+        clients = list(_OBS_CLIENTS.values())
+        _OBS_CLIENTS.clear()
+    for client in clients:
+        client.close()
 
 
 # OBS accepts transition durations from 50 ms to 20 s.
