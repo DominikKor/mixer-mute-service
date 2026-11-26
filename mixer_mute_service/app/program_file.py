@@ -28,13 +28,18 @@ def _same(a: str, b: str) -> bool:
     return " ".join(a.split()).casefold() == " ".join(b.split()).casefold()
 
 
-def _only(matches: List[str], what: str, name: str) -> Tuple[Optional[str], Optional[str]]:
-    """(id, reason): the one match, else None and why not."""
+def _text(value) -> Optional[str]:
+    """The value if it is a text; anything else is left to the validation of the row."""
+    return value if isinstance(value, str) else None
+
+
+def _only(matches: List[str]) -> Tuple[Optional[str], Optional[str]]:
+    """(id, problem): the one match, else None and "nicht gefunden" or "mehrdeutig (n passen)"."""
     if len(matches) == 1:
         return matches[0], None
     if not matches:
-        return None, f"{what} '{name}' not found; reference dropped"
-    return None, f"{what} '{name}' is ambiguous ({len(matches)} fit); reference dropped"
+        return None, "nicht gefunden"
+    return None, f"mehrdeutig ({len(matches)} passen)"
 
 
 class Names:
@@ -103,64 +108,78 @@ async def annotate(row: dict, names: Names) -> dict:
 # -- import ----------------------------------------------------------------------
 
 async def resolve(row: dict, names: Names) -> Tuple[dict, List[dict]]:
-    """The row with every reference that does not exist here found by its name,
-    or dropped; the second value lists what was dropped: [{field, reason}]."""
+    """The row with every reference that does not exist here found by its name
+    (the *_name field, or the value itself when someone typed a name into the
+    ID field), or dropped. The second value lists what was dropped:
+    [{field, kind, name, reason}], reasons in German. Only texts are looked at;
+    other values stay for the validation of the row (a clean 400)."""
     row, dropped = dict(row), []
 
-    def drop(field: str, reason: str) -> None:
-        dropped.append({"field": field, "reason": reason})
+    def drop(field: str, kind: str, name: str, problem: str) -> None:
+        dropped.append({"field": field, "kind": kind, "name": name,
+                        "reason": f"{kind} „{name}“ {problem}; Verweis entfernt"})
 
-    value = row.get("light")
+    value = _text(row.get("light"))
     if value and value not in names.scenes:
-        name = row.get("light_name")
-        found, reason = _only([i for i, n in names.scenes.items() if name and _same(n, str(name))], "light scene",
-                              name or value)
+        name = _text(row.get("light_name")) or value
+        found, problem = _only([i for i, n in names.scenes.items() if _same(n, name)])
         row["light"] = found
-        if reason:
-            drop("light", reason)
+        if problem:
+            drop("light", "Licht", name, problem)
     for field in _KEY_FIELDS:
-        value = row.get(field)
-        if not value or not isinstance(value, str) or is_file_action(value):
+        value = _text(row.get(field))
+        if not value or is_file_action(value):
             continue
-        if value.startswith(DESKTOP_PREFIX):
+        name = _text(row.get(f"{field}_name"))
+        if value.startswith(DESKTOP_PREFIX):  # a desktop profile stays one: only profiles are searched
             if value.removeprefix(DESKTOP_PREFIX) in names.profiles:
                 continue
-        elif await pressable_button(names.request, value) is not None:
-            continue
-        name = row.get(f"{field}_name")
-        matches = [] if not isinstance(name, str) else (
-            [f"{DESKTOP_PREFIX}{i}" for i, t in names.profiles.items() if _same(t, name)]
-            + [i for i, label in names.buttons.items() if _same(label, name)])
-        found, reason = _only(list(dict.fromkeys(matches)), "key", name or value)
+            name = name or value.removeprefix(DESKTOP_PREFIX)
+            found, problem = _only([f"{DESKTOP_PREFIX}{i}" for i, t in names.profiles.items() if _same(t, name)])
+            kind = "Desktop-Profil"
+        else:  # a key stays one: only keys are searched
+            if await pressable_button(names.request, value) is not None:
+                continue
+            name = name or value
+            found, problem = _only([i for i, label in names.buttons.items() if _same(label, name)])
+            kind = "Taste"
         row[field] = found
-        if reason:
-            drop(field, reason)
+        if problem:
+            drop(field, kind, name, problem)
     profiles = row.get("desktop")
     if isinstance(profiles, list):
         titles = row.get("desktop_names") if isinstance(row.get("desktop_names"), list) else []
         kept = []
         for index, pid in enumerate(profiles):
-            if pid in names.profiles:
-                kept.append(pid)
+            if not isinstance(pid, str) or pid in names.profiles:
+                kept.append(pid)  # (a wrong type is for the validation)
                 continue
-            name = titles[index] if index < len(titles) and isinstance(titles[index], str) else None
-            found, reason = _only([i for i, t in names.profiles.items() if name and _same(t, name)],
-                                  "desktop profile", name or pid)
+            name = (_text(titles[index]) if index < len(titles) else None) or pid
+            found, problem = _only([i for i, t in names.profiles.items() if _same(t, name)])
             if found:
                 kept.append(found)
             else:
-                drop("desktop", reason)
+                drop("desktop", "Desktop-Profil", name, problem)
         row["desktop"] = kept
-    value = row.get("song")
+    value = _text(row.get("song"))
     if value and names.songs and value not in names.songs:  # the library may not be loaded: then it stays
-        title = row.get("song_title")
-        found, reason = _only([i for i, s in names.songs.items() if isinstance(title, str) and any(
-            _same(t, title) for t in s.get("titles") or [s["title"]])], "song", title or value)
+        title = _text(row.get("song_title")) or value
+        matches = [i for i, song in names.songs.items()
+                   if any(_same(t, title) for t in song.get("titles") or [song["title"]])]
+        book = _text(row.get("song_book"))
+        if len(matches) > 1 and book:  # the same title in several books: the book tells which
+            by_book = [i for i in matches if _same(names.song_book(names.songs[i]), book)]
+            matches = by_book or matches
+        found, problem = _only(matches)
         row["song"] = found
-        if reason:
-            drop("song", reason)
-    group = row.get("group")
-    if group and await names.request.app.state.groups.get(group) is None:
-        drop("group", f"mute group '{group}' not found; reference dropped")
-        row["group"] = ""
+        if problem:
+            drop("song", "Lied", title, problem)
+    group = _text(row.get("group"))
+    if group:
+        groups = await names.request.app.state.groups.list()
+        if group not in groups:
+            found, problem = _only([g for g in groups if _same(g, group)])
+            row["group"] = found or ""
+            if problem:
+                drop("group", "Mute-Gruppe", group, problem)
     return row, dropped

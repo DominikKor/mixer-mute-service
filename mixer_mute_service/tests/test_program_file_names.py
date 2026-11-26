@@ -135,14 +135,94 @@ class ProgramFileNameTests(unittest.TestCase):
             self.assertEqual(r.status_code, 200, r.text)
             self.assertEqual(len(r.json()["warnings"]), 5)
             reasons = " | ".join(w["reason"] for w in r.json()["warnings"])
-            self.assertIn("ambiguous (2 fit)", reasons)
-            self.assertIn("light scene 'Gibt es nicht' not found", reasons)
-            self.assertIn("mute group 'Gibt es nicht'", reasons)
-            self.assertIn("song 'Gibt es nicht' not found", reasons)
+            self.assertIn("Desktop-Profil „logo“ mehrdeutig (2 passen)", reasons)
+            self.assertIn("Licht „Gibt es nicht“ nicht gefunden", reasons)
+            self.assertIn("Mute-Gruppe „Gibt es nicht“ nicht gefunden", reasons)
+            self.assertIn("Lied „Gibt es nicht“ nicht gefunden", reasons)
+            self.assertEqual({w["kind"] for w in r.json()["warnings"]}, {"Licht", "Desktop-Profil", "Lied", "Mute-Gruppe"})
             self.assertEqual(r.json()["warnings"][0]["title"], "Predigt")
             now = client.get("/program/items").json()[0]
             self.assertEqual((now["desktop"], now["light"], now["song"], now["group"]), (["qr"], None, None, ""))
             self.assertEqual(now["title"], "Predigt")  # the row itself is imported
+
+
+class ProgramFileRobustnessTests(unittest.TestCase):
+    def test_a_reference_never_changes_its_kind(self):
+        with app_client(CONFIG) as (client, _):
+            setup(client)
+            payload = export(client)
+            item = payload["items"][0]
+            item["playback"], item["playback_name"] = "desktop:gone", "CAM1 Pult nah"  # a key's name for a profile
+            item["translation"], item["translation_name"] = "native-gone", "QR Gemeinde"  # a profile's name for a key
+            r = import_(client, payload)
+            self.assertEqual(r.status_code, 200, r.text)
+            now = client.get("/program/items").json()[0]
+            self.assertEqual((now["playback"], now["translation"]), (None, None))
+            kinds = {(w["field"], w["kind"]) for w in r.json()["warnings"]}
+            self.assertEqual(kinds, {("playback", "Desktop-Profil"), ("translation", "Taste")})
+
+    def test_malformed_values_are_a_400_not_a_500(self):
+        with app_client(CONFIG) as (client, _):
+            setup(client)
+            for field, value in (("light", ["a"]), ("light", {"a": 1}), ("desktop", [{"a": 1}]), ("desktop", "qr"),
+                                 ("song", {"a": 1}), ("group", ["Predigt"]), ("playback", ["x"]), ("playback", {"a": 1}),
+                                 ("song_title", ["x"]), ("light_name", {"a": 1}), ("desktop_names", "qr")):
+                payload = export(client)
+                payload["items"][0][field] = value
+                r = import_(client, payload)
+                if field.endswith("_name") or field.endswith("_names") or field == "song_title":
+                    self.assertEqual(r.status_code, 200, (field, value, r.text))  # only read where they are texts
+                else:
+                    self.assertEqual(r.status_code, 400, (field, value, r.text))
+                self.assertLess(r.status_code, 500, (field, value))
+
+    def test_the_book_decides_between_songs_with_the_same_title(self):
+        with app_client(CONFIG) as (client, _):
+            setup(client)
+            twin = {"title": "Above all", "titles": ["Above all"], "copyright": "", "slides": [{"key": "1", "text": "a"}]}
+            client.app.state.songs.songs = {
+                "ghs.foil": {**twin, "books": [{"name": "Glauben Hoffen Singen", "number": "371"}]},
+                "wlg.foil": {**twin, "books": [{"name": "Wir loben Gott", "number": "5"}]},
+            }
+            payload = export(client)
+            item = payload["items"][0]
+            item.update(song="weg.foil", song_title="above ALL", song_book="wir loben gott 5")
+            self.assertEqual(import_(client, payload).json()["warnings"], [])
+            self.assertEqual(client.get("/program/items").json()[0]["song"], "wlg.foil")
+            item.update(song="weg.foil", song_book="Gibt es nicht 1")  # the book fits none: still ambiguous
+            r = import_(client, payload)
+            self.assertEqual([w["reason"] for w in r.json()["warnings"]],
+                             ["Lied „above ALL“ mehrdeutig (2 passen); Verweis entfernt"])
+            item.pop("song_book")
+            self.assertEqual(len(import_(client, payload).json()["warnings"]), 1)
+
+    def test_a_name_typed_into_the_id_field(self):
+        with app_client(CONFIG) as (client, _):
+            light = setup(client)
+            payload = export(client)
+            item = payload["items"][0]
+            for key in [k for k in item if k.endswith("_name") or k.endswith("_names") or k in ("song_title", "song_book")]:
+                item.pop(key)
+            item.update(light="predigt HELL", desktop=["qr gemeinde", "Logo2"], song="Above all",
+                        playback="desktop:QR Gemeinde", translation="CAM1 Pult nah", group="predigt")
+            r = import_(client, payload)
+            self.assertEqual(r.status_code, 200, r.text)
+            now = client.get("/program/items").json()[0]
+            self.assertEqual((now["light"], now["desktop"], now["song"], now["group"]),
+                             (light["id"], ["qr"], "a.foil", "Predigt"))
+            self.assertEqual((now["playback"], now["translation"]), ("desktop:qr", "native-cam1-preset-1"))
+            self.assertEqual([w["name"] for w in r.json()["warnings"]], ["Logo2"])
+
+    def test_a_row_without_title_is_still_reported(self):
+        with app_client(CONFIG) as (client, _):
+            setup(client)
+            payload = export(client)
+            payload["items"][0].update(title="", light="e" * 32, light_name="Weg")
+            r = import_(client, payload)
+            self.assertEqual(r.status_code, 400)  # an empty title is invalid: nothing imported, no crash
+            payload["items"][0]["title"] = " x "
+            payload["items"][0].pop("title")
+            self.assertLess(import_(client, payload).status_code, 500)
 
 
 if __name__ == "__main__":

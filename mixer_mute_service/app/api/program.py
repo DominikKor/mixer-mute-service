@@ -116,7 +116,7 @@ async def import_program(request: Request, body: dict = Body(...)):
         if not isinstance(row.get("desktop", []), list):
             return fail(f"item {index + 1} has invalid fields", 400)
         row, dropped = await resolve(row, names)
-        warnings += [{"item": index + 1, "title": str(row.get("title", "")), **entry} for entry in dropped]
+        warnings += [{"item": index + 1, "title": str(row.get("title") or ""), **entry} for entry in dropped]
         try:
             item = ProgramItemRequest.model_validate(row)
         except ValidationError:

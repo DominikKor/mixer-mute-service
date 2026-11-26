@@ -1299,7 +1299,13 @@ $("program-import-file").addEventListener("change", async event => {
     }
     await loadProgramItems();
     toast(`${result.data.items.length} Programmpunkte importiert`, true);
-    for (const warning of result.data.warnings || []) toast(`${warning.title}: ${warning.reason}`, false);
+    const warnings = result.data.warnings || [];
+    if (warnings.length) {
+      // One summary; every detail is in the browser console.
+      const shown = warnings.slice(0, 3).map(w => `${w.kind} „${w.name}“`).join(", ");
+      toast(`Import: ${warnings.length} ${warnings.length === 1 ? "Verweis" : "Verweise"} nicht gefunden oder mehrdeutig (${shown}${warnings.length > 3 ? ", …" : ""}) – entfernt`, false);
+      for (const w of warnings) console.warn(`Import, Zeile ${w.item} (${w.title || "ohne Titel"}): ${w.reason}`);
+    }
   } finally {
     button.disabled = false;
   }
