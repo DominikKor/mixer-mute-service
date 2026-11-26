@@ -28,6 +28,7 @@ from .file_actions import (PLAYER_FAILURE_PREFIX, is_file_action, no_file_reason
                            runs_from_network_share, spotlight_search)
 from .mission_spotlight import profile_path
 from .native_controls import NativeControlError
+from .profile_stops import program_row
 from .responses import Result, controller_result
 
 log = logging.getLogger("mixer.actions")
@@ -245,11 +246,49 @@ async def show_profile(request: Request, profile_id: str) -> Result:
             return {"ok": False, "reason": "several monitors are only possible for images"}, 400
         payload["monitors"] = profile.monitors
     try:
-        return await display_agent.call(cfg, profile.target_ip, "/display", payload), 200
+        answer = await _tracked_start(request, profile_id, profile, lambda extra: display_agent.call(
+            cfg, profile.target_ip, "/display", {**payload, **extra}))
     except AgentError as exc:
         if exc.agent_status == 503:
             return {"ok": False, "reason": await _no_file_reason(request, profile, payload["path"])}, 502
         return exc.answer(), exc.status
+    return answer, 200
+
+
+def _shown_profiles(request: Request):
+    """What desktop profiles are shown (app/profile_stops.py), or None."""
+    return getattr(request.app.state, "shown_profiles", None)
+
+
+async def _tracked_start(request: Request, profile_id: str, profile, send) -> dict:
+    """Send a profile's start (send(extra): the agent call, extra fields
+    added) through the notes of app/profile_stops.py. A program row's start
+    is noted once the agent accepted it (it stops when the program moves
+    on); one by hand takes the profile over (it keeps running). A program
+    row asks the agent to keep music that still plays and a video window
+    still open as they are. Never waits for a stop. Raises AgentError as
+    send()."""
+    shown = _shown_profiles(request)
+    if shown is None:
+        return await send({})
+    stamp = shown.starting(profile_id)
+    extra = {"stamp": stamp}
+    if program_row() is not None:
+        if profile.kind == "audio":
+            extra["keep_if_playing"] = True
+        elif profile.kind == "file":
+            extra["keep_if_open"] = True
+    try:
+        answer = await send(extra)
+    except AgentError as exc:
+        if exc.agent_status != 400:
+            raise
+        # An agent from before stamps: the start as it knows it.
+        log.warning("Agent %s is older than start stamps (update the desktop agent)", profile.target_ip)
+        answer = await send({})
+    if answer.get("ok") is not False:
+        shown.accepted(profile_id, profile.target_ip, profile.kind, stamp)
+    return answer
 
 
 async def control_audio(request: Request, profile_id: str, action: str) -> Result:
@@ -267,9 +306,13 @@ async def control_audio(request: Request, profile_id: str, action: str) -> Resul
         # always full volume now, so every agent version accepts it.
         payload["fade"] = {"db": AUDIO_FADE_FULL_DB, "seconds": profile.fade_seconds}
     cfg = request.app.state.cfg.desktop_display
+
+    def send(extra: dict):
+        return display_agent.call(cfg, profile.target_ip, "/audio", {**payload, **extra},
+                                  timeout=display_agent.AUDIO_TIMEOUT_SECONDS)
+
     try:
-        return await display_agent.call(cfg, profile.target_ip, "/audio", payload,
-                                        timeout=display_agent.AUDIO_TIMEOUT_SECONDS), 200
+        answer = await (_tracked_start(request, profile_id, profile, send) if action == "play" else send({}))
     except AgentError as exc:
         if exc.agent_status is None:
             return exc.answer(), exc.status
@@ -286,6 +329,10 @@ async def control_audio(request: Request, profile_id: str, action: str) -> Resul
             # Agents before fading reject the extra field.
             reason += "; update the desktop agent on this PC for fading"
         return {"ok": False, "reason": reason}, exc.agent_status
+    shown = _shown_profiles(request)
+    if shown is not None and action == "stop" and answer.get("ok") is not False:
+        shown.audio_stopped(profile.target_ip)
+    return answer, 200
 
 
 async def run_profile(request: Request, profile_id: str) -> Result:

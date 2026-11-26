@@ -31,6 +31,10 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 _tmp = temp_dir("mixer_profiles_")
 
 
+
+def without_stamp(payload: dict) -> dict:
+    return {key: value for key, value in payload.items() if key != "stamp"}
+
 def check(name, cond):
     global PASS, FAIL
     PASS, FAIL = (PASS + 1, FAIL) if cond else (PASS, FAIL + 1)
@@ -336,10 +340,12 @@ with TestClient(app) as client:
     }) as forward:
         r = client.post("/desktop/audio/audio/play")
         check("audio play forwarded", r.status_code == 200 and r.json()["action"] == "play")
+        # Every start carries a stamp (app/profile_stops.py): a later stop
+        # names the start it means.
         check("play uses configured target and track", forward.call_args.args[0] ==
-              "http://192.168.188.11:8766/audio" and forward.call_args.args[2] == {
+              "http://192.168.188.11:8766/audio" and without_stamp(forward.call_args.args[2]) == {
                   "id": "audio", "action": "play", "path": AUDIO.path
-              })
+              } and len(forward.call_args.args[2]["stamp"]) == 32)
         r = client.post("/desktop/audio/audio/stop")
         check("audio stop forwarded", r.status_code == 200 and r.json()["action"] == "stop")
         check("stop does not send a track path", forward.call_args.args[2] == {
@@ -358,15 +364,15 @@ with TestClient(app) as client:
         "ok": True, "action": payload.get("action")
     }) as forward:
         client.post("/desktop/faded/audio/play")
-        check("play fades in to full volume (0 dB = 100 %)", forward.call_args.args[2] == {
+        check("play fades in to full volume (0 dB = 100 %)", without_stamp(forward.call_args.args[2]) == {
             "id": "faded", "action": "play", "path": AUDIO.path, "fade": {"db": 0.0, "seconds": 4.0}})
         client.post("/desktop/faded/audio/stop")
         check("stop fades out from there", forward.call_args.args[2] == {
             "id": "faded", "action": "stop", "path": None, "fade": {"db": 0.0, "seconds": 4.0}})
         client.post("/desktop/profiles", json={"id": "qrimg", **QR.model_dump()})
         client.post("/desktop/qrimg/open")
-        check("display request has exactly the agent's keys", set(forward.call_args.args[2]) == {
-            "id", "title", "kind", "path", "args", "fullscreen", "monitor", "position"})
+        check("display request has exactly the agent's keys (and the stamp)", set(forward.call_args.args[2]) == {
+            "id", "title", "kind", "path", "args", "fullscreen", "monitor", "position", "stamp"})
     import urllib.error  # noqa: E402
     old_agent = urllib.error.HTTPError("http://x/audio", 400, "Bad Request", {}, None)
     with patch("app.display_agent._post", side_effect=old_agent):

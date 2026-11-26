@@ -125,6 +125,10 @@ async def run_file_action(request: Request, value: str) -> Tuple[dict, int]:
             return {"ok": False, "reason": await no_file_reason(request, target, path), "file": name}, 502
         return {**exc.answer(), "file": name}, exc.status
     log.info("FILE %s %s on %s", "play" if kind == "audio" else "open", path, target)
+    shown = getattr(request.app.state, "shown_profiles", None)
+    if kind == "audio" and shown is not None and result.get("ok", True) is not False:
+        # It replaced the music on that PC (app/profile_stops.py).
+        shown.audio_replaced(target)
     return {"ok": result.get("ok", True) is not False, "file": name, "kind": kind, "target": target}, 200
 
 

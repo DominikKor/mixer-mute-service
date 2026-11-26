@@ -140,7 +140,26 @@ miniatures, and **Standard** restores the original one.
   (one row at a time, Esc or another tap closes it).
   Play activates the group first, then runs
   the linked actions in order; the delay records the click offset from the
-  planned time. The cue bar shows the clock, the next row and how long until
+  planned time. As soon as a row starts (Play, **Weiter**), the desktop
+  profiles the rows before started stop, unless the new row starts them
+  itself (app/profile_stops.py): music fades out with its profile's fade,
+  a file's window (e.g. the Mission Spotlight video) closes and an image is
+  hidden (agent `POST /close`; only windows of the process the agent
+  started itself: a file handed to an app that was already running, e.g.
+  a single-instance player, cannot be closed and is logged). A profile the
+  new row starts again is sent again, and the agent decides: music that
+  still plays and a video window still open stay as they are (no new
+  fade-in, no reopened video), music that ended starts again, an image is
+  shown again. Music is never stopped on a PC where the new row starts
+  audio itself (a profile or a file). Every start carries a stamp and a
+  stop names the start it means, so the agent never lets a late stop end
+  a newer start; no start waits for a stop. What the operator started by hand (a Desktop key,
+  a shortcut key) keeps running, also a profile the program started whose
+  Desktop key was used by hand since. Programs (e.g. OBS),
+  song windows, files of the row's file fields, the beamer and the light
+  are left alone. The stops run in the background with short timeouts; an
+  agent that does not answer is skipped for 30 s and tried again on the
+  next row. After a restart nothing counts as started by the program. The cue bar shows the clock, the next row and how long until
   it is due; **Weiter** starts the next row (also from a Stream Deck via
   `POST /program/next`). The row that ran last today is marked "Läuft", the
   next one "Nächster", earlier ones are dimmed. **Duplizieren** puts the copy

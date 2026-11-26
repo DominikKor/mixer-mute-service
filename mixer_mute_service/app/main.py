@@ -45,6 +45,7 @@ from .request_guard import refusal
 from .program_items import ProgramItemStore
 from .program_pdf import ProgramPdfStore
 from .shortcuts import ShortcutStore
+from .profile_stops import ShownProfiles
 from .program_templates import ProgramTemplateStore
 from .api import router
 from .songs import SongService
@@ -161,6 +162,8 @@ async def lifespan(app: FastAPI):
     # One preset save per camera at a time (app/api/cameras.py), per event loop.
     app.state.camera_preset_locks = {}
     app.state.camera_ptz = camera_ptz
+    # Desktop profiles shown or playing; stopped when the program moves on.
+    app.state.shown_profiles = ShownProfiles()
     app.state.native_controls = _optional(
         app, "native controls", lambda: NativeControlService(data_dir / "native_control_state.json"))
     camera_program = None
