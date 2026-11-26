@@ -27,8 +27,6 @@ LIBRARY = {
     "zweit.foil": {"title": "Zweites Lied", "titles": ["Zweites Lied"], "books": [], "copyright": "",
                    "slides": [{"key": "1", "text": "a"}]},
 }
-for _file, _title in (("above.foil", "Above all"), ("ach.foil", "Ach mein Herr Jesu"), ("sorgen.foil", "All eure Sorgen")):
-    LIBRARY[_file] = {"title": _title, "titles": [_title], "books": [], "copyright": "", "slides": [{"key": "1", "text": "a"}]}
 
 
 def put(client, time, title, **extra):
@@ -223,9 +221,11 @@ def production_setup(client):
     # the template as it was saved: other slot titles (last time's songs) than the program rows have now
     template = client.post("/program/templates", json={"name": "Gottesdienst", "slots": slots}).json()["template"]
     store = client.app.state.program_templates
-    for row, (title, _) in zip(next(t for t in store._templates if t["id"] == template["id"])["rows"], PROD_TEMPLATE):
+    stored = next(t for t in store._templates if t["id"] == template["id"])
+    for row, (title, _) in zip(stored["rows"], PROD_TEMPLATE):
         row["title"] = title
-    return template
+    del stored["slot_names"]  # saved before slots were named by place
+    return client.get("/program/templates").json()["templates"][0]
 
 
 class SongSlotAnchorTests(unittest.TestCase):
@@ -351,9 +351,9 @@ class SongSlotAnchorTests(unittest.TestCase):
         with app_client() as (client, _):
             client.app.state.songs.songs = dict(LIBRARY)
             put(client, "10:00", "Begrüßung")
-            a = put(client, "10:05", "Above all", song="above.foil")
+            a = put(client, "10:05", "Above all", song="neu.foil")
             put(client, "10:10", "Gebet")
-            b = put(client, "10:15", "Ach mein Herr Jesu", song="ach.foil")
+            b = put(client, "10:15", "Ach mein Herr Jesu", song="zweit.foil")
             c = put(client, "10:20", "Eingangslied", song="neu.foil")
             d = put(client, "10:25", "Lobpreis")  # no song, a name the user gave
             t = client.post("/program/templates", json={"name": "GD", "slots": [a["id"], b["id"], c["id"], d["id"]]}).json()["template"]
@@ -401,13 +401,83 @@ class SongSlotAnchorTests(unittest.TestCase):
         keys = _song_keys(LIBRARY)
         for title, song, expected in [
             ("Lied", None, True), ("Lied 3", None, True), ("lied  2: 300", None, True),  # already by place
-            ("Above all", None, True), ("ABOVE ALL: x", None, True),  # the title of a library song
+            ("Neues Lied", None, True), ("NEUES LIED: x", None, True),  # the title of a library song
             ("Eigenes Lied", "Eigenes Lied.foil", True),  # the file name of its song (library not loaded)
             ("Eigenes Lied", "andere.foil", False),
             ("Eingangslied", None, False), ("Schlusslied", "neu.foil", False), ("Lobpreis", None, False),  # the user's
             ("Kinderlied", None, False),
         ]:
-            self.assertEqual(is_place_named(title, song, keys), expected, (title, song))
+            self.assertEqual(is_place_named(title, keys, song), expected, (title, song))
+        # saving a template: a row with a song is named by its place, whatever its title says
+        self.assertTrue(is_place_named("Above all", keys, "neu.foil", by_song=True))
+        self.assertFalse(is_place_named("Eingangslied", keys, "neu.foil", by_song=True))
+        # slots of a template saved before slots were named by place: last time's songs
+        self.assertTrue(is_place_named("All eure Sorgen", keys, slot_keys=frozenset({"alleuresorgen"})))
+        self.assertFalse(is_place_named("Eingangslied", keys, slot_keys=frozenset({"eingangslied"})))
+
+    def test_save_names_a_row_with_a_song_by_place_even_if_the_library_lacks_its_title(self):
+        with app_client() as (client, _):
+            client.app.state.songs.songs = dict(LIBRARY)
+            row = put(client, "10:05", "Above all", song="neu.foil")  # the library has no "Above all"
+            put(client, "10:00", "Begrüßung")
+            t = client.post("/program/templates", json={"name": "GD", "slots": [row["id"]]}).json()["template"]
+            self.assertEqual([r["title"] for r in t["rows"]], ["Begrüßung", "Lied 1"])
+            self.assertEqual(t["slot_names"], "place")
+
+    def test_old_template_slot_titles_name_by_place_without_the_library(self):
+        with app_client() as (client, _):
+            template = production_setup(client)  # an old template; the library has none of its songs
+            self.assertNotIn("slot_names", template)
+            self.assertEqual(client.app.state.songs.songs.get("sorgen.foil"), None)
+            songs = [{"song_id": "neu.foil", "text": ""}] * 3 + [{"song_id": None, "text": "300"}]
+            apply(client, template, songs)
+            now = rows(client)
+            self.assertEqual([x["title"] for x in now if x["title"].startswith("Lied")],
+                             ["Lied 1", "Lied 2", "Lied 3", "Lied 4: 300"])
+            self.assertNotIn("All eure Sorgen", [x["title"] for x in now])
+            self.assertEqual([x["song"] for x in now if x["title"].startswith("Lied")][:3], ["neu.foil"] * 3)
+
+    def test_old_template_builds_an_empty_program_without_the_library(self):
+        with app_client() as (client, _):
+            template = production_setup(client)
+            for item in rows(client):
+                client.delete(f"/program/items/{item['id']}")
+            songs = [{"song_id": "neu.foil", "text": ""}] * 3 + [{"song_id": None, "text": "300"}]
+            apply(client, template, songs)
+            titles = [x["title"] for x in rows(client)]
+            self.assertEqual([t for t in titles if t.startswith("Lied")], ["Lied 1", "Lied 2", "Lied 3", "Lied 4: 300"])
+            self.assertFalse({"Above all", "Ach mein Herr Jesu", "All eure Sorgen", "All eure Sorgen: 300"} & set(titles))
+
+    def test_the_mark_survives_a_restart(self):
+        import tempfile
+        from pathlib import Path
+
+        from app.program_templates import ProgramTemplateStore
+
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "templates.json"
+            store = ProgramTemplateStore(path)
+            items = [{"id": "a", "time": "10:00", "title": "Lobpreis", "person": "", "group": "", "song": "neu.foil",
+                      "playback_description": "", "translation_description": "", "lyrics_description": ""}]
+            asyncio.run(store.save("GD", items, {"a"}, songs=LIBRARY))
+            reloaded = asyncio.run(ProgramTemplateStore(path).list())
+            self.assertEqual((reloaded[0]["slot_names"], reloaded[0]["rows"][0]["title"]), ("place", "Lied 1"))
+
+    def test_a_template_saved_by_place_keeps_a_custom_slot_name(self):
+        with app_client() as (client, _):
+            client.app.state.songs.songs = dict(LIBRARY)
+            put(client, "10:00", "Begrüßung")
+            slot = put(client, "10:05", "Lobpreis")  # no song: the user's name
+            put(client, "10:30", "Predigt")
+            template = client.post("/program/templates", json={"name": "GD", "slots": [slot["id"]]}).json()["template"]
+            self.assertEqual((template["slot_names"], template["rows"][1]["title"]), ("place", "Lobpreis"))
+            apply(client, template, [{"song_id": "neu.foil", "text": ""}])
+            self.assertEqual(by_title(client, "Lobpreis")["song"], "neu.foil")
+            # the same template without the mark (an old one): the slot title counts as a song of that day
+            stored = client.app.state.program_templates._templates[0]
+            del stored["slot_names"]
+            apply(client, client.get("/program/templates").json()["templates"][0], [{"song_id": "zweit.foil", "text": ""}])
+            self.assertEqual(by_title(client, "Lied 1")["song"], "zweit.foil")
 
     def test_saving_and_applying_agree_for_a_row_titled_by_its_song_file(self):
         with app_client() as (client, _):  # no library loaded: only the file name tells
