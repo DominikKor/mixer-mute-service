@@ -77,12 +77,39 @@ class SlideLayoutTests(unittest.TestCase):
         self.assertEqual(px, MAX_PX)
         self.assertEqual(lines, text.split("\n"))
 
-    def test_a_long_own_line_is_shrunk_before_it_is_wrapped(self):
-        # Fits at about 50 px: still above the minimum, so it stays one line.
-        line = "x" * 60
+    def test_own_lines_kept_when_they_cost_at_most_15_percent(self):
+        # 42 characters fit at 63.6 px, the wrapped text would get 72 px:
+        # 88 % of it, so the line stays whole (a little smaller).
+        line = "Herr, du bist mein Leben, Herr du bist mei"
         px, lines = agent._fit_text(measure, line, MAX_PX, MIN_PX, BOX_W, BOX_H)
         self.assertEqual(lines, [line])
-        self.assertTrue(MIN_PX <= px < MAX_PX)
+        self.assertTrue(0.85 * MAX_PX <= px < MAX_PX)
+
+    def test_own_lines_wrapped_when_they_would_be_much_smaller(self):
+        # 55 characters would need 49.7 px whole, under 85 % of the 72 px the
+        # wrapped text gets: wrapped, so the slides of a song keep one size.
+        line = "Du bist meine Stärke, nichts sonst hab ich hier, Herr!!"
+        self.assertEqual(len(line), 55)
+        px, lines = agent._fit_text(measure, "Kurz\n" + line, MAX_PX, MIN_PX, BOX_W, BOX_H)
+        self.assertEqual(px, MAX_PX)
+        self.assertEqual(lines[0], "Kurz")
+        self.assertEqual(" ".join(lines[1:]), line)
+        self.assertGreater(len(lines), 2)
+
+    def test_repeat_marks_stay_with_their_word(self):
+        self.assertEqual(agent._word_units("|: Alles ist eitel, du aber bleibst :|"),
+                         ["|: Alles", "ist", "eitel,", "du", "aber", "bleibst :|"])
+        width = measure("|: Alles ist eitel", MAX_PX)
+        lines = agent._wrap_lines(measure, ["|: Alles ist eitel, du aber bleibst :|"], MAX_PX, width)
+        self.assertNotIn("|:", lines)
+        self.assertNotIn(":|", lines)
+        self.assertTrue(lines[0].startswith("|: Alles") and lines[-1].endswith("bleibst :|"))
+
+    def test_text_taller_than_its_box_is_cut_at_the_bottom(self):
+        # Box from 100 to 500, 40 px lines every 50 px: 100, 150, ... 450 end at 490.
+        self.assertEqual(agent._visible_lines(20, 100, 40, 500), 8)
+        self.assertEqual(agent._visible_lines(3, 100, 40, 500), 3)
+        self.assertEqual(agent._visible_lines(3, 100, 40, 130), 0)
 
     def test_never_below_the_minimum(self):
         text = "\n".join([ONE_LINE] * 4)  # far too much text

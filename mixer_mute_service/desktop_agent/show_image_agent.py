@@ -1135,18 +1135,41 @@ SLIDE_MIN_PX = 40
 PREVIEW_SCALE, PREVIEW_MIN, PREVIEW_GAP, PREVIEW_MIX = 0.5, 20, 0.5, 0.45
 
 
+# The file's own lines are kept only if that costs at most 15 % of the size
+# the wrapped text would get; otherwise the slides of one song would jump
+# between small and full size.
+OWN_LINES_KEEP = 0.85
+# Repeat marks stay with their word, never alone on a line.
+REPEAT_OPEN, REPEAT_CLOSE = "|:", ":|"
+
+
+def _word_units(paragraph: str) -> list[str]:
+    """The paragraph's words; a repeat mark is joined to its neighbour
+    ("|: Alles", "bleibst. :|") so a line break never separates them."""
+    units: list[str] = []
+    for word in paragraph.split(" "):
+        if word == REPEAT_CLOSE and units and units[-1] not in ("", REPEAT_OPEN):
+            units[-1] += " " + word
+        elif word and units and units[-1] == REPEAT_OPEN:
+            units[-1] += " " + word
+        else:
+            units.append(word)
+    return units
+
+
 def _wrap_lines(measure, paragraphs: list[str], px: float, width: float) -> list[str]:
     """Each line of the text, broken at spaces where it is wider than width
     (like FoilPresenter, whose files often keep a whole stanza on one line).
     A word wider than the line on its own is broken between letters.
-    measure(text, size) gives the width of text at that pixel size."""
+    measure(text, size) gives the width of text at that pixel size.
+    Same as wrapSlideLines() in app/static/js/songs.js."""
     out = []
     for paragraph in paragraphs:
         if measure(paragraph, px) <= width:
             out.append(paragraph)
             continue
         line = ""
-        for word in paragraph.split(" "):
+        for word in _word_units(paragraph):
             candidate = word if not line else f"{line} {word}"
             if not line or measure(candidate, px) <= width:
                 line = candidate
@@ -1154,31 +1177,48 @@ def _wrap_lines(measure, paragraphs: list[str], px: float, width: float) -> list
                 out.append(line)
                 line = word
             while len(line) > 1 and measure(line, px) > width:
-                cut = max(1, next((k for k in range(len(line) - 1, 0, -1) if measure(line[:k], px) <= width), 1))
+                cut = next((k for k in range(len(line) - 1, 0, -1) if measure(line[:k], px) <= width), 1)
                 out.append(line[:cut])
                 line = line[cut:]
         out.append(line)
     return out
 
 
+def _slide_sizes(max_px: float, min_px: float):
+    """The sizes tried, largest first (the page tries the same ones)."""
+    px = max_px
+    while px >= min_px:
+        yield px
+        px *= 0.94
+
+
 def _fit_text(measure, text: str, max_px: float, min_px: float, box_w: float, box_h: float):
-    """(size, lines) of the lyrics. The text's own lines are kept as long as
-    they fit at min_px or larger; otherwise lines are wrapped at the largest
-    size where the wrapped text fits; at min_px it is wrapped regardless."""
+    """(size, lines) of the lyrics: wrapped at the largest size where the text
+    fits; the file's own lines instead if they fit at OWN_LINES_KEEP of that
+    size or more (and not below min_px); at min_px wrapped regardless.
+    Same as fitSlideText() in app/static/js/songs.js."""
     paragraphs = text.split("\n")
     min_px = min(min_px, max_px)
-    px = max_px
-    while px >= min_px:
-        if max(measure(line, px) for line in paragraphs) <= box_w and len(paragraphs) * px * SLIDE_LINE <= box_h:
-            return px, paragraphs
-        px *= 0.94
-    px = max_px
-    while px >= min_px:
+    own = next((px for px in _slide_sizes(max_px, min_px)
+                if max(measure(line, px) for line in paragraphs) <= box_w
+                and len(paragraphs) * px * SLIDE_LINE <= box_h), None)
+    wrapped = None
+    for px in _slide_sizes(max_px, min_px):
         lines = _wrap_lines(measure, paragraphs, px, box_w)
         if len(lines) * px * SLIDE_LINE <= box_h:
-            return px, lines
-        px *= 0.94
+            wrapped = (px, lines)
+            break
+    if own is not None and (wrapped is None or own >= OWN_LINES_KEEP * wrapped[0]):
+        return own, paragraphs
+    if wrapped is not None:
+        return wrapped
     return min_px, _wrap_lines(measure, paragraphs, min_px, box_w)
+
+
+def _visible_lines(count: int, top: float, px: float, bottom: float) -> int:
+    """How many of the lines fit above bottom (the text never runs into the
+    copyright). Same as in renderSlide()."""
+    return max(0, min(count, int((bottom - top - px) // (px * SLIDE_LINE)) + 1)) if bottom - top >= px else 0
 
 
 def _mix_color(fg: str, bg: str, amount: float) -> str:
@@ -1232,7 +1272,9 @@ def _draw_slide(canvas: tk.Canvas, width: int, height: int, body: dict) -> None:
     font = tkfont.Font(family=style["font"], size=-max(1, round(px)))
     # Centred in the box; text taller than the box starts at its top.
     top = pad_y + title_h + max(0.0, (box_h - len(lines) * px * SLIDE_LINE) / 2)
-    for i, line in enumerate(lines):
+    # Text taller than its box is cut at the box's bottom edge.
+    shown = _visible_lines(len(lines), top, px, pad_y + title_h + box_h)
+    for i, line in enumerate(lines[:shown]):
         canvas.create_text(x, top + i * px * SLIDE_LINE, text=line, anchor=top_anchor,
                            fill=style["text_color"], font=font, justify=align)
     next_text = body.get("next", "")

@@ -53,24 +53,45 @@ function slideMeasure(ctx, settings) {
   return (text, size) => { ctx.font = songSlideFont(size, settings); return ctx.measureText(text).width; };
 }
 
+// The file's own lines are kept only if that costs at most 15 % of the size
+// the wrapped text would get (else the slides of a song jump between small
+// and full size). Repeat marks stay with their word.
+const OWN_LINES_KEEP = 0.85;
+const REPEAT_OPEN = "|:", REPEAT_CLOSE = ":|";
+
+// The paragraph's words; a repeat mark is joined to its neighbour
+// ("|: Alles", "bleibst. :|") so a line break never separates them.
+function slideWordUnits(paragraph) {
+  const units = [];
+  for (const word of paragraph.split(" ")) {
+    const last = units[units.length - 1];
+    if (word === REPEAT_CLOSE && units.length && last !== "" && last !== REPEAT_OPEN) units[units.length - 1] += " " + word;
+    else if (word && units.length && last === REPEAT_OPEN) units[units.length - 1] += " " + word;
+    else units.push(word);
+  }
+  return units;
+}
+
 // Each line of the text, broken at spaces where it is wider than width (like
 // FoilPresenter, whose files often keep a whole stanza on one line); a word
-// wider than the line on its own is broken between letters. Same as
-// _wrap_lines() in the display agent.
+// wider than the line on its own is broken between letters (code points, as
+// in Python). Same as _wrap_lines() in the display agent.
 function wrapSlideLines(measure, paragraphs, px, width) {
   const out = [];
   for (const paragraph of paragraphs) {
     if (measure(paragraph, px) <= width) { out.push(paragraph); continue; }
     let line = "";
-    for (const word of paragraph.split(" ")) {
+    for (const word of slideWordUnits(paragraph)) {
       const candidate = line ? `${line} ${word}` : word;
       if (!line || measure(candidate, px) <= width) line = candidate;
       else { out.push(line); line = word; }
-      while (line.length > 1 && measure(line, px) > width) {
-        let cut = line.length - 1;
-        while (cut > 1 && measure(line.slice(0, cut), px) > width) cut--;
-        out.push(line.slice(0, cut));
-        line = line.slice(cut);
+      let chars = Array.from(line);
+      while (chars.length > 1 && measure(line, px) > width) {
+        let cut = chars.length - 1;
+        while (cut > 1 && measure(chars.slice(0, cut).join(""), px) > width) cut--;
+        out.push(chars.slice(0, cut).join(""));
+        chars = chars.slice(cut);
+        line = chars.join("");
       }
     }
     out.push(line);
@@ -78,22 +99,36 @@ function wrapSlideLines(measure, paragraphs, px, width) {
   return out;
 }
 
-// {px, lines} of the lyrics: the text's own lines while they fit at minPx or
-// larger, else wrapped at the largest size that fits, at minPx regardless.
-// Same as _fit_text() in the display agent.
+// The sizes tried, largest first (the display agent tries the same ones).
+function slideSizes(maxPx, minPx) {
+  const sizes = [];
+  for (let px = maxPx; px >= minPx; px *= 0.94) sizes.push(px);
+  return sizes;
+}
+
+// {px, lines} of the lyrics: wrapped at the largest size where the text fits;
+// the file's own lines instead if they fit at OWN_LINES_KEEP of that size or
+// more (not below minPx); at minPx wrapped regardless. Same as _fit_text().
 function fitSlideText(measure, text, maxPx, minPx, boxW, boxH) {
   const paragraphs = text.split("\n");
   minPx = Math.min(minPx, maxPx);
-  for (let px = maxPx; px >= minPx; px *= 0.94) {
-    if (Math.max(...paragraphs.map(l => measure(l, px))) <= boxW && paragraphs.length * px * SLIDE.line <= boxH) {
-      return { px, lines: paragraphs };
-    }
-  }
-  for (let px = maxPx; px >= minPx; px *= 0.94) {
+  const sizes = slideSizes(maxPx, minPx);
+  const own = sizes.find(px => Math.max(...paragraphs.map(l => measure(l, px))) <= boxW
+    && paragraphs.length * px * SLIDE.line <= boxH);
+  let wrapped = null;
+  for (const px of sizes) {
     const lines = wrapSlideLines(measure, paragraphs, px, boxW);
-    if (lines.length * px * SLIDE.line <= boxH) return { px, lines };
+    if (lines.length * px * SLIDE.line <= boxH) { wrapped = { px, lines }; break; }
   }
+  if (own !== undefined && (!wrapped || own >= OWN_LINES_KEEP * wrapped.px)) return { px: own, lines: paragraphs };
+  if (wrapped) return wrapped;
   return { px: minPx, lines: wrapSlideLines(measure, paragraphs, minPx, boxW) };
+}
+
+// How many lines fit above bottom (the text never runs into the copyright).
+// Same as _visible_lines() in the display agent.
+function visibleSlideLines(count, top, px, bottom) {
+  return bottom - top >= px ? Math.max(0, Math.min(count, Math.floor((bottom - top - px) / (px * SLIDE.line)) + 1)) : 0;
 }
 
 // {px, lines} of the next-slide preview, or null where it does not fit: half
@@ -136,7 +171,8 @@ function renderSlide(box, slide, settings) {
   };
   // Centred in the box; text taller than the box starts at its top.
   const top = padY + titleH + Math.max(0, (boxH - lines.length * px * SLIDE.line) / 2);
-  lines.forEach((line, i) => {
+  // Text taller than its box is cut at the box's bottom edge.
+  lines.slice(0, visibleSlideLines(lines.length, top, px, padY + titleH + boxH)).forEach((line, i) => {
     const el = document.createElement("div");
     el.className = "slide-line";
     el.textContent = line;

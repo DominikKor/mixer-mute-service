@@ -684,16 +684,20 @@ bleibt dabei unverändert groß und an seiner Stelle; nach der letzten Folie gib
 es keine Vorschau. Ein Anzeige-PC mit älterem Display-Agent bekommt die Folie
 ohne Vorschau und Ausrichtung, bis der Agent aktualisiert ist (die Update-Taste
 aktualisiert die Agents aller PCs).
-**Zeilen und Schriftgröße**: Die Zeilenumbrüche aus der Datei bleiben, solange
-der Text mit ihnen in mindestens 40 px (bei 1080p; nie mehr als die größte
-Schrift) passt – dafür wird er höchstens kleiner. Viele FoilPresenter-Dateien
-haben eine ganze Strophe in einer einzigen Zeile (FoilPresenter bricht selbst
-um); solche Zeilen werden wie dort an Leerzeichen umgebrochen, in der größten
-Schrift, bei der der Text auf die Folie passt, nie unter 40 px. Passt selbst
-das nicht (ganzes Lied auf einer Folie), beginnt der Text oben. Anzeige-PC und
-Vorschau auf der Seite rechnen gleich (`_fit_text` im Agent, `fitSlideText` in
-`js/songs.js`); auch die graue Vorschau der nächsten Folie wird umgebrochen.
-Der Agent auf dem Anzeige-PC braucht dafür die neue Version.
+**Zeilen und Schriftgröße**: Viele FoilPresenter-Dateien haben eine ganze
+Strophe in einer einzigen Zeile (FoilPresenter bricht selbst um). Solche Zeilen
+werden wie dort an Leerzeichen umgebrochen, in der größten Schrift, bei der der
+Text auf die Folie passt, nie unter 40 px (bei 1080p; nie mehr als die größte
+Schrift). Die eigenen Zeilen der Datei bleiben, wenn sie dafür höchstens 15 %
+kleiner werden als mit Umbruch – so springen die Folien eines Liedes nicht
+zwischen klein und groß. Wiederholungszeichen (`|:` / `:|`) bleiben beim
+Umbruch an ihrem Wort. Passt der Text selbst in 40 px nicht (ganzes Lied auf
+einer Folie), beginnt er oben und endet am Rand seines Felds; Titel und
+Copyright bleiben frei. Anzeige-PC und Vorschau auf der Seite rechnen gleich
+(`_fit_text` im Agent, `fitSlideText` in `js/songs.js`;
+`tests/test_slide_parity.py` vergleicht beide mit quickjs); auch die graue
+Vorschau der nächsten Folie wird umgebrochen. Der Agent auf dem Anzeige-PC
+braucht dafür die neue Version.
 **Titelfolie** (Standard: an): Jedes Lied beginnt mit einer eigenen Folie, auf
 der der Titel in der Mitte steht und das Copyright darunter (mit dem Schalter
 *Copyright*). Sie ist Folie 0, die Liedfolien zählen ab 1; ein Programmpunkt
