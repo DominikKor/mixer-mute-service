@@ -849,7 +849,8 @@ bis er wieder antwortet (dann zeigt er gleich die aktuelle). Die Liedanzeige
 nennt ihn in Gelb mit Grund, die Leiste am Programmpunkt zeigt ⚠ (antippen nennt
 ihn), und beim ersten Mal kommt eine Meldung (auch beim Start eines
 Programmpunkts). Erst wenn kein Bildschirm erreichbar ist, bleibt die Folie
-stehen (502). Ältere Einstellungen (`target_ip` + `monitor`) gelten als ein
+stehen (502); die Tasten, die keinen Bildschirm erreicht haben, zählen dann
+nicht, und zurückkommende Bildschirme zeigen dieselbe Folie wie die Seite. Ältere Einstellungen (`target_ip` + `monitor`) gelten als ein
 Bildschirm; `target_ip` ist seither der PC mit der Bibliothek, `monitor` der
 des ersten Bildschirms; eine ältere Seite ändert damit nur den ersten
 Bildschirm. Ein ungültiger oder doppelter Bildschirm in `song_display.json`
