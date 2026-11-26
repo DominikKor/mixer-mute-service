@@ -116,7 +116,9 @@ function programSelect(field, label, value, options, placeholder) {
 }
 
 // A row without a group leaves the mutes alone and only runs its actions.
-const NO_PROGRAM_GROUP = "Keine Mutegruppe";
+// Such a row is marked red (field and summary chip): usually a group is
+// wanted, so a forgotten one should stand out. Shortcuts are not marked.
+const NO_PROGRAM_GROUP = "Keine Mute Gruppe";
 // A row without a light scene leaves the light as it is.
 const NO_PROGRAM_LIGHT = "Licht bleibt";
 
@@ -581,7 +583,7 @@ function buildProgramRow(item, draft = false, kind = draft ? "draft" : "program"
   if (!shortcut) edit("Uhrzeit", programInput("time", "Uhrzeit", item.time, "text", 5), "time");
   edit(shortcut ? "Name" : "Titel", programInput("title", "Titel", item.title, "text", 120), "title");
   if (!shortcut) edit("Person", programInput("person", "Person", item.person, "text", 80), "person");
-  edit("Mutegruppe", programSelect("group", "Mutegruppe", item.group, programGroupOptions(), NO_PROGRAM_GROUP), "group");
+  edit("Mute Gruppe", programSelect("group", "Mute Gruppe", item.group, programGroupOptions(), NO_PROGRAM_GROUP), "group");
   edit("Licht", programSelect("light", "Licht-Preset", item.light, programLightOptions(item.light), NO_PROGRAM_LIGHT), "light");
 
   for (const [field, label] of [["playback", "Playback"], ["translation", "Übersetzung"], ["lyrics", "Liedtext"]]) {
@@ -707,15 +709,20 @@ function renderProgramSummary(row, item) {
   summary.querySelector(".program-sum-time").textContent = item.time || "--:--";
   summary.querySelector(".program-sum-title").textContent = item.title || "Ohne Titel";
   summary.querySelector(".program-sum-person").textContent = item.person || "";
-  renderProgramChips(summary.querySelector(".program-sum-chips"), programChips(item));
+  renderProgramChips(summary.querySelector(".program-sum-chips"), programChips(item), !item.group);
   if (!summary.disabled) summary.title = row.classList.contains("program-open") ? "Zuklappen" : "Bearbeiten";
 }
 
-function renderProgramChips(box, chips) {
-  const sig = JSON.stringify(chips);
+// noGroup: the row has no mute group; a red chip comes first.
+function renderProgramChips(box, chips, noGroup = false) {
+  const sig = JSON.stringify([chips, noGroup]);
   if (box.dataset.sig === sig) return;
   box.dataset.sig = sig;
-  box.replaceChildren(...(chips.length ? chips.map(chip => {
+  const warn = noGroup ? [Object.assign(document.createElement("span"), {
+    className: "program-chip no-group", textContent: NO_PROGRAM_GROUP,
+    title: "Dieser Punkt schaltet keine Mute Gruppe – nur seine Aktionen laufen",
+  })] : [];
+  box.replaceChildren(...warn, ...(chips.length ? chips.map(chip => {
     const element = document.createElement("span");
     element.className = `program-chip ${chip.kind}`;
     const label = document.createElement("b");
@@ -853,7 +860,7 @@ function renderProgramItems() {
   }
   // Only move rows that are out of place: moving a row would blur its field.
   wanted.forEach((row, i) => { if (tbody.children[i] !== row) tbody.insertBefore(row, tbody.children[i] || null); });
-  $("program-empty").hidden = PROGRAM_ITEMS.length > 0 || PROGRAM_DRAFT;
+  renderProgramAddRow();
   updateProgramCue();
   renderShortcuts();
   renderSongDock();   // js/song-dock.js: verse keys at the running row
@@ -1215,11 +1222,56 @@ async function deleteProgramItem(itemId, button) {
   renderProgramItems();
 }
 
+// A row runs best effort per area (app/api/program.py): what did not work,
+// named briefly, in one line.
+const PROGRAM_AREA_LABELS = {
+  mixer: "Mischpult", light: "Licht", beamer: "Beamer", playback: "Playback", translation: "Übersetzung",
+  lyrics: "Liedtext", desktop: "Desktop", song: "Lied", cameras: "Kameras",
+};
+const PROGRAM_AREA_REASONS = [
+  [/no mixer connection|not connected/i, "nicht verbunden"],
+  [/link stale|no data from mixer/i, "keine Daten vom Pult"],
+  [/panic/i, "Panic aktiv"],
+  [/display agent unavailable|unavailable|timed? ?out|no answer/i, "keine Antwort"],
+  [/^unknown group$/i, "Mutegruppe gelöscht"],
+  [/^unknown button$/i, "Taste gelöscht"],
+  [/^unknown light scene$/i, "Lichtszene gelöscht"],
+  [/^unknown song$/i, "Lied nicht gefunden"],
+  [/^unknown desktop profile/i, "Profil gelöscht"],
+  [/song library not loaded/i, "Liedbibliothek nicht geladen"],
+  [/switches mutes/i, "Taste schaltet Mutes (die Mutegruppe des Punkts tut das)"],
+];
+
+function programReasonText(reason) {
+  const known = PROGRAM_AREA_REASONS.find(([pattern]) => pattern.test(reason));
+  return known ? known[1] : reason;
+}
+
+// "Desktop: Logo: keine Antwort" – the desktop area names its profiles.
+function programAreaText(area, entry) {
+  const parts = String(entry.reason || "fehlgeschlagen").split("; ").map(part => {
+    const named = area === "desktop" && /^(.+?): (.+)$/.exec(part);
+    return named ? `${named[1]}: ${programReasonText(named[2])}` : programReasonText(part);
+  });
+  return `${PROGRAM_AREA_LABELS[area] || area}: ${parts.join(", ")}`;
+}
+
 function programPlayToast(result) {
   const title = result.data && result.data.title ? `„${result.data.title}“` : "Programmpunkt";
   // What the camera part said is in this toast; later outcomes come from the status.
   const cameraSeq = result.data && result.data.camera && result.data.camera.seq;
   if (typeof cameraSeq === "number") PROGRAM_CAMERA_SEQ = Math.max(PROGRAM_CAMERA_SEQ ?? 0, cameraSeq);
+  const areas = result.ok && result.data && result.data.areas;
+  if (areas && result.data.ok === false) {
+    // Some areas did not work: one line with all of them, the rest ran.
+    const failed = Object.entries(areas).filter(([, entry]) => !entry.ok).map(([area, entry]) => programAreaText(area, entry));
+    const ran = Object.values(areas).some(entry => entry.ok || entry.partial);
+    toast(`${title} ${ran ? "gestartet" : "– nichts ausgeführt"} – ${failed.join("; ")}`, false);
+    noteSongScreensFailed(result.data.song);
+    const wait = result.data.camera && result.data.camera.switch_in_seconds;
+    if (wait) setTimeout(checkCameraProgram, (wait + 4) * 1000);
+    return;
+  }
   if (!result.ok || result.data.ok === false) {
     // Name the action that failed and why (e.g. a file missing on the target PC).
     const failed = ((result.data && result.data.linked_actions) || []).find(action => action.ok === false);
@@ -1299,6 +1351,13 @@ $("program-import-file").addEventListener("change", async event => {
     }
     await loadProgramItems();
     toast(`${result.data.items.length} Programmpunkte importiert`, true);
+    const warnings = result.data.warnings || [];
+    if (warnings.length) {
+      // One summary; every detail is in the browser console.
+      const shown = warnings.slice(0, 3).map(w => `${w.kind} „${w.name}“`).join(", ");
+      toast(`Import: ${warnings.length} ${warnings.length === 1 ? "Verweis" : "Verweise"} nicht gefunden oder mehrdeutig (${shown}${warnings.length > 3 ? ", …" : ""}) – entfernt`, false);
+      for (const w of warnings) console.warn(`Import, Zeile ${w.item} (${w.title || "ohne Titel"}): ${w.reason}`);
+    }
   } finally {
     button.disabled = false;
   }
@@ -1312,11 +1371,23 @@ $("program-reset-btn").addEventListener("click", async event => {
   await loadProgramItems();
 });
 
-$("program-add-btn").addEventListener("click", () => {
+// The last "row" of the list: dashed and empty, "+ Programmpunkt hinzufügen",
+// the same as the head key. Hidden while a new row is open (that is the last
+// row then); with no rows at all it also says how else to start (it replaces
+// the empty note, which is left for a load error).
+function renderProgramAddRow() {
+  $("program-add-row").hidden = PROGRAM_DRAFT;
+  $("program-add-row-hint").hidden = PROGRAM_ITEMS.length > 0;
+  $("program-empty").hidden = true;
+}
+
+function startProgramDraft() {
   PROGRAM_DRAFT = true;
   renderProgramItems();
   document.querySelector('#program-items .program-draft-row [data-program-field="title"]')?.focus();
-});
+}
+$("program-add-btn").addEventListener("click", startProgramDraft);
+$("program-add-row").addEventListener("click", startProgramDraft);
 $("program-items").addEventListener("change", event => {
   const field = event.target.closest("[data-program-field]");
   if (field && field.dataset.programField === "time") field.value = normalizeProgramTime(field.value);

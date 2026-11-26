@@ -98,6 +98,11 @@ class SongDockWiringTest(unittest.TestCase):
         self.assertIn('event.target.closest(".sd-shield")', DOCK_JS)
         self.assertIn("songDockOverlaps(point, shield)", DOCK_JS)
         self.assertIn("SONG_DOCK.shield = null;", function_body(DOCK_JS, "closeSongDock"))
+        # The tap point counts too, the message comes once, a resize lifts it.
+        self.assertIn("songDockOverlaps(tap, shield)", handler)
+        self.assertIn("if (!SONG_DOCK.shieldToasted) toast(", handler)
+        self.assertIn("SONG_DOCK.shieldToasted = false;", function_body(DOCK_JS, "shieldSongDock"))
+        self.assertRegex(DOCK_JS, r'addEventListener\("resize", \(\) => \{ if \(SONG_DOCK.shield\) shieldSongDock\(null\); \}\)')
 
     def test_preview_reuses_the_slide_drawing(self):
         # The same drawing as the Liedanzeige (songs.js), no layout code of its own.

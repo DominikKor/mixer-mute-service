@@ -427,16 +427,25 @@ with TestClient(app) as client:
     with patch.object(app.state.native_controls, "press", AsyncMock(return_value={"ok": True})) as program_native, \
             patch("app.actions.run_profile", new=AsyncMock(return_value=({"ok": True}, 200))) as program_desktop:
         blocked_program_play = client.post(f"/program/items/{program_id}/play")
-        check("program play blocked while mixer offline", blocked_program_play.status_code == 409)
-        check("program play does not trigger linked buttons when group is blocked",
-              program_native.await_count == 0 and program_desktop.await_count == 0)
-    # A key deleted after the row was saved: refuse before muting anything.
+        blocked = blocked_program_play.json()
+        # Best effort per area: the mixer part is blocked as a whole (nothing
+        # sent to the mixer), the rest of the row runs all the same.
+        check("program play: mixer part blocked while mixer offline",
+              blocked_program_play.status_code == 200 and blocked["ok"] is False
+              and blocked["areas"]["mixer"]["ok"] is False and blocked["group_result"]["ok"] is False)
+        check("program play runs the other areas when the group is blocked",
+              program_native.await_count == 2 and program_desktop.await_count == 1
+              and blocked["areas"]["playback"] == {"ok": True} and blocked["partial"] is True)
+    # A key deleted after the row was saved: only that field is skipped.
     with patch.object(app.state.companion_button_store, "get_button", AsyncMock(return_value=None)), \
-            patch.object(app.state.controller, "group_set", AsyncMock(return_value={"ok": True})) as dangling_group:
+            patch.object(app.state.controller, "group_set", AsyncMock(return_value={"ok": True})) as dangling_group, \
+            patch("app.actions.run_profile", new=AsyncMock(return_value=({"ok": True}, 200))):
         dangling_play = client.post(f"/program/items/{program_id}/play")
-        check("program play refuses a deleted linked key",
-              dangling_play.status_code == 409 and dangling_play.json()["reason"] == "unknown translation button")
-        check("program play with a deleted key mutes nothing", dangling_group.await_count == 0)
+        areas = dangling_play.json()["areas"]
+        check("program play skips a deleted linked key",
+              dangling_play.status_code == 200 and areas["translation"] == {"ok": False, "reason": "unknown button", "skipped": True})
+        check("program play with a deleted key: the rest runs (group set)",
+              dangling_group.await_count == 1 and areas["mixer"] == {"ok": True} and areas["playback"] == {"ok": True})
     played_program = client.get("/program/items").json()[0]
     check("program play stores timing delay", played_program["last_delay_seconds"] is not None
           and played_program["last_played_at"] is not None)
@@ -461,11 +470,16 @@ with TestClient(app) as client:
         finished = client.post("/program/next")
         check("Weiter at the end -> 409 program finished",
               finished.status_code == 409 and finished.json()["reason"] == "program finished")
-    with patch.object(app.state.controller, "group_set", AsyncMock(return_value={"ok": False, "reason": "unsafe group operation"})):
+    # The row's other areas run all the same (best effort): their keys and
+    # profiles are faked so nothing reaches OBS or a display PC.
+    with patch.object(app.state.controller, "group_set", AsyncMock(return_value={"ok": False, "reason": "unsafe group operation"})), \
+            patch.object(app.state.native_controls, "press", AsyncMock(return_value={"ok": True})), \
+            patch("app.actions.run_profile", new=AsyncMock(return_value=({"ok": True}, 200))):
         client.post("/program/reset")
         blocked_next = client.post("/program/next")
-        check("blocked group: row is not marked as started",
-              blocked_next.status_code == 409 and client.get("/program/status").json()["next_id"] == program_id)
+        check("blocked group: the program moves on all the same",
+              blocked_next.status_code == 200 and blocked_next.json()["areas"]["mixer"]["ok"] is False
+              and client.get("/program/status").json()["current_id"] == program_id)
     reset = client.post("/program/reset")
     check("reset forgets start times", reset.status_code == 200
           and all(i["last_played_at"] is None for i in client.get("/program/items").json()))
