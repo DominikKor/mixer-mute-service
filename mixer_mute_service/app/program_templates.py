@@ -18,7 +18,7 @@ POST   /program/templates/{id}/apply {songs: [{song_id, text}], persons, dry_run
                                               dry_run: only return the rows;
                                               persons: [{id, person}] from the
                                               Ablauf PDF (app/program_pdf.py)
-POST   /songs/match {lines: [...]}            [{line, song_id, title, candidates}]
+POST   /songs/match {lines: [...]}            [{line, song_id, title, preferred_book, candidates}]
 """
 
 from __future__ import annotations
@@ -268,6 +268,28 @@ def _score(line: str, words: set, numbers: set, song: dict) -> int:
     return best
 
 
+# When one number exists in several songbooks and the line names no book, this
+# one is taken (the church mostly sings from it). Matches the book's name or its
+# initials: "GHS" = "Glauben Hoffen Singen".
+PREFERRED_BOOK = "GHS"
+
+
+def _is_preferred_book(name: str) -> bool:
+    words = _norm(name).split()
+    wanted = _norm(PREFERRED_BOOK).replace(" ", "")
+    return bool(words) and ("".join(words) == wanted or "".join(w[0] for w in words) == wanted)
+
+
+def _preferred_choice(top: List[str], numbers: set, songs: dict) -> Optional[str]:
+    """The one tied song that has a number of the line in the preferred book, else None."""
+    if not numbers:
+        return None
+    found = [sid for sid in top if any(
+        _is_preferred_book(book.get("name", "")) and str(book.get("number", "")).strip() in numbers
+        for book in songs[sid].get("books") or [])]
+    return found[0] if len(found) == 1 else None
+
+
 def match_lines(lines: List[str], songs: dict) -> List[dict]:
     results = []
     for raw in lines:
@@ -283,13 +305,20 @@ def match_lines(lines: List[str], songs: dict) -> List[dict]:
         )
         scored = [pair for pair in scored if pair[0] >= 30][:5]
         song_id = None
-        # Only a clear winner is taken; anything else is left to the user.
+        preferred = False
+        # Only a clear winner is taken; anything else is left to the user ...
         if scored and scored[0][0] >= 70 and (len(scored) == 1 or scored[1][0] < scored[0][0]):
             song_id = scored[0][1]
+        elif scored and scored[0][0] >= 70:
+            # ... except a tie between songbooks, where the preferred one wins if it is the only one.
+            top = [sid for score, sid in scored if score == scored[0][0]]
+            song_id = _preferred_choice(top, numbers, songs)
+            preferred = song_id is not None
         results.append({
             "line": line,
             "song_id": song_id,
             "title": songs[song_id]["title"] if song_id else None,
+            "preferred_book": PREFERRED_BOOK if preferred else None,
             "candidates": [{"song_id": sid, "title": songs[sid]["title"]} for _, sid in scored],
         })
     return results

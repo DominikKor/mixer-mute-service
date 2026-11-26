@@ -107,7 +107,9 @@ function renderTemplateMatches() {
   TEMPLATES.matches.forEach((match, i) => {
     const song = songs[i].song_id ? songById(songs[i].song_id) : null;
     const li = document.createElement("li");
-    li.className = "tp-match" + (song ? "" : " missing");
+    // The number was in several songbooks: the preferred one is taken, shown in orange.
+    const defaulted = !!song && !!match.preferred_book && !TEMPLATES.picked.has(match.line);
+    li.className = "tp-match" + (song ? "" : " missing") + (defaulted ? " ambiguous" : "");
     const no = document.createElement("span");
     no.className = "tp-no";
     no.textContent = String(i + 1);
@@ -115,7 +117,7 @@ function renderTemplateMatches() {
     texts.className = "tp-texts";
     const line = document.createElement("span");
     line.className = "tp-line";
-    line.textContent = match.line;
+    line.textContent = defaulted ? `${match.line} · Mehrdeutig – ${match.preferred_book} gewählt` : match.line;
     const found = document.createElement("span");
     found.className = "tp-song";
     found.textContent = song ? `♪ ${song.title}`
