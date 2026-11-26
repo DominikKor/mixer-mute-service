@@ -82,6 +82,10 @@ function openTileMenu(trigger, menu) {
   // Inside a modal dialog the menu must live in the dialog (top layer).
   const host = trigger.closest("dialog[open]") || document.body;
   if (menu.parentElement !== host) host.appendChild(menu);
+  // The backdrop right under the menu takes every tap outside it.
+  const backdrop = menuBackdrop();
+  if (backdrop.nextSibling !== menu) host.insertBefore(backdrop, menu);
+  backdrop.hidden = false;
   const r = trigger.getBoundingClientRect();
   OPEN_MENU = { menu, trigger, key: trigger.dataset.menuKey || null, top: r.top, left: r.left };
   menu._trigger = trigger;
@@ -152,6 +156,7 @@ function closeTileMenu(refocus = false) {
   const { menu } = OPEN_MENU;
   OPEN_MENU = null;
   menu.hidden = true;
+  menuBackdrop().hidden = true;
   for (const key of new Set([trigger, menu._trigger])) {
     if (key) key.setAttribute("aria-expanded", "false");
   }
@@ -188,41 +193,33 @@ document.addEventListener("click", event => {
   if (OPEN_MENU && OPEN_MENU.trigger === trigger) closeTileMenu();
   else openTileMenu(trigger, $(trigger.dataset.panelMenu));
 });
-// A tap elsewhere only closes the menu: it must not also press the key,
-// fader or camera arrow under the finger. So that tap is swallowed whole:
-// its pointerdown here (capture, before any other handler) and the click
-// that follows it (finger: pointerdown, pointerup, click; mouse the same).
-// The swallowing ends with that click, a cancelled touch (it became a
-// scroll), a new pointerdown, or 400 ms after the finger lifted.
-const MENU_SWALLOW = { active: false, timer: 0 };
-
-function endMenuSwallow() {
-  MENU_SWALLOW.active = false;
-  clearTimeout(MENU_SWALLOW.timer);
+// A tap elsewhere only closes the menu: it must not also press a key, move
+// a fader or start a camera. A transparent backdrop under the open menu
+// covers the page, so such a tap lands on the backdrop and nothing below
+// gets any event (sliders included: their jump is the browser's own default
+// action). It lies under the header, so Panic and the status stay reachable
+// with one tap; a tap there also closes the menu. In a modal dialog the
+// backdrop goes into the dialog with the menu.
+function menuBackdrop() {
+  let backdrop = $("menu-backdrop");
+  if (backdrop) return backdrop;
+  backdrop = document.createElement("div");
+  backdrop.id = "menu-backdrop";
+  backdrop.className = "menu-backdrop";
+  backdrop.hidden = true;
+  backdrop.setAttribute("aria-hidden", "true");
+  backdrop.addEventListener("click", () => closeTileMenu());
+  document.body.appendChild(backdrop);
+  return backdrop;
 }
 
-window.addEventListener("pointerdown", event => {
-  endMenuSwallow();
-  if (!OPEN_MENU || OPEN_MENU.menu.contains(event.target)) return;
+// Taps above the backdrop (the header) close the menu and still do their job.
+document.addEventListener("pointerdown", event => {
+  if (!OPEN_MENU || OPEN_MENU.menu.contains(event.target) || event.target.closest(".menu-backdrop")) return;
   const key = event.target.closest("[data-menu-key]");
   if (OPEN_MENU.trigger.contains(event.target) || (key && OPEN_MENU.key && key.dataset.menuKey === OPEN_MENU.key)) return;
   closeTileMenu();
-  event.stopPropagation();
-  MENU_SWALLOW.active = true;
-  MENU_SWALLOW.timer = setTimeout(endMenuSwallow, 10000);  // never stuck, even if no pointerup comes
-}, true);
-window.addEventListener("pointerup", () => {
-  if (!MENU_SWALLOW.active) return;
-  clearTimeout(MENU_SWALLOW.timer);
-  MENU_SWALLOW.timer = setTimeout(endMenuSwallow, 400);
-}, true);
-window.addEventListener("pointercancel", endMenuSwallow, true);
-window.addEventListener("click", event => {
-  if (!MENU_SWALLOW.active) return;
-  endMenuSwallow();
-  event.preventDefault();
-  event.stopPropagation();
-}, true);
+});
 // Any scroll that moves the key (the page, the stage, a list) closes the
 // menu; a scroll elsewhere (a song list following the slide) does not.
 document.addEventListener("scroll", () => {
