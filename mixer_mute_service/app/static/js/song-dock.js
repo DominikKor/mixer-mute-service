@@ -45,6 +45,7 @@ function songDockOverlaps(a, b) {
 
 function shieldSongDock(rect) {
   const pad = 6;   // a finger lands a little off
+  SONG_DOCK.shieldToasted = false;
   SONG_DOCK.shield = rect ? { left: rect.left - pad, top: rect.top - pad, right: rect.right + pad, bottom: rect.bottom + pad } : null;
   if (SONG_DOCK.cell) applySongDockShield(SONG_DOCK.cell);
 }
@@ -59,6 +60,10 @@ function applySongDockShield(cell) {
   });
   cell.classList.toggle("shielded", any);
 }
+
+// A changed layout (window size, iPad turned) moves the keys: the old place
+// no longer says anything.
+window.addEventListener("resize", () => { if (SONG_DOCK.shield) shieldSongDock(null); });
 
 // A tap anywhere else lifts it; taps where PLAY was (also between the keys)
 // and on a marked key do not.
@@ -455,8 +460,14 @@ $("program-items").addEventListener("click", event => {
   const button = event.target.closest("[data-song-dock]");
   if (!button || !button.closest(".song-dock")) return;
   if (!songDockArmed(SONG_DOCK.armedAt, performance.now(), SONG_DOCK.guardMs)) return;   // just appeared: a tap meant for what was there
-  if (button.classList.contains("sd-shield")) {   // PLAY lay here: a tap elsewhere first
-    toast("Diese Taste liegt, wo eben PLAY war – erst woanders tippen, dann geht sie", false);
+  // PLAY lay here: a tap elsewhere first. The marked key, or any tap inside
+  // PLAY's old place (also if the key moved since it was marked).
+  const shield = SONG_DOCK.shield;
+  const tap = { left: event.clientX, right: event.clientX + 1, top: event.clientY, bottom: event.clientY + 1 };
+  if (shield && (button.classList.contains("sd-shield") || (event.detail > 0 && songDockOverlaps(tap, shield)))) {
+    // Said once; the amber note in the dock keeps saying it (no pile of toasts over the rows).
+    if (!SONG_DOCK.shieldToasted) toast("Diese Taste liegt, wo eben PLAY war – erst woanders tippen, dann geht sie", false);
+    SONG_DOCK.shieldToasted = true;
     return;
   }
   const target = songDockTarget();

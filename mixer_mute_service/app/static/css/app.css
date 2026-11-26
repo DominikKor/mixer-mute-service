@@ -737,6 +737,23 @@ button.collapse-btn:active:not(:disabled) .collapse-chip { transform: translateY
    Every field carries its own engraved label (the table head is kept for
    screen readers only). Narrow screens fall back to two columns. */
 .program-table-wrap { min-width: 0; }
+/* The last "row": an empty, dashed program row with "+ Programmpunkt
+   hinzufügen" in the middle (as high as a closed row). Not while arranging
+   the sections (it would look like a place to drop one). */
+button.program-add-row {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+  width: 100%; min-height: 77px; margin-top: 8px; padding: 10px 16px; border-radius: 8px;
+  border: 1px dashed #353b46; background: transparent; box-shadow: none; text-shadow: none;
+  color: var(--muted); font-size: 14px; font-weight: 700; letter-spacing: .02em;
+}
+button.program-add-row:hover:not(:disabled) { color: var(--text); border-color: #4a5260; background: rgba(255,255,255,.03); filter: none; }
+button.program-add-row:active:not(:disabled) {
+  transform: none; color: var(--text); border-color: #3584e6; background: rgba(79,156,255,.08); box-shadow: none;
+}
+.program-add-row-main { display: inline-flex; align-items: center; gap: 8px; }
+.program-add-row-main .plus-icon { width: 18px; height: 18px; color: #8fc2ff; }
+.program-add-row-hint { font-size: 12px; font-weight: 500; letter-spacing: 0; }
+body.arranging button.program-add-row { display: none; }
 .program-table, .program-table tbody { display: block; width: 100%; }
 .program-table colgroup { display: none; }
 .program-table thead {

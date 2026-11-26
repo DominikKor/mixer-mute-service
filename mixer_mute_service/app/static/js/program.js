@@ -853,7 +853,7 @@ function renderProgramItems() {
   }
   // Only move rows that are out of place: moving a row would blur its field.
   wanted.forEach((row, i) => { if (tbody.children[i] !== row) tbody.insertBefore(row, tbody.children[i] || null); });
-  $("program-empty").hidden = PROGRAM_ITEMS.length > 0 || PROGRAM_DRAFT;
+  renderProgramAddRow();
   updateProgramCue();
   renderShortcuts();
   renderSongDock();   // js/song-dock.js: verse keys at the running row
@@ -1312,11 +1312,23 @@ $("program-reset-btn").addEventListener("click", async event => {
   await loadProgramItems();
 });
 
-$("program-add-btn").addEventListener("click", () => {
+// The last "row" of the list: dashed and empty, "+ Programmpunkt hinzufügen",
+// the same as the head key. Hidden while a new row is open (that is the last
+// row then); with no rows at all it also says how else to start (it replaces
+// the empty note, which is left for a load error).
+function renderProgramAddRow() {
+  $("program-add-row").hidden = PROGRAM_DRAFT;
+  $("program-add-row-hint").hidden = PROGRAM_ITEMS.length > 0;
+  $("program-empty").hidden = true;
+}
+
+function startProgramDraft() {
   PROGRAM_DRAFT = true;
   renderProgramItems();
   document.querySelector('#program-items .program-draft-row [data-program-field="title"]')?.focus();
-});
+}
+$("program-add-btn").addEventListener("click", startProgramDraft);
+$("program-add-row").addEventListener("click", startProgramDraft);
 $("program-items").addEventListener("change", event => {
   const field = event.target.closest("[data-program-field]");
   if (field && field.dataset.programField === "time") field.value = normalizeProgramTime(field.value);
