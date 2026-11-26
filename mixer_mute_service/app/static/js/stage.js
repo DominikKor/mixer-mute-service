@@ -5,7 +5,9 @@
 // ---- Stage (like Stage Manager) ---------------------------------------------
 // The sections stay the same live elements; only their place changes: the
 // stage (main) or a miniature in the rail. Moves are animated FLIP-style.
-const STAGE = { on: false, current: null, order: [], thumbs: {}, raf: 0, anims: [] };
+// railScroll: the rail's scroll place, kept while a flight runs (the rail
+// is opened for it and cannot scroll meanwhile).
+const STAGE = { on: false, current: null, order: [], thumbs: {}, raf: 0, anims: [], railScroll: null };
 // Scaling limit: with a finger keys must stay big enough to tap; a mouse can
 // hit smaller ones. Beyond it the stage scrolls (very long sections only).
 const STAGE_MIN_FIT = window.matchMedia && matchMedia("(pointer: coarse)").matches ? 0.85 : 0.6;
@@ -158,6 +160,7 @@ function setStage(on, animate) {
 function stageShow(section) {
   if (!STAGE.on || section === STAGE.current || !stagePanel(section)) return;
   const firsts = stageRects();
+  const back = STAGE.thumbs[STAGE.current];  // the section going back into the rail
   STAGE.current = section;
   $("stage-main").scrollTop = 0;
   const p = loadUiPrefs();
@@ -165,7 +168,17 @@ function stageShow(section) {
   saveUiPrefs(p);
   placeStagePanels();
   layoutStage();
-  stageFlip(firsts);
+  stageFlip(firsts, back);
+}
+
+// Scroll the rail so a miniature is fully visible (the one that just came
+// back from the stage may sit outside the scrolled part).
+function stageRevealThumb(thumb) {
+  const rail = $("stage-rail");
+  if (!thumb || thumb.hidden || !rail || !rail.classList.contains("scrolls")) return;
+  const r = thumb.getBoundingClientRect(), box = rail.getBoundingClientRect();
+  const delta = r.top < box.top ? r.top - box.top : r.bottom > box.bottom ? r.bottom - box.bottom : 0;
+  if (delta) rail.scrollBy({ top: delta, behavior: stageReducedMotion() ? "auto" : "smooth" });
 }
 
 function scheduleStageLayout() {
@@ -381,10 +394,20 @@ function stageRects() {
 
 // FLIP: every section starts where it was on screen and glides to its new
 // place; the miniature's own scale is part of the end state.
-function stageFlip(firsts) {
+function stageFlip(firsts, reveal = null) {
   STAGE.anims.forEach(a => a.cancel());
   STAGE.anims = [];
-  if (stageReducedMotion()) return;
+  if (stageReducedMotion()) { stageRevealThumb(reveal); return; }
+  // The rail is opened for the flight, so a section flying into it is not cut
+  // at its edge (app.css). A scrolled rail keeps its picture: the list is
+  // shifted by the scroll place and the scrollbar's room kept, and both are
+  // undone when the flight ends.
+  const rail = $("stage-rail"), list = $("stage-rail-list");
+  if (rail && STAGE.railScroll === null) {
+    STAGE.railScroll = rail.scrollTop;
+    rail.style.paddingRight = `${rail.offsetWidth - rail.clientWidth}px`;
+  }
+  if (list) list.style.transform = STAGE.railScroll ? `translateY(${-STAGE.railScroll}px)` : "";
   document.body.classList.add("stage-anim");
   const pending = [];
   for (const panel of STAGE.order) {
@@ -408,6 +431,14 @@ function stageFlip(firsts) {
     pending.push(anim.finished.catch(() => {}).then(() => panel.classList.remove("stage-flying")));
   }
   Promise.all(pending).then(() => {
-    if (!STAGE.anims.some(a => a.playState === "running")) document.body.classList.remove("stage-anim");
+    if (STAGE.anims.some(a => a.playState === "running")) return;
+    document.body.classList.remove("stage-anim");
+    if (rail && list) {
+      list.style.transform = "";
+      rail.style.paddingRight = "";
+      rail.scrollTop = STAGE.railScroll || 0;
+    }
+    STAGE.railScroll = null;
+    stageRevealThumb(reveal);
   });
 }

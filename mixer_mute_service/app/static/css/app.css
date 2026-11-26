@@ -1358,8 +1358,9 @@ body.stage-on .page {
 body.stage-on .stage-rail {
   display: flex; flex-direction: column; min-height: 0;
   overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; touch-action: pan-y;
-  scrollbar-gutter: stable; scrollbar-width: thin;
+  scrollbar-width: thin;
 }
+body.stage-on .stage-rail.scrolls { scrollbar-gutter: stable; }
 .stage-rail-list { display: flex; flex-direction: column; align-items: center; gap: 12px; margin: auto 0; }
 body.stage-on .stage-main { display: block; position: relative; min-width: 0; min-height: 0; overflow: hidden; scrollbar-gutter: stable; }
 body.stage-on .stage-main.scroll { overflow-y: auto; overscroll-behavior: contain; }
@@ -1399,9 +1400,11 @@ body.stage-on .section-toggle::before { display: none; }
   font-size: 11px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; color: #9aa3b2;
   text-shadow: 0 1px 0 #000; white-space: nowrap;
 }
-/* While sections fly between rail and stage nothing may clip them. */
-/* A scrolling rail keeps clipping: opening it would lose its scroll place. */
-body.stage-anim .stage-rail:not(.scrolls), body.stage-anim .stage-main, body.stage-anim .stage-thumb-screen { overflow: visible; }
+/* While sections fly between rail and stage nothing may clip them. A rail
+   that scrolls is cut only at its top and bottom edge meanwhile (its list is
+   shifted by the scroll place, see stageFlip). */
+body.stage-anim .stage-rail, body.stage-anim .stage-main, body.stage-anim .stage-thumb-screen { overflow: visible; }
+body.stage-anim .stage-rail.scrolls { clip-path: inset(0 -100vw); }
 body.stage-anim .panel.stage-flying { position: relative; z-index: 5; }
 body.stage-anim .stage-thumb-screen .panel.stage-flying { position: absolute; }
 .stage-switch { margin-left: 8px; }
