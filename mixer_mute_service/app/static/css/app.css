@@ -15,8 +15,22 @@
      many as fit, at least 120 px each). */
   --strip-gap: 10px;
   --page-pad: 24px;
+  /* One look for the same thing everywhere (see "Shared components" at the end) */
+  --r-card: 10px;            /* cards: groups, light blocks, categories, program rows */
+  --r-key: 7px;              /* keys */
+  --title: #9aa3b2;          /* card titles (engraved, upper case) */
+  --label: #7d8594;          /* field labels */
+  --sel-border: #0a2550;     /* chosen / pressed: blue */
+  --sel-bg: linear-gradient(to bottom, #4386d6, #2f68b0 55%, #275896);
+  --sel-glow: 0 0 12px rgba(79,156,255,.32);
+  --lit-bg: linear-gradient(to bottom, #ffd45c, #f1b52a 55%, #d99a12);  /* light on: amber */
+  --edit-ring: 0 0 0 1px rgba(79,156,255,.6), 0 0 14px rgba(79,156,255,.18);  /* being edited / created */
+  /* The chevron of everything that opens and closes (drawn, a "▸" sat off-centre) */
+  --chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='3.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M9 5l7 7-7 7'/%3E%3C/svg%3E");
 }
 * { box-sizing: border-box; }
+/* hidden always hides, whatever display a component sets */
+[hidden] { display: none !important; }
 body {
   margin: 0; min-height: 100vh; color: var(--text);
   background: radial-gradient(ellipse 120% 60% at 50% 0%, #1d2026, var(--bg) 70%) fixed, var(--bg);
@@ -324,24 +338,36 @@ body:not(.stage-on) .page > .panel { grid-column: 1 / -1; min-width: 0; }
 .camera-stream-status.bad { color: #ff8576; }
 .camera-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .camera-card { min-width: 0; overflow: hidden; border: 1px solid #08090b; border-radius: 6px; background: var(--panel-bg); box-shadow: var(--panel-shadow); }
-.camera-card-head { display: flex; align-items: center; gap: 8px; min-height: 52px; padding: 4px 8px 4px 12px; }
+.camera-card-head { display: flex; align-items: center; gap: 8px; min-height: 52px; padding: 4px 4px 4px 14px; }
 .camera-card-title { flex: 1; min-width: 0; overflow: hidden; margin: 0; color: var(--text); font-size: 13px; font-weight: 800; text-overflow: ellipsis; white-space: nowrap; }
-.camera-card-tools { display: flex; gap: 4px; }
-.camera-card-tools button { display: grid; place-items: center; width: 44px; height: 44px; padding: 0; }
-.camera-card-tools svg { width: 18px; height: 18px; }
 .camera-view { position: relative; width: 100%; aspect-ratio: 16 / 9; background: #07090b; }
 .camera-view iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
-.camera-unavailable, .camera-empty { display: grid; place-items: center; min-height: 100%; padding: 20px; color: var(--lcd-dim); font: 600 12px/1.5 var(--mono); text-align: center; }
-.camera-empty { min-height: 64px; place-items: start; padding: 10px 0; }
-.camera-empty[hidden], .camera-controls[hidden] { display: none; }
+.camera-unavailable { display: grid; place-items: center; min-height: 100%; padding: 20px; color: var(--lcd-dim); font: 600 12px/1.5 var(--mono); text-align: center; }
+.camera-controls[hidden] { display: none; }
 @media (max-width: 760px) { .camera-grid { grid-template-columns: minmax(0, 1fr); } }
 /* PTZ controls under a camera named Cam1/Cam2: preset keys and hold-to-move
    keys (arrows for pan/tilt like a keyboard's arrow keys, zoom beside them) */
 .camera-controls { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px 12px; border-top: 1px solid #08090b; box-shadow: inset 0 1px 0 rgba(255,255,255,.04); }
-.camera-controls-label { font-size: 10px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; color: #7d8594; }
+.camera-controls-label { font-size: 10px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; color: var(--label); }
 .camera-presets { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 6px; }
 button.camera-preset { min-height: 44px; padding: 6px 8px; font-size: 12px; line-height: 1.2; overflow-wrap: anywhere; }
-button.camera-preset[aria-pressed="true"] { color: #fff; border-color: #0a2550; background: linear-gradient(to bottom, #3a6fae, #2a5590 55%, #224a80); }
+button.camera-preset .camera-preset-num { font-weight: 800; font-variant-numeric: tabular-nums; }
+/* "Presets" with "Nr. [ ] Anfahren" at its right end: any preset number */
+.camera-presets-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 44px; }
+.camera-recall { display: flex; align-items: stretch; gap: 6px; margin: 0; }
+.camera-recall-number {
+  width: 64px; min-height: 44px; padding: 0 10px; border: 1px solid #000; border-radius: 5px;
+  background: #0b1418; color: var(--lcd-text); font: 700 15px/1 var(--mono); text-align: center;
+  box-shadow: inset 0 2px 4px rgba(0,0,0,.8), 0 1px 0 rgba(255,255,255,.05);
+}
+.camera-recall-number::placeholder { color: var(--lcd-dim); font-weight: 600; }
+.camera-recall-number:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.camera-recall-number[aria-invalid="true"] { outline: 2px solid var(--red); outline-offset: 1px; }
+button.camera-recall-go { min-height: 44px; padding: 0 14px; font-size: 12px; }
+.camera-preset-dialog .pf-input { min-height: 44px; }
+.camera-preset-dialog .update-actions button { min-height: 44px; }
+.pf-grid.camera-preset-fields { grid-template-columns: 120px minmax(0, 1fr); }
+.pf-hint.warn { color: var(--amber); }
 .camera-ptz {
   display: grid; gap: 6px;
   grid-template-columns: repeat(3, minmax(44px, 1fr)) minmax(76px, 1.3fr);
@@ -359,7 +385,7 @@ button.camera-move-key svg { width: 20px; height: 20px; flex-shrink: 0; }
 .camera-ptz [data-direction="in"] { grid-area: in; }
 .camera-ptz [data-direction="out"] { grid-area: out; }
 button.camera-zoom-key { margin-left: 6px; }
-button.camera-move-key.active { color: #fff; border-color: #0a2550; background: linear-gradient(to bottom, #62adff, #3584e6 55%, #2a6cc4); transform: translateY(1px); }
+button.camera-move-key.active { transform: translateY(1px); }
 button.display-key {
   display: inline-grid; grid-template-columns: auto 1fr; align-items: center; gap: 4px 10px;
   min-width: 200px; max-width: 100%; min-height: 48px; padding: 8px 14px 9px 12px; text-align: left;
@@ -388,28 +414,26 @@ button.display-audio-stop {
 }
 button.display-audio-stop::after { content: ""; position: absolute; inset: -6px; }  /* -6 from inside the 1 px border: 44 px */
 button.display-audio-stop:hover:not(:disabled) { color: rgba(255,255,255,.3); }
-button.display-menu-btn {
-  position: absolute; top: 0; right: 0; width: 44px; height: 44px; padding: 6px 4px 0 0;
-  display: flex; align-items: flex-start; justify-content: flex-end;
-  color: #6f8a93; background: none; border: none; box-shadow: none; transition: color .12s;
-}
-button.display-menu-btn:hover:not(:disabled), button.display-menu-btn[aria-expanded="true"] { color: #e6f4f8; filter: none; }
-button.display-menu-btn:active:not(:disabled) { transform: none; box-shadow: none; }
-.display-menu-btn svg { display: block; width: 18px; height: 18px; }
 /* The tile menu: a small console panel under the dots */
 .tile-menu {
-  position: fixed; z-index: 40; min-width: 180px; padding: 4px; border-radius: 6px; border: 1px solid #000;
+  position: fixed; z-index: 40; min-width: 200px; max-width: calc(100vw - 16px); padding: 5px; border-radius: 9px; border: 1px solid #000;
   background: var(--panel-bg); box-shadow: var(--panel-shadow), 0 10px 28px rgba(0,0,0,.6);
 }
 .tile-menu[hidden] { display: none; }
+/* Under an open menu: takes every tap outside it (js/menus.js). Below the
+   header (z-index 10), so Panic always works; above the page's content. */
+.menu-backdrop { position: fixed; inset: 0; z-index: 9; background: transparent; }
+dialog .menu-backdrop { z-index: 39; }
 .tile-menu button {
-  display: flex; align-items: center; gap: 10px; width: 100%; min-height: 44px; padding: 0 12px; border-radius: 4px;
+  display: flex; align-items: center; gap: 12px; width: 100%; min-height: 44px; padding: 0 14px 0 12px; border-radius: 6px;
   font-size: 13px; text-align: left; color: #c9ced6; background: none; border: none; box-shadow: none;
 }
 .tile-menu button:hover:not(:disabled), .tile-menu button:focus-visible { color: #fff; background: rgba(255,255,255,.07); filter: none; }
 .tile-menu button:active:not(:disabled) { transform: none; box-shadow: none; }
 .tile-menu button.danger { color: #ff8576; }
-.tile-menu svg { width: 16px; height: 16px; flex-shrink: 0; }
+.tile-menu svg { width: 17px; height: 17px; flex-shrink: 0; opacity: .85; }
+.tile-menu button:disabled { opacity: .35; }
+.menu-sep { height: 1px; margin: 4px 8px; background: rgba(255,255,255,.07); box-shadow: 0 -1px 0 rgba(0,0,0,.5); }
 /* The grey "+" tile after the last profile */
 button.display-add {
   display: grid; place-items: center; align-self: stretch; min-width: 72px; min-height: 48px; padding: 0 20px;
@@ -459,11 +483,6 @@ button.kind-tile {
 .kind-tile svg { width: 30px; height: 30px; }
 .kind-tile-name { font-size: 12px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
 .kind-tile-desc { font-size: 11px; font-weight: 500; color: #7f8b98; text-shadow: none; }
-button.kind-tile[aria-checked="true"] {
-  color: #fff; border-color: #0a2550;
-  background: linear-gradient(to bottom, #3a6fae, #2a5590 55%, #224a80);
-  box-shadow: 0 0 12px rgba(79,156,255,.35), inset 0 1px 0 rgba(255,255,255,.25), 0 2px 3px rgba(0,0,0,.55);
-}
 button.kind-tile[aria-checked="true"] .kind-tile-desc { color: #c9dcf5; }
 /* Monitor keys and the screen with its five window positions */
 .pf-display-row { display: flex; gap: 18px 24px; flex-wrap: wrap; align-items: flex-start; }
@@ -475,10 +494,6 @@ button.monitor-key { width: 52px; height: 44px; padding: 0; font: 800 15px/1 var
 button.align-key { display: grid; place-items: center; }
 button.align-key svg { width: 20px; height: 20px; }
 .profile-dialog .pf-input { min-height: 44px; }
-button.monitor-key[aria-checked="true"] {
-  color: #fff; border-color: #0a2550; background: linear-gradient(to bottom, #62adff, #3584e6 55%, #2a6cc4);
-  box-shadow: 0 0 10px rgba(79,156,255,.35), inset 0 1px 0 rgba(255,255,255,.35), 0 2px 3px rgba(0,0,0,.55);
-}
 .screen-picker { display: flex; flex-direction: column; align-items: center; width: min(100%, 300px); }
 .screen {
   position: relative; width: 100%; aspect-ratio: 16 / 9; border-radius: 6px; border: 3px solid #0a0b0d;
@@ -519,10 +534,14 @@ button.section-toggle {
   -webkit-tap-highlight-color: transparent;
 }
 button.section-toggle:hover:not(:disabled) { color: #d9dde3; filter: none; }
+button.section-toggle:hover:not(:disabled)::before, button.companion-category-toggle:hover:not(:disabled)::before { background: #9aa3b2; }
 button.section-toggle:active:not(:disabled) { transform: none; box-shadow: none; }
-.section-toggle::before { /* chevron */
-  content: "▸"; display: inline-block; width: 18px; font-size: 15px; color: #6c7482; transition: transform .15s;
+.section-toggle::before, button.companion-category-toggle::before, .person-chevron { /* chevron */
+  content: ""; flex-shrink: 0; display: inline-block; width: 14px; height: 14px; font-size: 0;
+  background: #6c7482; -webkit-mask: var(--chevron) center / contain no-repeat; mask: var(--chevron) center / contain no-repeat;
+  transition: transform .15s;
 }
+.section-toggle::before { margin: 0 2px; }
 .panel.open .section-toggle::before { transform: rotate(90deg); }
 .section-toggle::after {
   content: ""; flex: 1; height: 1px; box-shadow: 0 1px 0 rgba(0,0,0,.6);
@@ -632,10 +651,10 @@ button.section-toggle:active:not(:disabled) { transform: none; box-shadow: none;
 @media (max-width: 899px) { #persons { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 599px) { #persons { grid-template-columns: minmax(0, 1fr); } }
 .person-card {
-  min-width: 0; padding: 6px 4px 6px 6px; border-radius: 8px; border: 1px solid #08090b;
+  min-width: 0; padding: 6px 4px 6px 6px; border-radius: var(--r-card); border: 1px solid #08090b;
   background: var(--panel-bg); box-shadow: var(--panel-shadow);
 }
-.person-card.editing { box-shadow: 0 0 0 1px rgba(79,156,255,.6), 0 0 14px rgba(79,156,255,.18), var(--panel-shadow); }
+.person-card.editing { box-shadow: var(--edit-ring), var(--panel-shadow); }
 .person-head { display: flex; align-items: stretch; gap: 6px; }
 .person-name-wrap { display: flex; flex: 1; min-width: 0; }
 /* The display is the open/close key of the card (full height, 44 px+) */
@@ -647,7 +666,7 @@ button.person-lcd {
 button.person-lcd:hover:not(:disabled) { filter: brightness(1.15); }
 button.person-lcd:active:not(:disabled) { transform: none; box-shadow: var(--lcd-shadow); }
 .person-name-line { display: flex; align-items: baseline; gap: 5px; min-width: 0; }
-.person-chevron { flex-shrink: 0; font-size: 10px; color: var(--lcd-dim); transition: transform .15s; }
+.person-chevron { width: 10px; height: 10px; align-self: center; background: var(--lcd-dim); }
 .person-card.open .person-chevron { transform: rotate(90deg); }
 .person-name {
   display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere;
@@ -663,15 +682,9 @@ button.person-key {
   flex-shrink: 0; align-self: center; min-width: 52px; height: 44px; padding: 0 8px;
   font-size: 11px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase;
 }
-button.person-menu-btn {
-  display: grid; place-items: center; flex-shrink: 0; align-self: center; width: 30px; height: 44px; margin: 0 -2px 0 -4px; padding: 0;
-  color: #6f8a93; background: none; border: none; box-shadow: none; transition: color .12s;
-}
-/* 44 px wide tap area for the narrow dots key */
-button.person-menu-btn { position: relative; }
-button.person-menu-btn::after { content: ""; position: absolute; inset: 0 -7px; }
-button.person-menu-btn:hover:not(:disabled), button.person-menu-btn[aria-expanded="true"] { color: #e6f4f8; filter: none; }
-button.person-menu-btn:active:not(:disabled) { transform: none; box-shadow: none; }
+/* The dots sit close to Solo (36 px drawn, the tap area stays 44 px wide) */
+.person-head button.menu-btn { position: relative; align-self: center; width: 36px; margin: 0 -4px 0 -2px; }
+.person-head button.menu-btn::after { content: ""; position: absolute; inset: 0 -4px; }
 button.icon-btn { display: grid; place-items: center; width: 44px; height: 44px; padding: 0; }
 button.collapse-btn {
   display: grid; place-items: center; width: 44px; height: 44px; margin: 0 -8px; padding: 0; flex-shrink: 0;
@@ -762,40 +775,16 @@ button.program-hide[aria-pressed="true"] { color: #ffbf4d; border-color: #4a3410
 .program-table td.pc-time { grid-area: 2 / 1; }
 .program-table td.pc-title { grid-area: 2 / 2; }
 .program-table td.pc-person { grid-area: 2 / 3; }
-.program-table td.pc-shortcut { grid-area: 2 / 4 / 3 / 7; }
-.program-table td.pc-group { grid-area: 3 / 1 / 4 / 3; }
-.program-table td.pc-light { grid-area: 3 / 3 / 4 / 5; }
-.program-table td.pc-beamer { grid-area: 3 / 5 / 4 / 7; }
-.program-table td.pc-playback { grid-area: 4 / 1 / 5 / 3; }
-.program-table td.pc-translation { grid-area: 4 / 3 / 5 / 4; }
-.program-table td.pc-lyrics { grid-area: 4 / 4 / 5 / 7; }
-.program-table td.pc-camera { grid-area: 5 / 1 / 6 / 7; }
-.program-table td.pc-desktop { grid-area: 6 / 1 / 7 / 7; }
-.program-table td.pc-linked { grid-area: 3 / 1 / 4 / 7; }
-/* With a shortcut the row runs the shortcut's fields: its own are hidden
-   (still saved) and the shortcut's configuration shows instead. */
-.program-table tr:not(.program-linked-row) td.pc-linked,
-.program-table tr.program-linked-row td:is(.pc-group, .pc-light, .pc-beamer, .pc-playback, .pc-translation, .pc-camera, .pc-desktop) { display: none; }
-/* Linked: the song stays the row's, at the start of the line under the configuration */
-.program-table tr.program-linked-row td.pc-lyrics { grid-area: 4 / 1 / 5 / 4; }
-.program-shortcut-pick { display: grid; gap: 6px; min-width: 0; }
-.program-fallback {
-  display: flex; align-items: center; gap: 8px 10px; padding: 4px 4px 4px 12px; border-radius: 6px;
-  font-size: 12px; line-height: 1.35; color: #ffbf4d; background: #1d1608; border: 1px solid #4a3410;
-}
-.program-fallback span { flex: 1; min-width: 0; }
-.program-table .program-fallback button { flex-shrink: 0; min-width: 52px; min-height: 44px; padding: 0 12px; font-size: 12px; font-weight: 700; }
-.program-linked {
-  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; min-height: 56px; padding: 8px 8px 8px 14px; border-radius: 6px;
-  background: var(--lcd-bg); border: 1px solid #2a1d4d; box-shadow: var(--lcd-shadow);
-}
-.program-linked-text { flex: 1 1 260px; font-size: 13px; color: #9aa3b0; }
-.program-linked-text b { color: var(--lcd-text); font-weight: 800; }
-.program-linked .program-sum-chips { flex: 1 1 100%; order: 2; }
-.program-linked.missing { border-color: #4a3410; }
-.program-linked.missing .program-linked-text { color: #ffbf4d; }
+.program-table td.pc-group { grid-area: 2 / 4; }
+.program-table td.pc-light { grid-area: 2 / 5 / 3 / 7; }
+.program-table td.pc-playback { grid-area: 3 / 1 / 4 / 3; }
+.program-table td.pc-translation { grid-area: 3 / 3 / 4 / 4; }
+.program-table td.pc-lyrics { grid-area: 3 / 4 / 4 / 7; }
+.program-table td.pc-camera { grid-area: 4 / 1 / 5 / 7; }
+.program-table td.pc-desktop { grid-area: 5 / 1 / 6 / 5; }
+.program-table td.pc-beamer { grid-area: 5 / 5 / 6 / 7; }
 .program-table [hidden], .song-picker[hidden] { display: none !important; }
-/* Shortcut dialog: the same fields without time, person and shortcut */
+/* Shortcut dialog: the same fields without time and person */
 dialog.shortcut-dialog { width: min(1000px, calc(100vw - 32px)); }
 .program-table.shortcut-table tr {
   grid-template-columns: repeat(4, minmax(0, 1fr)); padding: 0; border: none; background: none; box-shadow: none;
@@ -840,8 +829,6 @@ dialog.shortcut-dialog { width: min(1000px, calc(100vw - 32px)); }
 .program-chip.desktop, .program-chip.beamer { border-color: #2a1d4d; }
 .program-chip.song, .program-chip.file { border-color: #0b3a1e; }
 .program-chip.none { color: var(--lcd-dim); font-weight: 500; }
-.program-chip.shortcut { border-color: #4d2a4a; }
-.program-chip.warn { color: #ffbf4d; border-color: #4a3410; }
 .program-sum-chevron { display: grid; place-items: center; color: #6f8a93; transition: transform .2s; }
 .program-open .program-sum-chevron { transform: rotate(180deg); color: #e6f4f8; }
 .program-draft-row .program-sum-chevron { visibility: hidden; }
@@ -887,9 +874,6 @@ dialog.shortcut-dialog { width: min(1000px, calc(100vw - 32px)); }
   font-size: 12px; font-weight: 700; text-align: left;
 }
 .program-table button.program-single span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.program-table button.program-single[aria-pressed="true"] {
-  color: #fff; border-color: #0a2550; background: linear-gradient(to bottom, #62adff, #3584e6 55%, #2a6cc4);
-}
 .program-table button.program-single svg { flex-shrink: 0; }
 /* Desktop profiles of a row: the chosen ones in run order (✕ removes one),
    "+" opens the others below to add one */
@@ -922,9 +906,6 @@ dialog.shortcut-dialog { width: min(1000px, calc(100vw - 32px)); }
   min-height: 44px; max-width: 100%; padding: 0 14px; font-size: 12px; font-weight: 700;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.program-table button.program-desktop-key[aria-pressed="true"] {
-  color: #fff; border-color: #0a2550; background: linear-gradient(to bottom, #62adff, #3584e6 55%, #2a6cc4);
-}
 .program-desktop-empty { display: flex; align-items: center; min-height: 44px; font: 600 12px/1.3 var(--mono); color: var(--lcd-dim); }
 .program-delay {
   display: flex; align-items: center; justify-content: center; min-height: 44px; border-radius: 5px;
@@ -938,6 +919,15 @@ dialog.shortcut-dialog { width: min(1000px, calc(100vw - 32px)); }
 .program-actions { display: flex; align-items: center; gap: 6px; }
 .program-actions button { display: grid; place-items: center; width: 52px; height: 52px; padding: 0; }
 .program-actions button.program-play { width: 92px; font-size: 15px; }
+/* The new-row draft: "Shortcut laden" before save and cancel */
+.program-actions button.program-load-shortcut { display: inline-flex; gap: 6px; width: auto; padding: 0 14px; font-size: 12px; font-weight: 700; white-space: nowrap; }
+/* "Shortcut laden": one key per shortcut, with what it sets */
+dialog.shortcut-load-dialog { width: min(720px, calc(100vw - 32px)); }
+.shortcut-load-list { display: grid; gap: 8px; max-height: min(60vh, 560px); overflow: auto; padding: 2px; }
+button.shortcut-load-item {
+  display: grid; gap: 6px; justify-items: start; width: 100%; min-height: 56px; padding: 10px 14px; text-align: left;
+}
+.shortcut-load-name { font-size: 14px; font-weight: 800; }
 .program-next button.program-play { animation: program-next-glow 1.6s ease-in-out infinite; }
 @keyframes program-next-glow { 50% { box-shadow: 0 0 22px rgba(46,204,113,.75), inset 0 1px 0 rgba(255,255,255,.35); } }
 @media (prefers-reduced-motion: reduce) { .program-next button.program-play { animation: none; } }
@@ -988,7 +978,8 @@ dialog.shortcut-dialog { width: min(1000px, calc(100vw - 32px)); }
   padding: 12px; border-radius: 8px; border: 1px solid #08090b; background: var(--panel-bg); box-shadow: var(--panel-shadow);
 }
 .song-live[hidden] { display: none; }
-.song-live.idle { grid-template-columns: 1fr; }
+.song-live.idle { grid-template-columns: 1fr; border-style: dashed; border-color: #353b46; background: rgba(0,0,0,.16); box-shadow: none; }
+.song-live.idle .song-live-title { color: var(--muted); font-weight: 600; }
 .song-live.idle .song-stage, .song-live.idle .song-controls, .song-live.idle .song-slides { display: none; }
 @media (max-width: 900px) { .song-live { grid-template-columns: 1fr; } }
 .song-preview.blank::after {
@@ -1062,13 +1053,8 @@ dialog.template-dialog { width: min(980px, calc(100vw - 32px)); max-height: calc
 }
 .tp-pick .tp-name { font-size: 14px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tp-pick .tp-meta { font: 600 11px/1.2 var(--mono); color: #8d96a3; }
-.tp-item button.tp-pick[aria-checked="true"] {
-  color: #fff; border-color: #0a2550; background: linear-gradient(to bottom, #3a6fae, #2a5590 55%, #224a80);
-  box-shadow: 0 0 12px rgba(79,156,255,.35), inset 0 1px 0 rgba(255,255,255,.25), 0 2px 3px rgba(0,0,0,.55);
-}
 .tp-item button.tp-pick[aria-checked="true"] .tp-meta { color: #c9dcf5; }
-.tp-item button.tp-delete { width: 44px; min-height: 52px; padding: 0; flex-shrink: 0; font-size: 18px; color: #9aa1ad; }
-.tp-item button.tp-delete.armed { width: auto; padding: 0 10px; font-size: 12px; font-weight: 800; color: #fff; background: linear-gradient(to bottom, #c2443a, #9c2f27); }
+.tp-item .menu-btn { align-self: center; }
 .tp-empty { color: #8d96a3; font-size: 13px; padding: 6px 2px; }
 .tp-columns { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 14px; align-items: start; }
 #tp-songs { min-height: 190px; font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
@@ -1104,7 +1090,6 @@ dialog.template-dialog { width: min(980px, calc(100vw - 32px)); max-height: calc
 .tp-row .tp-time { font: 700 12px/1 var(--mono); color: var(--lcd-text); }
 .tp-row .tp-title { font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tp-row .tp-psong { color: #9fd0ff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-button.primary.armed { background: linear-gradient(to bottom, #c2443a, #9c2f27); border-color: #4a0f0b; }
 .song-search {
   position: absolute; z-index: 9; width: min(420px, calc(100vw - 16px)); padding: 10px; border-radius: 8px;
   border: 1px solid #000; background: var(--panel-bg); box-shadow: var(--panel-shadow), 0 14px 32px rgba(0,0,0,.65);
@@ -1148,16 +1133,12 @@ button.program-play:hover:not(:disabled) { color: #fff; }
 .program-cue-count.late { color: #ffbf4d; text-shadow: 0 0 6px rgba(255,191,77,.45); }
 button.program-go { min-width: 132px; min-height: 52px; font-size: 15px; }
 button.program-go:disabled { opacity: .45; animation: none; }
-.program-draft-row { box-shadow: 0 0 0 1px rgba(79,156,255,.6), 0 0 14px rgba(79,156,255,.18), var(--panel-shadow); }
-.program-empty {
-  padding: 14px 16px; border-radius: 6px; border: 1px solid #000; background: var(--lcd-bg); box-shadow: var(--lcd-shadow);
-  font: 600 12px/1.4 var(--mono); color: var(--lcd-dim);
-}
+.program-draft-row { box-shadow: var(--edit-ring), var(--panel-shadow); }
 @media (max-width: 900px) {
   .program-table tr { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .program-table td.program-edit-cell, .program-table td.program-summary-cell, .program-table td.program-actions-cell { grid-area: auto; }
   .program-table td.program-summary-cell, .program-table td.pc-title, .program-table td.pc-lyrics,
-  .program-table td.pc-camera, .program-table td.pc-desktop, .program-table td.pc-shortcut, .program-table td.pc-linked, .program-table td.program-actions-cell { grid-column: 1 / -1; }
+  .program-table td.pc-camera, .program-table td.pc-desktop, .program-table td.program-actions-cell { grid-column: 1 / -1; }
   .program-table td.program-actions-cell { order: 1; }
   .program-table td.program-edit-cell { order: 2; }
   .program-camera { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
@@ -1178,10 +1159,7 @@ button.program-go:disabled { opacity: .45; animation: none; }
 .add-ch-row { display: flex; gap: 6px; align-items: center; margin-top: 6px; flex-wrap: wrap; }
 .add-ch-row select { flex: 1; min-width: 0; }
 button.person-edit-done { margin-left: auto; }
-.add-ch-row select, .add-ch-row button, .person-create-row input, .person-create-row button { min-height: 44px; }
-.person-create-row { display: none; margin: 0 0 14px; align-items: center; gap: 8px; flex-wrap: wrap; }
-.person-create-row.visible { display: flex; }
-.person-create-row input { width: 260px; max-width: 100%; }
+.add-ch-row select, .add-ch-row button { min-height: 44px; }
 
 /* Recessed input fields */
 .rename-input, .add-ch-row select {
@@ -1192,13 +1170,6 @@ button.person-edit-done { margin-left: auto; }
 .rename-input:focus, .add-ch-row select:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
 .add-ch-row select { cursor: pointer; }
 .card-title-wrap { display: flex; align-items: center; gap: 6px; }
-/* Group rename: a pencil with a 44 x 44 px tap area */
-button.rename-btn {
-  display: grid; place-items: center; flex-shrink: 0; width: 44px; height: 44px; margin: 0 -6px; padding: 0;
-  font-size: 12px; opacity: .55; color: #8fb3bd; background: none; border: none; box-shadow: none;
-}
-button.rename-btn:hover:not(:disabled) { opacity: 1; filter: none; }
-button.rename-btn:active:not(:disabled) { transform: none; box-shadow: none; }
 
 /* Horizontal faders in the group editor (same cap as the channel faders) */
 .person-fader-wrap { display: flex; align-items: center; gap: 10px; }
@@ -1278,17 +1249,18 @@ button.rename-btn:active:not(:disabled) { transform: none; box-shadow: none; }
 /* Steuerung: every category is a console panel with an engraved, tappable
    title; its keys carry an LED (blue: external control, green: mixer
    action). Re-filing and deleting keys only shows in "Bearbeiten" mode. */
-  .beamer-state-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
-  .beamer-state-title { color: #a9bacb; font-size: 11px; font-weight: 800; text-transform: uppercase; }
-  .beamer-state-options { display: inline-flex; gap: 4px; }
-  button.beamer-state-key { min-width: 76px; min-height: 44px; padding: 6px 12px; }
-  button.beamer-state-key[aria-pressed="true"] { color: #fff; border-color: #245c76; background: linear-gradient(to bottom, #286a7e, #1d4e5e); }
+.beamer-state-bar {
+  display: flex; align-items: center; gap: 8px 12px; flex-wrap: wrap; min-height: 56px; margin-bottom: 12px; padding: 6px 14px;
+  border-radius: var(--r-card); border: 1px solid #08090b; background: var(--panel-bg); box-shadow: var(--panel-shadow);
+}
+.beamer-state-options { display: inline-flex; gap: 6px; }
+button.beamer-state-key { min-width: 88px; min-height: 44px; padding: 6px 12px; }
 /* "Alles ausschalten": a Steuerung category of its own. Each target is a key
    whose LED turns red when it belongs to the all-off; the red console key
    in the head switches them off. Agent PCs carry a small power key in the
    corner to shut down just that PC. */
 .power-off-panel {
-  display: grid; gap: 8px; min-width: 0; margin: 0 0 12px; padding: 4px 12px 12px; border-radius: 8px;
+  display: grid; gap: 8px; min-width: 0; margin: 0 0 12px; padding: 4px 14px 14px; border-radius: var(--r-card);
   border: 1px solid #08090b; background: var(--panel-bg); box-shadow: var(--panel-shadow);
 }
 .power-off-head { display: flex; align-items: center; gap: 12px; min-height: 52px; }
@@ -1327,7 +1299,7 @@ label.power-off-target:has(input:checked) { color: #fff; }
 label.power-off-target:has(input:checked)::before { background: #ff4b3a; box-shadow: 0 0 6px rgba(255,75,58,.85); }
 label.power-off-target:has(input:disabled) { cursor: progress; filter: brightness(.8); }
 .power-off-name {
-  min-width: 0; overflow-wrap: anywhere;
+  min-width: 0; overflow-wrap: break-word; -webkit-hyphens: auto; hyphens: auto;
   font-size: 12px; font-weight: 800; line-height: 1.25; letter-spacing: .06em; text-transform: uppercase;
 }
 .power-off-meta { font: 600 10px/1 var(--mono); color: #7f8b98; overflow-wrap: anywhere; }
@@ -1341,10 +1313,10 @@ button.power-agent-shutdown:active:not(:disabled) { transform: none; box-shadow:
 .power-off-status { min-height: 15px; color: var(--lcd-dim); font: 600 11px/1.4 var(--mono); }
 .power-off-status.bad { color: #ff8576; }
 @media (max-width: 760px) { .power-off-targets { grid-template-columns: repeat(auto-fill, minmax(124px, 1fr)); } }
-  .beamer-state-current { color: var(--lcd-dim); font: 600 11px/1.35 var(--mono); }
+.beamer-state-current { margin-left: auto; color: var(--lcd-dim); font: 600 11px/1.35 var(--mono); }
 .companion-categories { display: grid; gap: 12px; }
 .companion-category {
-  min-width: 0; padding: 4px 12px 12px; border-radius: 8px; border: 1px solid #08090b;
+  min-width: 0; padding: 4px 14px 14px; border-radius: var(--r-card); border: 1px solid #08090b;
   background: var(--panel-bg); box-shadow: var(--panel-shadow);
 }
 .companion-category-head { display: flex; align-items: center; min-height: 44px; }
@@ -1357,9 +1329,6 @@ button.companion-category-toggle {
 }
 button.companion-category-toggle:hover:not(:disabled) { color: #d9dde3; filter: none; }
 button.companion-category-toggle:active:not(:disabled) { transform: none; box-shadow: none; }
-button.companion-category-toggle::before {
-  content: "\25B8"; display: inline-block; width: 14px; font-size: 13px; color: #6c7482; transition: transform .15s;
-}
 button.companion-category-toggle[aria-expanded="true"]::before { transform: rotate(90deg); }
 button.companion-category-toggle::after {
   content: ""; flex: 1; height: 1px; box-shadow: 0 1px 0 rgba(0,0,0,.6);
@@ -1370,7 +1339,7 @@ button.companion-category-toggle::after {
 .companion-button-item { display: grid; gap: 6px; min-width: 0; align-content: start; }
 button.companion-key {
   position: relative; width: 100%; min-width: 0; min-height: 64px; padding: 10px 12px 10px 24px;
-  white-space: normal; overflow-wrap: anywhere; text-align: left;
+  white-space: normal; overflow-wrap: break-word; -webkit-hyphens: auto; hyphens: auto; text-align: left;
   font-size: 12px; font-weight: 800; line-height: 1.25; letter-spacing: .06em; text-transform: uppercase;
 }
 button.companion-key::before {  /* kind LED */
@@ -1389,16 +1358,12 @@ button.companion-key.obs-preview { background: linear-gradient(to bottom, #1d6a3
 button.companion-key.obs-preview::before { background: #3ee07f; box-shadow: 0 0 8px rgba(46,204,113,.95); }
 /* A value shown on a key (OBS transition time); not part of its label. */
 button.companion-key[data-value]::after { content: attr(data-value); display: block; margin-top: 2px; font-weight: 600; opacity: .8; text-transform: none; }
-.companion-button-tools { display: none; align-items: center; gap: 6px; min-width: 0; }
-.companion-categories.editing .companion-button-tools { display: flex; }
-.companion-category-select {
-  flex: 1; width: 0; min-width: 0; height: 44px; padding: 0 28px 0 10px; border-radius: 5px; cursor: pointer;
-  -webkit-appearance: none; appearance: none; font: inherit; font-size: 12px; font-weight: 600; color: var(--lcd-text);
-  background: #0b1418 url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5l5 5 5-5' fill='none' stroke='%238fb3bd' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") no-repeat right 10px center;
-  border: 1px solid #000; box-shadow: inset 0 2px 4px rgba(0,0,0,.8), 0 1px 0 rgba(255,255,255,.05);
-}
-.companion-category-select:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
-button.companion-delete { display: grid; place-items: center; width: 44px; height: 44px; padding: 0; flex-shrink: 0; }
+/* "Bearbeiten": every key, category and target shows its "⋮" */
+.companion-button-item { position: relative; }
+.companion-categories:not(.editing) .edit-only, .power-off-panel:not(.editing) .edit-only { display: none; }
+/* Editing: keys do not fire (a tap opens their menu), so they look inert */
+.companion-categories.editing button.companion-key { padding-right: 36px; cursor: context-menu; border-style: dashed; border-color: #4a5160; filter: saturate(.55); }
+.power-off-panel.editing .power-agent-shutdown { display: none; }
 .companion-create-dialog { width: min(520px, calc(100vw - 32px)); }
 @media (max-width: 760px) {
   .companion-grid { grid-template-columns: repeat(auto-fill, minmax(124px, 1fr)); }
@@ -1505,26 +1470,26 @@ body.stage-on button.companion-key {
   background: var(--lcd-bg); box-shadow: var(--lcd-shadow); color: #ffb36b; font: 600 12px/1.4 var(--mono);
 }
 .light-block {
-  padding: 12px 14px 14px; border-radius: 8px; border: 1px solid #08090b;
+  padding: 6px 14px 14px; border-radius: var(--r-card); border: 1px solid #08090b;
   background: var(--panel-bg); box-shadow: var(--panel-shadow);
 }
 .light-grid { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); gap: 12px; margin-top: 12px; align-items: start; }
 .light-block-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; min-height: 44px; margin-bottom: 8px; }
-.light-block-title { font-size: 11px; font-weight: 800; letter-spacing: .16em; text-transform: uppercase; color: #9aa1ad; }
+.light-block-title { font-size: 12px; font-weight: 800; letter-spacing: .16em; text-transform: uppercase; color: var(--title); text-shadow: 0 1px 0 #000; }
 .light-block-hint { font-size: 12px; color: var(--muted); min-width: 0; }
-.light-block-tools { display: flex; gap: 6px; flex-wrap: wrap; margin-left: auto; }
+.light-block-tools { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-left: auto; }
 button.light-all { min-height: 44px; min-width: 88px; padding: 0 14px; font-size: 12px; }
-button.light-all[aria-pressed="true"] { color: #fff; border-color: #0a2550; background: linear-gradient(to bottom, #3a6fae, #2a5590 55%, #224a80); }
-.light-empty { grid-column: 1 / -1; color: var(--muted); font-size: 13px; padding: 6px 2px; }
+
 .light-block button.busy { opacity: .6; pointer-events: none; }
 
 /* Presets: big tiles, the one that matches the light now glows. */
 .light-scenes { display: grid; grid-template-columns: repeat(auto-fill, minmax(236px, 1fr)); gap: 10px; }
-.preset { position: relative; display: flex; flex-direction: column; min-width: 0; border-radius: 10px; }
+.preset { position: relative; display: flex; flex-direction: column; min-width: 0; border-radius: var(--r-card); }
 button.preset-key {
   display: flex; flex-direction: column; justify-content: space-between; gap: 10px; width: 100%; min-width: 0;
-  min-height: 88px; padding: 12px 14px; text-align: left; border-radius: 10px;
+  min-height: 88px; padding: 12px 14px; text-align: left; border-radius: var(--r-card);
 }
+.preset .preset-top { padding-right: 30px; }  /* room for the "⋮" in the corner */
 .preset-top { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
 .preset-name { flex: 1; min-width: 0; font-size: 16px; font-weight: 800; letter-spacing: .01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .preset-state { flex-shrink: 0; font: 800 10px/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: #ffd45c; }
@@ -1546,25 +1511,18 @@ button.preset-key {
 .preset-dot[data-state="none"] { background: none; box-shadow: none; border: 1px dashed #3a3f48; }
 .preset.active button.preset-key {
   color: #2a1d00; border-color: #5a3d00;
-  background: linear-gradient(to bottom, #ffd45c, #f1b52a 55%, #d99a12);
+  background: var(--lit-bg);
   box-shadow: 0 0 18px rgba(255,200,70,.45), inset 0 1px 0 rgba(255,255,255,.45), 0 2px 3px rgba(0,0,0,.55);
 }
 .preset.active .preset-state { color: #5a3d00; }
 .preset.active .preset-room, .preset.active .preset-room::before { color: #5a4310; }
 .preset.active .preset-dot[data-state="off"] { background: rgba(0,0,0,.25); box-shadow: inset 0 0 0 2px rgba(90,61,0,.7); }
 .preset.active .preset-dot[data-state="none"] { border-color: rgba(90,61,0,.5); }
+.preset.active button.menu-btn { color: #5a3d00; }
+.preset.active button.menu-btn:hover:not(:disabled), .preset.active button.menu-btn[aria-expanded="true"] { color: #2a1d00; background: rgba(0,0,0,.1); }
 .preset.changed button.preset-key { border-color: #6b5420; box-shadow: inset 0 0 0 1px rgba(255,200,70,.35), 0 2px 3px rgba(0,0,0,.55); }
 .preset.applying button.preset-key { animation: light-pending .7s ease-in-out infinite alternate; }
 .preset .inline-rename { width: 100%; min-height: 88px; font-size: 16px; }
-/* Editing: tools under each tile, taps on the tile do not apply it. */
-.preset-tools { display: none; gap: 4px; margin-top: 6px; }
-.light-presets.editing .preset-tools { display: flex; flex-wrap: wrap; }
-.light-presets.editing button.preset-key { min-height: 64px; cursor: default; }
-button.preset-tool, .preset-tools .rename-btn {
-  display: grid; place-items: center; flex: 1 0 44px; min-width: 44px; min-height: 44px; padding: 0; margin: 0; color: #c9ced6;
-}
-button.preset-tool svg { width: 18px; height: 18px; }
-button.preset-tool.danger { color: #e88b8b; }
 
 /* Stage lights: a card each (on/off, brightness, colour). An off light keeps
    its sliders, greyed: they show what comes back when it is switched on. */
@@ -1586,9 +1544,15 @@ button.preset-tool.danger { color: #e88b8b; }
 .fixture.off .light-name { color: #8d96a3; }
 /* Name and pencil; while renaming the field takes the cell. */
 .light-name-cell { display: flex; align-items: center; min-width: 0; }
-.light-name-cell .rename-btn { margin: 0 0 0 -6px; }
 .light-name-cell .inline-rename, .light-circuit-tile .inline-rename { width: 100%; min-width: 0; min-height: 44px; }
-.light-name { font-size: 14px; font-weight: 700; color: #c9ced6; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* The name is a key only in rename mode (Bühne ⋮ > Scheinwerfer umbenennen) */
+button.light-name {
+  display: block; max-width: 100%; min-height: 44px; margin-left: -3px; padding: 0 6px; border: 1px solid transparent; border-radius: 6px;
+  font-size: 14px; font-weight: 700; color: #c9ced6; text-align: left; text-shadow: none; cursor: default;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; background: none; box-shadow: none;
+}
+button.light-name:hover:not(:disabled) { filter: none; color: #c9ced6; }
+button.light-name:active:not(:disabled) { transform: none; box-shadow: none; }
 .light-value { font: 700 13px/1 var(--mono); color: var(--lcd-text); text-align: right; white-space: nowrap; }
 .fixture-row-tone .light-value { font-size: 11px; }
 button.light-zone-key {
@@ -1596,7 +1560,7 @@ button.light-zone-key {
 }
 button.light-zone-key.on {
   color: #2a1d00; border-color: #5a3d00;
-  background: linear-gradient(to bottom, #ffd45c, #f1b52a 55%, #d99a12);
+  background: var(--lit-bg);
   box-shadow: 0 0 12px rgba(255,200,70,.4), inset 0 1px 0 rgba(255,255,255,.45), 0 2px 3px rgba(0,0,0,.55);
 }
 /* Settings: two small chips, the chosen one opens its slider below. */
@@ -1605,7 +1569,6 @@ button.light-chip {
   display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 12px; font-size: 12px; font-weight: 700; color: #9aa1ad;
 }
 button.light-chip .light-chip-value { font: 700 12px/1 var(--mono); color: var(--lcd-text); }
-button.light-chip[aria-expanded="true"] { color: #fff; border-color: #0a2550; background: linear-gradient(to bottom, #3a6fae, #2a5590 55%, #224a80); }
 .light-setting-pop { margin-top: 6px; padding: 4px 10px 8px; border-radius: 8px; background: rgba(0,0,0,.18); border: 1px solid #08090b; }
 .light-setting-pop .fixture-row { grid-template-columns: minmax(84px, auto) minmax(0, 1fr) 64px; }
 .light-setting-pop .fixture-label { text-transform: none; letter-spacing: 0; font-size: 12px; }
@@ -1643,10 +1606,9 @@ input.light-range-tone::-webkit-slider-runnable-track {
 }
 input.light-range-tone::-moz-range-track { background: linear-gradient(to right, rgb(255,160,64), rgb(255,238,214) 50%, rgb(178,212,255)); }
 input.light-range-tone::-moz-range-progress { background: transparent; }
-.light-circuits { display: grid; grid-template-columns: repeat(auto-fill, minmax(196px, 1fr)); gap: 8px; }
+.light-circuits { display: grid; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); gap: 8px; }  /* two per row in the narrow Raumlicht block */
 .light-circuit-tile { display: flex; align-items: center; min-width: 0; }
 .light-circuit-tile button.light-circuit { flex: 1; min-width: 0; }
-.light-circuit-tile .rename-btn { margin: 0; }
 button.light-circuit {
   display: grid; grid-template-columns: 14px minmax(0, 1fr) auto; align-items: center; gap: 8px;
   min-height: 52px; padding: 6px 12px; text-align: left; font-size: 13px; font-weight: 700;
@@ -1664,12 +1626,7 @@ button.light-circuit.pending .light-lamp { animation: light-pending .7s ease-in-
 @media (prefers-reduced-motion: reduce) { button.light-circuit.pending .light-lamp { animation: none; opacity: .5; } }
 .light-block button.busy { opacity: .6; pointer-events: none; }
 /* Saving a preset: name, then which lights belong to it (toggle keys, blue = chosen) */
-.light-scene-create { display: none; margin-bottom: 12px; }
-.light-scene-create.visible { display: block; }
-.light-scene-create-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.light-scene-create-row input { width: 260px; max-width: 100%; min-height: 44px; }
-.light-scene-create-row button { min-height: 44px; }
-.light-pick-hint { margin: 10px 0 4px; font-size: 12px; color: var(--muted); }
+.light-pick-hint { margin-bottom: 4px; }
 .light-pick { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); gap: 4px 20px; }
 .light-pick-head { display: flex; align-items: center; gap: 10px; min-height: 44px; }
 button.light-pick-all { min-height: 44px; min-width: 64px; padding: 0 12px; font-size: 12px; }
@@ -1680,7 +1637,6 @@ button.light-pick-key {
 }
 .light-pick-key .light-pick-name { flex-shrink: 0; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .light-pick-key .light-pick-now { min-width: 0; font: 700 11px/1 var(--mono); color: #8d96a3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-button.light-pick-key[aria-pressed="true"] { color: #fff; border-color: #0a2550; background: linear-gradient(to bottom, #3a6fae, #2a5590 55%, #224a80); }
 button.light-pick-key[aria-pressed="true"] .light-pick-now { color: #cfe2ff; }
 @media (max-width: 1100px) {
   .light-grid { grid-template-columns: minmax(0, 1fr); }
@@ -1689,27 +1645,101 @@ button.light-pick-key[aria-pressed="true"] .light-pick-now { color: #cfe2ff; }
 
 /* ---- Renaming in place (js/rename.js) ------------------------------------------ */
 .inline-rename { flex: 1; min-width: 0; min-height: 44px; }
-/* Steuerung: pencils only with "Bearbeiten" */
-.companion-category-head .rename-btn { display: none; }
-.companion-categories.editing .companion-category-head .rename-btn { display: grid; margin: 0; }
 .companion-category-head .inline-rename { max-width: 360px; }
-.power-tile { flex-direction: column; gap: 6px; }
-.power-tile-tools { display: none; justify-content: flex-end; }
-.power-off-panel.editing .power-tile-tools { display: flex; }
-.power-tile-tools .rename-btn { margin: 0; }
 .power-tile .inline-rename { width: 100%; min-height: 64px; }
-.tp-item .rename-btn { margin: 0; align-self: center; }
+.companion-button-item .inline-rename { width: 100%; min-height: 64px; }
 .tp-item .inline-rename { width: 100%; min-height: 52px; }
-/* Camera presets: one pencil per camera switches renaming on (keys get a
-   dashed edge, a tap opens the name instead of moving the camera). */
-.camera-presets-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 44px; }
-.camera-presets-head .rename-btn { margin: 0; }
-.camera-presets-hint { display: none; letter-spacing: .06em; color: #8fb3bd; }
-.camera-controls.renaming .camera-presets-hint { display: inline; }
-.camera-controls.renaming .rename-btn[data-camera-rename] { opacity: 1; color: #fff; }
-.camera-controls.renaming button.camera-preset { outline: 1px dashed #8fb3bd; outline-offset: -4px; }
 .camera-preset-slot { display: grid; min-width: 0; }
 .camera-preset-slot .inline-rename { width: 100%; min-height: 44px; }
 /* Desktop profile: a recognised YouTube link */
 #pf-path-hint.youtube { color: #7ff0a8; font-weight: 700; }
 #pf-path-hint.youtube::before { content: "\25B6  "; }
+
+/* ---- Shared components ----------------------------------------------------------
+   One look for the same thing everywhere on the page. */
+
+/* The "⋮" key: flat, 44 x 44 px, lit while its menu is open. Every item that
+   can be renamed, moved or deleted has exactly one (js/menus.js). The program
+   rows' and shortcut tiles' keys (program.js) share the look. */
+button.menu-btn, button.display-menu-btn, .program-actions button.program-menu-btn {
+  display: grid; place-items: center; flex-shrink: 0; width: 44px; height: 44px; min-height: 0; padding: 0;
+  color: #8592a0; background: none; border: 1px solid transparent; border-radius: var(--r-key); box-shadow: none; text-shadow: none;
+  transition: color .12s, background-color .12s;
+}
+.program-actions button.program-menu-btn { height: 52px; }
+button.menu-btn:hover:not(:disabled), button.menu-btn[aria-expanded="true"],
+button.display-menu-btn:hover:not(:disabled), button.display-menu-btn[aria-expanded="true"],
+.program-actions button.program-menu-btn:hover:not(:disabled), .program-actions button.program-menu-btn[aria-expanded="true"] {
+  color: #fff; background: rgba(255,255,255,.08); border-color: rgba(255,255,255,.06); filter: none;
+}
+button.menu-btn:active:not(:disabled), button.display-menu-btn:active:not(:disabled),
+.program-actions button.program-menu-btn:active:not(:disabled) { transform: none; box-shadow: none; background: rgba(255,255,255,.12); }
+button.menu-btn svg, button.display-menu-btn svg { display: block; width: 18px; height: 18px; }
+/* On a tile (desktop key, shortcut, preset, Steuerung key, power target): in
+   its top-right corner, the dots drawn small in the corner, the tap area 44 px. */
+button.tile-menu-btn, button.display-menu-btn {
+  position: absolute; top: 0; right: 0; z-index: 1; display: flex; align-items: flex-start; justify-content: flex-end;
+  padding: 6px 5px 0 0; border-radius: 0 var(--r-key) 0 var(--r-key);
+}
+button.tile-menu-btn:hover:not(:disabled), button.tile-menu-btn[aria-expanded="true"],
+button.display-menu-btn:hover:not(:disabled), button.display-menu-btn[aria-expanded="true"] { background: rgba(255,255,255,.06); border-color: transparent; }
+.panel-tools button.menu-btn { margin-left: -2px; }
+
+/* Chosen / pressed / open: one blue for every choice key on the page. */
+button.light-all[aria-pressed="true"], button.light-chip[aria-expanded="true"], button.light-pick-key[aria-pressed="true"],
+button.kind-tile[aria-checked="true"], button.monitor-key[aria-checked="true"], button.camera-preset[aria-pressed="true"],
+button.camera-move-key.active, button.beamer-state-key[aria-pressed="true"], .tp-item button.tp-pick[aria-checked="true"],
+.program-table button.program-single[aria-pressed="true"], .program-table button.program-desktop-key[aria-pressed="true"] {
+  color: #fff; border-color: var(--sel-border); background: var(--sel-bg);
+  box-shadow: var(--sel-glow), inset 0 1px 0 rgba(255,255,255,.28), 0 2px 3px rgba(0,0,0,.55);
+}
+
+/* Section heads: icon + label for every tool; the main "+" key is lit a little. */
+button.add-key { border-radius: var(--r-key); }
+button.add-key .plus-icon { opacity: .9; }
+button.add-key.primary-add { color: #e9f2ff; border-color: #0d2a4d; background: linear-gradient(to bottom, #36506f, #283d57 55%, #22344b); }
+button.add-key.primary-add .plus-icon { color: #8fc2ff; opacity: 1; }
+
+/* Empty lists: one quiet dashed box that says how to start. */
+.empty-state {
+  grid-column: 1 / -1; display: flex; align-items: center; min-height: 56px; padding: 12px 16px;
+  border-radius: var(--r-card); border: 1px dashed #353b46; background: rgba(0,0,0,.16);
+  color: var(--muted); font-size: 13px; line-height: 1.45;
+}
+.empty-state[hidden] { display: none; }
+
+/* Creating something in place (Mute Gruppe, Preset): a card with a blue ring,
+   the name, then "Abbrechen" and the lit save key on the right. */
+.create-card {
+  display: none; margin: 0 0 14px; padding: 10px 14px 14px; border-radius: var(--r-card);
+  border: 1px solid #08090b; background: var(--panel-bg); box-shadow: var(--edit-ring), var(--panel-shadow);
+}
+.create-card.visible { display: block; }
+.create-card-title {
+  display: flex; align-items: center; min-height: 36px; margin-bottom: 6px;
+  font-size: 12px; font-weight: 800; letter-spacing: .16em; text-transform: uppercase; color: #b9d7ff; text-shadow: 0 1px 0 #000;
+}
+.create-card-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.create-card-row input { flex: 1 1 240px; width: auto; max-width: 380px; min-height: 44px; font-size: 14px; }
+.create-card-row button { min-height: 44px; min-width: 110px; }
+.create-card-hint { margin-top: 10px; font-size: 12px; color: var(--muted); }
+
+/* Rename mode (lights, circuits, camera presets): a bar with "Fertig"; the
+   names to tap get a dashed edge. */
+.rename-bar {
+  display: flex; align-items: center; gap: 10px; margin: 0 0 10px; padding: 4px 4px 4px 12px; border-radius: 8px;
+  border: 1px dashed rgba(143,194,255,.45); background: rgba(79,156,255,.08);
+  color: #b9d7ff; font-size: 12px; font-weight: 700;
+}
+.rename-bar[hidden] { display: none; }
+.rename-bar span { flex: 1; min-width: 0; }
+.rename-bar button { min-height: 44px; min-width: 96px; }
+.light-fixtures.renaming button.light-name { cursor: pointer; border-color: rgba(143,194,255,.6); border-style: dashed; background: rgba(79,156,255,.08); }
+.light-circuits.renaming button.light-circuit, .camera-controls.renaming button.camera-preset { outline: 1px dashed #8fc2ff; outline-offset: -5px; }
+.light-circuits.renaming .light-circuit-state { visibility: hidden; }
+
+/* Card heads inside a section share one title style. */
+.companion-category-toggle, .power-off-title { color: var(--title); }
+.beamer-state-title {
+  font-size: 12px; font-weight: 800; letter-spacing: .16em; text-transform: uppercase; color: var(--title); text-shadow: 0 1px 0 #000;
+}

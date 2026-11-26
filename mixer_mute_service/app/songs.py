@@ -28,11 +28,14 @@ POST /songs/create                a new song: written as .foil into the library
 
 Screens: the lyrics go to one or more screens at once ("targets": one PC
 and monitor each, at most one per PC: a display agent has one song window).
-Every show, blank and hide is sent to all of them in parallel; a screen
-that fails does not stop the others. Answers and /songs/live carry
-"screens" (per screen: ok, or the reason it failed). "target_ip" is the PC
-that holds the library; "monitor" (the first screen's) is kept for older
-pages and files: settings without "targets" mean that one screen.
+Every show, blank and hide is queued for all of them at once (ScreenSender:
+in order, 1 s timeout); a step waits only for the screens that answer,
+never for one that is down, which keeps only the newest slide and gets it
+again every 5 s until it answers. Answers and /songs/live carry "screens" (per screen: ok, or the
+reason it failed). "target_ip" is the PC that holds the library; "monitor"
+(the first screen's) is kept for older pages and files: settings without
+"targets" mean that one screen, and an older page that saves "monitor"
+changes the first screen only.
 
 Layout: the service lays the song out for every screen (app/slide_layout.py:
 one text size per song and screen, line breaks, verses split into more
@@ -47,6 +50,7 @@ remembered for AGENT_MEMORY_SECONDS, so it gets one request per slide.
 from __future__ import annotations
 
 import asyncio
+import collections
 import json
 import logging
 import re
@@ -88,6 +92,21 @@ class SongTarget(BaseModel):
         if not display_agent.allowed_target(value):
             raise ValueError("ip must be a LAN address of a PC with the display service")
         return value
+
+
+def clean_targets(targets: list) -> list:
+    """The valid screens of a stored list, the first one per PC (a bad or
+    doubled entry must not cost all the other song settings)."""
+    cleaned, seen = [], set()
+    for entry in targets[:MAX_SONG_SCREENS * 2]:
+        try:
+            target = SongTarget(**entry) if isinstance(entry, dict) else None
+        except (ValidationError, TypeError):
+            target = None
+        if target is not None and target.ip not in seen:
+            seen.add(target.ip)
+            cleaned.append(target.model_dump())
+    return cleaned[:MAX_SONG_SCREENS]
 
 
 class SongSettings(BaseModel):
@@ -175,8 +194,12 @@ class SongService:
         self.loaded_at: Optional[float] = library.get("loaded_at")
         self.errors: list = library.get("errors", []) if isinstance(library.get("errors"), list) else []
         self.live = {"song_id": None, "slide": 0, "blank": False}
-        # Per screen, how the last show/blank/hide went: [{ip, monitor, ok, reason?}].
-        self.screens: list = []
+        # One sender per screen's PC (ScreenSender), and the step numbers:
+        # live is set when a step is sent, confirmed once a screen took it.
+        self.senders: dict = {}
+        self.seq = 0
+        self.live_seq = 0
+        self.confirmed = (0, dict(self.live))
         # Song layouts (app/slide_layout.py), newest last: song_id -> plan.
         self.layouts: dict = {}
         self.layout_rev = 0
@@ -186,17 +209,47 @@ class SongService:
         self.agent_memory: dict = {}
 
     def _load_settings(self) -> SongSettings:
+        data = read_json(self._settings_path, dict, default={})
+        if isinstance(data.get("targets"), list):
+            cleaned = clean_targets(data["targets"])
+            if len(cleaned) != len(data["targets"]):
+                log.warning("%s: dropped %s invalid or duplicate song screen(s)",
+                            self._settings_path, len(data["targets"]) - len(cleaned))
+            data = {**data, "targets": cleaned} if cleaned else {k: v for k, v in data.items() if k != "targets"}
         try:
-            return SongSettings(**read_json(self._settings_path, dict, default={}))
+            return SongSettings(**data)
         except (ValidationError, ValueError, TypeError) as exc:
             log.warning("Ignoring invalid %s: %s", self._settings_path, exc)
             return SongSettings()
 
     def save_settings(self, settings: SongSettings) -> None:
         write_json_atomic(self._settings_path, settings.model_dump(), ensure_ascii=False, indent=2)
-        if settings.targets != self.settings.targets:
-            self.screens = []
         self.settings = settings
+        keep = {target.ip for target in settings.targets}
+        for ip in [ip for ip in self.senders if ip not in keep]:
+            self.senders.pop(ip).close()
+
+    def sender(self, ip: str) -> "ScreenSender":
+        if ip not in self.senders:
+            self.senders[ip] = ScreenSender(ip, self.agent_memory)
+        return self.senders[ip]
+
+    def screens(self) -> list:
+        """Per screen: ok (None while nothing was sent there yet) or the reason it failed."""
+        screens = []
+        for target in self.settings.targets:
+            sender = self.senders.get(target.ip)
+            entry = {"ip": target.ip, "monitor": target.monitor,
+                     "ok": sender.up if sender is not None and sender.tried else None}
+            if entry["ok"] is False:
+                entry["reason"] = sender.reason
+            screens.append(entry)
+        return screens
+
+    def close(self) -> None:
+        for sender in self.senders.values():
+            sender.close()
+        self.senders.clear()
 
     @staticmethod
     def parse_library(files: list) -> Tuple[dict, list]:
@@ -323,7 +376,7 @@ class SongService:
     def _screen(self) -> dict:
         s = self.settings
         return {
-            "monitor": s.targets[0].monitor, "fullscreen": s.fullscreen,   # monitor: per screen (_send_song)
+            "monitor": s.targets[0].monitor, "fullscreen": s.fullscreen,   # monitor: per screen (_step)
             "style": {
                 "font": s.font, "font_size": s.font_size,
                 "text_color": s.text_color, "background_color": s.background_color,
@@ -334,6 +387,8 @@ class SongService:
 
 # How long an agent's refusal is remembered (an updated agent is asked again after that).
 AGENT_MEMORY_SECONDS = 600
+# A live display agent measures at once; one that does not answer is asked again after METRICS_RETRY_SECONDS.
+METRICS_TIMEOUT = 1.5
 # An agent that did not answer the metrics request is asked again after this.
 METRICS_RETRY_SECONDS = 60
 # Window size assumed where the agent cannot tell (full screen / framed window).
@@ -356,8 +411,8 @@ def song_payload_levels(payload: dict) -> list:
     return [payload, without_layout, oldest]
 
 
-def _remembered(service: "SongService", ip: str, what: str, seconds: float = AGENT_MEMORY_SECONDS):
-    entry = service.agent_memory.get((ip, what))
+def _remembered(memory: dict, ip: str, what: str, seconds: float = AGENT_MEMORY_SECONDS):
+    entry = memory.get((ip, what))
     if entry is None or time.monotonic() - entry[1] > seconds:
         return None
     return entry[0]
@@ -382,13 +437,16 @@ async def _screen_for(request: Request, target: "SongTarget", settings: "SongSet
     key = (target.ip, target.monitor, settings.fullscreen, settings.font)
     entry = service.metrics.get(key)
     missing = (chars - entry["metrics"].widths.keys()) if entry else (chars | set(BASE_CHARS))
-    if (missing and not _remembered(service, target.ip, "no_metrics")
-            and not _remembered(service, target.ip, "metrics_failed", METRICS_RETRY_SECONDS)):
+    sender = service.senders.get(target.ip)
+    # Never wait for a screen that is down (the step does not either).
+    if (missing and not (sender is not None and not sender.up)
+            and not _remembered(service.agent_memory, target.ip, "no_metrics")
+            and not _remembered(service.agent_memory, target.ip, "metrics_failed", METRICS_RETRY_SECONDS)):
         asked = "".join(sorted(missing))[:MAX_METRICS_CHARS]
         payload = {"font": settings.font, "monitor": target.monitor, "fullscreen": settings.fullscreen, "chars": asked}
         try:
             answer = await display_agent.call(request.app.state.cfg.desktop_display, target.ip, "/song/metrics",
-                                              payload, 3)
+                                              payload, METRICS_TIMEOUT)
         except AgentError as exc:
             if exc.agent_status in (400, 404):
                 log.info("Display agent %s cannot measure fonts (old version); estimating the song layout", target.ip)
@@ -475,20 +533,24 @@ async def ensure_layout(request: Request, song_id: str) -> dict:
     return plan
 
 
-async def _call_agent(request: Request, path: str, payload: dict, timeout: float = 3,
-                      target: Optional[str] = None) -> Tuple[dict, int]:
-    """(result, status) of a call to a display agent: ``target``, or the PC
-    with the library."""
-    cfg = request.app.state.cfg.desktop_display
-    service: SongService = request.app.state.songs
-    target = target or service.settings.target_ip
+async def _call_agent(request: Request, path: str, payload: dict, timeout: float = 3) -> Tuple[dict, int]:
+    """(result, status) of a call to the display agent of the PC with the library."""
+    return await _agent_call(request.app.state.cfg.desktop_display, request.app.state.songs.settings.target_ip,
+                             path, payload, timeout)
+
+
+async def _agent_call(cfg, target: str, path: str, payload: dict, timeout: float,
+                      memory: Optional[dict] = None) -> Tuple[dict, int]:
+    """(result, status) of a call to the display agent at ``target``.
+    memory: SongService.agent_memory, where a refused /song form is kept."""
+    memory = memory if memory is not None else {}
     try:
         if path != "/song":
             return await display_agent.call(cfg, target, path, payload, timeout), 200
         # Older display agents refuse newer parts with 400: the next older
         # form, remembered, so the next slides go there in one request.
         levels = song_payload_levels(payload)
-        level = _remembered(service, target, "song_level") or 0
+        level = _remembered(memory, target, "song_level") or 0
         while True:
             try:
                 return await display_agent.call(cfg, target, path, levels[level], timeout), 200
@@ -497,7 +559,7 @@ async def _call_agent(request: Request, path: str, payload: dict, timeout: float
                 if exc.agent_status != 400 or following is None:
                     raise
                 level = following
-                service.agent_memory[(target, "song_level")] = (level, time.monotonic())
+                memory[(target, "song_level")] = (level, time.monotonic())
                 log.warning("Display agent %s refused the song request (old version?); sending it %s", target,
                             "without the layout" if level == 1 else "without preview/alignment")
     except AgentError as exc:
@@ -510,46 +572,151 @@ async def _call_agent(request: Request, path: str, payload: dict, timeout: float
         return exc.answer(), exc.status
 
 
-async def _send_song(request: Request, payload) -> Tuple[bool, Tuple[dict, int]]:
-    """Send one /song request to every screen at once, each with its own
-    monitor; ``payload`` is one request for all screens or a function
-    (screen index -> request), as each screen gets its own layout. Returns
-    (any screen took it, the first failure or the last answer) and keeps the
-    per-screen outcome in ``service.screens``."""
+SONG_SCREEN_TIMEOUT = 1.0   # a live display agent answers at once (202)
+SONG_SCREEN_RETRY = 5.0     # a screen that is down gets the newest slide again this often
+UNREACHABLE = "display agent unavailable"
+
+
+class ScreenSender:
+    """Sends /song requests to one PC's display agent, one at a time and in
+    order: a screen that answers gets every step. While the PC does not
+    answer it is "down": steps do not wait for it, only the newest request
+    is kept for it (it shows the current slide when it is back, without
+    replaying the ones it missed), and that is tried again every
+    SONG_SCREEN_RETRY seconds until it answers. The requests are passed
+    through as they are (the payload is the caller's business)."""
+
+    MAX_QUEUE = 8
+
+    def __init__(self, ip: str, memory: Optional[dict] = None) -> None:
+        self.ip = ip
+        self.memory = memory if memory is not None else {}   # SongService.agent_memory
+        self.up = True          # until a request fails
+        self.tried = False
+        self.reason: Optional[str] = None
+        self.latest = None      # (cfg, payload): what the screen should show now
+        self.queue = collections.deque()   # (seq, cfg, payload): not sent yet
+        self.done_seq = 0
+        self.waiters: list = []  # (seq, future): steps waiting for this screen
+        self.task: Optional[asyncio.Task] = None
+        self.wake: Optional[asyncio.Event] = None
+
+    def submit(self, seq: int, cfg, payload: dict) -> asyncio.Future:
+        """Queue a request; the future gets (ok, result, status) once it or
+        a newer one was sent."""
+        loop = asyncio.get_running_loop()
+        future = loop.create_future()
+        self.waiters.append((seq, future))
+        if not self.up:
+            self.queue.clear()   # down: only the newest counts
+        self.queue.append((seq, cfg, payload))
+        while len(self.queue) > self.MAX_QUEUE:
+            self.queue.popleft()
+        self.latest = (cfg, payload)
+        if self.wake is None:
+            self.wake = asyncio.Event()
+        self.wake.set()
+        if self.task is None or self.task.done():
+            self.task = loop.create_task(self._run(), name=f"song screen {self.ip}")
+        return future
+
+    def close(self) -> None:
+        if self.task is not None:
+            self.task.cancel()
+        for _, future in self.waiters:
+            if not future.done():
+                future.cancel()
+        self.waiters = []
+
+    async def _run(self) -> None:
+        while True:
+            self.wake.clear()
+            if not self.queue:
+                if self.up or self.latest is None:
+                    return
+                try:
+                    await asyncio.wait_for(self.wake.wait(), SONG_SCREEN_RETRY)
+                except asyncio.TimeoutError:
+                    if not self.queue:
+                        self.queue.append((self.done_seq, *self.latest))
+                continue
+            seq, cfg, payload = self.queue.popleft()
+            result, status = await _agent_call(cfg, self.ip, "/song", payload, SONG_SCREEN_TIMEOUT, self.memory)
+            ok = status == 200 and result.get("ok") is not False
+            if not ok and (self.up or not self.tried):
+                log.warning("SONG screen %s down: %s", self.ip, result.get("reason"))
+            elif ok and not self.up:
+                log.info("SONG screen %s back", self.ip)
+            self.tried = True
+            self.up = ok
+            self.reason = None if ok else (result.get("reason") or f"HTTP {status}")
+            if not ok:
+                while len(self.queue) > 1:   # just went down: skip to the newest
+                    self.queue.popleft()
+            self.done_seq = max(self.done_seq, seq)
+            waiting = []
+            for waiting_seq, future in self.waiters:
+                if waiting_seq > seq:
+                    waiting.append((waiting_seq, future))
+                elif not future.done():
+                    future.set_result((ok, result, status))
+            self.waiters = waiting
+
+
+async def _step(request: Request, plan):
+    """One show/blank/hide on every screen. ``plan(service)`` runs under the
+    lock (a coroutine: awaited) and returns (payload, new live state, log
+    text), or an answer; the payload is one request for all screens or a
+    function (screen index -> request), as each screen gets its own layout. The
+    lock is held only to decide and queue (the next press steps on from the
+    new state); then the step waits for the screens that are up, at most
+    SONG_SCREEN_TIMEOUT, never for one that is down. If no screen took it,
+    the live state goes back to the last one a screen took."""
     service: SongService = request.app.state.songs
-    targets = list(service.settings.targets)
-
-    def for_screen(index: int, target: SongTarget) -> dict:
-        body = payload(index) if callable(payload) else payload
-        return body if body["action"] == "hide" else {**body, "monitor": target.monitor}
-
-    answers = await asyncio.gather(*(
-        _call_agent(request, "/song", for_screen(index, target), target=target.ip)
-        for index, target in enumerate(targets)))
+    cfg = request.app.state.cfg.desktop_display
+    async with service.lock:
+        planned = plan(service)
+        if asyncio.iscoroutine(planned):
+            planned = await planned
+        if not isinstance(planned, tuple):
+            return planned
+        payload, live, note = planned
+        service.seq += 1
+        seq = service.seq
+        targets = list(service.settings.targets)
+        senders = {target.ip: service.sender(target.ip) for target in targets}
+        up = [target.ip for target in targets if senders[target.ip].up]
+        bodies = [payload(index) if callable(payload) else payload for index in range(len(targets))]
+        futures = {target.ip: senders[target.ip].submit(
+            seq, cfg, body if body["action"] == "hide" else {**body, "monitor": target.monitor})
+            for target, body in zip(targets, bodies)}
+        service.live, service.live_seq = live, seq
+    waited = [futures[ip] for ip in (up or futures)]
+    await asyncio.wait(waited, timeout=SONG_SCREEN_TIMEOUT + 0.2)
     screens, failure = [], None
-    for target, (result, status) in zip(targets, answers):
-        ok = status == 200 and result.get("ok") is not False
+    for target in targets:
+        future = futures[target.ip]
+        if future.done() and not future.cancelled():
+            ok, result, status = future.result()
+        else:   # down (not waited for) or still busy
+            ok, result, status = False, {"ok": False, "reason": senders[target.ip].reason or UNREACHABLE}, 502
         entry = {"ip": target.ip, "monitor": target.monitor, "ok": ok}
         if not ok:
             entry["reason"] = result.get("reason") or f"HTTP {status}"
             failure = failure or (result, status)
-            action = (payload(0) if callable(payload) else payload)["action"]
-            log.warning("SONG %s not shown on %s monitor %s: %s", action, target.ip, target.monitor, entry["reason"])
         screens.append(entry)
-    service.screens = screens
     reached = any(entry["ok"] for entry in screens)
-    return reached, (failure or answers[-1])
-
-
-def _sent(service: SongService) -> dict:
-    """The answer after a show/blank/hide that reached at least one screen."""
-    failed = [entry for entry in service.screens if not entry["ok"]]
+    async with service.lock:
+        if reached and seq > service.confirmed[0]:
+            service.confirmed = (seq, dict(live))
+        elif not reached and service.live_seq == seq:
+            service.live = dict(service.confirmed[1])
+    if not reached:
+        result, status = failure
+        return reply({**result, "screens": screens}, status)
+    log.info(note)
+    failed = [entry for entry in screens if not entry["ok"]]
     return {"ok": True, **_live_view(service), **({"failed": failed} if failed else {})}
-
-
-def _not_sent(service: SongService, answer: Tuple[dict, int]):
-    result, status = answer
-    return reply({**result, "screens": service.screens}, status)
 
 
 def _song_view(song_id: str, song: dict, plan: Optional[dict], slides: list) -> dict:
@@ -579,51 +746,30 @@ def _live_view(service: SongService) -> dict:
         live["slide_count"] = len(slides)
     else:
         live["song"], live["layout_rev"], live["slide_count"] = None, 0, 0
-    live["screens"] = list(service.screens)
+    live["screens"] = service.screens()
     return live
 
 
 async def show_slide(request: Request, song_id: str, slide: int):
     """Show one slide of a song (also used by program rows). Unblanks."""
-    service: SongService = request.app.state.songs
-    async with service.lock:
-        return await _show_locked(request, song_id, slide)
+    return await _step(request, lambda service: _plan_show(request, service, song_id, slide))
 
 
-async def _show_locked(request: Request, song_id: str, slide: int):
-    """The caller holds ``service.lock``."""
-    service: SongService = request.app.state.songs
+async def _plan_show(request: Request, service: SongService, song_id: str, slide: int):
     song = service.songs.get(song_id)
     if song is None:
         reason = "song library not loaded" if not service.songs else "unknown song"
         return JSONResponse({"ok": False, "reason": reason, "song_id": song_id}, 409 if not service.songs else 404)
-    await ensure_layout(request, song_id)
+    await ensure_layout(request, song_id)   # the split decides the slide numbers
     count = len(service.slides(song_id))
     if not 0 <= slide < count:
         return JSONResponse({"ok": False, "reason": "no such slide", "song_id": song_id}, 400)
-    reached, answer = await _send_song(request, lambda screen: service.slide_payload(song_id, slide, screen))
-    if reached:
-        service.live = {"song_id": song_id, "slide": slide, "blank": False}
-        log.info("SONG show %r slide %s/%s", song_id, slide + 1, count)
-        return _sent(service)
-    return _not_sent(service, answer)
+    return (lambda screen: service.slide_payload(song_id, slide, screen),
+            {"song_id": song_id, "slide": slide, "blank": False}, f"SONG show {song_id!r} slide {slide + 1}/{count}")
 
 
-async def _blank(request: Request):
-    service: SongService = request.app.state.songs
-    async with service.lock:
-        return await _blank_locked(request)
-
-
-async def _blank_locked(request: Request):
-    """The caller holds ``service.lock``."""
-    service: SongService = request.app.state.songs
-    reached, answer = await _send_song(request, service.blank_payload())
-    if reached:
-        service.live = {**service.live, "blank": True}
-        log.info("SONG blank")
-        return _sent(service)
-    return _not_sent(service, answer)
+def _plan_blank(service: SongService):
+    return service.blank_payload(), {**service.live, "blank": True}, "SONG blank"
 
 
 @router.get("/songs/settings")
@@ -637,8 +783,10 @@ async def set_song_settings(request: Request, body: dict = Body(...)):
     service: SongService = request.app.state.songs
     merged = {**service.settings.model_dump(), **body}
     if "targets" not in body and "monitor" in body:
-        # An older page: its PC and monitor are the one screen.
-        del merged["targets"]
+        # An older page knows one screen (its PC and monitor): that is the
+        # first one; the others stay.
+        first = {"ip": body.get("target_ip", service.settings.targets[0].ip), "monitor": body["monitor"]}
+        merged["targets"] = [first, *[t.model_dump() for t in service.settings.targets[1:]]]
     try:
         settings = SongSettings(**merged)
     except (ValidationError, TypeError) as exc:
@@ -713,8 +861,7 @@ async def song_show(request: Request, body: dict = Body(...)):
 
 @router.post("/songs/next")
 async def song_next(request: Request):
-    service: SongService = request.app.state.songs
-    async with service.lock:
+    def plan(service: SongService):
         live = service.live
         if live["song_id"] not in service.songs:
             return JSONResponse({"ok": False, "reason": "no song selected"}, 409)
@@ -722,37 +869,31 @@ async def song_next(request: Request):
         if live["blank"] and live["slide"] >= last:
             return {"ok": True, **_live_view(service)}  # already dark after the end
         if live["slide"] >= last:
-            return await _blank_locked(request)
-        return await _show_locked(request, live["song_id"], live["slide"] + (0 if live["blank"] else 1))
+            return _plan_blank(service)
+        return _plan_show(request, service, live["song_id"], live["slide"] + (0 if live["blank"] else 1))
+    return await _step(request, plan)
 
 
 @router.post("/songs/prev")
 async def song_prev(request: Request):
-    service: SongService = request.app.state.songs
-    async with service.lock:
+    def plan(service: SongService):
         live = service.live
         if live["song_id"] not in service.songs:
             return JSONResponse({"ok": False, "reason": "no song selected"}, 409)
         # Dark after the last slide: "back" shows the last slide again.
-        target = live["slide"] if live["blank"] else max(0, live["slide"] - 1)
-        return await _show_locked(request, live["song_id"], target)
+        return _plan_show(request, service, live["song_id"], live["slide"] if live["blank"] else max(0, live["slide"] - 1))
+    return await _step(request, plan)
 
 
 @router.post("/songs/blank")
 async def song_blank(request: Request):
-    return await _blank(request)
+    return await _step(request, _plan_blank)
 
 
 @router.post("/songs/hide")
 async def song_hide(request: Request):
-    service: SongService = request.app.state.songs
-    async with service.lock:
-        reached, answer = await _send_song(request, {"action": "hide"})
-        if reached:
-            service.live = {"song_id": None, "slide": 0, "blank": False}
-            log.info("SONG hide")
-            return _sent(service)
-        return _not_sent(service, answer)
+    return await _step(request, lambda service: (
+        {"action": "hide"}, {"song_id": None, "slide": 0, "blank": False}, "SONG hide"))
 
 
 def _new_song_fields(body: dict) -> Tuple[str, str, list, list]:

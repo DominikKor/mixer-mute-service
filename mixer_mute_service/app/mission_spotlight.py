@@ -1,9 +1,11 @@
 """Mission Spotlight: a desktop profile whose path is a folder; the file of
 the current week is picked by date.
 
-    <folder>\\<Q>. Quartal\\<WW>*      e.g. I:\\Spotlight\\3. Quartal\\01_Testvideo.mp4
+    <folder>\\<YYYY>_<Q>. Quartal\\<WW>*   e.g. I:\\Spotlight\\2026_3. Quartal\\01_Testvideo.mp4
 
-Q is the quarter of today's date, WW the week within it, two digits: days
+YYYY is the year and Q the quarter of today's date (one folder per year and
+quarter, no fallback to a folder without the year), WW the week within the
+quarter, two digits: days
 1-7 of the quarter are week 01, days 8-14 week 02, and so on (the last days
 of a quarter may make a week 14). The display agent fills in "*" on the
 target PC; with several matching files the newest one wins.
@@ -22,8 +24,8 @@ def quarter_and_week(today: Optional[date] = None) -> tuple[int, int]:
     return quarter, (today - start).days // 7 + 1
 
 
-def subfolder(quarter: int) -> str:
-    return f"{quarter}. Quartal"
+def subfolder(year: int, quarter: int) -> str:
+    return f"{year}_{quarter}. Quartal"
 
 
 def week_prefix(week: int) -> str:
@@ -31,14 +33,17 @@ def week_prefix(week: int) -> str:
 
 
 def spotlight_path(folder: str, today: Optional[date] = None) -> str:
+    today = today or date.today()
     quarter, week = quarter_and_week(today)
-    return f"{folder.rstrip(chr(92) + '/')}\\{subfolder(quarter)}\\{week_prefix(week)}*"
+    return f"{folder.rstrip(chr(92) + '/')}\\{subfolder(today.year, quarter)}\\{week_prefix(week)}*"
 
 
 def current(today: Optional[date] = None) -> dict:
-    """What the settings show: quarter, week and the names that are looked for."""
+    """What the settings show: year, quarter, week and the names that are looked for."""
+    today = today or date.today()
     quarter, week = quarter_and_week(today)
-    return {"quarter": quarter, "week": week, "subfolder": subfolder(quarter), "file_prefix": week_prefix(week)}
+    return {"year": today.year, "quarter": quarter, "week": week,
+            "subfolder": subfolder(today.year, quarter), "file_prefix": week_prefix(week)}
 
 
 def profile_path(profile, today: Optional[date] = None) -> str:

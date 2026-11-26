@@ -80,11 +80,11 @@ function renderPowerOffConfig(data) {
     key.title = `${name}: ${checked ? "wird mit ausgeschaltet" : "bleibt an"} – tippen zum Umschalten`;
     key.append(input, title, sub);
     tile.append(key);
-    // Renaming (shown with "Bearbeiten"): stored on the service for all devices.
-    const tools = document.createElement("div");
-    tools.className = "power-tile-tools";
-    tools.appendChild(renamePencil(name));
-    tile.append(tools);
+    // Renaming (its "⋮", shown with "Bearbeiten"): stored on the service for all devices.
+    const menu = menuButton(`${name}: umbenennen`, `power:${nameId}`);
+    menu.classList.add("tile-menu-btn", "edit-only");
+    menu.dataset.powerMenu = nameId;
+    tile.append(menu);
     targets.append(tile);
     return tile;
   };
@@ -99,7 +99,7 @@ function renderPowerOffConfig(data) {
     shutdown.dataset.powerAgentShutdown = target.ip;
     shutdown.title = `Nur ${target.label} jetzt herunterfahren (nach 10 Sekunden)`;
     shutdown.setAttribute("aria-label", shutdown.title);
-    shutdown.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 3v8M6.3 6.8a8 8 0 1 0 11.4 0"/></svg>';
+    shutdown.innerHTML = ICON_POWER;
     tile.append(shutdown);
   }
   const status = $("power-off-status");
@@ -219,9 +219,10 @@ function renderCompanionButtons() {
     toggle.dataset.companionCategoryToggle = category.id;
     toggle.setAttribute("aria-expanded", String(category.visible));
     toggle.textContent = category.name;
-    const pencil = renamePencil(`Kategorie ${category.name}`);
-    pencil.dataset.companionCategoryRename = category.id;
-    header.append(toggle, pencil);
+    const menu = menuButton(`Kategorie ${category.name}: umbenennen`, `category:${category.id}`);
+    menu.classList.add("edit-only");
+    menu.dataset.categoryMenu = category.id;
+    header.append(toggle, menu);
 
     const grid = document.createElement("div");
     grid.className = "companion-grid";
@@ -238,28 +239,11 @@ function renderCompanionButtons() {
       if (obs.scene) press.dataset.obsScene = obs.scene;
       if (obs.transition) press.dataset.obsTransition = "";
       press.title = info.kind === "native" ? "Direkt über den lokalen Dienst ausführen" : "Über den sicheren Dienst ausführen";
-      const tools = document.createElement("div");
-      tools.className = "companion-button-tools";
-      const categorySelect = document.createElement("select");
-      categorySelect.className = "companion-category-select";
-      categorySelect.dataset.companionCategorySelect = info.id;
-      categorySelect.setAttribute("aria-label", `${info.label}: Kategorie`);
-      for (const option of COMPANION_DATA.categories) {
-        const element = document.createElement("option");
-        element.value = option.id;
-        element.textContent = option.name;
-        element.selected = option.id === category.id;
-        categorySelect.appendChild(element);
-      }
-      const remove = document.createElement("button");
-      remove.type = "button";
-      remove.className = "companion-delete danger";
-      remove.dataset.companionDelete = info.id;
-      remove.setAttribute("aria-label", `${info.label} löschen`);
-      remove.title = "Button löschen";
-      remove.innerHTML = ICON_TRASH;
-      tools.append(categorySelect, remove);
-      item.append(press, tools);
+      // With "Bearbeiten": the key's "⋮" (rename, move, delete).
+      const menu = menuButton(`${info.label}: umbenennen, verschieben oder löschen`, `key:${info.id}`);
+      menu.classList.add("tile-menu-btn", "edit-only");
+      menu.dataset.companionMenu = info.id;
+      item.append(press, menu);
       grid.appendChild(item);
     }
     section.append(header, grid);
@@ -338,7 +322,7 @@ async function saveCompanionButton(event) {
   if (!result.ok || result.data.ok === false) { toast(result.data.reason || `HTTP ${result.status}`, false); return; }
   $("companion-button-dialog").close();
   await loadCompanionButtons();
-  toast("Button erstellt", true);
+  toast("Taste erstellt", true);
 }
 
 function openSnapshotCreateRow() {
@@ -408,15 +392,24 @@ $("companion-category-cancel").addEventListener("click", () => $("companion-cate
 $("companion-button-cancel").addEventListener("click", () => $("companion-button-dialog").close());
 
 $("companion-categories").addEventListener("click", async (event) => {
-  const rename = event.target.closest("[data-companion-category-rename]");
-  if (rename) {
-    const category = COMPANION_DATA.categories.find(item => item.id === rename.dataset.companionCategoryRename);
+  const categoryMenu = event.target.closest("[data-category-menu]");
+  if (categoryMenu) {
+    const category = COMPANION_DATA.categories.find(item => item.id === categoryMenu.dataset.categoryMenu);
     if (!category) return;
-    startInlineRename(rename.closest(".companion-category-head"), category.name, { save: async name => {
-      if (await saveName("POST", `/companion/categories/${encodeURIComponent(category.id)}/rename`, name, "Kategorie")) {
-        await loadCompanionButtons();
-      }
-    } });
+    toggleActionMenu(categoryMenu, [{ label: "Umbenennen", icon: ICON_PENCIL, run: () => {
+      const head = $("companion-categories").querySelector(`[data-category-id="${CSS.escape(category.id)}"] .companion-category-head`);
+      if (head) startInlineRename(head, category.name, { save: async name => {
+        if (await saveName("POST", `/companion/categories/${encodeURIComponent(category.id)}/rename`, name, "Kategorie")) {
+          await loadCompanionButtons();
+        }
+      } });
+    } }]);
+    return;
+  }
+  const keyMenu = event.target.closest("[data-companion-menu]");
+  if (keyMenu) {
+    const info = COMPANION_DATA.buttons.find(button => button.id === keyMenu.dataset.companionMenu);
+    if (info) toggleActionMenu(keyMenu, () => companionKeyMenuItems(info));
     return;
   }
   const toggle = event.target.closest("[data-companion-category-toggle]");
@@ -435,17 +428,17 @@ $("companion-categories").addEventListener("click", async (event) => {
     }
     return;
   }
-  const remove = event.target.closest("[data-companion-delete]");
-  if (remove) {
-    const info = COMPANION_DATA.buttons.find(button => button.id === remove.dataset.companionDelete);
-    if (!info || !(await confirmDelete(remove, `Button „${info.label}“ löschen?`))) return;
-    const result = await api("POST", `/companion/buttons/${encodeURIComponent(info.id)}/delete`);
-    if (!result.ok || result.data.ok === false) toast(result.data.reason || `HTTP ${result.status}`, false);
-    else { await loadCompanionButtons(); toast(`Button ${info.label} gelöscht`, true); }
-    return;
-  }
   const button = event.target.closest("[data-companion-press]");
   if (!button) return;
+  // "Bearbeiten": a key never fires (a tap that misses its "⋮" by a few
+  // pixels would otherwise switch the mixer, OBS or the beamer); it opens
+  // the key's menu instead.
+  if (companionEditing()) {
+    const info = COMPANION_DATA.buttons.find(item => item.id === button.dataset.companionPress);
+    const menu = button.closest(".companion-button-item")?.querySelector("[data-companion-menu]");
+    if (info && menu) toggleActionMenu(menu, () => companionKeyMenuItems(info));
+    return;
+  }
   const pressId = button.dataset.companionPress;
   if (COMPANION_BUTTON_BUSY.has(pressId)) return;
   COMPANION_BUTTON_BUSY.add(pressId);
@@ -498,18 +491,21 @@ $("power-off-targets").addEventListener("change", event => {
   if (event.target.matches("[data-power-target], [data-power-beamer]")) savePowerOffConfig();
 });
 $("power-off-targets").addEventListener("click", async event => {
-  const pencil = event.target.closest(".power-tile-tools .rename-btn");
-  if (pencil) {
-    const tile = pencil.closest(".power-tile");
-    const current = tile.dataset.name === tile.dataset.defaultName ? "" : tile.dataset.name;
-    startInlineRename(tile, current, {
-      placeholder: tile.dataset.defaultName, allowEmpty: true,
-      save: async name => {
-        if (await saveName("PUT", `/names/power-target/${encodeURIComponent(tile.dataset.powerName)}`, name, "Name")) {
-          await loadPowerOffConfig();
-        }
-      },
-    });
+  const menu = event.target.closest("[data-power-menu]");
+  if (menu) {
+    toggleActionMenu(menu, [{ label: "Umbenennen", icon: ICON_PENCIL, run: anchor => {
+      const tile = (anchor || menu).closest(".power-tile");
+      if (!tile) return;
+      const current = tile.dataset.name === tile.dataset.defaultName ? "" : tile.dataset.name;
+      startInlineRename(tile, current, {
+        placeholder: tile.dataset.defaultName, allowEmpty: true,
+        save: async name => {
+          if (await saveName("PUT", `/names/power-target/${encodeURIComponent(tile.dataset.powerName)}`, name, "Name")) {
+            await loadPowerOffConfig();
+          }
+        },
+      });
+    } }]);
     return;
   }
   const button = event.target.closest("button[data-power-agent-shutdown]");
@@ -540,12 +536,41 @@ $("power-off-selected").addEventListener("click", async event => {
   }
   await refresh();
 });
-$("companion-categories").addEventListener("change", async (event) => {
-  const select = event.target.closest("[data-companion-category-select]");
-  if (!select) return;
-  const button = COMPANION_DATA.buttons.find(item => item.id === select.dataset.companionCategorySelect);
-  if (!button) return;
-  const result = await api("POST", `/companion/buttons/${encodeURIComponent(button.id)}/update`, { label: button.label, category_id: select.value });
+function companionEditing() {
+  return $("companion-categories").classList.contains("editing");
+}
+
+// A key's "⋮" (with "Bearbeiten"): rename, move to another category, delete.
+function companionKeyMenuItems(info) {
+  const others = COMPANION_DATA.categories.filter(category => category.id !== info.category_id);
+  return [
+    { label: "Umbenennen", icon: ICON_PENCIL, run: () => renameCompanionKey(info) },
+    others.length ? "-" : null,
+    ...others.map(category => ({ label: `Nach „${category.name}“ verschieben`, icon: ICON_MOVE,
+      run: () => updateCompanionKey(info, { category_id: category.id }) })),
+    "-",
+    { label: "Löschen", icon: ICON_TRASH, danger: true, run: anchor => deleteCompanionKey(info, anchor) },
+  ];
+}
+
+async function updateCompanionKey(info, change) {
+  const body = { label: info.label, category_id: info.category_id, ...change };
+  const result = await api("POST", `/companion/buttons/${encodeURIComponent(info.id)}/update`, body);
   if (!result.ok || result.data.ok === false) toast(result.data.reason || `HTTP ${result.status}`, false);
   await loadCompanionButtons();
-});
+}
+
+function renameCompanionKey(info) {
+  const press = $("companion-categories").querySelector(`[data-companion-press="${CSS.escape(info.id)}"]`);
+  if (!press) return;
+  startInlineRename(press.closest(".companion-button-item"), info.label, { maxLength: 40, save: async name => {
+    await updateCompanionKey(info, { label: name });
+  } });
+}
+
+async function deleteCompanionKey(info, anchor) {
+  if (!(await confirmDelete(anchor, `Taste „${info.label}“ löschen?`))) return;
+  const result = await api("POST", `/companion/buttons/${encodeURIComponent(info.id)}/delete`);
+  if (!result.ok || result.data.ok === false) toast(result.data.reason || `HTTP ${result.status}`, false);
+  else { await loadCompanionButtons(); toast(`Taste „${info.label}“ gelöscht`, true); }
+}

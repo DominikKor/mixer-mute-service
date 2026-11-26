@@ -104,11 +104,11 @@ miniatures, and **Standard** restores the original one.
   colour, and **Immer an** protects a channel from group mutes and solo.
   Blocked actions show the reason as a toast (e.g. "fader value stale").
 - **Mute Gruppen**: per-group mute / unmute, **create / edit / delete**, and
-  per-channel fader presets (**Use** / **Use All**). **Mutegruppe aus Status**
+  per-channel fader presets (**Use** / **Use All**). **Aus Pult-Status…**
   creates a group from the channels currently unmuted, with their observed
   fader values as presets. Each group is one line (display, Mute, Solo, "⋮");
   tapping the display shows its channels (Set / Use and the fader). The "⋮"
-  menu has Bearbeiten (channel descriptions, remove and add channels; "Fertig"
+  menu has Kanäle bearbeiten (channel descriptions, remove and add channels; "Fertig"
   ends it), Umbenennen, Use All, Kanal-Einstellungen, Duplizieren, Löschen.
 - **Kanal-Einstellungen** (in the "⋮" menu of each mute group): saves gain, high-pass,
   EQ, gate and compressor of the group's input channels as they are set on the
@@ -118,30 +118,20 @@ miniatures, and **Standard** restores the original one.
 - **Programm**: a cue list with planned time, title, person, mute group
   (optional: a row without one changes no mutes), light scene, a file each
   for playback and translation, for lyrics a song *or* a file (small keys
-  "Lied" / "Datei", ✕ removes it; a row saved with both keeps the song,
-  and a row's own song also wins over its shortcut's file), camera presets with an OBS scene per
-  camera, desktop profiles (only the chosen ones show, numbered in the
-  order they run, ✕ removes one, ‹ moves one earlier, **+** adds another
-  at the end), and the
-  beamer (hide before the row shows anything, unhide after its files,
-  desktop profiles and song; "Beamer bleibt" leaves it alone). A row may
-  instead use a **shortcut** as its whole configuration: it then runs the
-  shortcut's fields instead of its own (linked: editing the shortcut
-  changes every row using it); time, title, person and the **song** stay
-  the row's (a template's song slots fill it; a shortcut's own song only
-  runs from its Desktop key). Its own fields are hidden but stay saved and
-  come back with "Kein Shortcut" or when the shortcut is deleted; a new
-  row created with a shortcut saves none (the editor's pre-filled group
-  would otherwise run unseen later). A row whose shortcut was deleted says
-  so on every device ("Shortcut „X“ gelöscht – läuft mit eigenen
-  Einstellungen") until it is saved again (or "OK"), and is checked for
-  mute conflicts before it starts. A PUT without `shortcut` (a page from
-  before) keeps the row's shortcut. A row whose shortcut is gone without
-  that (e.g. an imported file) refuses to start ("unknown shortcut"). Rows
-  saved with the older list of shortcuts (run after the row's own steps)
-  take the first one as their shortcut when the service starts, program
-  templates likewise (both saved once); rows that change what they do by
-  this are logged as warnings with the shortcuts' names. A
+  "Lied" / "Datei", ✕ removes it; a row saved with both keeps the song),
+  camera presets with an OBS scene per camera, desktop profiles (only the
+  chosen ones show, numbered in the order they run, ✕ removes one, ‹ moves
+  one earlier, **+** adds another at the end), and the beamer (hide before
+  the row shows anything, unhide after its files, desktop profiles and
+  song; "Beamer bleibt" leaves it alone). A row always runs its own fields.
+  **Shortcut laden** (row's "⋮"; a new row has the key next to ✓) copies a
+  shortcut's fields into them: a copy, they stay visible and can be
+  changed, and later edits of the shortcut change no row. Time, title,
+  person and song stay the row's; with a song the shortcut's Liedtext file
+  is left out. Rows and templates saved while rows could refer to a
+  shortcut (v1.2.1-210 and before) get that shortcut's fields copied in
+  once when the service starts (logged as warnings, a deleted shortcut is
+  just dropped); an imported program file of that time too. A
   choice with only one entry (e.g. one light scene) is a key that
   switches it on and off instead of a dropdown (not the OBS scenes).
   Each row is one compact line (time, delay, title, person, chips of what it
@@ -153,7 +143,8 @@ miniatures, and **Standard** restores the original one.
   it is due; **Weiter** starts the next row (also from a Stream Deck via
   `POST /program/next`). The row that ran last today is marked "Läuft", the
   next one "Nächster", earlier ones are dimmed. **Duplizieren** puts the copy
-  right below its original, **Ablauf zurücksetzen** forgets all start times.
+  right below its original, **Ablauf zurücksetzen** (the section head's "⋮",
+  with JSON export and import) forgets all start times.
   **Als Shortcut speichern** (row's "⋮") copies what the row does into a
   new shortcut (`shortcuts.json`). Shortcuts are keys in the Desktop
   section: a tap runs them without touching the program's order or start
@@ -165,7 +156,16 @@ miniatures, and **Standard** restores the original one.
 - **Steuerung**: the keys imported from the former Companion setup (lights,
   OBS, beamer, "Overall" scene macros), grouped in categories; the camera
   keys live in the Kameras section. With
-  **Bearbeiten** switched on, keys can be renamed, moved, created and deleted.
+  **Bearbeiten** switched on, every key, category and *Alles ausschalten*
+  target shows a "⋮" (Umbenennen; keys also Nach „…“ verschieben and Löschen),
+  and a tap on a key opens its menu instead of pressing it.
+
+**One pattern for editing:** everything that can be renamed, moved or deleted
+has one "⋮" key (desktop keys, shortcuts, program rows, mute groups, light
+presets, cameras, templates, Steuerung in Bearbeiten); the menu lists what can
+be done, deleting asks once at the "⋮". A tap outside an open menu only closes
+it. Section heads show their tools with an icon (the main "+" lit blue), rare
+ones sit in the head's "⋮".
 
 The page polls `/state`, `/health` and `/groups` about once per second.
 
@@ -315,7 +315,7 @@ The connection closes when the service stops.
 | POST | `/program/items/{item_id}/hidden` | `{"hidden": true}` greys a row out, `/program/next` skips it |
 | POST | `/program/items/{item_id}/shortcut` | save what the row does as a new shortcut |
 | GET/POST | `/shortcuts` | list shortcuts / create one (`title` and the row's action fields) |
-| PUT/DELETE | `/shortcuts/{id}` | edit / delete (rows that used it run their own fields again; `program_items`: how many) |
+| PUT/DELETE | `/shortcuts/{id}` | edit / delete (program rows keep what they loaded from it) |
 | POST | `/shortcuts/{id}/duplicate`, `/shortcuts/{id}/play` | copy ("… (Kopie)") / run now |
 | GET  | `/program/obs-scenes` | OBS's scenes for a row's OBS scene (503 if OBS is not reachable) |
 | GET  | `/program/status` | `current_id` (started last today) and `next_id` (hidden rows skipped) |
@@ -521,6 +521,25 @@ Eine gehaltene Pfeiltaste wiederholt ihre Richtung jede Sekunde; kommt 3 s
 lang weder Wiederholung noch Stop an (z. B. WLAN weg), stoppt der Dienst die
 Kamera selbst.
 
+Jede Preset-Taste zeigt ihre Nummer vor dem Namen („3 · Kanzel“), ebenso die
+Preset-Auswahl der Programmzeilen. Rechts neben „Presets“ fährt
+**Nr. [ ] Anfahren** jede Preset-Nummer 1 bis 16 an, auch eine ohne Namen in
+der App (`POST /cameras/{cam1|cam2}/preset/recall` mit `{"preset": 11}`;
+derselbe Weg wie eine Preset-Taste). „⋮“ der Kamera → **Aktuelle Position
+speichern** fragt Nummer und Name; vorbelegt ist die kleinste Nummer, die in
+der App keinen Namen hat und die nichts benutzt. Die Kamera speichert dort
+ihre aktuelle Position (VISCA `81 01 04 3F 01 pp FF`), der Dienst den Namen
+(`POST /cameras/{cam1|cam2}/presets` mit `{"preset", "name", "overwrite"}`).
+Hat die Nummer schon einen Namen oder benutzt sie eine Programmzeile, ein
+Shortcut, eine Vorlage oder eine Taste der Steuerung (z. B. eine
+Overall-Taste), antwortet der Dienst ohne `"overwrite": true` mit 409, dem
+Namen und der Liste `users`, und die Seite fragt, ob überschrieben werden
+soll (`GET /cameras/{cam1|cam2}/presets/usage` liefert diese Liste für alle
+Nummern). „In der App ohne Namen“ heißt nicht, dass die Kamera dort nichts
+gespeichert hat (Companion, Fernbedienung). Zwei gleichzeitige Speichervorgänge
+derselben Kamera laufen nacheinander. Nummern ohne Katalog-Taste stehen als
+`saved_camera_presets` in `companion_buttons.json`.
+
 Die Kamera-Tasten (Presets, Zoom) stehen seit Katalog-Version 7 nicht mehr in
 der Steuerung; eine bestehende `companion_buttons.json` wird beim Start
 umgestellt (umbenannte Presets behalten ihre Beschriftung im Kamera-Bereich).
@@ -580,11 +599,12 @@ Service neu starten.
 
 **Mission Spotlight** (Schalter im Profil, `mission_spotlight: true`; fuer Bild,
 Datei und Audio): `path` ist dann ein Ordner. Beim Ausloesen nimmt der Service
-das Quartal des heutigen Datums und die Woche darin (Tag 1–7 des Quartals =
-Woche 01, Tag 8–14 = Woche 02 …) und schickt `<Ordner>\<Q>. Quartal\<WW>*`; der
+Jahr und Quartal des heutigen Datums und die Woche darin (Tag 1–7 des Quartals =
+Woche 01, Tag 8–14 = Woche 02 …) und schickt `<Ordner>\<JJJJ>_<Q>. Quartal\<WW>*`; der
 Agent nimmt die Datei, deren Name mit der zweistelligen Woche beginnt, z. B.
-`I:\Mission Spotlight\3. Quartal\01_Testvideo.mp4` (bei mehreren die neueste).
-Das Profilfenster zeigt das aktuelle Quartal und die Woche.
+`I:\Mission Spotlight\2026_3. Quartal\01_Testvideo.mp4` (bei mehreren die neueste;
+Ordner ohne Jahr, z. B. `3. Quartal`, werden nicht mehr beachtet).
+Das Profilfenster zeigt das aktuelle Jahr, Quartal und die Woche.
 
 **Platzhalter `*` in Pfaden:** In allen Pfaden (Profile, Datei-Aktionen im
 Programm, Liederbibliothek) steht `*` fuer einen unbekannten Teil eines Namens,
@@ -828,15 +848,20 @@ jeder Display-Agent zeigt sie also ohne Update.
 **Mehrere Bildschirme**: Unter *Liedtext zeigen auf* wird je PC ein Schalter
 (und dann dessen Monitor) gewählt, z. B. der Beamer am Anzeige-PC und ein Monitor
 am Streaming-PC (`targets`: bis zu 4, je PC einer – ein Display-Agent hat ein
-Liedfenster). Jede Folie, Schwarz und Aus geht gleichzeitig an alle; jeder Agent
-passt den Text an seinen eigenen Bildschirm an. Ist ein PC nicht erreichbar,
-zeigen die anderen trotzdem weiter: die Liedanzeige nennt ihn in Gelb mit Grund,
-die Leiste am Programmpunkt zeigt ⚠ (antippen nennt ihn), und beim ersten Mal
-kommt eine Meldung. Erst wenn kein Bildschirm erreichbar ist, bleibt die Folie
+Liedfenster). Jede Folie, Schwarz und Aus geht gleichzeitig an alle, je
+Bildschirm der Reihe nach; jeder Agent passt den Text an seinen eigenen
+Bildschirm an. Ein Schritt wartet höchstens 1 s und nie auf einen PC, der schon
+nicht geantwortet hat: der bekommt nur die jeweils neueste Folie, alle 5 s neu,
+bis er wieder antwortet (dann zeigt er gleich die aktuelle). Die Liedanzeige
+nennt ihn in Gelb mit Grund, die Leiste am Programmpunkt zeigt ⚠ (antippen nennt
+ihn), und beim ersten Mal kommt eine Meldung (auch beim Start eines
+Programmpunkts). Erst wenn kein Bildschirm erreichbar ist, bleibt die Folie
 stehen (502). Ältere Einstellungen (`target_ip` + `monitor`) gelten als ein
 Bildschirm; `target_ip` ist seither der PC mit der Bibliothek, `monitor` der
-des ersten Bildschirms. Im Test-Dienst spielt `--dead-agent IP` einen PC, dessen
-Agent aus ist.
+des ersten Bildschirms; eine ältere Seite ändert damit nur den ersten
+Bildschirm. Ein ungültiger oder doppelter Bildschirm in `song_display.json`
+fällt allein weg. Im Test-Dienst spielt `--dead-agent IP` einen PC, dessen
+Agent aus ist (jeder Aufruf hängt bis zum Timeout).
 
 Ein Programmpunkt bekommt sein Lied in der Spalte *Liedtext* („♪ Lied wählen“,
 Suche nach Titel oder Liederbuch-Nummer; eine eingetippte Nummer zeigt die Lieder
@@ -850,7 +875,7 @@ der letzten Folie schaltet *Weiter* auf schwarz.
 **Am laufenden Programmpunkt**: Hat der laufende Programmpunkt ein Lied, fährt
 unter seiner Zeile eine schmale Leiste aus (`js/song-dock.js`): Zurück, je Folie
 ein Knopf (T, 1, R, 2 …; antippen = anzeigen), die erste Zeile der gezeigten
-Folie, Schwarz und ein großes Weiter. Sie steuert dasselbe Lied wie der Bereich
+Folie, Schwarz, Aus und ein großes Weiter. Sie steuert dasselbe Lied wie der Bereich
 Liedanzeige (gleiche Aufrufe, beide zeigen immer dasselbe). Ist ein anderes oder
 kein Lied auf dem Bildschirm, bleibt eine Zeile mit *Zeigen* (das Lied des
 Programmpunkts ab der ersten Folie); läuft ein anderer Programmpunkt, fährt sie
@@ -943,7 +968,7 @@ Bibliothek gesucht; ist sie nicht eindeutig oder fehlt sie, gibt es **Wählen**
 als Liedplätze werden direkt nach dem letzten Liedplatz angehängt (als Kopie
 dieser Zeile), übrige Liedplätze bleiben ohne Lied, ein Lied, das nicht in der
 Bibliothek ist, steht als Text im Titel. Die Vorschau zeigt das Programm genau so,
-wie es danach aussieht. **Programm ersetzen** (zweimal tippen) ersetzt das ganze
+wie es danach aussieht. **Programm ersetzen** (mit Rückfrage) ersetzt das ganze
 Programm und setzt den Ablauf zurück.
 
 **Gottesdienstablauf-PDF**: **PDF importieren** liest das ausgefüllte Formular
@@ -986,12 +1011,11 @@ weiter über `/companion/buttons/{id}/press` drücken.
   ist), dazu die Raumlicht-Kreise („Raum 2 an · 1 aus“). *+ Preset* speichert
   das aktuelle Licht der gewählten Lichter: jeder gewählte Scheinwerfer mit
   an/aus, Helligkeit und Farbe, jeder gewählte Kreis mit seinem Zustand.
-  *Bearbeiten* zeigt unter jeder Kachel: Reihenfolge (Pfeile), Name (Stift),
-  mit dem aktuellen Licht überschreiben (Kreis; die Auswahl der Lichter lässt
-  sich dabei ändern, Platz und Programmzeilen bleiben; ein Kreis des Presets,
-  der gerade nicht antwortet, behält seinen bisherigen Zustand, die Meldung
-  sagt es) und Löschen (mit
-  Rückfrage). Im Bearbeiten-Modus blendet ein Tipp auf die Kachel nichts ein.
+  Das „⋮“ jeder Kachel hat Umbenennen, Mit aktuellem Licht überschreiben… (die
+  Auswahl der Lichter lässt sich dabei ändern, Platz und Programmzeilen bleiben;
+  ein Kreis des Presets, der gerade nicht antwortet, behält seinen bisherigen
+  Zustand, die Meldung sagt es), Nach vorne / Nach hinten und Löschen (mit
+  Rückfrage).
   Presets heißen in der API weiter `scenes`. Alte Szenen (ein Warm/Kalt für alle,
   0 = aus) werden beim Start umgewandelt: jede Zone mit ihrer Helligkeit bzw. aus
   (den gemerkten Wert behält der Scheinwerfer), die gespeicherte Farbe für jeden
@@ -1081,21 +1105,27 @@ startet die Zeile nicht mehr („unknown light scene“), bis ein anderes gewäh
 
 ## Umbenennen
 
-Ein Stift (✎) neben dem Namen macht ihn zum Textfeld: Enter oder Wegtippen
+„Umbenennen“ im „⋮“-Menü macht den Namen zum Textfeld: Enter oder Wegtippen
 speichert, Escape bricht ab. Die Namen speichert der Dienst, alle Geräte sehen
 sie.
 
-- **Licht**: Scheinwerfer und Raumlicht-Kreise (Stift immer sichtbar), Presets
-  (Stift mit *Bearbeiten*).
-  Bei Zonen und Kreisen stellt ein leerer Name den eingebauten Namen wieder her.
-- **Steuerung** (mit *Bearbeiten*): Kategorien und die Geräte unter *Alles
-  ausschalten* (Beamer, Agent-PCs; leer = Name aus den Desktop-Profilen).
-- **Programm → Vorlagen**: die Vorlagen.
-- **Kameras**: der Stift neben „Presets“ schaltet das Umbenennen für diese
-  Kamera ein (Tasten gestrichelt); dann öffnet ein Tippen auf ein Preset den
-  Namen, statt die Kamera zu bewegen. Gespeichert wird mit der Kamera davor
-  („CAM1 Kanzel“), damit Programmzeilen die Kameras unterscheiden; leer = Name
-  aus dem Katalog. Nochmal den Stift: wieder normal.
+- **Licht**: Presets (ihr „⋮“). Scheinwerfer und Raumlicht-Kreise: das „⋮“ des
+  Blocks (Bühne bzw. Raumlicht) startet einen Umbenennen-Modus (Namen
+  gestrichelt, Leiste mit „Fertig“); dann öffnet ein Tipp den Namen, statt das
+  Licht zu schalten. Bei Zonen und Kreisen stellt ein leerer Name den
+  eingebauten Namen wieder her.
+- **Steuerung** (mit *Bearbeiten*): Tasten, Kategorien und die Geräte unter
+  *Alles ausschalten* (Beamer, Agent-PCs; leer = Name aus den Desktop-Profilen).
+- **Programm → Vorlagen**: die Vorlagen (ihr „⋮“).
+- **Kameras**: „⋮“ der Kamera → Presets umbenennen (Tasten gestrichelt); dann
+  öffnet ein Tippen auf ein Preset den Namen, statt die Kamera zu bewegen.
+  Gespeichert wird mit der Kamera davor („CAM1 Kanzel“), damit Programmzeilen
+  die Kameras unterscheiden; leer = Name aus dem Katalog (ein selbst
+  gespeichertes Preset braucht einen Namen).
+
+Ein Umbenennen-Modus endet mit „Fertig“, wenn ein anderer beginnt, wenn sein
+Bereich zugeklappt wird, und von selbst nach 30 s ohne Umbenennen; danach
+schalten die Tasten wieder.
 
 Kanäle, Mutegruppen, Steuerungstasten, Kameras und Desktop-Profile ließen sich
 schon vorher umbenennen.
