@@ -104,13 +104,21 @@ async def press_native(request: Request, button_id: str, action: dict) -> Result
 
 async def _press_group_macro(request: Request, button_id: str, action: dict) -> Result:
     """Overall (see the catalog in app/companion_buttons.py): the group's
-    mutes first; a blocked group stops the key before anything changes. Then
+    mutes first; a blocked group stops the key before the light, the cameras
+    or OBS change (a camera cut still waiting from an earlier key is dropped:
+    OBS stays as it is). Then
     the stage light fades while the cameras and keys run: only the camera
     that is off air moves now, the cut follows in the background after the
     wait. Every part is tried even if another one fails (a camera that does
     not answer must not keep OBS or the light from switching); the answer
     lists what failed."""
     state = request.app.state
+    camera_program = getattr(state, "camera_program", None)
+    presets = {cam: (action.get("cameras") or {}).get(cam) for cam in CAMERAS}
+    # Its place in the camera order, taken now (this stops a cut still
+    # waiting from an earlier key): a key pressed while the mutes are being
+    # set wins over this one's cameras.
+    camera_token = camera_program.cancel() if camera_program is not None and any(presets.values()) else None
     result = await state.controller.group_set(action["group"], False)
     if not result.get("ok"):
         return controller_result({**result, "button": button_id})
@@ -122,8 +130,6 @@ async def _press_group_macro(request: Request, button_id: str, action: dict) -> 
             {"type": "artnet-zones-set", "on": stage.get("on") or [], "off": stage.get("off") or []}))
 
     camera = None
-    camera_program = getattr(state, "camera_program", None)
-    presets = {cam: (action.get("cameras") or {}).get(cam) for cam in CAMERAS}
     if any(presets.values()):
         if camera_program is None:
             camera = {"ok": False, "reason": "camera presets unavailable"}
@@ -131,7 +137,7 @@ async def _press_group_macro(request: Request, button_id: str, action: dict) -> 
             camera = await camera_program.run(
                 presets, action.get("camera_wait_seconds") or DEFAULT_WAIT_SECONDS,
                 COMPANION_BUTTONS_BY_ID.get(button_id, {}).get("label", button_id),
-                switch_if_none_live="cam1")
+                switch_if_none_live="cam1", token=camera_token)
         if not camera.get("ok"):
             failed.append(f"cameras: {camera.get('reason')}")
 
@@ -161,6 +167,9 @@ async def _press_group_macro(request: Request, button_id: str, action: dict) -> 
 
     answer = {"ok": not failed, "button": button_id, "group_result": result,
               "light": light_result, "camera": camera, "linked_actions": linked}
+    warnings = [data["warning"] for data in linked if data.get("warning")]
+    if warnings:
+        answer["warning"] = "; ".join(warnings)
     if failed:
         log.warning("Overall %s: mute group set, but %s", button_id, "; ".join(failed))
         return {**answer, "reason": "group set, but " + "; ".join(failed)}, 502

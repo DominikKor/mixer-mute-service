@@ -463,6 +463,8 @@ $("companion-categories").addEventListener("click", async (event) => {
         // Overall: the camera cut follows after the wait; say so.
         const camera = result.data.camera && result.data.camera.message;
         toast(`${button.textContent}: ausgeführt${camera ? ` – ${camera}` : ""}`, true);
+        // Done, but something needs a look (e.g. an OBS source was renamed).
+        if (result.data.warning) toast(`${button.textContent}: ${result.data.warning}`, false);
       }
       if (button.classList.contains("channel") || button.classList.contains("group")) await refresh();
       // Show the cut (or the new transition time) without waiting for the poll.

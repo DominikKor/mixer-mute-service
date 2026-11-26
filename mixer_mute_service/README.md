@@ -214,14 +214,17 @@ raw HEX are not accepted.
    live, then the other camera follows to its preset (the same sequence as
    program rows, `app/camera_program.py`). With no camera on air both move and
    Cam 1 goes live after the wait; if OBS was switched meanwhile (in OBS or
-   with an OBS key here), nothing is cut;
+   with an OBS key here), nothing is cut. The key pressed last wins: a second
+   Overall or an OBS key pressed right after an Overall stops its cameras,
+   even while its mute group is still being set;
 4. their OBS key, if any (Mission Video: PC2, Ende: the end scene).
 
 Every part is tried even if another fails; the answer (and the toast) names
 what failed. "Licht AN/AUS" leave the Technik circuit alone, as in Companion,
 and switch all other circuits at once. "Cam N Live" makes the camera's source
 visible in its own scene and puts that scene on air; a scene without the
-source no longer stops the switch.
+source no longer stops the switch; the page then shows a warning (renamed
+source?).
 
 Catalog version 10 keeps each OBS key once: the duplicates of Companion's
 first page (Cam 2 Live twice, PC2 Live three times, Start/Ende twice) left

@@ -822,9 +822,11 @@ class NativeControlService:
                 # point. Companion carried on as well when a scene lacked the
                 # source (the "Cam N Live" keys used to fail in every scene
                 # without a "CamN" source, e.g. PC2 or a title).
-                log.info("OBS: %s not in scene %s; switching to %s anyway", source, source_scene, scene)
+                # Visible, though: a renamed source would go unnoticed otherwise.
+                log.warning("OBS: source %s not in scene %s; switched to %s anyway", source, source_scene, scene)
                 await asyncio.to_thread(_obs_request, OBS_HOST, OBS_PORT, "SetCurrentProgramScene", {"sceneName": scene})
-                return {"ok": True, "source_missing": True}
+                return {"ok": True, "source_missing": True,
+                        "warning": f"OBS-Quelle „{source}“ fehlt in Szene „{source_scene}“ (umbenannt?)"}
             if item is None:
                 raise NativeControlError(f"OBS source not found: {source}")
             visible = True if action_type == "obs-live" else not bool(item.get("sceneItemEnabled"))

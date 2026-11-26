@@ -69,12 +69,14 @@ class LiveDetectionTests(unittest.TestCase):
 class Rig:
     """A CameraProgram on scripted OBS answers; records what was done."""
 
-    def __init__(self, live_answers, gate=None):
+    def __init__(self, live_answers, gate=None, read_yields=0):
         self.live_answers = list(live_answers)
         self.events = []
         self.gate = gate  # an Event the wait blocks on, if given
 
         async def read_live():
+            for _ in range(read_yields):  # OBS takes a moment: other presses get in between
+                await asyncio.sleep(0)
             answer = self.live_answers.pop(0)
             if isinstance(answer, Exception):
                 raise answer
@@ -110,6 +112,52 @@ class Rig:
 
     def moves(self):
         return [event for event in self.events if event[0] in ("recall", "switch", "scene")]
+
+
+async def spin(rounds=60):
+    for _ in range(rounds):
+        await asyncio.sleep(0)
+
+
+class QuickPressTests(unittest.IsolatedAsyncioTestCase):
+    """Two Overall keys pressed at once, or an OBS key while a sequence is
+    still reading OBS: only the newest sequence may act, and every cancel
+    must reach it (no orphaned background task)."""
+
+    async def test_second_key_wins_while_a_camera_is_live(self):
+        gate = asyncio.Event()
+        rig = Rig([{"cam1"}] * 3 + [{"cam2"}] * 4, gate=gate, read_yields=3)
+        # Cam 1 live: Predigt (presets 1) and at once Gebet (presets 8).
+        await asyncio.gather(rig.program.run({"cam1": 1, "cam2": 1}, 4), rig.program.run({"cam1": 8, "cam2": 8}, 4))
+        gate.set()
+        await spin()
+        moves = rig.moves()
+        self.assertEqual(moves.count(("switch", "cam2")), 1, moves)
+        self.assertIn(("recall", "cam1", 8), moves)
+        self.assertNotIn(("recall", "cam1", 1), moves, "Cam 1 must end on Gebet's preset")
+
+    async def test_obs_key_after_two_quick_keys_stops_the_cut(self):
+        gate = asyncio.Event()
+        rig = Rig([set()] * 6, gate=gate, read_yields=3)
+        await asyncio.gather(rig.program.run({"cam1": 5, "cam2": 5}, 4, switch_if_none_live="cam1"),
+                             rig.program.run({"cam1": 1, "cam2": 1}, 4, switch_if_none_live="cam1"))
+        rig.program.cancel()  # "Bild" pressed
+        gate.set()
+        await spin()
+        self.assertNotIn(("switch", "cam1"), rig.moves())
+
+    async def test_cancel_while_a_sequence_reads_obs(self):
+        gate = asyncio.Event()
+        rig = Rig([{"cam1"}] * 3, gate=gate, read_yields=3)
+        running = asyncio.create_task(rig.program.run({"cam1": 3, "cam2": 5}, 4))
+        await asyncio.sleep(0)
+        rig.program.cancel()
+        result = await running
+        gate.set()
+        await spin()
+        self.assertEqual(rig.moves(), [("recall", "cam2", 5)], "moved off air, but no cut afterwards")
+        self.assertEqual(rig.program.status["state"], "aborted")
+        self.assertIsNone(result.get("switch_to"))
 
 
 class SequenceTests(unittest.IsolatedAsyncioTestCase):

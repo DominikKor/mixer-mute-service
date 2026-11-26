@@ -130,11 +130,13 @@ class NativeControlTests(unittest.IsolatedAsyncioTestCase):
                 return {"sceneItems": [{"sourceName": "Capture_PC2", "sceneItemId": 3, "sceneItemEnabled": True}]}
             return {}
 
-        with patch("app.native_controls._obs_request", side_effect=obs):
+        with patch("app.native_controls._obs_request", side_effect=obs), \
+                self.assertLogs("mixer.native_controls", "WARNING"):
             result = await self.controls.press({"type": "obs-live", "scene": "Cam 1", "source": "Cam1"})
             with self.assertRaises(NativeControlError):  # a toggle key still needs its source
                 await self.controls.press({"type": "obs-source-toggle", "scene": "Preview Scene", "source": "Cam1_klein"})
         self.assertTrue(result["ok"])
+        self.assertIn("Cam1", result["warning"])
         self.assertIn(("SetCurrentProgramScene", {"sceneName": "Cam 1"}), requests)
         self.assertNotIn("SetSceneItemEnabled", [r for r, _ in requests])
 

@@ -16,6 +16,7 @@ from types import SimpleNamespace
 
 from app import actions
 from app.companion_buttons import COMPANION_BUTTONS, COMPANION_BUTTONS_BY_ID, DEFAULT_CATEGORIES, CompanionButtonStore
+from app.camera_program import CameraProgram
 from app.native_controls import NativeControlError
 
 # Companion: zones on (the others off), Cam1 preset, Cam2 preset, mute group,
@@ -72,18 +73,20 @@ class FakeCameraProgram:
         self.answer = answer or {"ok": True, "message": "Cam 2 fährt Preset 5 an, Umschalten in 4 s"}
         self.status = {"seq": 0}
 
-    async def run(self, presets, wait, title="", scenes=None, switch_if_none_live=None):
+    async def run(self, presets, wait, title="", scenes=None, switch_if_none_live=None, token=None):
         self.calls.append((presets, wait, switch_if_none_live))
         return dict(self.answer)
 
     def cancel(self):
         self.cancelled += 1
+        return self.cancelled
 
 
 class Rig:
     def __init__(self, group_ok=True, light_error=None, failing=(), camera_answer=None, light_gate=None):
         self.events = []
         self.camera = FakeCameraProgram(camera_answer)
+        self.warn_scenes = set()
         self.light_gate = light_gate
 
         async def group_set(group, muted):
@@ -102,6 +105,8 @@ class Rig:
             self.events.append(("key", action.get("scene")))
             if action.get("scene") in failing:
                 raise NativeControlError("OBS WebSocket unavailable")
+            if action.get("scene") in self.warn_scenes:
+                return {"ok": True, "warning": f"OBS-Quelle fehlt in Szene „{action['scene']}“"}
             return {"ok": True}
 
         self.request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(
@@ -164,6 +169,12 @@ class OverallRunTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("light: Art-Net send failed", result["reason"])
         self.assertIn(("key", "Ende (neu)"), rig.events)
 
+    async def test_blocked_group_drops_a_waiting_cut_but_moves_nothing(self):
+        rig = Rig(group_ok=False)
+        await rig.press("gebet")
+        self.assertEqual(rig.camera.cancelled, 1)
+        self.assertEqual(rig.camera.calls, [])
+
     async def test_key_overall_cancels_a_waiting_camera_cut(self):
         rig = Rig()
         result, status = await rig.press("mission-video")
@@ -183,6 +194,13 @@ class OverallRunTests(unittest.IsolatedAsyncioTestCase):
         await actions.press_native(rig.request, "beamer-hide", COMPANION_BUTTONS_BY_ID["beamer-hide"]["native_action"])
         self.assertEqual(rig.camera.cancelled, 3, "keys that do not change the program leave it alone")
 
+    async def test_warning_of_its_obs_key_reaches_the_page(self):
+        rig = Rig()
+        rig.warn_scenes.add("PC2")
+        result, status = await rig.press("mission-video")
+        self.assertEqual(status, 200, result)
+        self.assertIn("PC2", result["warning"])
+
     async def test_failing_key_is_reported(self):
         rig = Rig(failing={"Ende (neu)"})
         result, status = await rig.press("ende")
@@ -197,6 +215,79 @@ class OverallRunTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(status, 502)
         self.assertIn("camera presets unavailable", result["reason"])
         self.assertIn(("light", ["left", "right"], ["center-left", "center-right"]), rig.events)
+
+
+class PressOrderTests(unittest.IsolatedAsyncioTestCase):
+    """With the real CameraProgram: the key pressed last wins, even if an
+    Overall pressed before it only gets to its cameras later (setting the
+    mute group takes a moment)."""
+
+    def _rig(self, live):
+        rig = Rig()
+        self.moves = []
+        self.cut_gate = asyncio.Event()
+        self.group_gates = {}
+
+        on_air = set(live)
+
+        async def read_live():
+            await asyncio.sleep(0)
+            return set(on_air)
+
+        async def recall(cam, preset):
+            self.moves.append(("recall", cam, preset))
+
+        async def switch(cam):
+            self.moves.append(("switch", cam))
+            on_air.clear()
+            on_air.add(cam)
+
+        async def transition():
+            return 0.0
+
+        async def sleep(seconds):
+            await self.cut_gate.wait()
+
+        async def group_set(group, muted):
+            gate = self.group_gates.get(group)
+            if gate is not None:
+                await gate.wait()
+            return {"ok": True}
+
+        rig.camera = CameraProgram(read_live, recall, switch, transition, sleep)
+        rig.request.app.state.camera_program = rig.camera
+        rig.request.app.state.controller = SimpleNamespace(group_set=group_set)
+        return rig
+
+    async def _spin(self):
+        for _ in range(60):
+            await asyncio.sleep(0)
+
+    async def test_obs_key_while_the_mutes_are_set_stops_the_cameras(self):
+        rig = self._rig(live=[])
+        self.group_gates["Predigt"] = asyncio.Event()
+        overall = asyncio.create_task(rig.press("predigt"))
+        await self._spin()
+        await actions.press_native(rig.request, "native-obs-picture",
+                                   COMPANION_BUTTONS_BY_ID["native-obs-picture"]["native_action"])
+        self.group_gates["Predigt"].set()
+        result, status = await overall
+        self.cut_gate.set()
+        await self._spin()
+        self.assertEqual(status, 200, result)
+        self.assertEqual(self.moves, [], "Bild was pressed last: no camera moves, no cut")
+
+    async def test_later_overall_wins_even_if_its_mutes_are_faster(self):
+        rig = self._rig(live=["cam1"])
+        self.group_gates["Predigt"] = asyncio.Event()
+        first = asyncio.create_task(rig.press("predigt"))   # presets 1, mutes take long
+        await self._spin()
+        await rig.press("gebet")                            # presets 8
+        self.group_gates["Predigt"].set()
+        await first
+        self.cut_gate.set()
+        await self._spin()
+        self.assertEqual(self.moves, [("recall", "cam2", 8), ("switch", "cam2"), ("recall", "cam1", 8)])
 
 
 class CatalogV9MigrationTests(unittest.TestCase):
