@@ -52,15 +52,18 @@ iPad in Safari (both orientations) and desktop browsers alike. Every section
 head (Desktop, Channels, Mute Gruppen, Programm, Liedanzeige, Steuerung) folds its section
 in and out; the choice is remembered per device. **Anordnen** (switch in the
 header) shows ◀ ▲ ▼ ▶ in every section head. Sections sit in rows, up to three
-side by side (single column below 900 px width): ◀ ▶ swap a section with its
-neighbour in the row, and a section alone in its row joins the row above on
-the left (◀) or right (▶); ▲ ▼ give a section sharing a row a row of its own
-above or below, and move one alone past the row above or below. Rows set
-width and order; on the page the sections are packed like masonry: each one,
-in that order, moves up into the column that is shortest at that point, so a
-short section (e.g. Mute Gruppen next to a long Programm) leaves no empty
-space below it. A section alone in its row keeps the full width and so comes
-below everything above it. The
+side by side (single column below 900 px width). A row sets width and column:
+of two sections the first is the left half, the second the right half. On the
+page every section moves up as far as its own columns allow (masonry), so a
+short section (e.g. Mute Gruppen next to a long Programm) gets the following
+rows' sections under it; a row stays level when its sections would start less
+than 120 px apart, or when one of them would straddle such a step (thirds
+under halves). A section never changes column. The arrows follow the screen:
+◀ ▶ swap a section with its neighbour in the row, and a section alone in its
+row joins the row above on the left (◀) or right (▶); ▲ ▼ swap a section with
+the one right above or below it (a whole-width section with the row above or
+below), and a section sharing a row with nothing above or below it gets the
+whole width at the top or bottom. The
 arrangement is remembered per device, also sets the order of the Stage
 miniatures, and **Standard** restores the original one.
 
