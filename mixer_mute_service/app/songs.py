@@ -47,10 +47,11 @@ display agent measures (POST /song/metrics), and sends each agent the lines
 and size to draw ("layout"). Display agents from before refuse that; they
 get the plain slide (and, older still, without preview and alignment) and
 fit it themselves, still with the service's split. What an agent refuses
-(400: a field it does not know; 422 from a current agent is a refused value
-and changes nothing) is remembered for AGENT_MEMORY_SECONDS, so it gets one
-request per slide, and forgotten as soon as the agent answers with another
-start time (updated or restarted). Agents report the size of their song
+(400: a field it does not know) is remembered for AGENT_MEMORY_SECONDS, so
+it gets one request per slide, and forgotten as soon as the agent answers
+with another start time (updated or restarted). A current agent that
+refuses a value (422) gets that one slide again without the layout, nothing
+remembered. Agents report the size of their song
 window with each slide: a changed resolution lays the song out again. When
 a layout changes while a song is on screen (settings, screens, library, font
 widths arriving), the live slide follows its verse part.
@@ -477,6 +478,22 @@ def _valid_metrics(answer, asked: str) -> bool:
     )
 
 
+# Fonts whose widths are kept per screen (the settings preview measures every
+# font name typed into the form, "V", "Ve", ...); the least recently used go,
+# never the saved font.
+METRICS_FONTS = 4
+
+
+def _keep_metrics(service: "SongService", key: tuple, entry: dict) -> None:
+    """Keep a screen's font widths ``key`` = (ip, monitor, fullscreen, font)
+    as the most recently used, and forget that screen's oldest other fonts."""
+    service.metrics.pop(key, None)
+    service.metrics[key] = entry
+    others = [k for k in service.metrics if k[:3] == key[:3] and k[3] != service.settings.font]
+    for old in others[:max(0, len(others) - (METRICS_FONTS - 1))]:
+        del service.metrics[old]
+
+
 async def _screen_for(request: Request, target: "SongTarget", settings: "SongSettings", chars: set):
     """(Screen, source) of one target: the font widths and window size its
     display agent measured ("agent"), asked for the characters still
@@ -486,6 +503,8 @@ async def _screen_for(request: Request, target: "SongTarget", settings: "SongSet
     memory = service.agent_memory
     key = (target.ip, target.monitor, settings.fullscreen, settings.font)
     entry = service.metrics.get(key)
+    if entry is not None:
+        _keep_metrics(service, key, entry)   # used: the newest
     generation = memory.get((target.ip, "generation"), (0, 0))[0]
     if entry is not None and entry.get("generation", 0) != generation:
         entry = None   # an updated or restarted agent: measure again
@@ -495,7 +514,7 @@ async def _screen_for(request: Request, target: "SongTarget", settings: "SongSet
             # The agent's window has another size now (resolution changed).
             log.info("Song window on %s monitor %s is now %sx%s", target.ip, target.monitor, *window[0])
             entry = {**entry, "width": window[0][0], "height": window[0][1], "at": window[1]}
-            service.metrics[key] = entry
+            _keep_metrics(service, key, entry)
     missing = (chars - entry["metrics"].widths.keys()) if entry else (chars | set(BASE_CHARS))
     sender = service.senders.get(target.ip)
     # Never wait for a screen that is down (the step does not either).
@@ -525,7 +544,7 @@ async def _screen_for(request: Request, target: "SongTarget", settings: "SongSet
                 default = sum(widths.values()) / len(widths) if widths else 60.0
                 entry = {"metrics": layout_engine.Metrics(widths, default), "width": answer["width"],
                          "height": answer["height"], "generation": generation, "at": time.monotonic()}
-                service.metrics[key] = entry
+                _keep_metrics(service, key, entry)
             else:
                 log.warning("Display agent %s sent invalid font widths", target.ip)
                 service.agent_memory[(target.ip, "metrics_failed")] = (True, time.monotonic())
@@ -686,8 +705,17 @@ async def _agent_call(cfg, target: str, path: str, payload: dict, timeout: float
                 note_agent(memory, target, answer)
                 return answer, 200
             except AgentError as exc:
+                if exc.agent_status == 422 and "layout" in levels[level]:
+                    # A current agent refuses a value (a layout it cannot
+                    # draw?): this slide once more without the layout (the
+                    # agent fits it itself) rather than a dark screen sent
+                    # again and again. Not remembered: the next slide has
+                    # its own layout.
+                    log.warning("Display agent %s refused the song request (%s); sending this slide without "
+                                "the layout", target, (exc.body or {}).get("reason") or exc.reason)
+                    level = 1
+                    continue
                 # 400: a field this agent does not know (an older version).
-                # A current agent says 422 for a value it refuses: no demotion.
                 following = next((n for n in range(level + 1, len(levels)) if levels[n] != levels[level]), None)
                 if exc.agent_status != 400 or following is None:
                     raise
@@ -963,11 +991,37 @@ async def set_song_settings(request: Request, body: dict = Body(...)):
         reason = f"{'.'.join(str(p) for p in first.get('loc', ()))}: {first.get('msg', 'invalid settings')}".strip(": ")
         return JSONResponse({"ok": False, "reason": reason}, 400)
     async with service.lock:
+        before = service.settings
         service.save_settings(settings)
     # The live song's slides may split differently now: the live slide
-    # follows its verse (the next step sends the new layout).
+    # follows its verse, and the screens show it with the new settings.
     await relayout_live(request)
+    if settings != before:
+        await resend_live(request)
     return {"ok": True, "settings": settings.model_dump()}
+
+
+async def resend_live(request: Request) -> None:
+    """Show the live slide again where it looks different now (other
+    settings: size, layout, colours, screens), so the screens do not wait
+    for the next press. Nothing while no slide is shown (hidden, blank) or
+    when every screen already has exactly this request."""
+    def plan(service: SongService):
+        live = service.live
+        if (live["song_id"] not in service.songs or live["blank"]
+                or not 0 <= live["slide"] < len(service.slides(live["song_id"]))):
+            return None
+        _, confirmed_live, bodies = service.confirmed
+        targets = service.settings.targets
+        fresh = {target.ip: _for_screen(service.slide_payload(live["song_id"], live["slide"], index), target)
+                 for index, target in enumerate(targets)}
+        if confirmed_live == live and fresh == bodies:
+            return None
+        return _plan_show(request, service, live["song_id"], live["slide"])
+
+    result = await _step(request, plan)
+    if isinstance(result, JSONResponse) or (isinstance(result, dict) and result.get("ok") is False):
+        log.warning("SONG: the live slide did not reach the screens with the new settings")
 
 
 @router.post("/songs/library/reload")

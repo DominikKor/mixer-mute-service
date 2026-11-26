@@ -650,9 +650,16 @@ scoop, Chocolatey, `Program Files`, `Program Files (x86)` und
 PATH) und der Installationsordner, den ein Installer in der Registry eintraegt
 (Programme und Features, Name mit „mpv“, ohne MPV.NET). Ein echtes `mpv.exe` geht immer vor MPV.NET (`mpvnet.exe`, auch wenn
 `MPV_PATH` darauf zeigt): MPV.NET startet langsam, und sein Steuerkanal
-antwortet nicht; es wird nur genommen, wenn sonst nichts da ist. Statt
+antwortet nicht; es wird nur genommen, wenn sonst nichts da ist. Dasselbe gilt
+fuer jedes Programm unter einem `WindowsApps`-Ordner (Store-Apps und ihre
+Aufruf-Aliasse). Die Registry wird in der 64- und der 32-Bit-Ansicht gelesen,
+`%ProgramFiles%` in den Eintraegen aufgeloest; `mpv_search` nennt sie immer,
+auch wenn kein Eintrag passt. Statt
 `mpv.com` (Konsolen-Huelle) wird das `mpv.exe` daneben gestartet. yt-dlp (fuer
-YouTube-Links) genauso, zuerst neben mpv. Startet der Agent ohne die Umgebung des Benutzers (nach dem Selbst-Update
+YouTube-Links) genauso, zuerst neben mpv. Ein Play nimmt den Pfad der letzten
+Suche im Hintergrund (hoechstens 5 Minuten alt, Datei noch vorhanden,
+`MPV_PATH`/`YTDLP_PATH` unveraendert, kein MPV.NET und keine Store-App) und
+sucht nur sonst neu, damit mpv ohne Ordnersuche startet. Startet der Agent ohne die Umgebung des Benutzers (nach dem Selbst-Update
 startet ihn Windows ueber WMI neu), uebernimmt er fehlende Benutzer- und
 System-Variablen und PATH-Eintraege beim Start aus der Registry. Findet er mpv
 nicht, nennt die Meldung die durchsuchten Orte; der Update-Dialog zeigt pro PC
@@ -879,6 +886,11 @@ und merkt sie sich; gesetzt wird im Service (in einem eigenen Thread, auch
 Einstellungen oder Breiten ändern; dabei bleibt die gezeigte Folie bei ihrer
 Strophe (aus „2.2“ wird z. B. „2“, nicht die nächste Strophe), und ein Sprung
 von einer Seite mit älterer Nummerierung (`rev`) landet auf dem gemeinten Teil.
+Nach dem Speichern geänderter Einstellungen zeigen die Bildschirme die
+aktuelle Folie gleich neu (nicht erst beim nächsten Weiter; nichts, solange
+schwarz oder ausgeblendet). Gemessen wird je Bildschirm für höchstens vier
+Schriften (die Einstellungs-Vorschau misst jeden getippten Schriftnamen); die
+zuletzt benutzten und die gespeicherte bleiben.
 **Mehrere Bildschirme**: Geteilt wird zuerst für den Bildschirm, der die
 meisten Folien braucht, dann weiter, wo ein anderer es noch braucht – so
 zeigen alle dieselben Folien, bleiben im Takt und keiner wird kleiner als
@@ -892,7 +904,9 @@ fragen dafür `POST /songs/layout`. **Ältere Display-Agents** kennen weder
 Agent passt sie wie früher selbst ein) und merkt sich das je PC für 10 Minuten,
 damit jede Folie nur eine Anfrage braucht – aber nur bei einer Absage wegen
 eines unbekannten Felds (400), und vergessen, sobald der Agent mit einer
-anderen Startzeit antwortet (aktualisiert oder neu gestartet). Die Liste der
+anderen Startzeit antwortet (aktualisiert oder neu gestartet). Lehnt ein
+aktueller Agent einen Wert ab (422), bekommt er diese Folie gleich noch einmal
+ohne `layout`, statt dunkel zu bleiben; gemerkt wird das nicht. Die Liste der
 Lieder zählt Strophen und Refrains (`slide_count`), nicht die geteilten Folien.
 **Titelfolie** (Standard: an): Jedes Lied beginnt mit einer eigenen Folie, auf
 der der Titel in der Mitte steht und das Copyright darunter (mit dem Schalter
@@ -938,6 +952,11 @@ steuert dasselbe Lied wie der Bereich Liedanzeige (gleiche Aufrufe, beide zeigen
 immer dasselbe). Ist ein anderes oder kein Lied auf dem Bildschirm, bleibt eine
 Zeile mit *Zeigen* (das Lied des Programmpunkts ab der ersten Folie); läuft ein
 anderer Programmpunkt, fährt sie wieder ein.
+Wird ein Programmpunkt hier mit PLAY gestartet, bleibt PLAY unter dem Finger
+(die Seite oder die Stage scrollt um die Höhe der Leiste). Geht das nicht (Stage,
+deren Programm ganz hineinpasst), bleiben die Tasten der Leiste, die jetzt dort
+liegen, wo PLAY war, gelb markiert gesperrt, bis woanders getippt wird; ein
+zweites Tippen „auf PLAY“ löst nie Schwarz oder Weiter aus.
 
 Tastatur und Presenter (immer, solange die Seite offen ist; nicht beim Tippen in
 einem Feld oder bei offenem Dialog):

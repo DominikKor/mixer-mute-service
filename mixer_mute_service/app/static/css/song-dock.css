@@ -72,6 +72,17 @@
 .song-dock.arming .sd-main button { animation: sd-arm .6s ease-in backwards; }
 @keyframes sd-arm { from { opacity: .3; } }   /* to the key's own opacity (a disabled key stays dim) */
 @media (prefers-reduced-motion: reduce) { .song-dock.arming .sd-main button { animation: none; } }
+/* Keys over the place where PLAY was (it could not stay there): inactive
+   until a tap somewhere else, marked, and the note replaces the "next" line. */
+.song-dock button.sd-shield {
+  opacity: .45; outline: 2px dashed #ffbf4d; outline-offset: -4px; cursor: not-allowed; animation: none;
+}
+.sd-shield-note {
+  display: none; min-width: 0; padding-left: 2px; font-size: 12px; font-weight: 700; color: #ffbf4d;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.song-dock.shielded .sd-shield-note { display: block; }
+.song-dock.shielded .sd-next-line { display: none; }
 /* Keys wait for the last press without the grey flash of a disabled key */
 .song-dock.busy button:disabled { opacity: .85; cursor: progress; }
 
@@ -84,6 +95,7 @@
   .song-dock.live .song-dock-bar { display: contents; }
   .song-dock .sd-next-line { grid-row: 1; grid-column: 3; flex-direction: column; align-items: flex-start; gap: 4px; padding-left: 10px; }
   .song-dock .sd-next-line .sd-line { max-width: 100%; }
+  .song-dock.live .sd-shield-note { grid-row: 1; grid-column: 3; white-space: normal; padding-left: 10px; }
 }
 
 /* Narrow (iPad portrait on the stage, small windows): a smaller preview and

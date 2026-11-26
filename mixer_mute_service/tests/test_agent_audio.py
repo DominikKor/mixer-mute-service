@@ -36,6 +36,10 @@ def setUpModule():
         cache,
         patch.object(agent, "audio_cache_directory", return_value=Path(cache.name)),
         patch.object(agent, "prefetch_audio", return_value=None),
+        # Plays use the path a fresh background search found: here always
+        # the patched _find_mpv / _find_ytdlp.
+        patch.dict(agent._tool_cache, at=0.0),
+        patch.object(agent, "refresh_tool_cache", side_effect=agent._tool_refreshing.clear),
     ])
     for item in _module_patches[1:]:
         item.start()
