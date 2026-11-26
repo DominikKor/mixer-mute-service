@@ -216,7 +216,7 @@ class CatalogV9MigrationTests(unittest.TestCase):
                                  "light_zones_on": ZONES, "buttons": ["native-cam1-preset-1", "native-obs-cam1-live"]}}
         migrated = self._migrate([old], 8)
         by_id = {b["id"]: b for b in migrated["buttons"]}
-        self.assertEqual(migrated["native_catalog_version"], 9)
+        self.assertEqual(migrated["native_catalog_version"], 10)
         action = by_id["native-overall-predigt"]["native_action"]
         self.assertEqual(action["group"], "Kanzel")
         self.assertEqual(by_id["native-overall-predigt"]["label"], "Predigt!")
@@ -225,8 +225,8 @@ class CatalogV9MigrationTests(unittest.TestCase):
         for added in ("native-overall-ende", "native-obs-bible-cam1", "native-obs-droidcam-live", "native-obs-picture"):
             self.assertIn(added, by_id)
 
-    def test_v9_does_not_bring_back_deleted_keys(self):
-        migrated = self._migrate([], 9)
+    def test_current_catalog_does_not_bring_back_deleted_keys(self):
+        migrated = self._migrate([], 10)
         self.assertEqual(migrated["buttons"], [])
 
 

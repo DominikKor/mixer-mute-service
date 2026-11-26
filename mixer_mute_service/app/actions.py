@@ -22,7 +22,7 @@ from fastapi import Request
 
 from . import display_agent
 from .camera_program import CAMERAS, DEFAULT_WAIT_SECONDS
-from .companion_buttons import CAMERA_BUTTON_IDS, CATALOG_ONLY_IDS, COMPANION_BUTTONS_BY_ID
+from .companion_buttons import CAMERA_BUTTON_IDS, CATALOG_ONLY_IDS, COMPANION_BUTTONS_BY_ID, resolve_alias
 from .display_agent import AgentError
 from .file_actions import is_file_action, not_found_reason, run_file_action, runs_from_network_share
 from .mission_spotlight import profile_path
@@ -39,6 +39,8 @@ _AGENT_EXCLUDED_FIELDS = {"target_ip", "fade", "fade_seconds", "monitors", "miss
 AUDIO_FADE_FULL_DB = 0.0  # audio fades always go up to full player volume
 # Catalog actions that change what OBS has on air.
 _OBS_PROGRAM_ACTIONS = {"obs-scene", "obs-live", "obs-overlay-toggle"}
+# ... and every action that changes what GET /obs/status reports.
+_OBS_STATUS_ACTIONS = _OBS_PROGRAM_ACTIONS | {"obs-transition-adjust"}
 
 
 # -- keys ------------------------------------------------------------------
@@ -49,7 +51,9 @@ async def pressable_button(request: Request, button_id: str) -> Optional[dict]:
     not in Steuerung any more but the camera section and program rows still
     run them by ID."""
     store = request.app.state.companion_button_store
-    button = await store.get_button(button_id)
+    # An old duplicate OBS key ID (catalog v10) is its native key: it runs
+    # while that key is in Steuerung (the migration put it there).
+    button = await store.get_button(resolve_alias(button_id))
     if button is None and button_id in CAMERA_BUTTON_IDS:
         button = next(item for item in await store.camera_buttons() if item["id"] == button_id)
     if button is None and button_id in CATALOG_ONLY_IDS:
@@ -62,7 +66,7 @@ def native_action_of(button: dict) -> Optional[dict]:
     if button["kind"] == "native":
         return button.get("native_action", {})
     if button["kind"] == "companion":
-        target = COMPANION_BUTTONS_BY_ID.get(button.get("target_button_id", button["id"]))
+        target = COMPANION_BUTTONS_BY_ID.get(resolve_alias(button.get("target_button_id", button["id"])))
         if target is not None and target["kind"] == "native":
             return target["native_action"]
     return None
@@ -91,6 +95,10 @@ async def press_native(request: Request, button_id: str, action: dict) -> Result
     except NativeControlError as exc:
         log.warning("Native action failed button=%s reason=%s", button_id, exc)
         return {"ok": False, "button": button_id, "reason": str(exc)}, 503
+    finally:
+        obs_status = getattr(request.app.state, "obs_status", None)
+        if obs_status is not None and action.get("type") in _OBS_STATUS_ACTIONS:
+            obs_status.invalidate()  # the next poll shows the cut at once
     return {**result, "button": button_id}, 200
 
 

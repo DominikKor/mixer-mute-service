@@ -87,6 +87,8 @@ class FakeDevices:
         self.dead_hosts = set()   # Shellys that never answer
         self.shelly_delay = 0.0   # seconds every other Shelly takes to answer
         self.scene = "Cam 1"
+        self.preview = "Cam 2"   # studio mode, as on the streaming PC
+        self.transition_ms = 300
         self.agent_started = {}  # "ip:port" of a fake display agent -> its start time
         self.artnet_frames = 0
         self.artnet_last = [0] * 16
@@ -145,7 +147,18 @@ class FakeDevices:
             return {"sceneItems": [{"sceneItemId": 1, "sourceName": source, "sceneItemEnabled": True,
                                     "isGroup": False}]}
         if request_type == "GetCurrentSceneTransition":
-            return {"transitionDuration": 300}
+            return {"transitionName": "Fade", "transitionFixed": False, "transitionDuration": self.transition_ms}
+        if request_type == "SetCurrentSceneTransitionDuration":
+            self.transition_ms = data["transitionDuration"]
+            log.info("FAKE OBS transition -> %s ms", self.transition_ms)
+            return {}
+        if request_type == "GetStudioModeEnabled":
+            return {"studioModeEnabled": True}
+        if request_type == "GetCurrentPreviewScene":
+            return {"currentPreviewSceneName": self.preview}
+        if request_type == "SetCurrentPreviewScene":
+            self.preview = data.get("sceneName", self.preview)
+            return {}
         log.info("FAKE OBS %s %s", request_type, data)
         return {}
 
@@ -184,6 +197,17 @@ def install_fakes() -> FakeDevices:
     native._post_beamer_form = fakes.beamer_form
     native._visca_tcp = fakes.visca
     native._obs_request = fakes.obs
+
+    def obs_batch(host, port, requests):
+        answers = []
+        for request_type, data in requests:
+            try:
+                answers.append(fakes.obs(host, port, request_type, data))
+            except native.NativeControlError:
+                answers.append(None)
+        return answers
+
+    native._obs_batch = obs_batch
     camera_program._obs_request = fakes.obs
     display_agent._post = fakes.agent
     camera_streams.MediaMTXRelay._binary = staticmethod(lambda: None)

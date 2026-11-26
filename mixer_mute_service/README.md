@@ -223,9 +223,21 @@ and switch all other circuits at once. "Cam N Live" makes the camera's source
 visible in its own scene and puts that scene on air; a scene without the
 source no longer stops the switch.
 
+Catalog version 10 keeps each OBS key once: the duplicates of Companion's
+first page (Cam 2 Live twice, PC2 Live three times, Start/Ende twice) left
+Steuerung; program rows, shortcuts and own keys that name an old ID
+(`BUTTON_ALIASES`) run the native key. "Übergang Langsamer/Schneller" set
+OBS's transition time in 50 ms steps (50 ms to 20 s); the keys show the
+current value. As on the Companion buttons, a key whose scene is on air in
+OBS is red, one in the preview (studio mode) green. The page asks
+`GET /obs/status` every 1.5 s; one OBS query (one connection) serves every
+page for a second, and while OBS does not answer no key is coloured and OBS
+is asked only every 5 s.
+
 | Method | Path | Purpose |
 | ------ | ---- | ------- |
 | GET  | `/companion/buttons` | list imported controls |
+| GET  | `/obs/status` | OBS program and preview scene, studio mode, transition (cached 1 s) |
 | POST | `/companion/buttons/{button_id}/press` | press one allowlisted control |
 | POST | `/companion/categories` | create a category `{name}` |
 | POST | `/companion/categories/{category_id}/visibility` | set `{visible}` |

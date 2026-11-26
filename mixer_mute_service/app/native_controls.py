@@ -274,8 +274,20 @@ def _visca_tcp(host: str, port: int, payload: bytes) -> None:
 
 
 def _obs_request(host: str, port: int, request_type: str, request_data: Optional[dict] = None) -> dict:
-    """One request on a fresh OBS WebSocket connection. Every wait is bounded:
-    a stuck OBS must not block a worker thread for good."""
+    """One request on a fresh OBS WebSocket connection. Raises
+    NativeControlError when OBS is unreachable or rejects the request."""
+    (answer,) = _obs_batch(host, port, [(request_type, request_data)])
+    if answer is None:
+        raise NativeControlError(f"OBS rejected {request_type}")
+    return answer
+
+
+def _obs_batch(host: str, port: int, requests: list) -> list:
+    """Several requests, one after the other, on one fresh OBS WebSocket
+    connection: [(request_type, request_data), ...] -> their response data,
+    None for a request OBS rejected (e.g. the preview scene outside studio
+    mode). Every wait is bounded: a stuck OBS must not block a worker thread
+    for good. Raises NativeControlError when OBS is unreachable."""
     try:
         from websockets.sync.client import connect
 
@@ -302,23 +314,51 @@ def _obs_request(host: str, port: int, request_type: str, request_data: Optional
             ws.send(json.dumps(identify))
             if recv().get("op") != 2:
                 raise NativeControlError("OBS WebSocket identification failed")
-            request_id = uuid.uuid4().hex
-            ws.send(json.dumps({
-                "op": 6,
-                "d": {"requestType": request_type, "requestId": request_id, "requestData": request_data or {}},
-            }))
-            while True:
-                response = recv()
-                if response.get("op") != 7 or response.get("d", {}).get("requestId") != request_id:
-                    continue
+            answers = []
+            for request_type, request_data in requests:
+                request_id = uuid.uuid4().hex
+                ws.send(json.dumps({
+                    "op": 6,
+                    "d": {"requestType": request_type, "requestId": request_id, "requestData": request_data or {}},
+                }))
+                while True:
+                    response = recv()
+                    if response.get("op") == 7 and response.get("d", {}).get("requestId") == request_id:
+                        break
                 status = response["d"].get("requestStatus", {})
-                if not status.get("result"):
-                    raise NativeControlError(f"OBS rejected {request_type}")
-                return response["d"].get("responseData", {})
+                answers.append((response["d"].get("responseData") or {}) if status.get("result") else None)
+            return answers
     except NativeControlError:
         raise
     except Exception as exc:
         raise NativeControlError("OBS WebSocket unavailable") from exc
+
+
+# OBS accepts transition durations from 50 ms to 20 s.
+OBS_TRANSITION_MS = (50, 20000)
+
+
+def obs_status_blocking() -> dict:
+    """What OBS has on air, in the preview (studio mode only) and its
+    transition, over one connection. Raises NativeControlError."""
+    program, studio, preview, transition = _obs_batch(OBS_HOST, OBS_PORT, [
+        ("GetCurrentProgramScene", None), ("GetStudioModeEnabled", None),
+        ("GetCurrentPreviewScene", None), ("GetCurrentSceneTransition", None),
+    ])
+    if program is None or not isinstance(program.get("currentProgramSceneName"), str):
+        raise NativeControlError("OBS did not name its program scene")
+    studio_mode = bool(studio and studio.get("studioModeEnabled"))
+    duration = (transition or {}).get("transitionDuration")
+    return {
+        "program": program["currentProgramSceneName"],
+        "preview": (preview or {}).get("currentPreviewSceneName") if studio_mode else None,
+        "studio_mode": studio_mode,
+        "transition": {
+            "name": (transition or {}).get("transitionName"),
+            "duration_ms": None if (transition or {}).get("transitionFixed") or not isinstance(duration, (int, float))
+            else int(duration),
+        },
+    }
 
 
 class NativeControlService:
@@ -803,6 +843,20 @@ class NativeControlService:
 
         if action_type == "obs-overlay-toggle":
             return await self._overlay_toggle(action)
+
+        if action_type == "obs-transition-adjust":
+            # Companion's "Übergang Langsam/Schneller": the transition OBS uses
+            # for every switch, a step longer or shorter.
+            delta = int(action.get("delta", 0))
+            current = await asyncio.to_thread(_obs_request, OBS_HOST, OBS_PORT, "GetCurrentSceneTransition")
+            duration = current.get("transitionDuration")
+            if current.get("transitionFixed") or not isinstance(duration, (int, float)):
+                raise NativeControlError(f"OBS transition has no duration ({current.get('transitionName')})")
+            low, high = OBS_TRANSITION_MS
+            duration = max(low, min(high, int(duration) + delta))
+            await asyncio.to_thread(_obs_request, OBS_HOST, OBS_PORT, "SetCurrentSceneTransitionDuration",
+                                    {"transitionDuration": duration})
+            return {"ok": True, "duration_ms": duration}
 
         if action_type == "beamer-set":
             hidden = action.get("hidden")

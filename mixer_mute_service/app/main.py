@@ -24,6 +24,7 @@ from fastapi.staticfiles import StaticFiles
 from .buses import BusRegistry
 from .channel_settings import ChannelSettingsCache, ChannelSettingsStore
 from .camera_program import device_camera_program
+from .obs_status import ObsStatus
 from .camera_ptz import PanTiltControl
 from .camera_streams import CameraStreamStore, MediaMTXRelay
 from .channel_preferences import ChannelPreferences
@@ -162,6 +163,7 @@ async def lifespan(app: FastAPI):
         camera_program = _optional(
             app, "program camera presets", lambda: device_camera_program(app.state.native_controls))
     app.state.camera_program = camera_program
+    app.state.obs_status = ObsStatus()
     app.state.light_scenes = _optional(app, "light scenes", lambda: LightSceneStore(data_dir / "light_scenes.json"))
     app.state.names = _optional(app, "names", lambda: NameStore(data_dir / "display_names.json"))
     app.state.light_circuits = CircuitCache()

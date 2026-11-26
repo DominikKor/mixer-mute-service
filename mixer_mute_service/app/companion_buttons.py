@@ -15,22 +15,29 @@ log = logging.getLogger("mixer.companion_buttons")
 
 COMPANION_BUTTONS = [
     {"id": "beamer-freeze", "label": "Beamer freeze", "kind": "native", "category_id": "beamer", "native_action": {"type": "beamer-command", "command": "freeze"}},
-    {"id": "cam2-live-top", "label": "Cam 2 Live", "kind": "native", "category_id": "obs", "native_action": {"type": "obs-live", "scene": "Cam 2", "source": "Cam2"}},
-    {"id": "pc2-live-top-left", "label": "PC2 Live", "kind": "native", "category_id": "obs", "native_action": {"type": "obs-live", "scene": "PC2", "source": "Capture_PC2"}},
-    {"id": "cam1-toggle", "label": "Cam1 ein/aus", "kind": "native", "category_id": "obs", "native_action": {"type": "obs-source-toggle", "scene": "Preview Scene", "source": "Cam1_klein", "hide_sources": ["Capture_PC2", "Beamer", "Cam2_klein"]}},
-    {"id": "pc2-live-top-right", "label": "PC2 Live", "kind": "native", "category_id": "obs", "native_action": {"type": "obs-live", "scene": "PC2", "source": "Capture_PC2"}},
-    {"id": "start", "label": "Start", "kind": "native", "category_id": "obs", "native_action": {"type": "obs-scene", "scene": "Willkommen (neu)"}},
-    {"id": "ende", "label": "Ende", "kind": "native", "category_id": "obs", "native_action": {"type": "obs-scene", "scene": "Ende (neu)"}},
     {"id": "beamer-hide", "label": "Beamer hide", "kind": "native", "category_id": "beamer", "native_action": {"type": "beamer-set", "hidden": True}},
     {"id": "beamer-unhide", "label": "Beamer unhide", "kind": "native", "category_id": "beamer", "native_action": {"type": "beamer-set", "hidden": False}},
     {"id": "beamer-power-off", "label": "Beamer off", "kind": "native", "category_id": "beamer", "native_action": {"type": "beamer-command", "command": "power-off"}},
     {"id": "beamer-power-on", "label": "Beamer on", "kind": "native", "category_id": "beamer", "native_action": {"type": "beamer-command", "command": "power-on"}},
-    {"id": "cam1-live", "label": "Cam 1 Live", "kind": "native", "category_id": "obs", "native_action": {"type": "obs-live", "scene": "Cam 1", "source": "Cam1"}},
-    {"id": "cam2-live-bottom", "label": "Cam 2 Live", "kind": "native", "category_id": "obs", "native_action": {"type": "obs-live", "scene": "Cam 2", "source": "Cam2"}},
     {"id": "beamer-live", "label": "Beamer Live", "kind": "native", "category_id": "obs", "native_action": {"type": "obs-live", "scene": "BeamerVonVorne", "source": "Beamer"}},
     {"id": "pultmikro-mute", "label": "Pultmikro Mute", "kind": "channel", "category_id": "mixer", "channel": 1, "operation": "mute"},
     {"id": "gebetsmikro-unmute", "label": "Gebetsmikro Unmute", "kind": "channel", "category_id": "mixer", "channel": 2, "operation": "unmute"},
 ]
+
+# Keys of Companion's first page that were the same as the native-obs-* keys
+# (Cam 2 Live twice, PC2 Live three times, Start/Ende twice). Since v10 only
+# the native key is in Steuerung; program rows, shortcuts and own keys that
+# still name an old ID run the native key.
+BUTTON_ALIASES = {
+    "cam1-live": "native-obs-cam1-live",
+    "cam2-live-top": "native-obs-cam2-live",
+    "cam2-live-bottom": "native-obs-cam2-live",
+    "pc2-live-top-left": "native-obs-pc2-live",
+    "pc2-live-top-right": "native-obs-pc2-live",
+    "cam1-toggle": "native-obs-cam1-toggle",
+    "start": "native-obs-start",
+    "ende": "native-obs-end",
+}
 
 _SHELLY_BUTTONS = [
     ("left", "Licht Links"), ("center-left", "Licht Mitte Links"),
@@ -111,6 +118,9 @@ NATIVE_BUTTONS.extend([
     {"id": "native-obs-picture", "label": "Bild", "kind": "native", "category_id": "obs", "native_action": {"type": "obs-scene", "scene": "Bild / Gebet"}},
     {"id": "native-obs-bible-cam1", "label": "Bibel Cam1 Beamer", "kind": "native", "category_id": "obs", "native_action": {"type": "obs-overlay-toggle", "scene": "Cam 1", "source": "BibleShow", "hide_beamer_while_shown": True}},
     {"id": "native-obs-bible-cam2", "label": "Bibel Cam2 Beamer", "kind": "native", "category_id": "obs", "native_action": {"type": "obs-overlay-toggle", "scene": "Cam 2", "source": "BibleShow", "hide_beamer_while_shown": True}},
+    # v10: Companion's "Übergang Langsam/Schneller": OBS's transition time.
+    {"id": "native-obs-transition-slower", "label": "Übergang Langsamer", "kind": "native", "category_id": "obs", "native_action": {"type": "obs-transition-adjust", "delta": 50}},
+    {"id": "native-obs-transition-faster", "label": "Übergang Schneller", "kind": "native", "category_id": "obs", "native_action": {"type": "obs-transition-adjust", "delta": -50}},
 ])
 
 # The Overall keys as Companion runs them (pages 2 and 7 of its config):
@@ -183,8 +193,9 @@ NOT_IN_STEUERUNG_IDS = CAMERA_BUTTON_IDS | CATALOG_ONLY_IDS
 # power and freeze commands, v7 removes the camera keys from Steuerung and v8
 # the light and mixer keys. v9 runs the Overall keys as Companion does (zone
 # pattern, only the off-air camera moves, then the cut) and adds the missing
-# Companion keys (Overall Ende, OBS scenes, Bibel).
-_NATIVE_CATALOG_VERSION = 9
+# Companion keys (Overall Ende, OBS scenes, Bibel). v10 drops the duplicate
+# OBS keys (BUTTON_ALIASES) and adds the transition time keys.
+_NATIVE_CATALOG_VERSION = 10
 _NATIVE_CATALOG_V3_IDS = {
     "native-artnet-start-up", "native-artnet-start-down",
     "native-artnet-steps-up", "native-artnet-steps-down",
@@ -199,6 +210,7 @@ _NATIVE_CATALOG_V9_IDS = {
     "native-obs-cam1-presentation", "native-obs-cam2-presentation", "native-obs-picture",
     "native-obs-bible-cam1", "native-obs-bible-cam2",
 }
+_NATIVE_CATALOG_V10_IDS = {"native-obs-transition-slower", "native-obs-transition-faster"}
 
 DEFAULT_CATEGORIES = [
     {"id": "beamer", "name": "Beamer", "visible": True},
@@ -242,6 +254,31 @@ def _remove_light_mixer_keys(buttons: List[dict], categories: List[dict]):
     used = {button.get("category_id") for button in buttons}
     categories = [c for c in categories if c.get("id") not in ("light", "mixer") or c.get("id") in used]
     return buttons, categories
+
+
+def resolve_alias(button_id: str) -> str:
+    """The catalog key an old duplicate ID stands for (see BUTTON_ALIASES)."""
+    return BUTTON_ALIASES.get(button_id, button_id)
+
+
+def _merge_duplicate_obs_keys(buttons: List[dict]) -> List[dict]:
+    """v10: each old duplicate OBS key leaves Steuerung. If its native key is
+    gone (the user deleted it), the first old key becomes the native key in
+    its place, keeping its label and category. Own keys that point at an old
+    key point at the native one."""
+    present = {button.get("id") for button in buttons}
+    merged = []
+    for button in buttons:
+        target = BUTTON_ALIASES.get(button.get("id"))
+        if target is None:
+            if button.get("kind") == "companion" and button.get("target_button_id") in BUTTON_ALIASES:
+                button["target_button_id"] = BUTTON_ALIASES[button["target_button_id"]]
+            merged.append(button)
+        elif target not in present:
+            present.add(target)
+            merged.append({**button, "id": target, "kind": "native",
+                           "native_action": deepcopy(COMPANION_BUTTONS_BY_ID[target]["native_action"])})
+    return merged
 
 
 class CompanionButtonStore:
@@ -296,6 +333,7 @@ class CompanionButtonStore:
                 add_v5 = self._catalog_version < 5
                 add_v6 = self._catalog_version < 6
                 add_v9 = self._catalog_version < 9
+                add_v10 = self._catalog_version < 10
                 for seed_button in self._buttons:
                     current = button_map.get(seed_button["id"])
                     add_button = (
@@ -303,6 +341,7 @@ class CompanionButtonStore:
                         or (add_v5 and seed_button["id"] in _NATIVE_CATALOG_V5_IDS)
                         or (add_v6 and seed_button["id"] in _NATIVE_CATALOG_V6_IDS)
                         or (add_v9 and seed_button["id"] in _NATIVE_CATALOG_V9_IDS)
+                        or (add_v10 and seed_button["id"] in _NATIVE_CATALOG_V10_IDS)
                     )
                     if current is None and add_button:
                         current = deepcopy(seed_button)
@@ -315,6 +354,8 @@ class CompanionButtonStore:
                     buttons, categories = _remove_camera_keys(buttons, categories, camera_labels)
                 if self._catalog_version < 8:
                     buttons, categories = _remove_light_mixer_keys(buttons, categories)
+                if self._catalog_version < 10:
+                    buttons = _merge_duplicate_obs_keys(buttons)
                 self._catalog_version = _NATIVE_CATALOG_VERSION
                 migrated = True
             category_ids = {item["id"] for item in categories}
