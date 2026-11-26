@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
+import http.client
 import json
 import logging
 import os
@@ -98,18 +99,39 @@ def _post_beamer_form(field: str, value: str) -> None:
         raise NativeControlError("Beamer HTTP control unavailable") from exc
 
 
+# A Shelly that is on the network connects within milliseconds (the room
+# light answers in 0.02-0.4 s); one that is off or gone never does. So the
+# connect gets a short timeout and the answer a longer one: a dead circuit
+# is given up after a second, a slow answer still counts.
+SHELLY_CONNECT_TIMEOUT = 1.0
+SHELLY_TIMEOUT = 2.5
+
+
 def _shelly_rpc(host: str, method: str, params: dict) -> dict:
-    request = Request(
-        f"http://{host}/rpc/{method}",
-        data=json.dumps(params).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
+    conn = http.client.HTTPConnection(host, timeout=SHELLY_CONNECT_TIMEOUT)
     try:
-        with urlopen(request, timeout=2.5) as response:
-            data = json.loads(response.read().decode("utf-8"))
-    except (URLError, TimeoutError, OSError, ValueError) as exc:
+        conn.connect()
+        conn.sock.settimeout(SHELLY_TIMEOUT)
+        conn.request("POST", f"/rpc/{method}", body=json.dumps(params).encode("utf-8"),
+                     headers={"Content-Type": "application/json"})
+        response = conn.getresponse()
+        body = response.read()
+        if response.status != 200:
+            # Gen2+ answers a rejected call with an error object and a 4xx/5xx.
+            try:
+                rejected = isinstance(json.loads(body.decode("utf-8")), dict)
+            except ValueError:
+                rejected = False
+            if rejected:
+                raise NativeControlError(f"Shelly {host} rejected command")
+            raise NativeControlError(f"Shelly {host} answered HTTP {response.status}")
+        data = json.loads(body.decode("utf-8"))
+    except NativeControlError:
+        raise
+    except (OSError, http.client.HTTPException, ValueError) as exc:
         raise NativeControlError(f"Shelly {host} unreachable") from exc
+    finally:
+        conn.close()
     if isinstance(data, dict) and data.get("error"):
         raise NativeControlError(f"Shelly {host} rejected command")
     return data if isinstance(data, dict) else {}

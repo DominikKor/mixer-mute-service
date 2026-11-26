@@ -29,8 +29,9 @@ class FakeDevices:
         self.shelly["light-tech"] = True
         self.offline = set()
         # target -> Event: its status question reads the state, then waits
-        # for the event (a slow or hanging Shelly).
+        # for the event (a slow or hanging Shelly); slow_set: its switching.
         self.slow = {}
+        self.slow_set = {}
         self.host_to_target = {host: target for target, host in native_mod.SHELLY_HOSTS.items()}
 
     def artnet(self, host, universe, values):
@@ -46,6 +47,8 @@ class FakeDevices:
                 self.slow[target].wait(5)
             return {"id": 0, "output": output}
         if method == "Switch.Set":
+            if target in self.slow_set:
+                self.slow_set[target].wait(5)
             self.shelly[target] = params["on"]
             return {"was_on": not params["on"]}
         raise AssertionError(method)
@@ -137,9 +140,9 @@ class LightsApiTests(unittest.TestCase):
         self.assertTrue(r.json()["circuits"]["light-right"])
         self.assertFalse(r.json()["circuits"]["light-front"])  # still the last known state
 
-    def _hang(self, target):
+    def _hang(self, target, switching=False):
         event = threading.Event()
-        self.devices.slow[target] = event
+        (self.devices.slow_set if switching else self.devices.slow)[target] = event
         self.addCleanup(event.set)
         return event
 
@@ -201,6 +204,25 @@ class LightsApiTests(unittest.TestCase):
         release.set()
         self._wait_for_query("light-front")
         self.assertTrue(self.client.app.state.light_circuits.snapshot()["light-front"])
+
+    def test_scene_stage_does_not_wait_for_a_hanging_shelly(self):
+        self.client.post("/lights/stage", json={"zones": {"left": 0}})
+        self.client.get("/lights")
+        r = self.client.post("/lights/scenes", json={
+            "name": "Vorne", "lights": {"zones": ["left"], "circuits": ["light-front"]}})
+        scene_id = r.json()["scene"]["id"]
+        self.client.post("/lights/stage", json={"zones": {"left": 200}})
+        frames = len(self.devices.frames)
+        release = self._hang("light-front", switching=True)
+        done = threading.Thread(target=self.client.post, args=(f"/lights/scenes/{scene_id}/apply",))
+        done.start()
+        end = time.monotonic() + 3
+        while len(self.devices.frames) == frames and time.monotonic() < end:
+            time.sleep(0.01)
+        self.assertGreater(len(self.devices.frames), frames)  # the stage moved while the Shelly hangs
+        release.set()
+        done.join(5)
+        self.assertEqual(self.devices.zone_white("left"), 0)
 
     def test_all_on_key_switches_every_answering_circuit(self):
         self.devices.offline.add("light-front")  # before light-tech and light-stage

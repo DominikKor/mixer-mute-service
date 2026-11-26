@@ -22,8 +22,8 @@ would have been sent.
 
     python -m tools.run_local_test --dead-shelly light-front --shelly-delay 0.3
 
-plays a room light circuit that does not answer (every call hangs for the
-real 2.5 s timeout, then fails) and a delay for the others' answers.
+plays a room light circuit that is off the network (every call hangs for
+the connect timeout, then fails) and a delay for the others' answers.
 """
 
 from __future__ import annotations
@@ -91,7 +91,7 @@ class FakeDevices:
 
     def shelly_rpc(self, host, method, params):
         if host in self.dead_hosts:
-            time.sleep(2.5)
+            time.sleep(self.native.SHELLY_CONNECT_TIMEOUT)  # no connection, as a switched-off Shelly
             raise self.native.NativeControlError(f"Shelly {host} unreachable")
         time.sleep(self.shelly_delay)
         if method == "Switch.GetStatus":

@@ -203,8 +203,9 @@ class CircuitCache:
 # -- shared with program rows ---------------------------------------------------
 
 async def apply_scene(request: Request, scene_id: str) -> Tuple[dict, int]:
-    """Apply a scene: room light first (quick), then the stage fade. Every
-    part is tried; any failure makes the result not ok and is listed."""
+    """Apply a scene: room light and stage fade at the same time (a dead
+    Shelly must not hold back the stage). Every part is tried; any failure
+    makes the result not ok and is listed."""
     state = request.app.state
     native, scenes = state.native_controls, state.light_scenes
     if native is None or scenes is None:
@@ -213,16 +214,23 @@ async def apply_scene(request: Request, scene_id: str) -> Tuple[dict, int]:
     if scene is None:
         return {"ok": False, "reason": "unknown light scene"}, 404
     errors = {}
-    if scene["circuits"]:
-        errors = await native.set_circuits(scene["circuits"])
-        state.light_circuits.update({k: v for k, v in scene["circuits"].items() if k not in errors})
-    stage = scene["stage"]
-    # Only the chosen stage parts; zones not named keep their level.
-    if stage["zones"] or stage["warm"] is not None:
-        try:
-            await native.set_stage(stage["zones"], stage["warm"], stage["cold"])
-        except (NativeControlError, OSError) as exc:
-            errors["stage"] = str(exc)
+
+    async def room_light() -> None:
+        if scene["circuits"]:
+            failed = await native.set_circuits(scene["circuits"])
+            state.light_circuits.update({k: v for k, v in scene["circuits"].items() if k not in failed})
+            errors.update(failed)
+
+    async def stage_light() -> None:
+        stage = scene["stage"]
+        # Only the chosen stage parts; zones not named keep their level.
+        if stage["zones"] or stage["warm"] is not None:
+            try:
+                await native.set_stage(stage["zones"], stage["warm"], stage["cold"])
+            except (NativeControlError, OSError) as exc:
+                errors["stage"] = str(exc)
+
+    await asyncio.gather(room_light(), stage_light())
     if errors:
         log.warning("Light scene %r applied with errors: %s", scene["name"], errors)
         return {"ok": False, "reason": "light scene not fully applied", "scene": scene["name"], "errors": errors}, 502

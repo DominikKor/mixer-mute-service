@@ -255,15 +255,18 @@ function renderLightCircuits(circuits) {
     const state = on === true ? "on" : on === false ? "off" : "unknown";
     key.dataset.state = state;
     key.classList.toggle("pending", pending);
-    key.querySelector(".light-circuit-state").textContent = { on: "An", off: "Aus", unknown: "?" }[state];
+    key.querySelector(".light-circuit-state").textContent = { on: "An", off: "Aus", unknown: "Offline" }[state];
     key.setAttribute("aria-pressed", String(on === true));
-    key.title = state === "unknown" ? `${circuit.label}: antwortet nicht – antippen schaltet ein` : `${circuit.label} ${state === "on" ? "ausschalten" : "einschalten"}`;
+    key.title = state === "unknown" ? `${circuit.label}: nicht erreichbar – antippen versucht einzuschalten` : `${circuit.label} ${state === "on" ? "ausschalten" : "einschalten"}`;
   }
 }
 
 // Room light: the keys show the new state at once, the service's answer
-// confirms it (or a failure brings the real state back). One request per
-// circuit at a time; a tap meanwhile is sent after it (the last tap wins).
+// confirms it (or a failure brings the real state back). The circuits that
+// answer go in one request, every unreachable one in its own: a dead
+// Shelly holds up nobody (and seven requests at once would queue in the
+// browser). One request per circuit at a time; a tap meanwhile is sent
+// after it (the last tap wins).
 function switchRoomLight(states) {
   Object.assign(LIGHTS.circuitWant, states);
   LIGHTS.circuitSeq++;
@@ -272,35 +275,41 @@ function switchRoomLight(states) {
 }
 
 async function sendRoomLight() {
-  const states = {};
-  for (const [id, on] of Object.entries(LIGHTS.circuitWant)) {
-    if (!(id in LIGHTS.circuitSent)) states[id] = on;
+  const ids = Object.keys(LIGHTS.circuitWant).filter(id => !(id in LIGHTS.circuitSent));
+  if (!ids.length) return;
+  const known = new Set((LIGHTS.data ? LIGHTS.data.circuits : []).filter(c => c.on !== null).map(c => c.id));
+  const groups = ids.filter(id => !known.has(id)).map(id => [id]);
+  if (ids.some(id => known.has(id))) groups.unshift(ids.filter(id => known.has(id)));
+  const failed = (await Promise.all(groups.map(sendRoomCircuits))).flat();
+  if (failed.length) {
+    // One message for the whole tap ("Alle an": every dead circuit named).
+    const labels = Object.fromEntries((LIGHTS.data ? LIGHTS.data.circuits : []).map(c => [c.id, c.label]));
+    toast(`Licht nicht geschaltet: ${failed.map(f => labels[f.id] || f.id).join(", ")} (${failed[0].reason})`, false);
   }
-  if (!Object.keys(states).length) return;
+}
+
+// Switch some circuits in one request; returns [{id, reason}] of those that failed.
+async function sendRoomCircuits(ids) {
+  const states = Object.fromEntries(ids.map(id => [id, LIGHTS.circuitWant[id]]));
   Object.assign(LIGHTS.circuitSent, states);
   const result = await api("POST", "/lights/circuits", { states }, { timeout: lightTimeout() });
   LIGHTS.circuitSeq++;
-  const confirmed = result.data.circuits || {};
-  for (const [id, on] of Object.entries(states)) {
+  const confirmed = result.data.circuits;
+  for (const id of ids) {
     delete LIGHTS.circuitSent[id];
-    if (LIGHTS.circuitWant[id] === on) delete LIGHTS.circuitWant[id];
+    if (LIGHTS.circuitWant[id] === states[id]) delete LIGHTS.circuitWant[id];
+    const circuit = LIGHTS.data && LIGHTS.data.circuits.find(c => c.id === id);
+    if (circuit && confirmed && id in confirmed) circuit.on = confirmed[id];
   }
-  if (LIGHTS.data) {
-    for (const circuit of LIGHTS.data.circuits) {
-      if (circuit.id in confirmed) circuit.on = confirmed[circuit.id];
-    }
-  }
-  if (!result.ok || result.data.ok === false) {
-    const errors = result.data.errors;
-    const names = errors && LIGHTS.data
-      ? LIGHTS.data.circuits.filter(c => c.id in errors).map(c => c.label).join(", ")
-      : "";
-    toast(`Licht: ${result.data.reason || "HTTP " + result.status}${names ? ` (${names})` : ""}`, false);
-    // No answer at all: show the real state again.
-    if (!result.data.circuits) loadLights();
-  }
+  const ok = result.ok && result.data.ok !== false;
+  // No answer from the service at all: show the real state again.
+  if (!ok && !confirmed) loadLights();
   if (LIGHTS.data) renderLightCircuits(LIGHTS.data.circuits);
-  sendRoomLight();  // taps made meanwhile
+  if (ids.some(id => id in LIGHTS.circuitWant)) sendRoomLight();  // tapped again meanwhile
+  if (ok) return [];
+  const errors = result.data.errors;
+  if (errors) return Object.keys(errors).map(id => ({ id, reason: "nicht erreichbar" }));
+  return ids.map(id => ({ id, reason: result.data.reason || `HTTP ${result.status}` }));
 }
 
 // ---- scenes ---------------------------------------------------------------------------
@@ -474,7 +483,7 @@ async function loadLights() {
     return;
   }
   const unknown = result.data.circuits.filter(c => c.on === null).map(c => c.label);
-  lightStatus(unknown.length ? `Raumlicht antwortet nicht: ${unknown.join(", ")}.` : "");
+  lightStatus(unknown.length ? `Raumlicht nicht erreichbar: ${unknown.join(", ")}.` : "");
   // A switch began or ended meanwhile: this answer may show the old state.
   if (seq !== LIGHTS.circuitSeq && LIGHTS.data) {
     const known = Object.fromEntries(LIGHTS.data.circuits.map(c => [c.id, c.on]));

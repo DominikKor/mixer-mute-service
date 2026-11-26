@@ -235,5 +235,89 @@ class NativeControlTests(unittest.IsolatedAsyncioTestCase):
         self.assertLess(enabled_index, scene_index)
 
 
+class ShellyRpcTests(unittest.TestCase):
+    """_shelly_rpc against a local HTTP server that answers like a Gen2+
+    Shelly (loopback only)."""
+
+    def setUp(self):
+        import http.server
+        import threading
+
+        test = self
+        self.delay = 0.0
+        self.answer = (200, {"was_on": False})
+        self.requests = []
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):
+                length = int(self.headers.get("Content-Length") or 0)
+                test.requests.append((self.path, json.loads(self.rfile.read(length) or b"{}")))
+                import time
+                time.sleep(test.delay)
+                status, body = test.answer
+                data = json.dumps(body).encode()
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+
+            def log_message(self, *args):
+                pass
+
+        self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.server.daemon_threads = True
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        self.addCleanup(self.server.server_close)
+        self.addCleanup(self.server.shutdown)
+        self.host = f"127.0.0.1:{self.server.server_address[1]}"
+
+    def test_answer_and_request(self):
+        from app.native_controls import _shelly_rpc
+        self.assertEqual(_shelly_rpc(self.host, "Switch.Set", {"id": 0, "on": True}), {"was_on": False})
+        self.assertEqual(self.requests, [("/rpc/Switch.Set", {"id": 0, "on": True})])
+
+    def test_rejected_call(self):
+        from app.native_controls import _shelly_rpc
+        self.answer = (400, {"code": -103, "message": "Invalid argument"})
+        with self.assertRaisesRegex(NativeControlError, "rejected"):
+            _shelly_rpc(self.host, "Switch.Set", {"id": 7, "on": True})
+        self.answer = (200, {"error": {"code": -103}})
+        with self.assertRaisesRegex(NativeControlError, "rejected"):
+            _shelly_rpc(self.host, "Switch.Set", {"id": 0, "on": True})
+
+    def test_slow_answer_counts_up_to_the_answer_timeout(self):
+        from app.native_controls import _shelly_rpc
+        self.delay = 0.3
+        with patch("app.native_controls.SHELLY_CONNECT_TIMEOUT", 0.1), patch("app.native_controls.SHELLY_TIMEOUT", 1.0):
+            self.assertEqual(_shelly_rpc(self.host, "Switch.GetStatus", {"id": 0}), {"was_on": False})
+        with patch("app.native_controls.SHELLY_TIMEOUT", 0.1):
+            with self.assertRaisesRegex(NativeControlError, "unreachable"):
+                _shelly_rpc(self.host, "Switch.GetStatus", {"id": 0})
+
+    def test_dead_shelly_is_given_up_at_the_connect_timeout(self):
+        import socket
+        from app import native_controls
+
+        timeouts = []
+
+        class DeadConnection:
+            def __init__(self, host, timeout):
+                timeouts.append(timeout)
+                self.sock = None
+
+            def connect(self):
+                raise socket.timeout("timed out")
+
+            def close(self):
+                pass
+
+        with patch.object(native_controls.http.client, "HTTPConnection", DeadConnection):
+            with self.assertRaisesRegex(NativeControlError, "unreachable"):
+                native_controls._shelly_rpc("192.168.188.23", "Switch.GetStatus", {"id": 0})
+        self.assertEqual(timeouts, [native_controls.SHELLY_CONNECT_TIMEOUT])
+        self.assertLessEqual(native_controls.SHELLY_CONNECT_TIMEOUT, 1.0)
+
+
 if __name__ == "__main__":
     unittest.main()
