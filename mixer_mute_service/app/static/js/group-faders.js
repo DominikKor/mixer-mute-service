@@ -107,15 +107,23 @@ $("new-person-name").addEventListener("keydown", (e) => {
   if (e.key === "Enter") { e.preventDefault(); savePerson(); }
   if (e.key === "Escape") { closePersonCreateRow(); }
 });
-$("panic-btn").addEventListener("click", () => {
-  const path = SERVICE_ENABLED === false ? "/panic/enable" : "/panic/disable";
-  act("POST", path, undefined, "panic");
+$("panic-btn").addEventListener("click", async () => {
+  const enable = SERVICE_ENABLED === false;
+  const result = await api("POST", enable ? "/panic/enable" : "/panic/disable");
+  if (result.ok && result.data.ok !== false) toast(enable ? "Senden wieder erlaubt" : "Senden gesperrt", true);
+  else toast(`Panic: ${result.data.reason || "HTTP " + result.status}`, false);
+  await refresh();
 });
 $("desktop-profiles").addEventListener("click", (event) => {
   const trigger = event.target.closest("button[data-profile-menu]");
   if (trigger) {
-    if (trigger.getAttribute("aria-expanded") === "true") closeTileMenu();
-    else openTileMenu(trigger);
+    const id = trigger.dataset.profileMenu;
+    toggleActionMenu(trigger, [
+      { label: "Bearbeiten", icon: ICON_PENCIL, run: () => openProfileDialog(id) },
+      { label: "Duplizieren", icon: ICON_COPY, run: () => duplicateDesktopProfile(id) },
+      "-",
+      { label: "Löschen", icon: ICON_TRASH, danger: true, run: anchor => deleteDesktopProfile(id, anchor) },
+    ]);
     return;
   }
   const open = event.target.closest("button[data-display-profile]");
@@ -143,10 +151,6 @@ $("camera-add-btn").addEventListener("click", () => openCameraDialog());
 $("camera-form").addEventListener("submit", saveCamera);
 $("camera-cancel").addEventListener("click", () => $("camera-dialog").close());
 $("camera-grid").addEventListener("click", async (event) => {
-  const edit = event.target.closest("button[data-camera-edit]");
-  if (edit) return openCameraDialog(edit.dataset.cameraEdit);
-  const remove = event.target.closest("button[data-camera-delete]");
-  if (remove) return deleteCamera(remove.dataset.cameraDelete, remove);
   const preset = event.target.closest("button[data-camera-preset]");
   if (preset) return pressCameraPreset(preset);
 });
@@ -187,36 +191,6 @@ $("camera-grid").addEventListener("contextmenu", (event) => {
 window.addEventListener("blur", stopAllCameraMoves);
 window.addEventListener("pagehide", stopAllCameraMoves);
 document.addEventListener("visibilitychange", () => { if (document.hidden) stopAllCameraMoves(); });
-$("tile-menu").addEventListener("click", (event) => {
-  const item = event.target.closest("button[data-menu-action]");
-  if (!item) return;
-  const profileId = TILE_MENU_PROFILE;
-  // The tile's "⋮" key anchors the delete question once the menu is gone.
-  const trigger = OPEN_MENU && OPEN_MENU.trigger;
-  closeTileMenu();
-  if (item.dataset.menuAction === "edit") openProfileDialog(profileId);
-  else if (item.dataset.menuAction === "duplicate") duplicateDesktopProfile(profileId);
-  else if (item.dataset.menuAction === "delete") deleteDesktopProfile(profileId, trigger);
-});
-// The mute groups' menu (#person-menu, js/groups.js) has its own keys: its
-// state lives in the cards' markup so it survives their redraw.
-for (const menu of document.querySelectorAll(".tile-menu:not(#person-menu)")) {
-  menu.addEventListener("keydown", (event) => {
-    const items = [...menu.querySelectorAll("button")];
-    const i = items.indexOf(document.activeElement);
-    if (event.key === "Escape") { event.preventDefault(); closeTileMenu(true); }
-    else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-      event.preventDefault();
-      items[(i + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length].focus();
-    } else if (event.key === "Tab") closeTileMenu();
-  });
-}
-// Close on any click elsewhere, and when the page scrolls or resizes.
-document.addEventListener("pointerdown", (event) => {
-  if (OPEN_MENU && !OPEN_MENU.menu.contains(event.target) && !OPEN_MENU.trigger.contains(event.target)) closeTileMenu();
-});
-window.addEventListener("scroll", () => closeTileMenu(), { passive: true });
-window.addEventListener("resize", () => closeTileMenu());
 $("new-profile-btn").addEventListener("click", () => openProfileDialog(null));
 $("target-pcs-btn").addEventListener("click", openTargetPcsDialog);
 document.addEventListener("click", event => {

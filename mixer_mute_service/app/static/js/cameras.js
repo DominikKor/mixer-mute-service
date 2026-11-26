@@ -4,7 +4,7 @@
 
 // ---- rendering ----------------------------------------------------------
 
-function fmtAge(a) { return a === null || a === undefined ? "—" : a.toFixed(2) + "s"; }
+function fmtAge(a) { return a === null || a === undefined ? "—" : `vor ${a.toFixed(1).replace(".", ",")} s`; }
 
 let CAMERA_STREAMS_SIGNATURE = "";
 let CAMERA_STREAMS = [];
@@ -37,22 +37,9 @@ function renderCameraStreams(data) {
     const title = document.createElement("h3");
     title.className = "camera-card-title";
     title.textContent = camera.name;
-    const tools = document.createElement("div");
-    tools.className = "camera-card-tools";
-    const edit = document.createElement("button");
-    edit.type = "button";
-    edit.dataset.cameraEdit = camera.id;
-    edit.title = `${camera.name} bearbeiten`;
-    edit.setAttribute("aria-label", edit.title);
-    edit.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/></svg>';
-    const remove = document.createElement("button");
-    remove.type = "button";
-    remove.dataset.cameraDelete = camera.id;
-    remove.title = `${camera.name} entfernen`;
-    remove.setAttribute("aria-label", remove.title);
-    remove.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6"/></svg>';
-    tools.append(edit, remove);
-    head.append(title, tools);
+    const menu = menuButton(`${camera.name}: bearbeiten, Presets umbenennen oder entfernen`, `camera:${camera.id}`);
+    menu.dataset.cameraMenu = camera.id;
+    head.append(title, menu);
     const view = document.createElement("div");
     view.className = "camera-view";
     if (data.relay_ready) {
@@ -85,7 +72,7 @@ function renderCameraStreams(data) {
 // held, releasing the key stops the camera.
 
 const CAMERA_LAST_PRESET = {};
-// Cameras whose presets are being renamed (pencil next to "Presets"): a tap
+// Cameras whose presets are being renamed (⋮ > Presets umbenennen): a tap
 // on a preset then opens its name instead of moving the camera.
 const CAMERA_RENAMING = new Set();
 // Per camera and kind ("pan" / "zoom"): the command chain, the held direction
@@ -140,11 +127,8 @@ function renderCameraControls() {
           title="${n} ${arrow.label}" aria-label="${n} ${arrow.label}, gedrückt halten">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${arrow.path}"/></svg></button>`).join("");
     controls.innerHTML = `
-      <div class="camera-presets-head">
-        <span class="camera-controls-label"><span class="camera-presets-title">Presets</span><span class="camera-presets-hint"> – zum Umbenennen antippen</span></span>
-        <button type="button" class="rename-btn" data-camera-rename="${c}" aria-pressed="false"
-          title="Presets von ${n} umbenennen" aria-label="Presets von ${n} umbenennen">&#9998;</button>
-      </div>
+      <div class="camera-controls-label">Presets</div>
+      <div class="rename-bar" data-camera-rename-bar hidden><span>Preset antippen zum Umbenennen</span><button type="button" class="primary" data-camera-rename-done="${c}">Fertig</button></div>
       <div class="camera-presets">${list.map(p => `
         <button type="button" class="camera-preset" data-camera-preset="${escapeAttr(p.id)}" data-camera="${c}"
           data-label="${escapeAttr(p.label)}" data-default-label="${escapeAttr(p.defaultLabel)}"
@@ -167,7 +151,8 @@ function setCameraRenaming(cam, on) {
   for (const controls of document.querySelectorAll(".camera-controls")) {
     if (controls.dataset.viscaCamera !== cam) continue;
     controls.classList.toggle("renaming", on);
-    controls.querySelector("[data-camera-rename]")?.setAttribute("aria-pressed", String(on));
+    const bar = controls.querySelector("[data-camera-rename-bar]");
+    if (bar) bar.hidden = !on;
   }
 }
 
@@ -332,14 +317,9 @@ function renderDesktopProfiles(data) {
       stop.disabled = !data.ready;
     }
     // Edit/duplicate/delete sit in the "⋮" menu; it works even while the agent is not set up.
-    const menuBtn = document.createElement("button");
-    menuBtn.className = "display-menu-btn";
+    const menuBtn = menuButton(`${profile.title}: bearbeiten, duplizieren oder löschen`, `profile:${profile.id}`);
+    menuBtn.classList.add("tile-menu-btn");
     menuBtn.dataset.profileMenu = profile.id;
-    menuBtn.title = `${profile.title}: bearbeiten, duplizieren oder löschen`;
-    menuBtn.setAttribute("aria-label", menuBtn.title);
-    menuBtn.setAttribute("aria-haspopup", "menu");
-    menuBtn.setAttribute("aria-expanded", "false");
-    menuBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>';
     const tile = document.createElement("span");
     tile.className = audio ? "display-tile audio" : "display-tile";
     tile.append(button);
@@ -347,7 +327,7 @@ function renderDesktopProfiles(data) {
     tile.append(menuBtn);
     wrap.insertBefore(tile, addTile);
   }
-  closeTileMenu();
+  if (OPEN_MENU && OPEN_MENU.key && OPEN_MENU.key.startsWith("profile:")) closeTileMenu();
   status.textContent = !DESKTOP_PROFILES.length ? "Noch keine Profile – mit + anlegen"
     : data.ready ? "Profile bereit" : "Desktop-Agent nicht eingerichtet";
 }
@@ -448,38 +428,6 @@ async function loadCameraStreams() {
   }
 }
 
-// ---- "⋮" menus --------------------------------------------------------------
-// One menu open at a time, placed under the dots it was opened from: the
-// shared tile menu of the desktop keys, the program rows' menu.
-
-let TILE_MENU_PROFILE = null;
-let OPEN_MENU = null;  // { menu, trigger }
-
-function openTileMenu(trigger, menu = $("tile-menu")) {
-  closeTileMenu();
-  OPEN_MENU = { menu, trigger };
-  TILE_MENU_PROFILE = trigger.dataset.profileMenu || null;
-  trigger.setAttribute("aria-expanded", "true");
-  menu.hidden = false;
-  const r = trigger.getBoundingClientRect();
-  const w = menu.offsetWidth, h = menu.offsetHeight;
-  const left = Math.min(Math.max(8, r.right - w), innerWidth - w - 8);
-  const top = r.bottom + 4 + h > innerHeight - 8 ? Math.max(8, r.top - h - 4) : r.bottom + 4;
-  menu.style.left = `${left}px`;
-  menu.style.top = `${top}px`;
-  menu.querySelector("button").focus({ preventScroll: true });
-}
-
-function closeTileMenu(refocus = false) {
-  if (!OPEN_MENU) return;
-  const { menu, trigger } = OPEN_MENU;
-  OPEN_MENU = null;
-  menu.hidden = true;
-  trigger.setAttribute("aria-expanded", "false");
-  if (refocus && trigger.isConnected) trigger.focus();
-  TILE_MENU_PROFILE = null;
-}
-
 // The copy ("… (Kopie)") is placed right after the original; its editor opens
 // so it can be renamed or pointed at another file straight away.
 async function duplicateDesktopProfile(profileId) {
@@ -510,6 +458,25 @@ async function deleteDesktopProfile(profileId, anchor) {
 
 // The pencil next to "Presets": renaming on/off for that camera.
 $("camera-grid").addEventListener("click", event => {
-  const pencil = event.target.closest("[data-camera-rename]");
-  if (pencil) setCameraRenaming(pencil.dataset.cameraRename, !CAMERA_RENAMING.has(pencil.dataset.cameraRename));
+  const done = event.target.closest("[data-camera-rename-done]");
+  if (done) { endRenameMode(); return; }
+  const trigger = event.target.closest("[data-camera-menu]");
+  if (!trigger) return;
+  const camera = CAMERA_STREAMS.find(item => item.id === trigger.dataset.cameraMenu);
+  if (!camera) return;
+  const cam = viscaCameraId(camera.name);
+  const controls = trigger.closest(".camera-card").querySelector(".camera-controls");
+  toggleActionMenu(trigger, [
+    { label: "Bearbeiten", icon: ICON_PENCIL, run: () => openCameraDialog(camera.id) },
+    controls && !controls.hidden ? {
+      label: CAMERA_RENAMING.has(cam) ? "Umbenennen beenden" : "Presets umbenennen", icon: ICON_EDIT_LIST,
+      run: () => {
+        if (CAMERA_RENAMING.has(cam)) { endRenameMode(); return; }
+        startRenameMode(controls, () => setCameraRenaming(cam, false));
+        setCameraRenaming(cam, true);
+      },
+    } : null,
+    "-",
+    { label: "Entfernen", icon: ICON_TRASH, danger: true, run: anchor => deleteCamera(camera.id, anchor) },
+  ]);
 });
