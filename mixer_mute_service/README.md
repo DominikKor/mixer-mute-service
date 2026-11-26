@@ -149,7 +149,15 @@ miniatures, and **Standard** restores the original one.
   (one row at a time, Esc or another tap closes it).
   Play activates the group first, then runs
   the linked actions in order; the delay records the click offset from the
-  planned time. The cue bar shows the clock, the next row and how long until
+  planned time. As soon as a row starts (Play, **Weiter**), the desktop
+  profiles shown or played before stop, unless the new row starts them
+  itself (app/profile_stops.py): music fades out with its profile's fade,
+  a file's window (e.g. the Mission Spotlight video) closes and an image is
+  hidden (agent `POST /close`). That includes what was started by hand with
+  a Desktop key; programs (e.g. OBS), song windows, files of the row's file
+  fields, the beamer and the light are left alone. The stops run in the
+  background with short timeouts; an agent that does not answer is skipped
+  for 30 s. The cue bar shows the clock, the next row and how long until
   it is due; **Weiter** starts the next row (also from a Stream Deck via
   `POST /program/next`). The row that ran last today is marked "Läuft", the
   next one "Nächster", earlier ones are dimmed. **Duplizieren** puts the copy

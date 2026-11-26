@@ -246,7 +246,7 @@ def _framed_window_position(
 
 
 def _place_process_window(
-    process_id: int, before: set, monitor: int, fullscreen: bool, position: str
+    process_id: int, before: set, monitor: int, fullscreen: bool, position: str, remember_as: str | None = None
 ) -> None:
     """Move the started app's window to its place, and keep it there while
     the app settles: many apps centre or restore their window right after
@@ -259,6 +259,8 @@ def _place_process_window(
     while True:
         hwnd = _find_window(process_id, before)
         if hwnd and hwnd not in placed:
+            if remember_as:
+                _remember_window(remember_as, hwnd, _window_process_id(hwnd))
             target = _apply_placement(hwnd, bounds, fullscreen, position)
             if target:
                 placed[hwnd] = target
@@ -371,11 +373,66 @@ def _launch_profile(profile: dict) -> None:
             ).pid
         else:
             process_id = _shell_open_file(path)
+        # A file's window (a video player, a document) can be closed again
+        # with POST /close; a program's never is.
         _place_process_window(
-            process_id, before, profile["monitor"], profile["fullscreen"], profile["position"]
+            process_id, before, profile["monitor"], profile["fullscreen"], profile["position"],
+            remember_as=profile["id"] if profile["kind"] == "file" else None,
         )
     except Exception:
         logger.exception("Profile %s failed", profile["id"])
+
+
+# -- closing what a profile opened (POST /close) ---------------------------------
+# When the program moves on to its next row, the service ends what the rows
+# before showed: the windows a "file" profile opened (a video player, e.g.
+# Mission Spotlight) get WM_CLOSE, and an image is hidden if it is still the
+# one in the window. Programs are never closed; songs are not profiles.
+
+_opened_windows: dict[str, set[tuple[int, int]]] = {}  # profile id -> {(hwnd, process id)}
+_opened_lock = threading.Lock()
+_shown_image: str | None = None  # the profile whose image the window shows (tk thread only)
+
+
+def _remember_window(profile_id: str, hwnd: int, process_id: int) -> None:
+    with _opened_lock:
+        _opened_windows.setdefault(profile_id, set()).add((hwnd, process_id))
+
+
+def _window_process_id(hwnd: int) -> int:
+    """The process a window belongs to; 0 when the window is gone."""
+    import ctypes
+    from ctypes import wintypes
+
+    owner = wintypes.DWORD()
+    if not ctypes.windll.user32.GetWindowThreadProcessId(wintypes.HWND(hwnd), ctypes.byref(owner)):
+        return 0
+    return owner.value
+
+
+def _post_close(hwnd: int) -> bool:
+    import ctypes
+    from ctypes import wintypes
+
+    WM_CLOSE = 0x0010
+    return bool(ctypes.windll.user32.PostMessageW(wintypes.HWND(hwnd), WM_CLOSE, 0, 0))
+
+
+def _close_profile_windows(profile_id: str, window_pid=None, post_close=None) -> int:
+    """Ask the windows a profile opened to close (as their close button
+    does). A window that is gone, or whose handle now belongs to another
+    process, is left alone. Returns how many were asked."""
+    window_pid = window_pid or _window_process_id
+    post_close = post_close or _post_close
+    with _opened_lock:
+        windows = _opened_windows.pop(profile_id, set())
+    closed = 0
+    for hwnd, process_id in windows:
+        if window_pid(hwnd) == process_id and post_close(hwnd):
+            closed += 1
+    if windows:
+        logger.info("Close profile=%s: %s of %s windows", profile_id, closed, len(windows))
+    return closed
 
 
 # -- finding mpv and yt-dlp ----------------------------------------------------
@@ -1150,6 +1207,8 @@ def _close_mirrors() -> None:
 
 def _hide_all(root: tk.Tk) -> None:
     """Escape or the window's close button: hide, never end the agent."""
+    global _shown_image
+    _shown_image = None
     _close_mirrors()
     root.withdraw()
 
@@ -1646,7 +1705,7 @@ def _show_song(root: tk.Tk, canvas: tk.Canvas, body: dict) -> None:
 
 class DisplayHandler(BaseHTTPRequestHandler):
     def do_POST(self):
-        if self.path not in ("/display", "/audio", "/song", "/songs/library", "/songs/save", "/power",
+        if self.path not in ("/display", "/audio", "/close", "/song", "/songs/library", "/songs/save", "/power",
                              "/info", "/update", "/restart", "/pick-file"):
             self.send_error(404)
             return
@@ -1688,6 +1747,9 @@ class DisplayHandler(BaseHTTPRequestHandler):
             return
         if self.path == "/audio":
             self._handle_audio(body)
+            return
+        if self.path == "/close":
+            self._handle_close(body)
             return
         if self.path == "/songs/library":
             self._handle_song_library(body)
@@ -1754,6 +1816,21 @@ class DisplayHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(result)))
         self.end_headers()
         self.wfile.write(result)
+
+    def _handle_close(self, body: dict) -> None:
+        """{"id": profile}: close the windows it opened, hide its image if it
+        is still shown (app/profile_stops.py). Answers at once."""
+        if (
+            not isinstance(body, dict)
+            or set(body) != {"id"}
+            or not isinstance(body["id"], str)
+            or not body["id"].replace("-", "").replace("_", "").isalnum()
+        ):
+            self.send_error(400)
+            return
+        closed = _close_profile_windows(body["id"])
+        requests.put({"kind": "close", "id": body["id"]})
+        self._send_json(200, {"ok": True, "profile": body["id"], "windows_closed": closed})
 
     def _handle_audio(self, body: dict) -> None:
         if (
@@ -1973,14 +2050,22 @@ def _pick_file(start: str) -> str | None:
 
 
 def drain_requests(root: tk.Tk, image_label: tk.Label, canvas: tk.Canvas) -> None:
+    global _shown_image
     try:
         while True:
             profile = requests.get_nowait()
             try:
                 if profile["kind"] == "song":
+                    _shown_image = None  # the window shows the song now
                     _show_song(root, canvas, profile)
                 elif profile["kind"] == "image":
                     _show_image(root, image_label, profile)
+                    _shown_image = profile["id"]
+                elif profile["kind"] == "close":
+                    # Only the image of that profile: a newer image or a song stays.
+                    if _shown_image == profile["id"]:
+                        _hide_all(root)
+                        logger.info("Image hidden profile=%s", profile["id"])
                 else:
                     threading.Thread(target=_launch_profile, args=(profile,), daemon=True).start()
             except Exception as exc:

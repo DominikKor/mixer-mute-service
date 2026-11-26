@@ -28,6 +28,7 @@ from ..actions import (
 )
 from ..models import ProgramItemRequest, ShortcutRequest
 from ..native_controls import NativeControlError
+from ..profile_stops import stop_previous
 from ..program_items import ProgramItemError, validated_shortcut_id, without_own_actions
 from ..responses import fail, respond, unwrap
 from ..lights import apply_scene
@@ -366,6 +367,9 @@ async def _play(item_id: str, request: Request):
 
     async def started() -> dict:
         # Marked once its group is set: a refused group leaves "Weiter" on this row.
+        # Then what the rows before showed or played stops, in the background
+        # (app/profile_stops.py): the new row's steps do not wait for it.
+        stop_previous(request.app.state, item)
         played = await program_store.mark_played(item_id)
         return {"delay_seconds": played["last_delay_seconds"]}
 

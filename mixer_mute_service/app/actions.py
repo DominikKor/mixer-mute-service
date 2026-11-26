@@ -238,11 +238,24 @@ async def show_profile(request: Request, profile_id: str) -> Result:
             return {"ok": False, "reason": "several monitors are only possible for images"}, 400
         payload["monitors"] = profile.monitors
     try:
-        return await display_agent.call(cfg, profile.target_ip, "/display", payload), 200
+        answer = await display_agent.call(cfg, profile.target_ip, "/display", payload)
     except AgentError as exc:
         if exc.agent_status == 503:
             return {"ok": False, "reason": not_found_reason(payload["path"])}, 502
         return exc.answer(), exc.status
+    _note_shown(request, profile_id, profile)
+    return answer, 200
+
+
+def _shown_profiles(request: Request):
+    """What desktop profiles are shown (app/profile_stops.py), or None."""
+    return getattr(request.app.state, "shown_profiles", None)
+
+
+def _note_shown(request: Request, profile_id: str, profile) -> None:
+    shown = _shown_profiles(request)
+    if shown is not None:
+        shown.started(profile_id, profile.target_ip, profile.kind)
 
 
 async def control_audio(request: Request, profile_id: str, action: str) -> Result:
@@ -261,8 +274,8 @@ async def control_audio(request: Request, profile_id: str, action: str) -> Resul
         payload["fade"] = {"db": AUDIO_FADE_FULL_DB, "seconds": profile.fade_seconds}
     cfg = request.app.state.cfg.desktop_display
     try:
-        return await display_agent.call(cfg, profile.target_ip, "/audio", payload,
-                                        timeout=display_agent.AUDIO_TIMEOUT_SECONDS), 200
+        answer = await display_agent.call(cfg, profile.target_ip, "/audio", payload,
+                                          timeout=display_agent.AUDIO_TIMEOUT_SECONDS)
     except AgentError as exc:
         if exc.agent_status is None:
             return exc.answer(), exc.status
@@ -273,6 +286,12 @@ async def control_audio(request: Request, profile_id: str, action: str) -> Resul
             # Agents before fading reject the extra field.
             reason += "; update the desktop agent on this PC for fading"
         return {"ok": False, "reason": reason}, exc.agent_status
+    if answer.get("ok") is not False:
+        if action == "play":
+            _note_shown(request, profile_id, profile)
+        elif _shown_profiles(request) is not None:
+            _shown_profiles(request).audio_stopped(profile.target_ip)
+    return answer, 200
 
 
 async def run_profile(request: Request, profile_id: str) -> Result:
