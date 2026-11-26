@@ -220,7 +220,10 @@ function layoutStage() {
   const gap = parseFloat(getComputedStyle(list).rowGap) || 0;
   const shown = list.querySelector(".stage-thumb:not([hidden])");
   const extra = shown ? shown.offsetHeight - shown.firstElementChild.offsetHeight : 30;
-  let tw = rail.clientWidth - 8;
+  // During a flight the scrollbar's room is kept as padding (stageFlip), which
+  // clientWidth counts; without it the miniatures would grow by the
+  // scrollbar's width and stay cut at the right until the next layout.
+  let tw = rail.clientWidth - (parseFloat(rail.style.paddingRight) || 0) - 8;
   let th = tw * H / W;
   const maxTh = (rail.clientHeight - n * extra - (n - 1) * gap) / n;
   if (th > maxTh) { th = Math.max(STAGE_THUMB_MIN, maxTh); tw = th * W / H; }
