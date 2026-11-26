@@ -42,9 +42,10 @@ class ShortcutStore:
             except ProgramItemError as exc:
                 log.warning("Skipping invalid shortcut %s: %s", entry.get("id"), exc)
 
-    def titles(self) -> dict:
-        """Shortcut id -> title (for the program's migration log)."""
-        return {item["id"]: item["title"] for item in self._items}
+    def by_id(self) -> dict:
+        """Shortcut id -> shortcut (for rows saved with a reference to one, see
+        app/program_items.py unlink_shortcut)."""
+        return {item["id"]: deepcopy(item) for item in self._items}
 
     def _persist(self) -> None:
         write_json_atomic(self._path, self._items, ensure_ascii=False)
