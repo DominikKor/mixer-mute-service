@@ -24,7 +24,7 @@ _ACTION_FIELDS = ("playback", "translation", "lyrics")
 _DESCRIPTION_FIELDS = ("playback_description", "translation_description", "lyrics_description")
 MAX_DESKTOP_PROFILES = 8
 MAX_OBS_SCENE_LENGTH = 100
-MAX_SHORTCUTS = 8
+MAX_SHORTCUTS = 8  # only for reading the old "shortcuts" list
 _SHORTCUT_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 
 
@@ -60,6 +60,9 @@ def validated_actions(data: dict) -> dict:
     if song is not None and (not isinstance(song, str) or len(song) > 200):
         raise ProgramItemError("song must be a song file name or empty")
     result["song"] = song or None
+    # Liedtext is a song or a file, not both: the song wins.
+    if result["song"]:
+        result["lyrics"] = None
     # Camera presets (app/camera_program.py): one per camera, or none.
     for cam in CAMERAS:
         value = data.get(f"{cam}_preset")
@@ -107,21 +110,85 @@ def validated_actions(data: dict) -> dict:
     return result
 
 
+# The fields validated_actions() returns: what a row (or its shortcut) does.
+ACTION_KEYS = tuple(validated_actions({}))
+# What a row's shortcut sets instead of the row's own fields. The song is the
+# row's own like its time and title: it changes with every service (a
+# template's song slots fill it), so a shortcut never replaces it.
+SHORTCUT_KEYS = tuple(key for key in ACTION_KEYS if key != "song")
+# Those that do something when set (descriptions and the camera wait alone do nothing).
+_ACTIVE_KEYS = ("group", *_ACTION_FIELDS, "light", "cam1_preset", "cam2_preset",
+                "desktop", "cam1_scene", "cam2_scene", "beamer")
+
+
+def has_own_actions(item: dict) -> bool:
+    """Whether a row does anything by the fields a shortcut would replace."""
+    return any(item.get(key) for key in _ACTIVE_KEYS)
+
+
+def without_own_actions(data: dict) -> dict:
+    """The row with the fields a shortcut replaces left empty (a new row
+    created with a shortcut: what the editor pre-filled stays unsaved)."""
+    return {**data, **{key: value for key, value in validated_actions({}).items() if key in SHORTCUT_KEYS}}
+
+
+def log_shortcut_migration(what: str, migrated: list, titles: dict) -> dict:
+    """Log what moving from the list of shortcuts (run after the row's own
+    steps) to one shortcut (instead of them) changes. migrated: (stored entry,
+    validated row) pairs; titles: shortcut id -> title. Returns the counts."""
+    name = lambda sid: f"„{titles[sid]}“ ({sid})" if sid in titles else f"{sid} (unbekannt)"  # noqa: E731
+    label = lambda row: f"{row.get('id', '-')} ({row['time']} {row['title']})"  # noqa: E731
+    several = [(row, entry["shortcuts"][1:]) for entry, row in migrated
+               if isinstance(entry["shortcuts"], list) and len(entry["shortcuts"]) > 1]
+    replaced = [row for _entry, row in migrated if row["shortcut"] and has_own_actions(row)]
+    for row, dropped in several:
+        log.warning("%s %s: only its first shortcut %s stays; no longer run: %s", what, label(row),
+                    name(row["shortcut"]), ", ".join(name(sid) for sid in dropped))
+    for row in replaced:
+        log.warning("%s %s: runs its shortcut %s instead of its own steps now", what, label(row),
+                    name(row["shortcut"]))
+    log.info("%ss migrated to one shortcut each: %s rows, %s had several shortcuts, "
+             "%s had own steps and a shortcut", what, len(migrated), len(several), len(replaced))
+    return {"rows": len(migrated), "several_shortcuts": [row.get("id") for row, _ in several],
+            "own_steps_and_shortcut": [row.get("id") for row in replaced]}
+
+
+def validated_shortcut_id(data: dict) -> Optional[str]:
+    """The row's shortcut: its whole configuration (app/shortcuts.py). Rows
+    saved before took a list of shortcuts that ran after their own steps
+    ("shortcuts"); the first of them is now the shortcut."""
+    shortcut = data.get("shortcut")
+    if shortcut in (None, ""):
+        legacy = data.get("shortcuts") or []
+        if (not isinstance(legacy, list) or len(legacy) > MAX_SHORTCUTS
+                or any(not isinstance(s, str) or not _SHORTCUT_ID_RE.fullmatch(s) for s in legacy)):
+            raise ProgramItemError(f"shortcuts must be a list of at most {MAX_SHORTCUTS} shortcut IDs")
+        return legacy[0] if legacy else None
+    if not isinstance(shortcut, str) or not _SHORTCUT_ID_RE.fullmatch(shortcut):
+        raise ProgramItemError("shortcut must be a shortcut ID or empty")
+    return shortcut
+
+
 class ProgramItemStore:
-    def __init__(self, path: Path) -> None:
+    def __init__(self, path: Path, shortcut_titles: Optional[dict] = None) -> None:
         self._path = path
         self._lock = asyncio.Lock()
         self._items: List[dict] = []
-        self._load()
+        self.migration: Optional[dict] = None  # what the last load migrated (see _migrate_shortcuts)
+        self._load(shortcut_titles or {})
 
-    def _load(self) -> None:
+    def _load(self, shortcut_titles: dict) -> None:
         items = []
+        migrated = []  # rows still saved with the old list of shortcuts
         for entry in read_json(self._path, list, default=[]):
             # Skip rows a hand edit or an old version left unusable instead of
             # failing later in list() or play.
             if not isinstance(entry, dict) or not isinstance(entry.get("id"), str):
                 log.warning("Skipping invalid program row in %s: %r", self._path, entry)
                 continue
+            if entry.get("song") and entry.get("lyrics"):
+                log.warning("Program row %s (%s): a song and a Liedtext file; the song stays, the file is dropped",
+                            entry.get("id"), entry.get("title"))
             try:
                 fields = self._validated_fields(entry)
             except ProgramItemError as exc:
@@ -133,8 +200,18 @@ class ProgramItemStore:
                 "last_delay_seconds": entry.get("last_delay_seconds"),
                 "last_played_at": entry.get("last_played_at"),
                 "hidden": entry.get("hidden") is True,
+                "shortcut_deleted": entry.get("shortcut_deleted") if isinstance(entry.get("shortcut_deleted"), str) else None,
             })
+            if "shortcuts" in entry:
+                migrated.append((entry, items[-1]))
         self._items = items
+        if migrated:
+            # Rows used to run a list of shortcuts after their own steps; now
+            # one shortcut is the row's whole configuration (the first of the
+            # list). Saved without the old list, so this runs once; their own
+            # fields stay saved.
+            self.migration = log_shortcut_migration("Program row", migrated, shortcut_titles)
+            self._persist()
 
     def _persist(self) -> None:
         write_json_atomic(self._path, self._items, ensure_ascii=False)
@@ -151,12 +228,9 @@ class ProgramItemStore:
         if len(person) > 80:
             raise ProgramItemError("person must be at most 80 characters")
         result = {"time": scheduled_time, "title": title, "person": person, **validated_actions(data)}
-        # Shortcuts (app/shortcuts.py) run after the row's own steps, in this order.
-        shortcuts = data.get("shortcuts") or []
-        if (not isinstance(shortcuts, list) or len(shortcuts) > MAX_SHORTCUTS
-                or any(not isinstance(s, str) or not _SHORTCUT_ID_RE.fullmatch(s) for s in shortcuts)):
-            raise ProgramItemError(f"shortcuts must be a list of at most {MAX_SHORTCUTS} shortcut IDs")
-        result["shortcuts"] = list(dict.fromkeys(shortcuts))
+        # With a shortcut the row runs the shortcut's fields instead of its own
+        # (app/actions.py); its own stay saved for when the shortcut is removed.
+        result["shortcut"] = validated_shortcut_id(data)
         return result
 
     def _ordered(self) -> List[dict]:
@@ -205,6 +279,7 @@ class ProgramItemStore:
                 "last_delay_seconds": None,
                 "last_played_at": None,
                 "hidden": False,
+                "shortcut_deleted": None,
             }
             self._items.append(item)
             self._persist()
@@ -217,6 +292,8 @@ class ProgramItemStore:
             if item is None:
                 return None
             item.update(fields)
+            # Saved from its editor, where the note was shown: it has done its job.
+            item["shortcut_deleted"] = None
             self._persist()
             return deepcopy(item)
 
@@ -247,6 +324,7 @@ class ProgramItemStore:
                     "last_delay_seconds": None,
                     "last_played_at": None,
                     "hidden": preserve_hidden and source.get("hidden") is True,
+                    "shortcut_deleted": None,
                 }
                 for source, validated in zip(rows, fields)
             ]
@@ -264,13 +342,16 @@ class ProgramItemStore:
                 self._persist()
             return deepcopy(item)
 
-    async def drop_shortcut(self, shortcut_id: str) -> int:
-        """A deleted shortcut leaves every row that ran it."""
+    async def drop_shortcut(self, shortcut_id: str, title: str = "") -> int:
+        """A deleted shortcut leaves every row that used it: those rows run
+        their own fields again. "shortcut_deleted" (its title) tells every
+        device so until the row is saved again."""
         async with self._lock:
             changed = 0
             for item in self._items:
-                if shortcut_id in item.get("shortcuts", []):
-                    item["shortcuts"] = [s for s in item["shortcuts"] if s != shortcut_id]
+                if item.get("shortcut") == shortcut_id:
+                    item["shortcut"] = None
+                    item["shortcut_deleted"] = title or shortcut_id
                     changed += 1
             if changed:
                 self._persist()

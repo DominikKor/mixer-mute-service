@@ -3,6 +3,8 @@
 // of index.html; main.js runs last and starts everything.
 
 let PROGRAM_ITEMS = [];
+// The empty list's help text (index.html), shown again after a failed load.
+const PROGRAM_EMPTY_TEXT = $("program-empty").textContent;
 let PROGRAM_GROUPS = {};
 let PROGRAM_BUTTONS = [];
 let PROGRAM_BUTTON_ALIASES = {};
@@ -25,7 +27,7 @@ const ICON_EYE = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" st
 const ICON_EYE_OFF = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.6-7 10-7c2 0 3.8.7 5.2 1.6M22 12s-3.6 7-10 7c-2 0-3.8-.7-5.2-1.6"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2M3 3l18 18"/></svg>`;
 const PROGRAM_FIELDS = [
   "time", "title", "person", "group", "playback", "translation", "lyrics", "song", "light",
-  "cam1_preset", "cam2_preset", "camera_wait_seconds", "cam1_scene", "cam2_scene", "desktop", "beamer", "shortcuts",
+  "cam1_preset", "cam2_preset", "camera_wait_seconds", "cam1_scene", "cam2_scene", "desktop", "beamer", "shortcut",
 ];
 const NO_PROGRAM_BEAMER = "Beamer bleibt";
 // Hide runs before the row shows anything new, unhide after it (app/api/program.py).
@@ -177,9 +179,16 @@ function programIconButton(pick, icon, text, title) {
 }
 
 // Empty: the choice keys. A song, a file or an older key: that, with ✕ to remove it.
+// A row with a shortcut: Liedtext only offers the song (the row's own, like its
+// title); the file comes from the shortcut, the row's own stays saved, unseen.
+function programSongOnly(link) {
+  return link.dataset.actionField === "lyrics" && !!link.closest("tr.program-linked-row");
+}
+
 function syncProgramAction(link) {
   const control = link.querySelector(":scope > [data-program-field]");
-  const value = control.value;
+  const songOnly = programSongOnly(link);
+  const value = songOnly ? "" : control.value;
   const songInput = link.querySelector('[data-program-field="song"]');
   const song = songInput ? songInput.value : "";
   const legacy = !!value && !isFileAction(value) && value !== FILE_CHOOSE;
@@ -189,7 +198,10 @@ function syncProgramAction(link) {
   link.querySelector(".program-action-current").hidden = !legacy;
   link.querySelector(".program-action-legacy").textContent = legacy ? `${programLegacyLabel(value)} (bisher)` : "";
   link.querySelector(".program-action-clear").hidden = !(value || song);
+  const file = link.querySelector('[data-action-pick="file"]');
+  if (file) file.hidden = songOnly;
   syncFileAction(control);
+  if (songOnly) link.querySelector(".file-action").hidden = true;
 }
 
 function pickProgramAction(button) {
@@ -205,7 +217,7 @@ function pickProgramAction(button) {
   openSongSearch(button, song => {
     if (!song) return;
     songInput.value = song.id;
-    control.value = "";  // a song or a file, not both
+    control.value = "";  // a song or a file, not both (a linked row's own file, too)
     syncSongPicker(link.querySelector(".song-picker"));
     syncProgramAction(link);
     const title = button.closest("tr").querySelector('[data-program-field="title"]');
@@ -218,7 +230,7 @@ function clearProgramAction(button) {
   const link = button.closest(".program-action-link");
   const control = link.querySelector(":scope > [data-program-field]");
   const songInput = link.querySelector('[data-program-field="song"]');
-  control.value = "";
+  if (!programSongOnly(link)) control.value = "";
   if (songInput) {
     songInput.value = "";
     syncSongPicker(link.querySelector(".song-picker"));
@@ -237,7 +249,7 @@ const SINGLE_CHOICE_ICONS = {
 };
 
 function syncSingleChoice(select) {
-  if (select.dataset.programCamera || select.dataset.obsScene) return;
+  if (select.dataset.programCamera || select.dataset.obsScene || select.dataset.programField === "shortcut") return;
   const real = [...select.options].filter(option => option.value);
   let toggle = select.nextElementSibling && select.nextElementSibling.classList.contains("program-single") ? select.nextElementSibling : null;
   if (real.length > 1) {
@@ -308,69 +320,181 @@ async function loadProgramObsScenes() {
   renderProgramItems();
 }
 
-// ---- Desktop profiles and shortcuts of a row --------------------------------
-// One switch per profile (or shortcut); the chosen ones run in this order.
+// ---- Desktop profiles of a row -----------------------------------------------
+// Only the chosen profiles show, in the order they run (1., 2., …), each with
+// ✕ to remove it; "+" opens the list of the others to add one at the end.
 
-const PROGRAM_CHOICES = {
-  desktop: { empty: "Keine Desktop-Profile", what: "startet", list: () => PROGRAM_DESKTOP_PROFILES },
-  shortcuts: { empty: "Keine Shortcuts – unter Desktop anlegen", what: "läuft", list: () => PROGRAM_SHORTCUTS },
-};
+const ICON_EARLIER = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg>`;
+const ICON_PLUS = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>`;
 
-function buildProgramChoices(field, item) {
+function buildProgramDesktop(item) {
   const box = document.createElement("div");
   box.className = "program-desktop";
-  box.dataset.choiceField = field;
   const hidden = document.createElement("input");
   hidden.type = "hidden";
-  hidden.dataset.programField = field;
-  hidden.value = (item[field] || []).join(",");
-  box.appendChild(hidden);
-  syncProgramChoices(box);
+  hidden.dataset.programField = "desktop";
+  hidden.value = (item.desktop || []).join(",");
+  const chosen = document.createElement("div");
+  chosen.className = "program-desktop-chosen";
+  const add = document.createElement("button");
+  add.type = "button";
+  add.className = "program-desktop-add";
+  add.setAttribute("aria-expanded", "false");
+  const pick = document.createElement("div");
+  pick.className = "program-desktop-pick";
+  pick.hidden = true;
+  const note = document.createElement("span");
+  note.className = "program-desktop-note";
+  chosen.append(add, note);
+  box.append(hidden, chosen, pick);
+  syncProgramDesktop(box);
   return box;
 }
 
-function syncProgramChoices(box) {
+function syncProgramDesktop(box) {
   if (!box) return;
-  const source = PROGRAM_CHOICES[box.dataset.choiceField];
   const chosen = box.querySelector("[data-program-field]").value.split(",").filter(Boolean);
-  const entries = source.list().map(p => ({ id: p.id, title: p.title }));
-  for (const id of chosen) {
-    if (!entries.some(p => p.id === id)) entries.push({ id, title: "Gelöscht" });
-  }
-  const sig = JSON.stringify(entries);
+  const profiles = PROGRAM_DESKTOP_PROFILES.map(p => ({ id: p.id, title: p.title }));
+  const titleOf = id => (profiles.find(p => p.id === id) || {}).title;
+  const rest = profiles.filter(p => !chosen.includes(p.id));
+  const sig = JSON.stringify([chosen.map(id => [id, titleOf(id) || null]), rest]);
+  const add = box.querySelector(".program-desktop-add");
+  const pick = box.querySelector(".program-desktop-pick");
   if (box.dataset.sig !== sig) {
     box.dataset.sig = sig;
-    box.querySelectorAll(".program-desktop-key, .program-desktop-empty").forEach(el => el.remove());
-    if (!entries.length) {
-      const empty = document.createElement("span");
-      empty.className = "program-desktop-empty";
-      empty.textContent = source.empty;
-      box.appendChild(empty);
-    }
-    for (const entry of entries) {
+    const chips = chosen.map((id, index) => {
+      const chip = document.createElement("span");
+      chip.className = "program-desktop-chip" + (titleOf(id) ? "" : " missing");
+      if (index > 0) {
+        const earlier = document.createElement("button");
+        earlier.type = "button";
+        earlier.className = "program-desktop-earlier";
+        earlier.dataset.choiceEarlier = id;
+        earlier.innerHTML = ICON_EARLIER;
+        earlier.title = `${titleOf(id) || id} früher ausführen (vor ${titleOf(chosen[index - 1]) || chosen[index - 1]})`;
+        earlier.setAttribute("aria-label", earlier.title);
+        chip.appendChild(earlier);
+      }
+      const label = document.createElement("span");
+      label.className = "program-desktop-chip-label";
+      label.textContent = `${index + 1}. ${titleOf(id) || `Gelöscht (${id})`}`;
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "program-desktop-remove";
+      remove.dataset.choiceRemove = id;
+      remove.innerHTML = ICON_CLEAR;
+      remove.title = `${titleOf(id) || id} entfernen`;
+      remove.setAttribute("aria-label", remove.title);
+      chip.append(label, remove);
+      return chip;
+    });
+    box.querySelector(".program-desktop-chosen").replaceChildren(...chips, add, box.querySelector(".program-desktop-note"));
+    pick.replaceChildren(...rest.map(profile => {
       const key = document.createElement("button");
       key.type = "button";
       key.className = "program-desktop-key";
-      key.dataset.choiceId = entry.id;
-      key.textContent = entry.title;
-      box.appendChild(key);
-    }
+      key.dataset.choiceAdd = profile.id;
+      key.textContent = profile.title;
+      key.title = `${profile.title} hinzufügen (läuft als ${chosen.length + 1}.)`;
+      return key;
+    }));
   }
-  for (const key of box.querySelectorAll(".program-desktop-key")) {
-    const on = chosen.includes(key.dataset.choiceId);
-    key.setAttribute("aria-pressed", String(on));
-    key.title = on ? `${key.textContent}: ${source.what} mit diesem Programmpunkt (antippen: entfernen)` : `${key.textContent} mit diesem Programmpunkt`;
-  }
+  add.innerHTML = `${ICON_PLUS}<span>${chosen.length ? "Profil" : "Desktop-Profil"}</span>`;
+  // Nothing left to add: a visible note instead of a dead key.
+  add.hidden = !rest.length;
+  box.querySelector(".program-desktop-note").textContent = !profiles.length ? "Keine Desktop-Profile – unter Desktop anlegen"
+    : !rest.length ? "Alle Desktop-Profile gewählt" : "";
+  add.title = "Desktop-Profil hinzufügen";
+  add.setAttribute("aria-label", add.title);
+  if (!rest.length) pick.hidden = true;
+  add.setAttribute("aria-expanded", String(!pick.hidden));
 }
 
-function toggleProgramChoice(key) {
-  const box = key.closest(".program-desktop");
+function toggleProgramDesktopPick(add) {
+  const pick = add.closest(".program-desktop").querySelector(".program-desktop-pick");
+  pick.hidden = !pick.hidden;
+  add.setAttribute("aria-expanded", String(!pick.hidden));
+  if (!pick.hidden) pick.querySelector("button")?.focus({ preventScroll: true });
+}
+
+function changeProgramDesktop(button) {
+  const box = button.closest(".program-desktop");
   const hidden = box.querySelector("[data-program-field]");
   const chosen = hidden.value.split(",").filter(Boolean);
-  const id = key.dataset.choiceId;
-  hidden.value = (chosen.includes(id) ? chosen.filter(c => c !== id) : [...chosen, id]).join(",");
-  syncProgramChoices(box);
+  if (button.dataset.choiceAdd) {
+    chosen.push(button.dataset.choiceAdd);
+    box.querySelector(".program-desktop-pick").hidden = true;
+  }
+  let next = button.dataset.choiceRemove ? chosen.filter(id => id !== button.dataset.choiceRemove) : chosen;
+  const earlier = button.dataset.choiceEarlier;
+  const at = earlier ? next.indexOf(earlier) : -1;
+  if (at > 0) next = [...next.slice(0, at - 1), earlier, next[at - 1], ...next.slice(at + 1)];
+  hidden.value = [...new Set(next)].join(",");
+  syncProgramDesktop(box);
+  // Keep the focus on the moved profile's key (or on "+").
+  const focus = (earlier && box.querySelector(`[data-choice-earlier="${CSS.escape(earlier)}"]`))
+    || (earlier && box.querySelector(`[data-choice-remove="${CSS.escape(earlier)}"]`))
+    || box.querySelector(".program-desktop-add:not([hidden])")
+    // The last profile added: "+" is gone, so the new profile's ✕.
+    || (button.dataset.choiceAdd && box.querySelector(`[data-choice-remove="${CSS.escape(button.dataset.choiceAdd)}"]`));
+  if (focus) focus.focus({ preventScroll: true });
   hidden.dispatchEvent(new Event("change", { bubbles: true }));
+}
+
+// ---- The shortcut of a row ---------------------------------------------------
+// A row with a shortcut runs the shortcut's fields instead of its own (linked:
+// editing the shortcut changes every row using it). Its own fields stay saved
+// and show again when the shortcut is set back to "Kein Shortcut".
+
+const NO_PROGRAM_SHORTCUT = "Kein Shortcut – eigene Einstellungen";
+
+function programShortcutOptions(value) {
+  const options = PROGRAM_SHORTCUTS.map(shortcut => ({ value: shortcut.id, label: shortcut.title }));
+  if (value && !options.some(option => option.value === value)) options.push({ value, label: "Gelöschter Shortcut" });
+  return options;
+}
+
+function buildProgramLinked() {
+  const box = document.createElement("div");
+  box.className = "program-linked";
+  box.innerHTML = `<div class="program-linked-text"></div><div class="program-sum-chips"></div>`;
+  const edit = document.createElement("button");
+  edit.type = "button";
+  edit.className = "program-icon-btn program-linked-edit";
+  edit.dataset.programAction = "shortcut-edit";
+  edit.innerHTML = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/></svg><span>Shortcut bearbeiten</span>`;
+  box.appendChild(edit);
+  return box;
+}
+
+// Shows or hides the row's own fields after its shortcut select.
+function syncProgramLinked(row) {
+  const select = row.querySelector('select[data-program-field="shortcut"]');
+  const box = row.querySelector(".program-linked");
+  if (!select || !box) return;
+  const id = select.value;
+  const shortcut = id ? PROGRAM_SHORTCUTS.find(entry => entry.id === id) : null;
+  row.classList.toggle("program-linked-row", !!id);
+  box.classList.toggle("missing", !!id && !shortcut);
+  const text = box.querySelector(".program-linked-text");
+  if (!id) text.textContent = "";
+  else if (!shortcut) text.textContent = "Dieser Shortcut wurde gelöscht – der Programmpunkt startet so nicht. Einen anderen Shortcut wählen oder „Kein Shortcut“ für die eigenen Einstellungen.";
+  else text.innerHTML = `Konfiguration aus Shortcut <b></b> · Änderungen am Shortcut gelten hier sofort`;
+  if (shortcut) text.querySelector("b").textContent = `„${shortcut.title}“`;
+  const chips = box.querySelector(".program-sum-chips");
+  chips.hidden = !shortcut;
+  // The shortcut's configuration; the song is the row's (shown in its own field).
+  // With a song of its own, the shortcut's Liedtext file does not run (a song or a file).
+  const ownSong = row.querySelector('[data-program-field="song"]');
+  if (shortcut) renderProgramChips(chips, programChips({ ...shortcut, song: null, lyrics: ownSong && ownSong.value ? null : shortcut.lyrics }));
+  const lyrics = row.querySelector("td.pc-lyrics");
+  if (lyrics) lyrics.dataset.label = id ? "Lied · gehört zum Programmpunkt" : "Liedtext";
+  row.querySelectorAll('.program-action-link[data-action-field="lyrics"]').forEach(syncProgramAction);
+  const fallback = row.querySelector(".program-fallback");
+  if (fallback) fallback.hidden = !!id || !row.dataset.shortcutDeleted;
+  const edit = box.querySelector(".program-linked-edit");
+  edit.hidden = !shortcut;
+  edit.title = shortcut ? `Shortcut „${shortcut.title}“ bearbeiten (gilt für alle Programmpunkte mit ihm)` : "";
 }
 
 // ---- Camera presets of a row (app/camera_program.py) ----------------------
@@ -452,6 +576,26 @@ function buildProgramRow(item, draft = false, kind = draft ? "draft" : "program"
   if (!shortcut) edit("Uhrzeit", programInput("time", "Uhrzeit", item.time, "text", 5), "time");
   edit(shortcut ? "Name" : "Titel", programInput("title", "Titel", item.title, "text", 120), "title");
   if (!shortcut) edit("Person", programInput("person", "Person", item.person, "text", 80), "person");
+  if (!shortcut) {
+    const select = programSelect("shortcut", "Shortcut", item.shortcut, programShortcutOptions(item.shortcut), NO_PROGRAM_SHORTCUT);
+    select.title = "Mit Shortcut übernimmt der Programmpunkt dessen ganze Konfiguration (außer dem Lied); die eigene bleibt gespeichert";
+    // Its shortcut was deleted: every device says so until the row is saved again.
+    const fallback = document.createElement("div");
+    fallback.className = "program-fallback";
+    fallback.hidden = true;
+    const text = document.createElement("span");
+    const ok = document.createElement("button");
+    ok.type = "button";
+    ok.dataset.programAction = "fallback-ok";
+    ok.textContent = "OK";
+    ok.title = "Hinweis ausblenden (der Programmpunkt läuft weiter mit seinen eigenen Einstellungen)";
+    fallback.append(text, ok);
+    const cell = document.createElement("div");
+    cell.className = "program-shortcut-pick";
+    cell.append(select, fallback);
+    edit("Shortcut", cell, "shortcut");
+    edit("Konfiguration", buildProgramLinked(), "linked");
+  }
   edit("Mutegruppe", programSelect("group", "Mutegruppe", item.group, programGroupOptions(), NO_PROGRAM_GROUP), "group");
   edit("Licht", programSelect("light", "Licht-Preset", item.light, programLightOptions(item.light), NO_PROGRAM_LIGHT), "light");
 
@@ -460,9 +604,8 @@ function buildProgramRow(item, draft = false, kind = draft ? "draft" : "program"
   }
 
   edit("Kamera-Presets · nur auf der Kamera, die nicht live ist", buildProgramCamera(item), "camera");
-  edit("Desktop", buildProgramChoices("desktop", item), "desktop");
+  edit("Desktop · läuft in dieser Reihenfolge", buildProgramDesktop(item), "desktop");
   edit("Beamer", programSelect("beamer", "Beamer", item.beamer, PROGRAM_BEAMER_OPTIONS, NO_PROGRAM_BEAMER), "beamer");
-  if (!shortcut) edit("Shortcuts · laufen danach", buildProgramChoices("shortcuts", item), "shortcuts");
   if (shortcut) {
     row.querySelectorAll("select[data-program-field]").forEach(syncSingleChoice);
     return row;
@@ -513,6 +656,7 @@ function buildProgramRow(item, draft = false, kind = draft ? "draft" : "program"
   if (draft) {
     renderProgramSummary(row, { ...item, title: item.title || "Neuer Programmpunkt" });
     row.querySelectorAll("select[data-program-field]").forEach(syncSingleChoice);
+    syncProgramLinked(row);
   } else updateProgramRow(row, item);
   return row;
 }
@@ -541,6 +685,14 @@ function buildProgramSummary(draft) {
 function programChips(item) {
   const chips = [];
   const add = (kind, label, text) => chips.push({ kind, label, text });
+  // A row with a shortcut does what the shortcut does.
+  // A row with a shortcut does what the shortcut does, with its own song.
+  if (item.shortcut) {
+    const shortcut = PROGRAM_SHORTCUTS.find(entry => entry.id === item.shortcut);
+    if (!shortcut) return [{ kind: "warn", label: "Shortcut", text: "gelöscht – startet nicht" }];
+    return [{ kind: "shortcut", label: "Shortcut", text: shortcut.title }, ...programChips({ ...shortcut, song: item.song, lyrics: item.song ? null : shortcut.lyrics })];
+  }
+  if (item.shortcut_deleted) add("warn", "Shortcut", `„${item.shortcut_deleted}“ gelöscht – läuft mit eigenen Einstellungen`);
   if (item.group) add("group", "Gruppe", item.group);
   if (item.light) add("light", "Licht", (PROGRAM_LIGHT_SCENES.find(scene => scene.id === item.light) || {}).name || "Gelöschtes Preset");
   for (const [field, label] of [["playback", "Playback"], ["translation", "Übersetzung"], ["lyrics", "Liedtext"]]) {
@@ -560,7 +712,6 @@ function programChips(item) {
   }
   for (const id of item.desktop || []) add("desktop", "Desktop", (PROGRAM_DESKTOP_PROFILES.find(p => p.id === id) || {}).title || id);
   if (item.beamer) add("beamer", "Beamer", item.beamer);
-  for (const id of item.shortcuts || []) add("desktop", "Shortcut", (PROGRAM_SHORTCUTS.find(s => s.id === id) || {}).title || "Gelöscht");
   return chips;
 }
 
@@ -569,22 +720,23 @@ function renderProgramSummary(row, item) {
   summary.querySelector(".program-sum-time").textContent = item.time || "--:--";
   summary.querySelector(".program-sum-title").textContent = item.title || "Ohne Titel";
   summary.querySelector(".program-sum-person").textContent = item.person || "";
-  const chips = programChips(item);
-  const box = summary.querySelector(".program-sum-chips");
-  const sig = JSON.stringify(chips);
-  if (box.dataset.sig !== sig) {
-    box.dataset.sig = sig;
-    box.replaceChildren(...(chips.length ? chips.map(chip => {
-      const element = document.createElement("span");
-      element.className = `program-chip ${chip.kind}`;
-      const label = document.createElement("b");
-      label.textContent = chip.label;
-      element.append(label, ` ${chip.text}`);
-      element.title = `${chip.label}: ${chip.text}`;
-      return element;
-    }) : [Object.assign(document.createElement("span"), { className: "program-chip none", textContent: "Keine Aktionen" })]));
-  }
+  renderProgramChips(summary.querySelector(".program-sum-chips"), programChips(item));
   if (!summary.disabled) summary.title = row.classList.contains("program-open") ? "Zuklappen" : "Bearbeiten";
+}
+
+function renderProgramChips(box, chips) {
+  const sig = JSON.stringify(chips);
+  if (box.dataset.sig === sig) return;
+  box.dataset.sig = sig;
+  box.replaceChildren(...(chips.length ? chips.map(chip => {
+    const element = document.createElement("span");
+    element.className = `program-chip ${chip.kind}`;
+    const label = document.createElement("b");
+    label.textContent = chip.label;
+    element.append(label, ` ${chip.text}`);
+    element.title = `${chip.label}: ${chip.text}`;
+    return element;
+  }) : [Object.assign(document.createElement("span"), { className: "program-chip none", textContent: "Keine Aktionen" })]));
 }
 
 function setProgramOpen(row, open) {
@@ -627,6 +779,10 @@ function updateProgramRow(row, item) {
         setSelectOptions(control, PROGRAM_BEAMER_OPTIONS, NO_PROGRAM_BEAMER, value);
         continue;
       }
+      if (field === "shortcut") {
+        setSelectOptions(control, programShortcutOptions(value), NO_PROGRAM_SHORTCUT, value);
+        continue;
+      }
       setSelectOptions(control, groupOptions, NO_PROGRAM_GROUP, value);
     } else if (!keep) {
       control.value = Array.isArray(item[field]) ? item[field].join(",") : (item[field] ?? "");
@@ -635,8 +791,14 @@ function updateProgramRow(row, item) {
   const picker = row.querySelector(".song-picker");
   if (picker) syncSongPicker(picker);
   row.querySelectorAll(".program-action-link").forEach(syncProgramAction);
-  row.querySelectorAll(".program-desktop").forEach(syncProgramChoices);
+  row.querySelectorAll(".program-desktop").forEach(syncProgramDesktop);
   row.querySelectorAll("select[data-program-field]").forEach(syncSingleChoice);
+  if (item.shortcut_deleted) row.dataset.shortcutDeleted = item.shortcut_deleted;
+  else delete row.dataset.shortcutDeleted;
+  const fallbackText = row.querySelector(".program-fallback span");
+  if (fallbackText) fallbackText.textContent = item.shortcut_deleted
+    ? `Shortcut „${item.shortcut_deleted}“ wurde gelöscht – dieser Punkt läuft jetzt mit seinen eigenen Einstellungen (unten).` : "";
+  syncProgramLinked(row);
   renderProgramSummary(row, item);
   const delay = row.querySelector(".program-delay");
   const seconds = item.last_delay_seconds;
@@ -692,9 +854,12 @@ function renderProgramItems() {
       for (const scene of draft.querySelectorAll("select[data-obs-scene]")) {
         setSelectOptions(scene, programObsOptions(scene.value), NO_OBS_SCENE, scene.value);
       }
-      draft.querySelectorAll(".program-desktop").forEach(syncProgramChoices);
+      const shortcut = draft.querySelector('[data-program-field="shortcut"]');
+      setSelectOptions(shortcut, programShortcutOptions(shortcut.value), NO_PROGRAM_SHORTCUT, shortcut.value);
+      draft.querySelectorAll(".program-desktop").forEach(syncProgramDesktop);
       draft.querySelectorAll(".program-action-link").forEach(syncProgramAction);
       draft.querySelectorAll("select[data-program-field]").forEach(syncSingleChoice);
+      syncProgramLinked(draft);
     }
     wanted.push(draft);
   } else if (draft) {
@@ -710,7 +875,8 @@ function renderProgramItems() {
 // ---- Shortcuts (app/shortcuts.py) -------------------------------------------
 // What a program row does, saved under a name: a key in the Desktop section
 // (Play leaves the program's order and start times alone), edited there with
-// the same fields as a row, duplicated, and run by program rows ("Shortcuts").
+// the same fields as a row, duplicated, and used by program rows as their
+// whole configuration (linked: an edit changes every row using it).
 
 let PROGRAM_SHORTCUTS_SIG = "";
 let SHORTCUT_EDIT_ID = null;  // null: a new shortcut
@@ -790,7 +956,7 @@ function openShortcutDialog(shortcutId) {
 async function saveShortcut(event) {
   event.preventDefault();
   const row = $("shortcut-editor").querySelector("tr");
-  const { time, person, shortcuts, ...body } = readProgramRow(row);
+  const { time, person, shortcut, ...body } = readProgramRow(row);
   const error = message => { $("shortcut-error").hidden = false; $("shortcut-error").textContent = message; };
   if (!body.title) return error("Bitte einen Namen eingeben.");
   $("shortcut-save").disabled = true;
@@ -814,11 +980,13 @@ async function duplicateShortcut(shortcutId) {
 async function deleteShortcut(shortcutId, anchor) {
   const shortcut = PROGRAM_SHORTCUTS.find(s => s.id === shortcutId);
   if (!shortcut || !anchor || !anchor.isConnected) return;
-  const used = PROGRAM_ITEMS.filter(item => (item.shortcuts || []).includes(shortcutId)).length;
-  const question = `Shortcut „${shortcut.title}“ löschen?` + (used ? ` ${used} Programmpunkt(e) führen ihn dann nicht mehr aus.` : "");
+  const used = PROGRAM_ITEMS.filter(item => item.shortcut === shortcutId).length;
+  const question = `Shortcut „${shortcut.title}“ löschen?` + (used ? ` ${used} Programmpunkt(e) nutzen ihn; sie laufen dann wieder mit ihren eigenen Einstellungen.` : "");
   if (!(await confirmDelete(anchor, question))) return;
   const result = await api("DELETE", `/shortcuts/${encodeURIComponent(shortcutId)}`);
   if (!result.ok || result.data.ok === false) { toast(result.data.reason || `HTTP ${result.status}`, false); return; }
+  const rows = result.data.program_items || 0;
+  toast(`Shortcut „${shortcut.title}“ gelöscht` + (rows ? ` · ${rows} Programmpunkt(e) laufen wieder mit ihren eigenen Einstellungen` : ""), true);
   await loadProgramItems();
 }
 
@@ -853,7 +1021,7 @@ async function loadProgramItems() {
     $("program-empty").textContent = "Programmdaten konnten nicht geladen werden";
     return;
   }
-  $("program-empty").textContent = "Noch keine Programmpunkte.";
+  $("program-empty").textContent = PROGRAM_EMPTY_TEXT;
   PROGRAM_ITEMS = items.data;
   PROGRAM_GROUPS = groups.data;
   // Camera presets and the light and mixer keys left Steuerung but program
@@ -953,12 +1121,11 @@ function readProgramRow(row) {
     if (control && field === "time") control.value = normalizeProgramTime(control.value);
     result[field] = control ? control.value.trim() : "";
   }
-  for (const field of ["playback", "translation", "lyrics", "song", "light", "cam1_scene", "cam2_scene", "beamer"]) {
+  for (const field of ["playback", "translation", "lyrics", "song", "light", "cam1_scene", "cam2_scene", "beamer", "shortcut"]) {
     if (result[field] === FILE_CHOOSE) result[field] = null;  // file chosen, path not entered yet
     result[field] ||= null;
   }
   result.desktop = result.desktop ? result.desktop.split(",").filter(Boolean) : [];
-  result.shortcuts = result.shortcuts ? result.shortcuts.split(",").filter(Boolean) : [];
   for (const [cam] of PROGRAM_CAMERAS) {
     result[`${cam}_preset`] = result[`${cam}_preset`] ? Number(result[`${cam}_preset`]) : null;
   }
@@ -1156,6 +1323,11 @@ $("program-items").addEventListener("change", event => {
   if (field && field.dataset.programField === "time") field.value = normalizeProgramTime(field.value);
   const row = field && field.closest("tr");
   if (row && row.dataset.programId) updateProgramItem(row);
+  // A new row: its summary shows what it will do as it is filled in.
+  if (row && row.classList.contains("program-draft-row")) {
+    const draft = readProgramRow(row);
+    renderProgramSummary(row, { ...draft, title: draft.title || "Neuer Programmpunkt" });
+  }
 });
 $("program-items").addEventListener("click", event => {
   const button = event.target.closest("[data-program-action]");
@@ -1174,6 +1346,19 @@ $("program-items").addEventListener("click", event => {
     return;
   }
   if (action === "hide") return toggleProgramHidden(button.dataset.programId, button);
+  if (action === "fallback-ok") {
+    // Saving the row clears the note on every device (app/program_items.py).
+    const row = button.closest("tr");
+    button.closest(".program-fallback").hidden = true;
+    delete row.dataset.shortcutDeleted;
+    updateProgramItem(row);
+    return;
+  }
+  if (action === "shortcut-edit") {
+    const id = button.closest("tr").querySelector('[data-program-field="shortcut"]').value;
+    if (id) openShortcutDialog(id);
+    return;
+  }
   if (action === "play") return playProgramItem(button.dataset.programId, button);
 });
 $("program-menu").addEventListener("click", event => {
@@ -1188,8 +1373,10 @@ $("program-menu").addEventListener("click", event => {
 });
 // Keys inside the fields, the same in program rows and in the shortcut editor.
 onProgramEditors("click", event => {
-  const key = event.target.closest(".program-desktop-key");
-  if (key) return toggleProgramChoice(key);
+  const add = event.target.closest(".program-desktop-add");
+  if (add) return toggleProgramDesktopPick(add);
+  const choice = event.target.closest("[data-choice-add], [data-choice-remove], [data-choice-earlier]");
+  if (choice) return changeProgramDesktop(choice);
   const pick = event.target.closest("[data-action-pick]");
   if (pick) return pickProgramAction(pick);
   const clear = event.target.closest("[data-action-clear]");
@@ -1200,6 +1387,7 @@ onProgramEditors("click", event => {
 onProgramEditors("change", event => {
   const link = event.target.closest(".program-action-link");
   if (link) syncProgramAction(link);
+  if (event.target.matches('[data-program-field="shortcut"], [data-program-field="song"]')) syncProgramLinked(event.target.closest("tr"));
 });
 // The scene list is asked again when a scene is about to be chosen (OBS may have started since).
 onProgramEditors("focusin", event => {

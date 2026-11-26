@@ -20,11 +20,11 @@
   <div class="status">
     <button id="update-btn" class="update-key" hidden title="Mixer Service und Display Service dieses PCs aktualisieren">Update</button>
     <div class="status-display">
-      <span class="pill"><span id="dot-conn" class="dot"></span><span id="txt-conn">mixer ...</span></span>
-      <span class="pill"><span id="dot-en" class="dot"></span><span id="txt-en">...</span></span>
-      <span class="pill opt status-meta"><span id="txt-age" class="muted-text">updates: —</span><span id="txt-build" class="muted-text">Stand: —</span></span>
+      <span class="pill"><span id="dot-conn" class="dot"></span><span id="txt-conn">Mixer …</span></span>
+      <span class="pill"><span id="dot-en" class="dot"></span><span id="txt-en">…</span></span>
+      <span class="pill opt status-meta"><span id="txt-age" class="muted-text">Pult-Daten: —</span><span id="txt-build" class="muted-text">Stand: —</span></span>
     </div>
-    <span class="panic-guard"><button id="panic-btn" class="danger">Panic</button></span>
+    <span class="panic-guard"><button id="panic-btn" class="danger" title="Panic: sofort jedes Senden an das Pult sperren">Panic</button></span>
   </div>
 </header>
 
@@ -33,7 +33,7 @@
   <div class="panel-head">
     <button class="section-toggle" aria-expanded="true" aria-controls="desktop-body">Desktop</button>
     <div class="panel-tools">
-      <button id="target-pcs-btn" class="add-key" type="button" title="Namen und IP-Adressen von Streaming PC und Anzeige PC"><svg class="plus-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="1.5"/><path d="M9 20h6M12 16v4"/></svg>Ziel-PCs</button>
+      <button id="target-pcs-btn" class="add-key" type="button" title="Namen und IP-Adressen von Streaming PC und Anzeige PC"><svg class="plus-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="1.5"/><path d="M9 20h6M12 16v4"/></svg>Ziel-PCs…</button>
     </div>
   </div>
   <div id="desktop-body" class="panel-body">
@@ -53,7 +53,7 @@
   <div id="cameras-body" class="panel-body">
     <div id="camera-stream-status" class="camera-stream-status" role="status" aria-live="polite"></div>
     <div id="camera-grid" class="camera-grid"></div>
-    <div id="camera-empty" class="camera-empty" hidden>Keine Kameras konfiguriert.</div>
+    <div id="camera-empty" class="empty-state camera-empty" hidden>Noch keine Kamera. Mit „+ Kamera“ eine RTSP-Kamera hinzufügen.</div>
   </div>
 </section>
 
@@ -80,12 +80,10 @@
   <div class="panel-head">
     <button class="section-toggle" aria-expanded="true" aria-controls="program-body">Programm</button>
     <div class="panel-tools">
-      <button id="program-template-btn" class="add-key" title="Programm als Vorlage speichern oder eine Vorlage mit den Liedern des Tages anwenden">Vorlagen…</button>
-      <button id="program-export-btn" class="add-key" title="Programmpunkte als bearbeitbare JSON-Datei exportieren">JSON exportieren</button>
-      <button id="program-import-btn" class="add-key" title="Programmpunkte aus einer JSON-Datei importieren">JSON importieren</button>
+      <button id="program-template-btn" class="add-key" title="Programm als Vorlage speichern oder eine Vorlage mit den Liedern des Tages anwenden"><svg class="plus-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/></svg>Vorlagen…</button>
       <input id="program-import-file" type="file" accept=".json,application/json" hidden>
-      <button id="program-reset-btn" class="add-key" title="Startzeiten und Verzögerungen vergessen (neuer Gottesdienst, Probe)">Ablauf zurücksetzen</button>
-      <button id="program-add-btn" class="add-key"><svg class="plus-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 4v16M4 12h16"/></svg>Programmpunkt</button>
+      <button id="program-add-btn" class="add-key primary-add"><svg class="plus-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 4v16M4 12h16"/></svg>Programmpunkt</button>
+      <button type="button" class="menu-btn" data-panel-menu="program-head-menu" aria-haspopup="menu" aria-expanded="false" title="Weitere Programm-Aktionen" aria-label="Weitere Programm-Aktionen"><svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg></button>
     </div>
   </div>
   <div id="program-body" class="panel-body">
@@ -113,7 +111,7 @@
         <tbody id="program-items"></tbody>
       </table>
     </div>
-    <div id="program-empty" class="program-empty" hidden>Noch keine Programmpunkte.</div>
+    <div id="program-empty" class="empty-state program-empty" hidden>Noch keine Programmpunkte. Mit „+ Programmpunkt“ anlegen oder unter „Vorlagen…“ eine Vorlage anwenden.</div>
   </div>
 </section>
 <!-- Liedanzeige: preview and keys of the song on screen -->
@@ -121,9 +119,9 @@
   <div class="panel-head">
     <button class="section-toggle" aria-expanded="true" aria-controls="songs-body">Liedanzeige</button>
     <div class="panel-tools">
-      <button id="song-choose-btn" type="button" class="add-key" title="Ein Lied direkt anzeigen">Lied zeigen…</button>
-      <button id="song-new-btn" type="button" class="add-key" title="Ein neues Lied anlegen und in der Bibliothek speichern">Neues Lied…</button>
-      <button id="song-settings-btn" type="button" class="add-key" title="Liedanzeige: Bibliothek, Anzeige-PC und Aussehen für alle Lieder">Einstellungen…</button>
+      <button id="song-choose-btn" type="button" class="add-key" title="Ein Lied direkt anzeigen"><svg class="plus-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5L21 21"/></svg>Lied zeigen…</button>
+      <button id="song-new-btn" type="button" class="add-key" title="Ein neues Lied anlegen und in der Bibliothek speichern"><svg class="plus-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 4v16M4 12h16"/></svg>Neues Lied</button>
+      <button id="song-settings-btn" type="button" class="add-key" title="Liedanzeige: Bibliothek, Anzeige-PC und Aussehen für alle Lieder"><svg class="plus-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M6 4v6M6 14v6M12 4v2M12 10v10M18 4v10M18 18v2"/><circle cx="6" cy="12" r="2"/><circle cx="12" cy="8" r="2"/><circle cx="18" cy="16" r="2"/></svg>Einstellungen…</button>
     </div>
   </div>
   <div id="songs-body" class="panel-body">
@@ -153,14 +151,14 @@
   </div>
   <div id="lights-body" class="panel-body">
     <div id="light-status" class="light-status" role="status" aria-live="polite" hidden></div>
-    <div id="light-scene-create" class="light-block light-scene-create">
-      <div class="light-block-head"><span id="light-scene-create-title" class="light-block-title">Neues Preset</span></div>
-      <div class="light-scene-create-row">
+    <div id="light-scene-create" class="create-card light-scene-create">
+      <div id="light-scene-create-title" class="create-card-title">Neues Preset</div>
+      <div class="create-card-row light-scene-create-row">
         <input id="light-scene-name" class="rename-input" type="text" placeholder="Name, z. B. Predigt" autocomplete="off" maxlength="40" />
-        <button id="light-scene-save" class="primary">Aktuelles Licht speichern</button>
         <button id="light-scene-cancel">Abbrechen</button>
+        <button id="light-scene-save" class="primary">Aktuelles Licht speichern</button>
       </div>
-      <div class="light-pick-hint">Welche Lichter gehören dazu? Gespeichert wird jeder gewählte Scheinwerfer so, wie er gerade ist (an/aus, Helligkeit, Farbe), und jeder gewählte Raumlicht-Kreis. Alle anderen Lichter bleiben beim Abrufen, wie sie sind.</div>
+      <div class="create-card-hint light-pick-hint">Welche Lichter gehören dazu? Gespeichert wird jeder gewählte Scheinwerfer so, wie er gerade ist (an/aus, Helligkeit, Farbe), und jeder gewählte Raumlicht-Kreis. Alle anderen Lichter bleiben beim Abrufen, wie sie sind.</div>
       <div class="light-pick">
         <div class="light-pick-group">
           <div class="light-pick-head"><span class="light-block-title">Bühne</span><button type="button" class="light-pick-all" data-light-pick-all="stage">Alle</button></div>
@@ -176,7 +174,6 @@
       <div class="light-block-head">
         <span class="light-block-title">Presets</span>
         <span id="light-presets-hint" class="light-block-hint">Antippen blendet ein</span>
-        <div class="light-block-tools"><button type="button" id="light-presets-edit" class="light-all" aria-pressed="false">Bearbeiten</button></div>
       </div>
       <div id="light-scenes" class="light-scenes"></div>
     </div>
@@ -188,8 +185,10 @@
             <button type="button" id="light-stage-on" class="light-all">Alle an</button>
             <button type="button" id="light-stage-off" class="light-all">Alle aus</button>
             <button type="button" id="light-link" class="light-all light-link" aria-pressed="false" title="Regler gemeinsam: Helligkeit und Farbe eines Scheinwerfers gelten für alle vier">Alle gleich</button>
+            <button type="button" id="light-stage-menu" class="menu-btn" data-menu-key="light-stage" aria-haspopup="menu" aria-expanded="false" title="Bühne: weitere Aktionen" aria-label="Bühne: weitere Aktionen"><svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg></button>
           </div>
         </div>
+        <div class="rename-bar" data-rename-bar="stage" hidden><span>Namen antippen zum Umbenennen</span><button type="button" class="primary" data-rename-done="stage">Fertig</button></div>
         <div id="light-fixtures" class="light-fixtures"></div>
         <div class="light-settings-bar">
           <button type="button" class="light-chip" data-light-setting="fade_ms" aria-expanded="false" aria-controls="light-setting-pop"><span class="light-chip-label">Übergang</span><span class="light-chip-value"></span></button>
@@ -197,14 +196,16 @@
         </div>
         <div id="light-setting-pop" class="light-setting-pop" hidden></div>
       </div>
-      <div class="light-block">
+      <div class="light-block light-room">
         <div class="light-block-head">
           <span class="light-block-title">Raumlicht</span>
           <div class="light-block-tools">
             <button type="button" id="light-room-on" class="light-all">Alle an</button>
             <button type="button" id="light-room-off" class="light-all">Alle aus</button>
+            <button type="button" id="light-room-menu" class="menu-btn" data-menu-key="light-room" aria-haspopup="menu" aria-expanded="false" title="Raumlicht: weitere Aktionen" aria-label="Raumlicht: weitere Aktionen"><svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg></button>
           </div>
         </div>
+        <div class="rename-bar" data-rename-bar="room" hidden><span>Kreis antippen zum Umbenennen</span><button type="button" class="primary" data-rename-done="room">Fertig</button></div>
         <div id="light-circuits" class="light-circuits"></div>
       </div>
     </div>
@@ -214,20 +215,27 @@
   <div class="panel-head">
     <button class="section-toggle" aria-expanded="true" aria-controls="groups-body">Mute Gruppen</button>
     <div class="panel-tools">
-      <button id="new-snapshot-btn" class="add-key">Mutegruppe aus Status</button>
-      <button id="new-person-btn" class="add-key"><svg class="plus-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 4v16M4 12h16"/></svg>Neue Mute Gruppe</button>
+      <button id="new-snapshot-btn" class="add-key" title="Neue Mute Gruppe aus allen Channels, die am Pult gerade nicht gemutet sind"><svg class="plus-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>Aus Pult-Status…</button>
+      <button id="new-person-btn" class="add-key primary-add"><svg class="plus-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 4v16M4 12h16"/></svg>Mute Gruppe</button>
     </div>
   </div>
   <div id="groups-body" class="panel-body">
-    <div id="person-create-row" class="person-create-row">
-      <input id="new-person-name" class="rename-input" type="text" placeholder="Name der Mute Gruppe" autocomplete="off" maxlength="64" />
-      <button id="create-person-save" class="primary">Save</button>
-      <button id="create-person-cancel">Cancel</button>
+    <div id="person-create-row" class="create-card person-create-row">
+      <div class="create-card-title">Neue Mute Gruppe</div>
+      <div class="create-card-row">
+        <input id="new-person-name" class="rename-input" type="text" placeholder="Name, z. B. Predigt" autocomplete="off" maxlength="64" />
+        <button id="create-person-cancel">Abbrechen</button>
+        <button id="create-person-save" class="primary">Anlegen</button>
+      </div>
     </div>
-    <div id="snapshot-create-row" class="person-create-row">
-      <input id="snapshot-name" class="rename-input" type="text" placeholder="Name der Mute Gruppe" autocomplete="off" maxlength="64" />
-      <button id="snapshot-save-btn" class="primary">Ungemutete Channels übernehmen</button>
-      <button id="snapshot-cancel-btn">Abbrechen</button>
+    <div id="snapshot-create-row" class="create-card person-create-row">
+      <div class="create-card-title">Mute Gruppe aus Pult-Status</div>
+      <div class="create-card-row">
+        <input id="snapshot-name" class="rename-input" type="text" placeholder="Name, z. B. Lobpreis" autocomplete="off" maxlength="64" />
+        <button id="snapshot-cancel-btn">Abbrechen</button>
+        <button id="snapshot-save-btn" class="primary">Ungemutete Channels übernehmen</button>
+      </div>
+      <div class="create-card-hint">Die neue Gruppe bekommt alle Channels, die am Pult gerade nicht gemutet sind, mit ihren aktuellen Fadern.</div>
     </div>
     <div id="persons"></div>
   </div>
@@ -236,14 +244,14 @@
   <div class="panel-head">
     <button class="section-toggle" aria-expanded="true" aria-controls="companion-body">Steuerung</button>
     <div class="panel-tools">
-      <label class="compact-switch" title="Tasten verschieben und löschen"><input id="companion-edit-toggle" type="checkbox" /><span class="track"></span>Bearbeiten</label>
+      <label class="compact-switch" title="Tasten, Kategorien und Abschaltziele umbenennen, verschieben und löschen (⋮ an jedem Teil)"><input id="companion-edit-toggle" type="checkbox" /><span class="track"></span>Bearbeiten</label>
       <button id="new-companion-category" class="add-key"><svg class="plus-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 4v16M4 12h16"/></svg>Kategorie</button>
-      <button id="new-companion-button" class="add-key"><svg class="plus-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 4v16M4 12h16"/></svg>Button</button>
+      <button id="new-companion-button" class="add-key primary-add"><svg class="plus-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 4v16M4 12h16"/></svg>Taste</button>
     </div>
   </div>
   <div id="companion-body" class="panel-body">
     <div id="beamer-state-control" class="beamer-state-bar">
-      <span class="beamer-state-title">Aktuellen Beamerzustand festlegen</span>
+      <span class="beamer-state-title">Beamer-Zustand festlegen</span>
       <div class="beamer-state-options" role="group" aria-label="Aktuellen Beamerzustand setzen">
         <button type="button" class="beamer-state-key" data-beamer-state="true" aria-pressed="false" title="Zustand auf Hide setzen, ohne den Beamer umzuschalten">Hide</button>
         <button type="button" class="beamer-state-key" data-beamer-state="false" aria-pressed="false" title="Zustand auf Unhide setzen, ohne den Beamer umzuschalten">Unhide</button>
@@ -277,20 +285,20 @@
 
 <dialog id="companion-button-dialog" class="update-dialog companion-create-dialog" aria-labelledby="companion-button-title">
   <form id="companion-button-form" class="update-body" novalidate>
-    <h3 id="companion-button-title">Neuer Button</h3>
+    <h3 id="companion-button-title">Neue Taste</h3>
     <label class="pf-field"><span>Name</span>
       <input id="companion-button-name" class="pf-input" type="text" maxlength="40" required /></label>
     <label class="pf-field"><span>Kategorie</span>
       <select id="companion-button-category" class="pf-input" required></select></label>
     <label class="pf-field"><span>Aktion</span>
       <select id="companion-button-kind" class="pf-input">
-        <option value="companion">Vorhandenen lokalen Button verknüpfen</option>
+        <option value="companion">Vorhandene lokale Taste verknüpfen</option>
         <option value="channel">Mixer-Kanal steuern</option>
-        <option value="group">Mute-Gruppe steuern</option>
+        <option value="group">Mute Gruppe steuern</option>
       </select></label>
     <label class="pf-field"><span>Ziel</span>
       <select id="companion-button-target" class="pf-input" required></select></label>
-    <label id="companion-button-operation-field" class="pf-field"><span>Aktion</span>
+    <label id="companion-button-operation-field" class="pf-field"><span>Befehl</span>
       <select id="companion-button-operation" class="pf-input">
         <option value="mute">Mute</option><option value="unmute">Unmute</option><option value="toggle">Toggle</option>
       </select></label>
@@ -617,11 +625,6 @@
   </form>
 </dialog>
 
-<div id="tile-menu" class="tile-menu" role="menu" hidden>
-  <button type="button" role="menuitem" data-menu-action="edit"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/></svg>Bearbeiten</button>
-  <button type="button" role="menuitem" data-menu-action="duplicate"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/></svg>Duplizieren</button>
-  <button type="button" role="menuitem" data-menu-action="delete" class="danger"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6"/></svg>Löschen</button>
-</div>
 <div id="shortcut-menu" class="tile-menu" role="menu" hidden>
   <button type="button" role="menuitem" data-menu-action="edit"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/></svg>Bearbeiten</button>
   <button type="button" role="menuitem" data-menu-action="duplicate"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/></svg>Duplizieren</button>
@@ -630,7 +633,7 @@
 <dialog id="shortcut-dialog" class="update-dialog profile-dialog shortcut-dialog" aria-labelledby="shortcut-dialog-title">
   <form id="shortcut-form" class="update-body" novalidate>
     <h3 id="shortcut-dialog-title">Shortcut bearbeiten</h3>
-    <div class="pf-hint">Was der Shortcut tut, wie bei einem Programmpunkt. Er läuft über seine Taste unter Desktop oder nach Programmpunkten, denen er zugewiesen ist.</div>
+    <div class="pf-hint">Was der Shortcut tut, wie bei einem Programmpunkt. Er läuft über seine Taste unter Desktop, und Programmpunkte können ihn als ihre ganze Konfiguration verwenden: Änderungen hier gelten dann für alle diese Programmpunkte.</div>
     <table class="program-table shortcut-table"><tbody id="shortcut-editor"></tbody></table>
     <div id="shortcut-error" class="update-lcd err" hidden></div>
     <div class="update-actions">
@@ -639,20 +642,18 @@
     </div>
   </form>
 </dialog>
+<div id="program-head-menu" class="tile-menu panel-menu" role="menu" hidden>
+  <button type="button" role="menuitem" id="program-export-btn" title="Programmpunkte als bearbeitbare JSON-Datei exportieren"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M12 4v11M7.5 10.5L12 15l4.5-4.5M5 19h14"/></svg><span>JSON exportieren</span></button>
+  <button type="button" role="menuitem" id="program-import-btn" title="Programmpunkte aus einer JSON-Datei importieren (ersetzt das Programm)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M12 15V4M7.5 8.5L12 4l4.5 4.5M5 19h14"/></svg><span>JSON importieren…</span></button>
+  <div class="menu-sep" role="separator"></div>
+  <button type="button" role="menuitem" id="program-reset-btn" class="danger" title="Startzeiten und Verzögerungen vergessen (neuer Gottesdienst, Probe)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 13a8 8 0 1 0 2.3-5.7"/><path d="M4 4v7h7"/></svg><span>Ablauf zurücksetzen…</span></button>
+</div>
 <div id="program-menu" class="tile-menu" role="menu" hidden>
   <button type="button" role="menuitem" data-menu-action="clone"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/></svg>Duplizieren</button>
   <button type="button" role="menuitem" data-menu-action="shortcut"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="1.5"/><path d="M9 20h6M12 16v4M10 7.5l4 2.5-4 2.5z"/></svg><span id="program-menu-shortcut-text">Als Shortcut speichern</span></button>
   <button type="button" role="menuitem" data-menu-action="delete" class="danger"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6"/></svg>Löschen</button>
 </div>
 
-<div id="person-menu" class="tile-menu" role="menu" hidden>
-  <button type="button" role="menuitem" data-menu-action="edit"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M4 6h10M4 12h10M4 18h6"/><path d="M17 4v8M13 8h8"/></svg><span>Bearbeiten</span></button>
-  <button type="button" role="menuitem" data-menu-action="rename"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/></svg>Umbenennen</button>
-  <button type="button" role="menuitem" data-menu-action="use-all"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M6 4v16M12 4v16M18 4v16"/><path d="M3.5 9h5M9.5 14h5M15.5 7h5"/></svg>Use All – gespeicherte Fader</button>
-  <button type="button" role="menuitem" data-menu-action="settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M6 4v6M6 14v6M12 4v2M12 10v10M18 4v10M18 18v2"/><circle cx="6" cy="12" r="2"/><circle cx="12" cy="8" r="2"/><circle cx="18" cy="16" r="2"/></svg>Kanal-Einstellungen</button>
-  <button type="button" role="menuitem" data-menu-action="duplicate"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/></svg>Duplizieren</button>
-  <button type="button" role="menuitem" data-menu-action="delete" class="danger"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6"/></svg>Löschen</button>
-</div>
 
 <div id="toasts" class="toast-wrap"></div>
 <div id="reload-banner" class="reload-banner" role="status" hidden>
@@ -661,6 +662,7 @@
 </div>
 
 <script src="js/core.js?v=__BUILD_ID__"></script>
+<script src="js/menus.js?v=__BUILD_ID__"></script>
 <script src="js/channels.js?v=__BUILD_ID__"></script>
 <script src="js/groups.js?v=__BUILD_ID__"></script>
 <script src="js/dialogs.js?v=__BUILD_ID__"></script>

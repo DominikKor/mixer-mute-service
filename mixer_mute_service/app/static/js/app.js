@@ -15,7 +15,8 @@ function renderPanic() {
   // key still disables: when in doubt, stop sending.
   const pb = $("panic-btn");
   const disabled = SERVICE_ENABLED === false;
-  pb.textContent = disabled ? "Re-enable" : "Panic (disable)";
+  pb.textContent = disabled ? "Senden ein" : "Panic";
+  pb.title = disabled ? "Senden an das Pult wieder erlauben" : "Panic: sofort jedes Senden an das Pult sperren";
   pb.className = disabled ? "primary" : "danger";
 }
 
@@ -55,18 +56,18 @@ async function refresh({ light = false } = {}) {
 
   const h = health.ok ? health.data : {};
   if (!health.ok && !stateOk) {
-    $("txt-conn").textContent = "service unreachable";
+    $("txt-conn").textContent = "Dienst nicht erreichbar";
     $("dot-conn").className = "dot bad";
-    $("txt-en").textContent = "status unknown";
+    $("txt-en").textContent = "Status unbekannt";
     $("dot-en").className = "dot bad";
   } else {
     const connected = health.ok ? h.mixer_connected : LAST_STATE.mixer_connected;
     $("dot-conn").className = "dot " + (connected ? "ok" : "bad");
-    $("txt-conn").textContent = connected ? "mixer connected" : "mixer offline";
+    $("txt-conn").textContent = connected ? "Mixer verbunden" : "Mixer getrennt";
     $("dot-en").className = "dot " + (SERVICE_ENABLED ? "ok" : "bad");
-    $("txt-en").textContent = SERVICE_ENABLED ? "sending enabled" : "PANIC (disabled)";
+    $("txt-en").textContent = SERVICE_ENABLED ? "Senden aktiv" : "PANIC: Senden gesperrt";
   }
-  $("txt-age").textContent = "updates: " + fmtAge(h.last_update_age_seconds);
+  $("txt-age").textContent = "Pult-Daten: " + fmtAge(h.last_update_age_seconds);
   renderPanic();
   if (health.ok) noticeNewBuild(h.build_id);
   if (desktop.ok) renderDesktopProfiles(desktop.data);

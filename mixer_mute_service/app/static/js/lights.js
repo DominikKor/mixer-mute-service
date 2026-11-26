@@ -11,7 +11,7 @@ const LIGHTS = {
   busy: new Set(),      // keys with a request in flight
   pick: new Set(),      // preset being saved: chosen lights ("zone:left", "circuit:light-tech")
   updating: null,       // id of the preset being overwritten, null for a new one
-  editing: false,       // presets: order, names, overwrite, delete
+  renaming: null,       // "stage" / "room": a tap on a light opens its name
   setting: null,        // the open setting below the chips ("fade_ms", "start")
   link: false,          // "Alle gleich": a slider moves all four lights
   circuitWant: {},      // room light: state the user chose, not yet confirmed (shown at once)
@@ -107,13 +107,16 @@ function fixtureCard(zone) {
   const lamp = document.createElement("span");
   lamp.className = "fixture-lamp";
   lamp.setAttribute("aria-hidden", "true");
+  // The name; in rename mode (Bühne ⋮ > Scheinwerfer umbenennen) a key
+  // that opens it as a field.
   const nameCell = document.createElement("div");
   nameCell.className = "light-name-cell";
-  const name = document.createElement("span");
+  const name = document.createElement("button");
+  name.type = "button";
   name.className = "light-name";
-  const pencil = renamePencil(zone);
-  pencil.dataset.lightRename = `light-zone/${zone}`;
-  nameCell.append(name, pencil);
+  name.dataset.lightRename = `light-zone/${zone}`;
+  name.tabIndex = -1;
+  nameCell.append(name);
   const key = document.createElement("button");
   key.type = "button";
   key.className = "light-zone-key";
@@ -131,9 +134,9 @@ function setFixture(card, fixture, label, fallback) {
   card.classList.toggle("off", !fixture.on);
   card.dataset.defaultName = fallback;
   card.querySelector(".light-name").textContent = label;
-  const pencil = card.querySelector("[data-light-rename]");
-  pencil.title = `${label} umbenennen`;
-  pencil.setAttribute("aria-label", pencil.title);
+  const nameKey = card.querySelector("[data-light-rename]");
+  nameKey.title = LIGHTS.renaming === "stage" ? `${label} umbenennen` : "";
+  nameKey.tabIndex = LIGHTS.renaming === "stage" ? 0 : -1;
   const key = card.querySelector(".light-zone-key");
   key.classList.toggle("on", fixture.on);
   key.setAttribute("aria-pressed", String(fixture.on));
@@ -348,25 +351,21 @@ function renderLightCircuits(circuits) {
   for (const circuit of circuits) {
     let key = box.querySelector(`[data-light-circuit="${circuit.id}"]`);
     if (!key) {
-      // Tile: the on/off key and its pencil (renaming, stored on the service).
+      // Tile: the on/off key (in rename mode a tap opens its name instead).
       const tile = document.createElement("div");
       tile.className = "light-circuit-tile";
       key = document.createElement("button");
       key.type = "button";
       key.className = "light-circuit";
       key.dataset.lightCircuit = circuit.id;
+      key.dataset.lightRename = `light-circuit/${circuit.id}`;
       key.innerHTML = '<span class="light-lamp" aria-hidden="true"></span><span class="light-circuit-name"></span><span class="light-circuit-state"></span>';
-      const pencil = renamePencil(circuit.label);
-      pencil.dataset.lightRename = `light-circuit/${circuit.id}`;
-      tile.append(key, pencil);
+      tile.append(key);
       box.appendChild(tile);
     }
     const tile = key.closest(".light-circuit-tile");
     tile.dataset.defaultName = circuit.default_label || circuit.label;
     tile.dataset.name = circuit.label;
-    const pencil = tile.querySelector("[data-light-rename]");
-    pencil.title = `${circuit.label} umbenennen`;
-    pencil.setAttribute("aria-label", pencil.title);
     key.querySelector(".light-circuit-name").textContent = circuit.label;
     // A tapped key shows its new state at once; "pending" until confirmed.
     const pending = circuit.id in LIGHTS.circuitWant;
@@ -376,7 +375,7 @@ function renderLightCircuits(circuits) {
     key.classList.toggle("pending", pending);
     key.querySelector(".light-circuit-state").textContent = { on: "An", off: "Aus", unknown: "Offline" }[state];
     key.setAttribute("aria-pressed", String(on === true));
-    key.title = state === "unknown" ? `${circuit.label}: nicht erreichbar – antippen versucht einzuschalten` : `${circuit.label} ${state === "on" ? "ausschalten" : "einschalten"}`;
+    key.title = LIGHTS.renaming === "room" ? `${circuit.label} umbenennen` : state === "unknown" ? `${circuit.label}: nicht erreichbar – antippen versucht einzuschalten` : `${circuit.label} ${state === "on" ? "ausschalten" : "einschalten"}`;
   }
 }
 
@@ -433,42 +432,22 @@ async function sendRoomCircuits(ids) {
 
 // ---- presets ----------------------------------------------------------------------------
 
-const ICON_LEFT = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg>`;
-const ICON_RIGHT = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>`;
-const ICON_REFRESH = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></svg>`;
-
-function lightToolButton(icon, label, data) {
-  const button = document.createElement("button");
-  button.type = "button";
-  button.className = "preset-tool";
-  button.innerHTML = icon;
-  button.setAttribute("aria-label", label);
-  button.title = label;
-  Object.assign(button.dataset, data);
-  return button;
-}
-
 function renderLightScenes(scenes) {
   const box = $("light-scenes");
   const data = LIGHTS.data;
-  const sig = JSON.stringify([scenes, data.last_scene, LIGHTS.editing, data.zone_labels, data.circuits.map(c => c.label)]);
-  $("light-presets").classList.toggle("editing", LIGHTS.editing);
-  $("light-presets-edit").setAttribute("aria-pressed", String(LIGHTS.editing));
-  $("light-presets-edit").textContent = LIGHTS.editing ? "Fertig" : "Bearbeiten";
-  $("light-presets-hint").textContent = LIGHTS.editing
-    ? "Pfeile: Reihenfolge · Stift: Name · Kreis: mit aktuellem Licht überschreiben"
-    : "Antippen blendet ein";
+  const sig = JSON.stringify([scenes, data.last_scene, data.zone_labels, data.circuits.map(c => c.label)]);
   if (box.dataset.sig === sig) return;
   box.dataset.sig = sig;
   box.replaceChildren();
+  $("light-presets-hint").hidden = !scenes.length;
   if (!scenes.length) {
     const empty = document.createElement("div");
-    empty.className = "light-empty";
+    empty.className = "empty-state light-empty";
     empty.textContent = "Noch kein Preset. Licht einstellen und mit „+ Preset“ speichern.";
     box.appendChild(empty);
     return;
   }
-  scenes.forEach((scene, index) => {
+  for (const scene of scenes) {
     const changed = !scene.active && scene.id === data.last_scene;
     const tile = document.createElement("div");
     tile.className = "preset";
@@ -480,8 +459,7 @@ function renderLightScenes(scenes) {
     key.className = "preset-key";
     key.dataset.lightScene = scene.id;
     key.setAttribute("aria-pressed", String(scene.active));
-    const parts = lightSceneParts(scene);
-    key.title = LIGHTS.editing ? `${scene.name} · ${parts}` : `Preset „${scene.name}“ einblenden · ${parts}`;
+    key.title = `Preset „${scene.name}“ einblenden · ${lightSceneParts(scene)}`;
     const name = document.createElement("span");
     name.className = "preset-name";
     name.textContent = scene.name;
@@ -492,24 +470,75 @@ function renderLightScenes(scenes) {
     top.className = "preset-top";
     top.append(name, state);
     key.append(top, presetSummary(scene));
-    tile.appendChild(key);
-    if (LIGHTS.editing) {
-      const tools = document.createElement("div");
-      tools.className = "preset-tools";
-      const left = lightToolButton(ICON_LEFT, `${scene.name} nach vorne`, { presetMove: "-1" });
-      const right = lightToolButton(ICON_RIGHT, `${scene.name} nach hinten`, { presetMove: "1" });
-      left.disabled = index === 0;
-      right.disabled = index === scenes.length - 1;
-      const pencil = renamePencil(`Preset „${scene.name}“`);
-      pencil.classList.add("preset-tool");
-      pencil.dataset.lightSceneRename = scene.id;
-      const update = lightToolButton(ICON_REFRESH, `${scene.name} mit dem aktuellen Licht überschreiben`, { presetUpdate: scene.id });
-      const del = lightToolButton(ICON_TRASH, `Preset „${scene.name}“ löschen`, { lightSceneDelete: scene.id });
-      del.classList.add("danger");
-      tools.append(left, right, pencil, update, del);
-      tile.appendChild(tools);
-    }
+    // Rename, overwrite, move and delete: the tile's "⋮", as everywhere.
+    const menu = menuButton(`Preset „${scene.name}“: umbenennen, überschreiben, verschieben oder löschen`, `preset:${scene.id}`);
+    menu.classList.add("tile-menu-btn");
+    menu.dataset.presetMenu = scene.id;
+    tile.append(key, menu);
     box.appendChild(tile);
+  }
+}
+
+function presetMenuItems(scene) {
+  const ids = LIGHTS.data.scenes.map(s => s.id);
+  const index = ids.indexOf(scene.id);
+  return [
+    { label: "Umbenennen", icon: ICON_PENCIL, run: () => renameLightScene(scene) },
+    { label: "Mit aktuellem Licht überschreiben…", icon: ICON_REFRESH, run: () => openLightSceneCreate(scene) },
+    "-",
+    { label: "Nach vorne", icon: ICON_LEFT, disabled: index <= 0, run: () => movePreset(scene.id, -1) },
+    { label: "Nach hinten", icon: ICON_RIGHT, disabled: index >= ids.length - 1, run: () => movePreset(scene.id, 1) },
+    "-",
+    { label: "Löschen", icon: ICON_TRASH, danger: true, run: anchor => deleteLightScene(scene, anchor) },
+  ];
+}
+
+function renameLightScene(scene) {
+  const tile = $("light-scenes").querySelector(`.preset[data-scene-id="${CSS.escape(scene.id)}"]`);
+  if (!tile) return;
+  startInlineRename(tile, scene.name, { save: async name => {
+    if (await saveName("PUT", `/lights/scenes/${encodeURIComponent(scene.id)}`, name, "Preset")) {
+      await loadLights();
+      loadProgramLightScenes();
+    }
+  } });
+}
+
+async function deleteLightScene(scene, anchor) {
+  if (!(await confirmDelete(anchor, `Preset „${scene.name}“ löschen? Programmpunkte mit diesem Preset starten dann nicht mehr.`))) return;
+  const result = await api("DELETE", `/lights/scenes/${encodeURIComponent(scene.id)}`, undefined, { timeout: lightTimeout() });
+  if (!result.ok || result.data.ok === false) toast(`Preset: ${result.data.reason || "HTTP " + result.status}`, false);
+  else toast(`Preset „${scene.name}“ gelöscht`, true);
+  await loadLights();
+  loadProgramLightScenes();
+}
+
+// Rename mode of the stage lights or the room light circuits (their block's
+// "⋮"): a tap on a name opens it as a field; "Fertig" ends it.
+function setLightRenaming(which) {
+  if (which) startRenameMode($(which === "stage" ? "light-fixtures" : "light-circuits"), () => showLightRenaming(null));
+  else if (LIGHTS.renaming) endRenameMode();
+  showLightRenaming(which);
+}
+
+function showLightRenaming(which) {
+  LIGHTS.renaming = which;
+  for (const bar of document.querySelectorAll("[data-rename-bar]")) bar.hidden = bar.dataset.renameBar !== which;
+  $("light-fixtures").classList.toggle("renaming", which === "stage");
+  $("light-circuits").classList.toggle("renaming", which === "room");
+  if (LIGHTS.data) { renderFixtures(); renderLightCircuits(LIGHTS.data.circuits); }
+}
+
+function startLightRename(target) {
+  const slot = target.closest(".light-name-cell, .light-circuit-tile");
+  const holder = target.closest("[data-default-name]");
+  const current = target.matches(".light-name") ? target.textContent : target.querySelector(".light-circuit-name").textContent;
+  const fallback = holder ? holder.dataset.defaultName : "";
+  startInlineRename(slot, current === fallback ? "" : current, {
+    placeholder: fallback, allowEmpty: true,
+    save: async name => {
+      if (await saveName("PUT", `/names/${target.dataset.lightRename}`, name, "Name")) await loadLights();
+    },
   });
 }
 
@@ -736,6 +765,8 @@ initLightSliders($("light-fixtures"));
 initLightSliders($("light-setting-pop"));
 
 $("light-fixtures").addEventListener("click", event => {
+  const name = event.target.closest("[data-light-rename]");
+  if (name && LIGHTS.renaming === "stage") { startLightRename(name); return; }
   const key = event.target.closest("[data-fixture-key]");
   if (key && LIGHTS.data) {
     const zone = key.dataset.fixtureKey;
@@ -768,6 +799,7 @@ for (const chip of document.querySelectorAll("[data-light-setting]")) {
 
 $("light-circuits").addEventListener("click", event => {
   const key = event.target.closest("[data-light-circuit]");
+  if (key && LIGHTS.renaming === "room") { startLightRename(key); return; }
   if (key) switchRoomLight({ [key.dataset.lightCircuit]: key.dataset.state !== "on" });
 });
 $("light-room-on").addEventListener("click", () => {
@@ -779,37 +811,14 @@ $("light-room-off").addEventListener("click", () => {
   if (ids.length) switchRoomLight(Object.fromEntries(ids.map(id => [id, false])));
 });
 
-$("light-presets-edit").addEventListener("click", () => {
-  LIGHTS.editing = !LIGHTS.editing;
-  if (LIGHTS.data) renderLightScenes(LIGHTS.data.scenes);
-});
 $("light-scenes").addEventListener("click", async event => {
   const tile = event.target.closest(".preset");
   const scene = tile && LIGHTS.data && LIGHTS.data.scenes.find(s => s.id === tile.dataset.sceneId);
   if (!scene) return;
-  const rename = event.target.closest("[data-light-scene-rename]");
-  if (rename) {
-    startInlineRename(tile, scene.name, { save: async name => {
-      if (await saveName("PUT", `/lights/scenes/${encodeURIComponent(scene.id)}`, name, "Preset")) {
-        await loadLights();
-        loadProgramLightScenes();
-      }
-    } });
-    return;
-  }
-  const move = event.target.closest("[data-preset-move]");
-  if (move) { await movePreset(scene.id, Number(move.dataset.presetMove)); return; }
-  if (event.target.closest("[data-preset-update]")) { openLightSceneCreate(scene); return; }
-  const del = event.target.closest("[data-light-scene-delete]");
-  if (del) {
-    if (!(await confirmDelete(del, `Preset „${scene.name}“ löschen? Programmpunkte mit diesem Preset starten dann nicht mehr.`))) return;
-    await lightRequest(del, "DELETE", `/lights/scenes/${encodeURIComponent(scene.id)}`);
-    loadProgramLightScenes();
-    return;
-  }
+  const trigger = event.target.closest("[data-preset-menu]");
+  if (trigger) { toggleActionMenu(trigger, () => presetMenuItems(scene)); return; }
   const apply = event.target.closest("[data-light-scene]");
-  // While editing, a tap on a tile does not change the light.
-  if (apply && !LIGHTS.editing) {
+  if (apply) {
     tile.classList.add("applying");
     try {
       await lightRequest(apply, "POST", `/lights/scenes/${encodeURIComponent(scene.id)}/apply`);
@@ -841,21 +850,16 @@ $("light-scene-create").addEventListener("click", event => {
   renderLightPick();
 });
 
-// Pencils of the stage lights and room light circuits: the name is stored
-// on the service; an empty name goes back to the built-in one.
-for (const box of [$("light-fixtures"), $("light-circuits")]) {
-  box.addEventListener("click", event => {
-    const pencil = event.target.closest("[data-light-rename]");
-    if (!pencil) return;
-    const slot = pencil.closest(".light-name-cell, .light-circuit-tile");
-    const holder = pencil.closest("[data-default-name]");
-    const current = slot.querySelector(".light-name, .light-circuit-name").textContent;
-    const fallback = holder ? holder.dataset.defaultName : "";
-    startInlineRename(slot, current === fallback ? "" : current, {
-      placeholder: fallback, allowEmpty: true,
-      save: async name => {
-        if (await saveName("PUT", `/names/${pencil.dataset.lightRename}`, name, "Name")) await loadLights();
-      },
-    });
-  });
+// The blocks' "⋮": renaming the lights (stored on the service; an empty
+// name goes back to the built-in one).
+$("light-stage-menu").addEventListener("click", event => toggleActionMenu(event.currentTarget, [
+  { label: LIGHTS.renaming === "stage" ? "Umbenennen beenden" : "Scheinwerfer umbenennen", icon: ICON_PENCIL,
+    run: () => setLightRenaming(LIGHTS.renaming === "stage" ? null : "stage") },
+]));
+$("light-room-menu").addEventListener("click", event => toggleActionMenu(event.currentTarget, [
+  { label: LIGHTS.renaming === "room" ? "Umbenennen beenden" : "Kreise umbenennen", icon: ICON_PENCIL,
+    run: () => setLightRenaming(LIGHTS.renaming === "room" ? null : "room") },
+]));
+for (const done of document.querySelectorAll("[data-rename-done]")) {
+  done.addEventListener("click", () => setLightRenaming(null));
 }
