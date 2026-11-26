@@ -104,11 +104,11 @@ miniatures, and **Standard** restores the original one.
   colour, and **Immer an** protects a channel from group mutes and solo.
   Blocked actions show the reason as a toast (e.g. "fader value stale").
 - **Mute Gruppen**: per-group mute / unmute, **create / edit / delete**, and
-  per-channel fader presets (**Use** / **Use All**). **Mutegruppe aus Status**
+  per-channel fader presets (**Use** / **Use All**). **Aus Pult-Status…**
   creates a group from the channels currently unmuted, with their observed
   fader values as presets. Each group is one line (display, Mute, Solo, "⋮");
   tapping the display shows its channels (Set / Use and the fader). The "⋮"
-  menu has Bearbeiten (channel descriptions, remove and add channels; "Fertig"
+  menu has Kanäle bearbeiten (channel descriptions, remove and add channels; "Fertig"
   ends it), Umbenennen, Use All, Kanal-Einstellungen, Duplizieren, Löschen.
 - **Kanal-Einstellungen** (in the "⋮" menu of each mute group): saves gain, high-pass,
   EQ, gate and compressor of the group's input channels as they are set on the
@@ -143,7 +143,8 @@ miniatures, and **Standard** restores the original one.
   it is due; **Weiter** starts the next row (also from a Stream Deck via
   `POST /program/next`). The row that ran last today is marked "Läuft", the
   next one "Nächster", earlier ones are dimmed. **Duplizieren** puts the copy
-  right below its original, **Ablauf zurücksetzen** forgets all start times.
+  right below its original, **Ablauf zurücksetzen** (the section head's "⋮",
+  with JSON export and import) forgets all start times.
   **Als Shortcut speichern** (row's "⋮") copies what the row does into a
   new shortcut (`shortcuts.json`). Shortcuts are keys in the Desktop
   section: a tap runs them without touching the program's order or start
@@ -155,7 +156,16 @@ miniatures, and **Standard** restores the original one.
 - **Steuerung**: the keys imported from the former Companion setup (lights,
   OBS, beamer, "Overall" scene macros), grouped in categories; the camera
   keys live in the Kameras section. With
-  **Bearbeiten** switched on, keys can be renamed, moved, created and deleted.
+  **Bearbeiten** switched on, every key, category and *Alles ausschalten*
+  target shows a "⋮" (Umbenennen; keys also Nach „…“ verschieben and Löschen),
+  and a tap on a key opens its menu instead of pressing it.
+
+**One pattern for editing:** everything that can be renamed, moved or deleted
+has one "⋮" key (desktop keys, shortcuts, program rows, mute groups, light
+presets, cameras, templates, Steuerung in Bearbeiten); the menu lists what can
+be done, deleting asks once at the "⋮". A tap outside an open menu only closes
+it. Section heads show their tools with an icon (the main "+" lit blue), rare
+ones sit in the head's "⋮".
 
 The page polls `/state`, `/health` and `/groups` about once per second.
 
@@ -887,7 +897,7 @@ Bibliothek gesucht; ist sie nicht eindeutig oder fehlt sie, gibt es **Wählen**
 als Liedplätze werden direkt nach dem letzten Liedplatz angehängt (als Kopie
 dieser Zeile), übrige Liedplätze bleiben ohne Lied, ein Lied, das nicht in der
 Bibliothek ist, steht als Text im Titel. Die Vorschau zeigt das Programm genau so,
-wie es danach aussieht. **Programm ersetzen** (zweimal tippen) ersetzt das ganze
+wie es danach aussieht. **Programm ersetzen** (mit Rückfrage) ersetzt das ganze
 Programm und setzt den Ablauf zurück.
 
 **Gottesdienstablauf-PDF**: **PDF importieren** liest das ausgefüllte Formular
@@ -930,12 +940,11 @@ weiter über `/companion/buttons/{id}/press` drücken.
   ist), dazu die Raumlicht-Kreise („Raum 2 an · 1 aus“). *+ Preset* speichert
   das aktuelle Licht der gewählten Lichter: jeder gewählte Scheinwerfer mit
   an/aus, Helligkeit und Farbe, jeder gewählte Kreis mit seinem Zustand.
-  *Bearbeiten* zeigt unter jeder Kachel: Reihenfolge (Pfeile), Name (Stift),
-  mit dem aktuellen Licht überschreiben (Kreis; die Auswahl der Lichter lässt
-  sich dabei ändern, Platz und Programmzeilen bleiben; ein Kreis des Presets,
-  der gerade nicht antwortet, behält seinen bisherigen Zustand, die Meldung
-  sagt es) und Löschen (mit
-  Rückfrage). Im Bearbeiten-Modus blendet ein Tipp auf die Kachel nichts ein.
+  Das „⋮“ jeder Kachel hat Umbenennen, Mit aktuellem Licht überschreiben… (die
+  Auswahl der Lichter lässt sich dabei ändern, Platz und Programmzeilen bleiben;
+  ein Kreis des Presets, der gerade nicht antwortet, behält seinen bisherigen
+  Zustand, die Meldung sagt es), Nach vorne / Nach hinten und Löschen (mit
+  Rückfrage).
   Presets heißen in der API weiter `scenes`. Alte Szenen (ein Warm/Kalt für alle,
   0 = aus) werden beim Start umgewandelt: jede Zone mit ihrer Helligkeit bzw. aus
   (den gemerkten Wert behält der Scheinwerfer), die gespeicherte Farbe für jeden
@@ -1025,21 +1034,26 @@ startet die Zeile nicht mehr („unknown light scene“), bis ein anderes gewäh
 
 ## Umbenennen
 
-Ein Stift (✎) neben dem Namen macht ihn zum Textfeld: Enter oder Wegtippen
+„Umbenennen“ im „⋮“-Menü macht den Namen zum Textfeld: Enter oder Wegtippen
 speichert, Escape bricht ab. Die Namen speichert der Dienst, alle Geräte sehen
 sie.
 
-- **Licht**: Scheinwerfer und Raumlicht-Kreise (Stift immer sichtbar), Presets
-  (Stift mit *Bearbeiten*).
-  Bei Zonen und Kreisen stellt ein leerer Name den eingebauten Namen wieder her.
-- **Steuerung** (mit *Bearbeiten*): Kategorien und die Geräte unter *Alles
-  ausschalten* (Beamer, Agent-PCs; leer = Name aus den Desktop-Profilen).
-- **Programm → Vorlagen**: die Vorlagen.
-- **Kameras**: der Stift neben „Presets“ schaltet das Umbenennen für diese
-  Kamera ein (Tasten gestrichelt); dann öffnet ein Tippen auf ein Preset den
-  Namen, statt die Kamera zu bewegen. Gespeichert wird mit der Kamera davor
-  („CAM1 Kanzel“), damit Programmzeilen die Kameras unterscheiden; leer = Name
-  aus dem Katalog. Nochmal den Stift: wieder normal.
+- **Licht**: Presets (ihr „⋮“). Scheinwerfer und Raumlicht-Kreise: das „⋮“ des
+  Blocks (Bühne bzw. Raumlicht) startet einen Umbenennen-Modus (Namen
+  gestrichelt, Leiste mit „Fertig“); dann öffnet ein Tipp den Namen, statt das
+  Licht zu schalten. Bei Zonen und Kreisen stellt ein leerer Name den
+  eingebauten Namen wieder her.
+- **Steuerung** (mit *Bearbeiten*): Tasten, Kategorien und die Geräte unter
+  *Alles ausschalten* (Beamer, Agent-PCs; leer = Name aus den Desktop-Profilen).
+- **Programm → Vorlagen**: die Vorlagen (ihr „⋮“).
+- **Kameras**: „⋮“ der Kamera → Presets umbenennen (Tasten gestrichelt); dann
+  öffnet ein Tippen auf ein Preset den Namen, statt die Kamera zu bewegen.
+  Gespeichert wird mit der Kamera davor („CAM1 Kanzel“), damit Programmzeilen
+  die Kameras unterscheiden; leer = Name aus dem Katalog.
+
+Ein Umbenennen-Modus endet mit „Fertig“, wenn ein anderer beginnt, wenn sein
+Bereich zugeklappt wird, und von selbst nach 30 s ohne Umbenennen; danach
+schalten die Tasten wieder.
 
 Kanäle, Mutegruppen, Steuerungstasten, Kameras und Desktop-Profile ließen sich
 schon vorher umbenennen.

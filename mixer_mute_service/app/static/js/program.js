@@ -3,6 +3,8 @@
 // of index.html; main.js runs last and starts everything.
 
 let PROGRAM_ITEMS = [];
+// The empty list's help text (index.html), shown again after a failed load.
+const PROGRAM_EMPTY_TEXT = $("program-empty").textContent;
 let PROGRAM_GROUPS = {};
 let PROGRAM_BUTTONS = [];
 let PROGRAM_BUTTON_ALIASES = {};
@@ -312,6 +314,7 @@ async function loadProgramObsScenes() {
 // Only the chosen profiles show, in the order they run (1., 2., …), each with
 // ✕ to remove it; "+" opens the list of the others to add one at the end.
 
+const ICON_SHORTCUT_SAVE = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="1.5"/><path d="M9 20h6M12 16v4M10 7.5l4 2.5-4 2.5z"/></svg>`;
 const ICON_SHORTCUT_LOAD = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v11M7.5 9.5L12 14l4.5-4.5"/><path d="M4 15v4a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-4"/></svg>`;
 const ICON_EARLIER = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg>`;
 const ICON_PLUS = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>`;
@@ -619,12 +622,13 @@ function buildProgramRow(item, draft = false, kind = draft ? "draft" : "program"
     hide.dataset.programAction = "hide";
     hide.dataset.programId = item.id;
     actions.appendChild(hide);
-    // Duplicate and delete sit in the "⋮" menu (#program-menu).
+    // Duplicate, shortcuts and delete sit in the "⋮" menu (programMenuItems).
     const menu = document.createElement("button");
     menu.type = "button";
     menu.className = "program-menu-btn";
     menu.dataset.programAction = "menu";
     menu.dataset.programId = item.id;
+    menu.dataset.menuKey = `program:${item.id}`;
     menu.title = "Duplizieren, Shortcut laden oder speichern, löschen";
     menu.setAttribute("aria-haspopup", "menu");
     menu.setAttribute("aria-expanded", "false");
@@ -987,7 +991,7 @@ async function loadProgramItems() {
     $("program-empty").textContent = "Programmdaten konnten nicht geladen werden";
     return;
   }
-  $("program-empty").textContent = "Noch keine Programmpunkte.";
+  $("program-empty").textContent = PROGRAM_EMPTY_TEXT;
   PROGRAM_ITEMS = items.data;
   PROGRAM_GROUPS = groups.data;
   // Camera presets and the light and mixer keys left Steuerung but program
@@ -1306,26 +1310,23 @@ $("program-items").addEventListener("click", event => {
   }
   if (action === "create") return createProgramItem(button.closest("tr"));
   if (action === "cancel") { PROGRAM_DRAFT = false; renderProgramItems(); return; }
-  if (action === "menu") {
-    if (button.getAttribute("aria-expanded") === "true") closeTileMenu();
-    else openTileMenu(button, $("program-menu"));
-    return;
-  }
+  if (action === "menu") return toggleActionMenu(button, () => programMenuItems(button.dataset.programId));
   if (action === "hide") return toggleProgramHidden(button.dataset.programId, button);
   if (action === "load-shortcut") return openShortcutLoad(button.closest("tr"));
   if (action === "play") return playProgramItem(button.dataset.programId, button);
 });
-$("program-menu").addEventListener("click", event => {
-  const entry = event.target.closest("button[data-menu-action]");
-  if (!entry || !OPEN_MENU) return;
-  // The row's "⋮" key anchors the delete question once the menu is gone.
-  const trigger = OPEN_MENU.trigger;
-  closeTileMenu();
-  if (entry.dataset.menuAction === "clone") cloneProgramItem(trigger.dataset.programId, trigger);
-  else if (entry.dataset.menuAction === "shortcut") saveRowAsShortcut(trigger.dataset.programId);
-  else if (entry.dataset.menuAction === "load-shortcut") openShortcutLoad(trigger.closest("tr"));
-  else if (entry.dataset.menuAction === "delete") deleteProgramItem(trigger.dataset.programId, trigger);
-});
+// A row's "⋮" (js/menus.js). run gets the row's "⋮" key: it anchors the
+// delete question once the menu is gone.
+function programMenuItems(itemId) {
+  const row = () => $("program-items").querySelector(`tr[data-program-id="${CSS.escape(itemId)}"]`);
+  return [
+    { label: "Duplizieren", icon: ICON_COPY, run: trigger => cloneProgramItem(itemId, trigger) },
+    { label: "Als Shortcut speichern", icon: ICON_SHORTCUT_SAVE, title: "Was der Programmpunkt tut, als Shortcut unter Desktop speichern", run: () => saveRowAsShortcut(itemId) },
+    { label: "Shortcut laden", icon: ICON_SHORTCUT_LOAD, title: "Die Einstellungen eines Shortcuts übernehmen (Uhrzeit, Titel, Person und Lied bleiben)", run: () => openShortcutLoad(row()) },
+    "-",
+    { label: "Löschen", icon: ICON_TRASH, danger: true, run: trigger => deleteProgramItem(itemId, trigger) },
+  ];
+}
 // Keys inside the fields, the same in program rows and in the shortcut editor.
 onProgramEditors("click", event => {
   const add = event.target.closest(".program-desktop-add");

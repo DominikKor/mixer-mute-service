@@ -14,30 +14,6 @@ const SLOT_TITLE_RE = /lied|lobpreis|song|worship|anbetung/i;
 
 function songById(id) { return SONG_INDEX.get(id) || null; }
 
-// A key that needs a second tap: true when it was already armed.
-function armKey(button, label) {
-  if (button.dataset.armed) {
-    clearTimeout(Number(button.dataset.armed));
-    delete button.dataset.armed;
-    button.classList.remove("armed");
-    button.textContent = button.dataset.label;
-    return true;
-  }
-  button.dataset.label = button.textContent;
-  button.textContent = label;
-  button.classList.add("armed");
-  button.dataset.armed = String(setTimeout(() => {
-    delete button.dataset.armed;
-    button.classList.remove("armed");
-    button.textContent = button.dataset.label;
-  }, 6000));
-  return false;
-}
-
-function disarmKey(button) {
-  if (button.dataset.armed) armKey(button, "");
-}
-
 function templateTab(save) {
   $("tp-tab-apply").setAttribute("aria-selected", String(!save));
   $("tp-tab-save").setAttribute("aria-selected", String(save));
@@ -77,28 +53,26 @@ function renderTemplateList() {
       renderTemplateList();
       updateTemplatePreview();
     });
-    const del = document.createElement("button");
-    del.type = "button";
-    del.className = "tp-delete";
-    del.textContent = "×";
-    del.title = `Vorlage „${template.name}“ löschen`;
-    del.setAttribute("aria-label", del.title);
-    del.addEventListener("click", async () => {
-      if (!armKey(del, "Löschen?")) return;
-      const result = await api("DELETE", `/program/templates/${encodeURIComponent(template.id)}`);
-      if (!result.ok) { toast(result.data.reason || `HTTP ${result.status}`, false); return; }
-      toast(`Vorlage „${template.name}“ gelöscht`, true);
-      if (TEMPLATES.selected === template.id) TEMPLATES.selected = null;
-      await loadTemplates();
-    });
-    const pencil = renamePencil(`Vorlage „${template.name}“`);
-    pencil.addEventListener("click", () => startInlineRename(item, template.name, { maxLength: 60, save: async name => {
-      if (await saveName("PUT", `/program/templates/${encodeURIComponent(template.id)}`, name, "Vorlage")) {
-        if ($("tp-name").value === template.name) $("tp-name").value = name;
+    // Rename and delete: the template's "⋮", as everywhere.
+    const menu = menuButton(`Vorlage „${template.name}“: umbenennen oder löschen`, `template:${template.id}`);
+    menu.addEventListener("click", () => toggleActionMenu(menu, [
+      { label: "Umbenennen", icon: ICON_PENCIL, run: () => startInlineRename(item, template.name, { maxLength: 60, save: async name => {
+        if (await saveName("PUT", `/program/templates/${encodeURIComponent(template.id)}`, name, "Vorlage")) {
+          if ($("tp-name").value === template.name) $("tp-name").value = name;
+          await loadTemplates();
+        }
+      } }) },
+      "-",
+      { label: "Löschen", icon: ICON_TRASH, danger: true, run: async anchor => {
+        if (!(await confirmDelete(anchor, `Vorlage „${template.name}“ löschen?`))) return;
+        const result = await api("DELETE", `/program/templates/${encodeURIComponent(template.id)}`);
+        if (!result.ok) { toast(result.data.reason || `HTTP ${result.status}`, false); return; }
+        toast(`Vorlage „${template.name}“ gelöscht`, true);
+        if (TEMPLATES.selected === template.id) TEMPLATES.selected = null;
         await loadTemplates();
-      }
-    } }));
-    item.append(pick, pencil, del);
+      } },
+    ]));
+    item.append(pick, menu);
     list.appendChild(item);
   }
 }
@@ -178,7 +152,6 @@ async function updateTemplatePreview() {
   const list = $("tp-preview");
   const template = TEMPLATES.list.find(t => t.id === TEMPLATES.selected);
   const apply = $("tp-apply-btn");
-  disarmKey(apply);
   apply.disabled = !template;
   if (!template) {
     list.replaceChildren();
@@ -363,7 +336,9 @@ $("tp-apply-btn").addEventListener("click", async event => {
   const button = event.currentTarget;
   const template = TEMPLATES.list.find(t => t.id === TEMPLATES.selected);
   if (!template) return;
-  if (PROGRAM_ITEMS.length && !armKey(button, `Wirklich ersetzen? (${PROGRAM_ITEMS.length} Punkte)`)) return;
+  // The same question as every other replace or delete: at the key, "Ersetzen" to go on.
+  if (PROGRAM_ITEMS.length && !(await confirmDelete(button,
+    `Das aktuelle Programm (${PROGRAM_ITEMS.length} Punkte) durch die Vorlage „${template.name}“ ersetzen?`, "Ersetzen"))) return;
   button.disabled = true;
   try {
     const result = await api("POST", `/program/templates/${encodeURIComponent(template.id)}/apply`, { songs: templateSongs(), persons: TEMPLATES.persons });
@@ -379,19 +354,20 @@ $("tp-apply-btn").addEventListener("click", async event => {
     button.disabled = false;
   }
 });
-$("tp-save-btn").addEventListener("click", async event => {
-  const button = event.currentTarget;
+$("tp-save-btn").addEventListener("click", () => saveTemplate(false));
+async function saveTemplate(replace) {
+  const button = $("tp-save-btn");
   const name = $("tp-name").value.trim();
   if (!name) { templateError("tp-save-error", "Bitte einen Namen eingeben."); $("tp-name").focus(); return; }
-  const replace = button.classList.contains("armed");
-  if (replace) armKey(button, "");
   const slots = [...$("tp-rows").querySelectorAll("input[data-slot]:checked")].map(input => input.dataset.slot);
   button.disabled = true;
   try {
     const result = await api("POST", "/program/templates", { name, slots, replace });
     if (result.status === 409) {
-      templateError("tp-save-error", `Es gibt schon eine Vorlage „${name}“.`);
-      armKey(button, "Vorlage ersetzen?");
+      button.disabled = false;
+      if (await confirmDelete(button, `Es gibt schon eine Vorlage „${name}“. Durch das aktuelle Programm ersetzen?`, "Ersetzen")) {
+        await saveTemplate(true);
+      }
       return;
     }
     if (!result.ok || result.data.ok === false) {
@@ -406,5 +382,5 @@ $("tp-save-btn").addEventListener("click", async event => {
   } finally {
     button.disabled = false;
   }
-});
-$("tp-name").addEventListener("input", () => { disarmKey($("tp-save-btn")); templateError("tp-save-error", ""); });
+}
+$("tp-name").addEventListener("input", () => templateError("tp-save-error", ""));

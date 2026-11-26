@@ -366,7 +366,7 @@ function updateChannelCard(ch, c) {
   const led = card.querySelector(".led");
   led.className = "led " + (c.safe ? "safe" : "unsafe");
   led.title = (c.safe ? "sicher" : "unsicher: " + (faderBlockReason(c) || "Kanal unsicher"))
-    + ` · Fader ${fmtAge(c.fader_age_seconds)} alt`;
+    + ` · Fader gelesen ${fmtAge(c.fader_age_seconds)}`;
 
   // Toggling needs an observed mute state; without one the key stays locked.
   const key = card.querySelector(".mute-key");
