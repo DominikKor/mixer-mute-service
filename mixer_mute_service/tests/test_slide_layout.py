@@ -105,6 +105,17 @@ class SlideLayoutTests(unittest.TestCase):
         self.assertNotIn(":|", lines)
         self.assertTrue(lines[0].startswith("|: Alles") and lines[-1].endswith("bleibst :|"))
 
+    def test_repeat_marks_bind_across_double_spaces_and_at_paragraph_ends(self):
+        self.assertEqual(agent._word_units("bleibst.  :|"), ["bleibst.  :|"])
+        self.assertEqual(agent._word_units("wir singen dir |:"), ["wir", "singen", "dir |:"])
+        self.assertEqual(agent._word_units("|:  Halleluja  :|"), ["|:  Halleluja  :|"])
+        self.assertEqual(agent._word_units(":| allein"), [":| allein"])
+        for paragraph in ("Du aber bleibst, du aber bleibst.  :|", "Halleluja, wir singen dir |:"):
+            width = measure(paragraph[:-4], MAX_PX) - 1  # the mark would not fit on the line
+            lines = agent._wrap_lines(measure, [paragraph], MAX_PX, width)
+            self.assertFalse(any(line.strip() in ("|:", ":|") for line in lines), lines)
+            self.assertEqual(" ".join(lines), paragraph)
+
     def test_text_taller_than_its_box_is_cut_at_the_bottom(self):
         # Box from 100 to 500, 40 px lines every 50 px: 100, 150, ... 450 end at 490.
         self.assertEqual(agent._visible_lines(20, 100, 40, 500), 8)

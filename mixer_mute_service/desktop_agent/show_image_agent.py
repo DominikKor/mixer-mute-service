@@ -1143,17 +1143,41 @@ OWN_LINES_KEEP = 0.85
 REPEAT_OPEN, REPEAT_CLOSE = "|:", ":|"
 
 
+def _next_word(words: list[str], start: int) -> int:
+    """Index of the first non-empty word from start on (double spaces give
+    empty ones), or len(words)."""
+    while start < len(words) and words[start] == "":
+        start += 1
+    return start
+
+
 def _word_units(paragraph: str) -> list[str]:
-    """The paragraph's words; a repeat mark is joined to its neighbour
-    ("|: Alles", "bleibst. :|") so a line break never separates them."""
+    """The paragraph's words; a repeat mark is joined to its neighbour so a
+    line break never separates them: "|:" to the word after it ("|: Alles"),
+    ":|" to the one before ("bleibst. :|"), also across double spaces; a
+    mark with no word on that side takes the one on the other side
+    ("singen dir |:"). Joined with spaces the units give the paragraph back.
+    Same as slideWordUnits() in app/static/js/songs.js."""
+    words = paragraph.split(" ")
     units: list[str] = []
-    for word in paragraph.split(" "):
-        if word == REPEAT_CLOSE and units and units[-1] not in ("", REPEAT_OPEN):
-            units[-1] += " " + word
-        elif word and units and units[-1] == REPEAT_OPEN:
-            units[-1] += " " + word
-        else:
-            units.append(word)
+    i = 0
+    while i < len(words):
+        word = words[i]
+        if word in (REPEAT_OPEN, REPEAT_CLOSE):
+            forward = _next_word(words, i + 1)
+            back = len(units)
+            while back > 0 and units[back - 1] == "":
+                back -= 1
+            if word == REPEAT_OPEN and forward < len(words) or word == REPEAT_CLOSE and back == 0 and forward < len(words):
+                units.append(" ".join(words[i:forward + 1]))
+                i = forward + 1
+                continue
+            if back > 0:
+                units[back - 1:] = [" ".join(units[back - 1:] + [word])]
+                i += 1
+                continue
+        units.append(word)
+        i += 1
     return units
 
 

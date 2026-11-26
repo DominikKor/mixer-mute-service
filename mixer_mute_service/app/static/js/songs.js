@@ -59,15 +59,34 @@ function slideMeasure(ctx, settings) {
 const OWN_LINES_KEEP = 0.85;
 const REPEAT_OPEN = "|:", REPEAT_CLOSE = ":|";
 
-// The paragraph's words; a repeat mark is joined to its neighbour
-// ("|: Alles", "bleibst. :|") so a line break never separates them.
+// The paragraph's words; a repeat mark is joined to its neighbour so a line
+// break never separates them: "|:" to the word after it, ":|" to the one
+// before, also across double spaces; a mark with no word on that side takes
+// the one on the other side. Same as _word_units() in the display agent.
 function slideWordUnits(paragraph) {
+  const words = paragraph.split(" ");
+  const nextWord = start => { while (start < words.length && words[start] === "") start++; return start; };
   const units = [];
-  for (const word of paragraph.split(" ")) {
-    const last = units[units.length - 1];
-    if (word === REPEAT_CLOSE && units.length && last !== "" && last !== REPEAT_OPEN) units[units.length - 1] += " " + word;
-    else if (word && units.length && last === REPEAT_OPEN) units[units.length - 1] += " " + word;
-    else units.push(word);
+  let i = 0;
+  while (i < words.length) {
+    const word = words[i];
+    if (word === REPEAT_OPEN || word === REPEAT_CLOSE) {
+      const forward = nextWord(i + 1);
+      let back = units.length;
+      while (back > 0 && units[back - 1] === "") back--;
+      if ((word === REPEAT_OPEN && forward < words.length) || (word === REPEAT_CLOSE && back === 0 && forward < words.length)) {
+        units.push(words.slice(i, forward + 1).join(" "));
+        i = forward + 1;
+        continue;
+      }
+      if (back > 0) {
+        units.splice(back - 1, units.length, [...units.slice(back - 1), word].join(" "));
+        i++;
+        continue;
+      }
+    }
+    units.push(word);
+    i++;
   }
   return units;
 }
