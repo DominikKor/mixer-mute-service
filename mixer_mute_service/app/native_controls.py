@@ -3,18 +3,14 @@
 from __future__ import annotations
 
 import asyncio
-import base64
-import hashlib
 import http.client
 import json
 import logging
-import os
 import select
 import socket
 import struct
 import threading
 import time
-import uuid
 from pathlib import Path
 from typing import Callable, Optional
 from urllib.error import URLError
@@ -22,6 +18,7 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from .jsonstore import read_json, write_json_atomic
+from .obs_client import ObsClient, ObsError
 
 log = logging.getLogger("mixer.native_controls")
 
@@ -294,51 +291,73 @@ def _visca_tcp(host: str, port: int, payload: bytes) -> None:
 
 
 def _obs_request(host: str, port: int, request_type: str, request_data: Optional[dict] = None) -> dict:
-    """One request on a fresh OBS WebSocket connection. Every wait is bounded:
-    a stuck OBS must not block a worker thread for good."""
+    """One request on a fresh OBS WebSocket connection. Raises
+    NativeControlError when OBS is unreachable or rejects the request."""
+    (answer,) = _obs_batch(host, port, [(request_type, request_data)])
+    if answer is None:
+        raise NativeControlError(f"OBS rejected {request_type}")
+    return answer
+
+
+def _obs_batch(host: str, port: int, requests: list) -> list:
+    """Several requests, one after the other, over the service's lasting OBS
+    connection (app/obs_client.py): [(request_type, request_data), ...] ->
+    their response data, None for a request OBS rejected (e.g. the preview
+    scene outside studio mode). Raises NativeControlError when OBS cannot be
+    asked."""
     try:
-        from websockets.sync.client import connect
+        return obs_client(host, port).batch(requests)
+    except ObsError as exc:
+        raise NativeControlError(str(exc)) from exc
 
-        password = os.environ.get("OBS_WEBSOCKET_PASSWORD", "")
-        deadline = time.monotonic() + OBS_TIMEOUT_SECONDS
 
-        def recv():
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise TimeoutError("OBS did not answer in time")
-            return json.loads(ws.recv(timeout=remaining))
+_OBS_CLIENTS: dict = {}
+_OBS_CLIENTS_LOCK = threading.Lock()
 
-        with connect(f"ws://{host}:{port}", open_timeout=OBS_TIMEOUT_SECONDS, close_timeout=1) as ws:
-            hello = recv()
-            authentication = hello.get("d", {}).get("authentication")
-            identify = {"op": 1, "d": {"rpcVersion": 1}}
-            if authentication:
-                if not password:
-                    raise NativeControlError("OBS WebSocket password is required")
-                secret = base64.b64encode(hashlib.sha256((password + authentication["salt"]).encode()).digest()).decode()
-                identify["d"]["authentication"] = base64.b64encode(
-                    hashlib.sha256((secret + authentication["challenge"]).encode()).digest()
-                ).decode()
-            ws.send(json.dumps(identify))
-            if recv().get("op") != 2:
-                raise NativeControlError("OBS WebSocket identification failed")
-            request_id = uuid.uuid4().hex
-            ws.send(json.dumps({
-                "op": 6,
-                "d": {"requestType": request_type, "requestId": request_id, "requestData": request_data or {}},
-            }))
-            while True:
-                response = recv()
-                if response.get("op") != 7 or response.get("d", {}).get("requestId") != request_id:
-                    continue
-                status = response["d"].get("requestStatus", {})
-                if not status.get("result"):
-                    raise NativeControlError(f"OBS rejected {request_type}")
-                return response["d"].get("responseData", {})
-    except NativeControlError:
-        raise
-    except Exception as exc:
-        raise NativeControlError("OBS WebSocket unavailable") from exc
+
+def obs_client(host: str, port: int) -> ObsClient:
+    """The one lasting connection to the OBS at host:port."""
+    with _OBS_CLIENTS_LOCK:
+        client = _OBS_CLIENTS.get((host, port))
+        if client is None:
+            client = _OBS_CLIENTS[(host, port)] = ObsClient(host, port, timeout=OBS_TIMEOUT_SECONDS)
+        return client
+
+
+def close_obs_clients() -> None:
+    """Close the OBS connections (service shutdown)."""
+    with _OBS_CLIENTS_LOCK:
+        clients = list(_OBS_CLIENTS.values())
+        _OBS_CLIENTS.clear()
+    for client in clients:
+        client.close()
+
+
+# OBS accepts transition durations from 50 ms to 20 s.
+OBS_TRANSITION_MS = (50, 20000)
+
+
+def obs_status_blocking() -> dict:
+    """What OBS has on air, in the preview (studio mode only) and its
+    transition, over one connection. Raises NativeControlError."""
+    program, studio, preview, transition = _obs_batch(OBS_HOST, OBS_PORT, [
+        ("GetCurrentProgramScene", None), ("GetStudioModeEnabled", None),
+        ("GetCurrentPreviewScene", None), ("GetCurrentSceneTransition", None),
+    ])
+    if program is None or not isinstance(program.get("currentProgramSceneName"), str):
+        raise NativeControlError("OBS did not name its program scene")
+    studio_mode = bool(studio and studio.get("studioModeEnabled"))
+    duration = (transition or {}).get("transitionDuration")
+    return {
+        "program": program["currentProgramSceneName"],
+        "preview": (preview or {}).get("currentPreviewSceneName") if studio_mode else None,
+        "studio_mode": studio_mode,
+        "transition": {
+            "name": (transition or {}).get("transitionName"),
+            "duration_ms": None if (transition or {}).get("transitionFixed") or not isinstance(duration, (int, float))
+            else int(duration),
+        },
+    }
 
 
 class NativeControlService:
@@ -695,18 +714,24 @@ class NativeControlService:
             target = await self._update_dmx(toggle)
             return {"ok": True, "level": target[zone["white"] - 1]}
 
-        if action_type == "artnet-zones-on":
-            zones = action.get("zones")
-            if not isinstance(zones, list) or not zones or any(z not in ARTNET_ZONES for z in zones):
-                raise NativeControlError("unknown Art-Net zone")
+        if action_type == "artnet-zones-set":
+            # Companion's Overall keys: these zones on (a zone that is on keeps
+            # its level, one that is off comes up to the start brightness),
+            # those off; zones not named stay as they are.
+            on, off = action.get("on") or [], action.get("off") or []
+            if not isinstance(on, list) or not isinstance(off, list) or not (on or off) \
+                    or any(z not in ARTNET_ZONES for z in [*on, *off]) or set(on) & set(off):
+                raise NativeControlError("invalid Art-Net zone set")
 
-            def switch_on(frame: list[int]) -> list[int]:
-                for zone_name in zones:
+            def switch(frame: list[int]) -> list[int]:
+                for zone_name in on:
                     white = frame[ARTNET_ZONES[zone_name]["white"] - 1]
                     self._set_zone(frame, zone_name, white or self._levels["start"])
+                for zone_name in off:
+                    self._set_zone(frame, zone_name, 0)
                 return frame
 
-            await self._update_dmx(switch_on)
+            await self._update_dmx(switch)
             return {"ok": True}
 
         if action_type in {"artnet-zone-adjust", "artnet-all-adjust"}:
@@ -791,6 +816,16 @@ class NativeControlService:
             data = await asyncio.to_thread(_obs_request, OBS_HOST, OBS_PORT, "GetSceneItemList", {"sceneName": source_scene})
             items = data.get("sceneItems", [])
             item = next((entry for entry in items if entry.get("sourceName") == source), None)
+            if item is None and action_type == "obs-live":
+                # Making the source visible is a courtesy; going live is the
+                # point. Companion carried on as well when a scene lacked the
+                # source (the "Cam N Live" keys used to fail in every scene
+                # without a "CamN" source, e.g. PC2 or a title).
+                # Visible, though: a renamed source would go unnoticed otherwise.
+                log.warning("OBS: source %s not in scene %s; switched to %s anyway", source, source_scene, scene)
+                await asyncio.to_thread(_obs_request, OBS_HOST, OBS_PORT, "SetCurrentProgramScene", {"sceneName": scene})
+                return {"ok": True, "source_missing": True,
+                        "warning": f"OBS-Quelle „{source}“ fehlt in Szene „{source_scene}“ (umbenannt?)"}
             if item is None:
                 raise NativeControlError(f"OBS source not found: {source}")
             visible = True if action_type == "obs-live" else not bool(item.get("sceneItemEnabled"))
@@ -807,6 +842,23 @@ class NativeControlService:
                 await asyncio.to_thread(_obs_request, OBS_HOST, OBS_PORT, "SetCurrentProgramScene", {"sceneName": scene})
             return {"ok": True}
 
+        if action_type == "obs-overlay-toggle":
+            return await self._overlay_toggle(action)
+
+        if action_type == "obs-transition-adjust":
+            # Companion's "Übergang Langsam/Schneller": the transition OBS uses
+            # for every switch, a step longer or shorter.
+            delta = int(action.get("delta", 0))
+            current = await asyncio.to_thread(_obs_request, OBS_HOST, OBS_PORT, "GetCurrentSceneTransition")
+            duration = current.get("transitionDuration")
+            if current.get("transitionFixed") or not isinstance(duration, (int, float)):
+                raise NativeControlError(f"OBS transition has no duration ({current.get('transitionName')})")
+            low, high = OBS_TRANSITION_MS
+            duration = max(low, min(high, int(duration) + delta))
+            await asyncio.to_thread(_obs_request, OBS_HOST, OBS_PORT, "SetCurrentSceneTransitionDuration",
+                                    {"transitionDuration": duration})
+            return {"ok": True, "duration_ms": duration}
+
         if action_type == "beamer-set":
             hidden = action.get("hidden")
             if not isinstance(hidden, bool):
@@ -817,3 +869,31 @@ class NativeControlService:
             return await self._beamer_command(action.get("command"))
 
         raise NativeControlError("unsupported native action")
+
+    async def _overlay_toggle(self, action: dict) -> dict:
+        """Companion's "Bibel Cam N Beamer": show or hide an overlay source
+        (the Bible text) in a camera scene and put that scene on air. While the
+        overlay shows, the projector is hidden (the stream shows the text);
+        hiding the overlay shows the projector again. The scene is switched
+        even if the projector fails; the failure is reported."""
+        scene, source = action.get("scene"), action.get("source")
+        if not isinstance(scene, str) or not scene or not isinstance(source, str) or not source:
+            raise NativeControlError("invalid OBS overlay action")
+        data = await asyncio.to_thread(_obs_request, OBS_HOST, OBS_PORT, "GetSceneItemList", {"sceneName": scene})
+        item = next((entry for entry in data.get("sceneItems", []) if entry.get("sourceName") == source), None)
+        if item is None:
+            raise NativeControlError(f"OBS source not found: {source}")
+        shown = not bool(item.get("sceneItemEnabled"))
+        await asyncio.to_thread(_obs_request, OBS_HOST, OBS_PORT, "SetSceneItemEnabled", {
+            "sceneName": scene, "sceneItemId": item["sceneItemId"], "sceneItemEnabled": shown,
+        })
+        beamer_error = None
+        if action.get("hide_beamer_while_shown"):
+            try:
+                await self._set_beamer_mode(shown)
+            except NativeControlError as exc:
+                beamer_error = str(exc)
+        await asyncio.to_thread(_obs_request, OBS_HOST, OBS_PORT, "SetCurrentProgramScene", {"sceneName": scene})
+        if beamer_error:
+            raise NativeControlError(f"{source} {'shown' if shown else 'hidden'}, but beamer: {beamer_error}")
+        return {"ok": True, "shown": shown}

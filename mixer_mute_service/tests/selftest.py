@@ -4,6 +4,7 @@ smoke test (no real mixer -> sends must be blocked)."""
 import os
 import sys
 import time
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from app.companion_buttons import CAMERA_BUTTONS, CATALOG_ONLY_BUTTONS, CATALOG_ONLY_IDS, COMPANION_BUTTONS
@@ -298,14 +299,17 @@ with TestClient(app) as client:
         check("native Beamer button dispatched", companion_press.status_code == 200 and companion_press.json()["ok"] is True)
         check("Beamer allowlist action selected",
               native_press.call_args.args[0] == {"type": "beamer-command", "command": "freeze"})
+    camera_run = AsyncMock(return_value={"ok": True, "message": "Cam 2 fährt Preset 1 an"})
     with patch.object(app.state.controller, "group_set", AsyncMock(return_value={"ok": True})) as macro_group, \
-            patch.object(app.state.native_controls, "press", AsyncMock(return_value={"ok": True})) as macro_native:
+            patch.object(app.state.native_controls, "press", AsyncMock(return_value={"ok": True})) as macro_native, \
+            patch.object(app.state, "camera_program", SimpleNamespace(run=camera_run, cancel=lambda: None)):
         macro = client.post("/companion/buttons/native-overall-predigt/press")
         macro_types = [call.args[0]["type"] for call in macro_native.await_args_list]
         check("Overall macro activates its group", macro.status_code == 200
               and macro_group.await_args.args == ("Predigt", False))
-        check("Overall macro switches the stage light on, then cameras and OBS",
-              macro_types == ["artnet-zones-on", "visca-preset", "obs-live", "visca-preset", "obs-live"])
+        check("Overall macro sets the stage pattern and hands the cameras to the camera program",
+              macro_types == ["artnet-zones-set"]
+              and camera_run.await_args.args[:2] == ({"cam1": 1, "cam2": 1}, 4.0))
         alias_macro = client.post("/companion/buttons", json={
             "label": "Predigt", "category_id": "overall",
             "kind": "companion", "target_button_id": "native-overall-predigt",

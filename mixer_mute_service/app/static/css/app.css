@@ -1321,6 +1321,14 @@ button.companion-key.channel::before, button.companion-key.group::before {
   background: #3ee07f; box-shadow: 0 0 6px rgba(46,204,113,.85);
 }
 button.companion-key:disabled { cursor: progress; opacity: 1; filter: brightness(.8); }
+/* Live colours as on the Companion buttons (refreshObsStatus): red = on air in
+   OBS, green = in OBS's preview (studio mode). */
+button.companion-key.obs-program { background: linear-gradient(to bottom, #8e2219, #641610); box-shadow: inset 0 0 0 2px var(--red), 0 0 10px rgba(231,76,60,.45); color: #fff; }
+button.companion-key.obs-program::before { background: #ff5a4a; box-shadow: 0 0 8px rgba(255,90,74,.95); }
+button.companion-key.obs-preview { background: linear-gradient(to bottom, #1d6a3c, #144c2b); box-shadow: inset 0 0 0 2px var(--green); color: #fff; }
+button.companion-key.obs-preview::before { background: #3ee07f; box-shadow: 0 0 8px rgba(46,204,113,.95); }
+/* A value shown on a key (OBS transition time); not part of its label. */
+button.companion-key[data-value]::after { content: attr(data-value); display: block; margin-top: 2px; font-weight: 600; opacity: .8; text-transform: none; }
 .companion-button-tools { display: none; align-items: center; gap: 6px; min-width: 0; }
 .companion-categories.editing .companion-button-tools { display: flex; }
 .companion-category-select {
@@ -1424,7 +1432,8 @@ body.stage-on .companion-categories { display: grid; column-gap: 12px; row-gap: 
 body.stage-on .companion-category { margin-bottom: 12px; }
 /* Strips on stage: slimmer padding, so 12 fit next to each other. */
 body.stage-on .strips .card { padding-left: 5px; padding-right: 5px; }
-body.stage-on .companion-grid { grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 8px; }
+/* --stage-key-min: 104 px, or 88 px when that fits the stage better (stage.js). */
+body.stage-on .companion-grid { grid-template-columns: repeat(auto-fill, minmax(var(--stage-key-min, 104px), 1fr)); gap: 8px; }
 body.stage-on button.companion-key {
   min-height: 50px; padding: 7px 8px 7px 20px; font-size: 11px; letter-spacing: .04em;
   overflow-wrap: break-word; -webkit-hyphens: auto; hyphens: auto;
