@@ -1,7 +1,8 @@
 """Art-Net sender of the stage light (no device is contacted: the socket is
-faked). Checks the ArtDmx packet byte by byte, that one socket with one
-source port is used for every frame, the sequence numbers, and the ArtPoll
-reply that tells whether the node merges a second controller."""
+faked). Checks the ArtDmx packet byte by byte (the same packet Companion's
+generic-artnet module sends to the stage node), that one socket with one
+source port is used for every frame, and the ArtPoll reply that tells
+whether the node merges a second controller."""
 
 import struct
 import unittest
@@ -72,21 +73,20 @@ class ArtDmxTests(unittest.TestCase):
         self.assertEqual(packet[:8], b"Art-Net\x00")
         self.assertEqual(packet[8:10], b"\x00\x50")          # OpDmx 0x5000, low byte first
         self.assertEqual(packet[10:12], b"\x00\x0e")         # protocol 14, high byte first
-        self.assertEqual(packet[12], 1)                      # sequence (0 would mean "none")
+        self.assertEqual(packet[12], 0)                      # sequence 0: none, like Companion
         self.assertEqual(packet[13], 0)                      # physical
         self.assertEqual(packet[14:16], b"\x00\x00")         # SubUni, Net: universe 0
         self.assertEqual(packet[16:18], b"\x02\x00")         # length 512, high byte first
         self.assertEqual(list(packet[18:21]), [200, 255, 50])
         self.assertEqual(len(packet), 18 + 512)
 
-    def test_one_socket_and_sequence_wraps_without_zero(self):
-        for _ in range(257):
+    def test_one_socket_and_no_sequence_numbers(self):
+        for _ in range(300):
             self.sender.send_dmx("192.168.188.48", 0, [0] * 512)
         self.assertEqual(len(self.sockets), 1)               # same source port for every frame
-        sequences = [packet[12] for packet, _ in self.sockets[0].sent]
-        self.assertEqual(sequences[:3], [1, 2, 3])
-        self.assertEqual(sequences[254:257], [255, 1, 2])
-        self.assertNotIn(0, sequences)
+        # Sequence 0 on every frame: a node that checks sequence numbers can
+        # never drop ours (after a wrap or a restart of the service).
+        self.assertEqual({packet[12] for packet, _ in self.sockets[0].sent}, {0})
 
     def test_invalid_frame_is_refused(self):
         with self.assertRaises(nc.NativeControlError):

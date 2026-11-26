@@ -157,6 +157,8 @@ async def lifespan(app: FastAPI):
         app, "native controls", lambda: NativeControlService(data_dir / "native_control_state.json"))
     camera_program = None
     if app.state.native_controls is not None:
+        # The stage light needs its frame resent every second (Art-Net).
+        app.state.native_controls.start_keepalive()
         camera_program = _optional(
             app, "program camera presets", lambda: device_camera_program(app.state.native_controls))
     app.state.camera_program = camera_program
@@ -204,6 +206,8 @@ async def lifespan(app: FastAPI):
     finally:
         if camera_program is not None:
             camera_program.cancel()
+        if app.state.native_controls is not None:
+            await app.state.native_controls.stop_keepalive()
         try:
             await client.stop()
         finally:

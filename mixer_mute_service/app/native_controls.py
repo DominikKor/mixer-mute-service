@@ -116,26 +116,37 @@ def _shelly_rpc(host: str, method: str, params: dict) -> dict:
 
 
 ARTNET_PORT = 0x1936  # 6454: Art-Net's port, as destination and (by the spec) as source
+# The stage frame is sent again this often while nothing changes, like
+# Companion's generic-artnet module (timer_slow 1000 ms). A node (or the
+# DMX fixtures behind it) that gets no data for a few seconds drops to
+# black, and a merging node forgets a source that went quiet: a frame sent
+# only while fading lights the stage for a moment at best.
+ARTNET_KEEPALIVE_SECONDS = 1.0
+ARTNET_FRAME_SECONDS = 0.04  # one fade step, like Companion's timer_fast 40 ms
 _ARTNET_ID = b"Art-Net\x00"
 _ARTNET_PROTOCOL = struct.pack(">H", 14)
 
 
 class _ArtNetSender:
-    """One UDP socket for every Art-Net packet, with ArtDmx sequence numbers.
+    """One UDP socket for every Art-Net packet.
 
     A new socket per packet gave every frame a new source port. An Art-Net
     node tells its sources apart by address and port and merges them: a
     stream of "new sources" while a slider moves makes it jump between old
-    and new values (the light flickers), and without sequence numbers it
-    cannot drop a frame that arrives late. So: one socket, bound to port
-    6454 as the spec asks (another port if that is taken, e.g. by a lighting
-    program on the same PC), and sequence 1..255.
+    and new values (the light flickers). So: one socket, bound to port 6454
+    as the spec asks (another port if that is taken, e.g. by a lighting
+    program on the same PC).
+
+    The ArtDmx packet is the one Companion's generic-artnet module sends to
+    this node (and the node follows): 512 channels, sequence 0 ("no
+    sequence": a node that checks sequence numbers would drop frames after
+    a counter wrap or a restart of the service), physical 0. Frames go out
+    in order over one socket on the LAN, so nothing needs reordering.
     """
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._socket: Optional[socket.socket] = None
-        self._sequence = 0
 
     def _sock(self) -> socket.socket:
         if self._socket is None:
@@ -152,13 +163,11 @@ class _ArtNetSender:
         if len(values) != 512 or any(not 0 <= value <= 255 for value in values):
             raise NativeControlError("invalid Art-Net DMX frame")
         with self._lock:
-            # 0 means "no sequence"; count 1..255 and wrap.
-            self._sequence = self._sequence % 255 + 1
             packet = (
                 _ARTNET_ID
                 + struct.pack("<H", 0x5000)        # OpDmx, low byte first
                 + _ARTNET_PROTOCOL                 # protocol version 14, high byte first
-                + bytes((self._sequence, 0))       # sequence, physical port
+                + bytes((0, 0))                    # sequence 0 (none), physical port 0
                 + struct.pack("<H", universe)      # SubUni, Net (15-bit Port-Address)
                 + struct.pack(">H", 512)           # data length, high byte first
                 + bytes(values)
@@ -300,6 +309,16 @@ class NativeControlService:
         self._dmx = [0] * 512
         self._levels = {"warm": 255, "cold": 50, "start": 255, "steps": 50, "fade_ms": 1000}
         self._beamer_hidden: Optional[bool] = None
+        # Stage sending: one frame at a time (fade steps and the keepalive),
+        # when the last one went out, and whether this service drives the
+        # stage at all. Until the first stage command it stays silent, so an
+        # install next to a still-used Companion does not fight it; from then
+        # on (also after a restart) it keeps sending its frame.
+        self._send_lock = asyncio.Lock()
+        self._sent_at = 0.0
+        self._stage_active = False
+        self._keepalive_task: Optional[asyncio.Task] = None
+        self._keepalive_error: Optional[str] = None
         self._load_state()
 
     def _load_state(self) -> None:
@@ -312,6 +331,7 @@ class NativeControlService:
             isinstance(v, int) and 0 <= v <= 255 for v in values
         ):
             self._dmx = values
+        self._stage_active = data.get("stage_active") is True
         levels = data.get("levels")
         if isinstance(levels, dict):
             for key, (low, high) in _LEVEL_BOUNDS.items():
@@ -324,6 +344,7 @@ class NativeControlService:
         try:
             write_json_atomic(self._state_path, {
                 "dmx": self._dmx,
+                "stage_active": self._stage_active,
                 "levels": self._levels,
                 "beamer_hidden": self._beamer_hidden,
             })
@@ -400,13 +421,74 @@ class NativeControlService:
     async def _fade_to(self, target: list[int], fade: bool = True) -> None:
         """Send the fade frames (one frame without fade). The caller holds
         ``self._lock``."""
+        self._stage_active = True  # from now on the keepalive holds the stage
         start = self._dmx.copy()
         frames = max(1, min(1500, self._levels["fade_ms"] // 40)) if fade else 1
         for index in range(1, frames + 1):
             frame = [round(a + (b - a) * index / frames) for a, b in zip(start, target)]
-            await asyncio.to_thread(_send_artnet_frame, ARTNET_HOST, ARTNET_UNIVERSE, frame)
+            await self._send_frame(frame)
             if index < frames:
-                await asyncio.sleep(0.04)
+                await asyncio.sleep(ARTNET_FRAME_SECONDS)
+
+    async def _send_frame(self, frame: list[int]) -> None:
+        """One ArtDmx frame to the stage; fade steps and the keepalive take
+        turns, so frames leave in the order they were made."""
+        async with self._send_lock:
+            try:
+                await asyncio.to_thread(_send_artnet_frame, ARTNET_HOST, ARTNET_UNIVERSE, frame)
+            finally:
+                # Also after a failure: the keepalive retries a second later,
+                # not in a tight loop.
+                self._sent_at = time.monotonic()
+
+    # -- stage keepalive -----------------------------------------------------
+
+    def start_keepalive(self) -> None:
+        """Start resending the stage frame (called once the event loop runs)."""
+        if self._keepalive_task is None or self._keepalive_task.done():
+            self._keepalive_task = asyncio.get_running_loop().create_task(self._keepalive())
+
+    async def stop_keepalive(self) -> None:
+        task, self._keepalive_task = self._keepalive_task, None
+        if task is not None:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+    def keepalive_status(self) -> dict:
+        return {
+            "active": self._stage_active,
+            "running": self._keepalive_task is not None and not self._keepalive_task.done(),
+            "error": self._keepalive_error,
+        }
+
+    async def _keepalive(self) -> None:
+        while True:
+            wait = ARTNET_KEEPALIVE_SECONDS - (time.monotonic() - self._sent_at)
+            await asyncio.sleep(max(ARTNET_FRAME_SECONDS, wait))
+            await self.keepalive_tick()
+
+    async def keepalive_tick(self) -> bool:
+        """Send the stage frame again when nothing went out for a second.
+        Not while a fade or another change runs (it sends its own frames,
+        and the frame it ends on becomes the one resent here)."""
+        if not self._stage_active or self._lock.locked():
+            return False
+        if time.monotonic() - self._sent_at < ARTNET_KEEPALIVE_SECONDS:
+            return False
+        try:
+            await self._send_frame(self._dmx.copy())
+        except (OSError, NativeControlError) as exc:
+            if self._keepalive_error is None:
+                log.warning("Art-Net: stage frame not sent (%s); retrying every second", exc)
+            self._keepalive_error = str(exc)
+            return False
+        if self._keepalive_error is not None:
+            log.info("Art-Net: stage frames go out again")
+            self._keepalive_error = None
+        return True
 
     def _set_zone(self, frame: list[int], zone_name: str, white: int) -> None:
         zone = ARTNET_ZONES.get(zone_name)

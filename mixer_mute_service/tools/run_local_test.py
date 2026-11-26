@@ -80,6 +80,8 @@ class FakeDevices:
         self.shelly = {host: target == "light-tech" for target, host in native.SHELLY_HOSTS.items()}
         self.scene = "Cam 1"
         self.agent_started = {}  # "ip:port" of a fake display agent -> its start time
+        self.artnet_frames = 0
+        self.artnet_last = [0] * 16
         self.scenes = ["Willkommen (neu)", "Cam 1", "Cam 2", "PC2", "BeamerVonVorne", "Ende (neu)", "Preview Scene"]
 
     def shelly_rpc(self, host, method, params):
@@ -97,10 +99,16 @@ class FakeDevices:
         return {}
 
     def artnet(self, host, universe, values):
-        pass  # sent every 40 ms during a fade: not logged
+        # Sent every 40 ms during a fade and every second as keepalive: not
+        # logged, only counted (the fake node's report shows the count).
+        self.artnet_frames += 1
+        self.artnet_last = list(values[:16])
 
     def artnet_status(self, host=None):
-        return {"ok": True, "short_name": "Fake node", "long_name": "Local test", "merging": False}
+        # Same shape as the real ArtPollReply parser (_parse_poll_reply).
+        return {"short_name": "Fake node", "long_name": "Local test",
+                "report": f"{self.artnet_frames} frames, ch1-16 {self.artnet_last}",
+                "outputs": [{"sending_dmx": self.artnet_frames > 0, "merging": False, "merge_mode": "HTP"}]}
 
     def beamer_form(self, field, value):
         log.info("FAKE beamer %s=%s", field, value)

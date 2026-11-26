@@ -12,7 +12,9 @@ POST   /lights/scenes {name, replace, lights: {zones, color, circuits}}
 DELETE /lights/scenes/{id}
 POST   /lights/scenes/{id}/apply
 GET    /lights/artnet                    ask the stage node (ArtPoll): name and
-                                     whether it merges a second controller
+                                     whether it merges a second controller;
+                                     "sending": whether this service holds
+                                     the stage (frame resent every second)
 """
 
 from __future__ import annotations
@@ -88,18 +90,21 @@ async def lights_artnet(request: Request):
     """Ask the stage's Art-Net node who it is and whether it merges: if
     another controller (an old Companion, a lighting desk) also sends to it,
     the stage jumps between both sources' values."""
-    if _native(request) is None:
+    native = _native(request)
+    if native is None:
         return _unavailable()
+    # Whether this service holds the stage (resends its frame every second).
+    sending = native.keepalive_status()
     try:
         node = await asyncio.to_thread(artnet_status)
     except (NativeControlError, OSError) as exc:
-        return fail(f"Art-Net node not asked: {exc}", 502, host=ARTNET_HOST)
+        return fail(f"Art-Net node not asked: {exc}", 502, host=ARTNET_HOST, sending=sending)
     if node is None:
-        return fail("Art-Net node did not answer the ArtPoll", 504, host=ARTNET_HOST)
+        return fail("Art-Net node did not answer the ArtPoll", 504, host=ARTNET_HOST, sending=sending)
     merging = any(output["merging"] for output in node["outputs"])
     if merging:
         log.warning("Art-Net node %s merges two sources: another controller sends to the stage", ARTNET_HOST)
-    return {"ok": True, "host": ARTNET_HOST, "node": node, "merging": merging}
+    return {"ok": True, "host": ARTNET_HOST, "node": node, "merging": merging, "sending": sending}
 
 
 @router.put("/lights/settings")
