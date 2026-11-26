@@ -230,6 +230,40 @@ class SlowObsTests(unittest.TestCase):
         self.assertTrue(all(took < 1.0 for _, _, took in results), results)
         self.assertEqual(obs.connections, 1)
 
+    def test_no_answer_and_slow_close_still_returns_in_time(self):
+        """OBS never answers and takes its time to close the connection: the
+        caller gets its error after the timeout, not after the close."""
+        obs = self._obs(login_delay=0)
+        closing = []
+
+        class SlowClose:
+            def __init__(self, ws):
+                self.ws = ws
+
+            def send(self, *args, **kwargs):
+                return self.ws.send(*args, **kwargs)
+
+            def recv(self, *args, **kwargs):
+                return self.ws.recv(*args, **kwargs)
+
+            def close(self):
+                closing.append(time.monotonic())
+                time.sleep(1.0)               # the peer answers the close late
+                self.ws.close()
+
+        def connect(url, **kwargs):
+            from websockets.sync.client import connect as real
+            return SlowClose(real(url, **kwargs))
+
+        client = ObsClient("127.0.0.1", obs.port, timeout=0.5, connect=connect)
+        self.addCleanup(client.close)
+        started = time.monotonic()
+        with self.assertRaisesRegex(ObsError, "in time"):
+            client.batch([("Silent", None)])
+        self.assertLess(time.monotonic() - started, 0.9)
+        time.sleep(0.1)
+        self.assertEqual(len(closing), 1, "the stuck connection is still closed, in the background")
+
     def test_close_returns_at_once_while_connecting(self):
         obs = self._obs(login_delay=0.6)
         client = ObsClient("127.0.0.1", obs.port, timeout=3.0)

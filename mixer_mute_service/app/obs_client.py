@@ -139,7 +139,7 @@ class ObsClient:
             attempt.error = "OBS connection closed"
             attempt.done.set()
         if ws is not None:
-            threading.Thread(target=self._close_quietly, args=(ws,), daemon=True).start()
+            self._close_in_background(ws)
 
     # -- connection -----------------------------------------------------------
 
@@ -273,7 +273,9 @@ class ObsClient:
             self._fail_pending(f"{UNAVAILABLE} ({reason})")
         if not self._closed:
             log.warning("OBS: %s", reason)
-        self._close_quietly(ws)
+        # Not in the caller's thread: closing waits up to close_timeout for
+        # OBS to answer the close, and the caller must get its error now.
+        self._close_in_background(ws)
 
     def _fail_pending(self, error: str) -> None:
         """The caller holds self._lock."""
@@ -286,6 +288,10 @@ class ObsClient:
         with self._lock:
             for request_id, _pending in sent:
                 self._pending.pop(request_id, None)
+
+    @classmethod
+    def _close_in_background(cls, ws) -> None:
+        threading.Thread(target=cls._close_quietly, args=(ws,), name="obs-close", daemon=True).start()
 
     @staticmethod
     def _close_quietly(ws) -> None:
