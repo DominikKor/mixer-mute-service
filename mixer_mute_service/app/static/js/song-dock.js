@@ -44,8 +44,9 @@ function buildSongDock() {
     + `<button type="button" class="sd-prev" data-song-dock="prev" title="Vorherige Folie (Bild auf, ←)" aria-label="Vorherige Folie">${ICON_DOCK_PREV}</button>`
     + `<div class="sd-mid"><div class="sd-chips" role="group" aria-label="Folien"></div><span class="sd-line"></span></div>`
     + `<span class="sd-status"><button type="button" class="sd-warn" data-song-dock="warn" hidden>⚠</button><span class="sd-pos" aria-live="polite"></span></span>`
-    + `<button type="button" class="sd-blank" data-song-dock="blank" title="Bildschirm schwarz / wieder an (Taste B oder .)" aria-pressed="false">Schwarz</button>`
+    // "Aus" (closes the lyrics everywhere) away from "Weiter": "Schwarz" sits between them.
     + `<button type="button" class="sd-hide danger" data-song-dock="hide" title="Liedfenster schließen (auf allen Bildschirmen)">Aus</button>`
+    + `<button type="button" class="sd-blank" data-song-dock="blank" title="Bildschirm schwarz / wieder an (Taste B oder .)" aria-pressed="false">Schwarz</button>`
     + `<button type="button" class="sd-next program-play" data-song-dock="next" title="Nächste Folie (Bild ab, →, Leertaste); nach der letzten: schwarz"><span class="sd-next-text">Weiter</span>${ICON_DOCK_NEXT}</button>`
     + `</div>`
     + `<div class="song-dock-off"><span class="sd-note">${ICON_DOCK_NOTE}</span><span class="sd-off-text"></span>`
@@ -66,25 +67,25 @@ function buildSongDock() {
 }
 
 // The page scrolls in normal mode: a drawer opening or closing above what is
-// on screen would push the view. Browsers with scroll anchoring keep it in
-// place themselves; elsewhere (Safari) the drawer then changes at once and
-// the scroll position makes up for it.
-function songDockAnchored() {
-  return !!(window.CSS && CSS.supports && CSS.supports("overflow-anchor", "auto"))
-    && getComputedStyle(document.scrollingElement || document.documentElement).overflowAnchor !== "none";
-}
-
-function songDockAboveView(row) {
-  if (STAGE.on || !row.isConnected || songDockAnchored()) return false;
+// on screen (also partly, e.g. its top under the header) would push the
+// view. Then it changes at once and the page scrolls by exactly the height
+// it gained or lost, in the same frame, with the browser's own scroll
+// anchoring off for that moment (else both would move it). The same in every
+// browser, with or without scroll anchoring (Safari).
+function songDockAboveView(y) {
+  if (STAGE.on) return false;
   const header = document.querySelector("header");
-  return row.getBoundingClientRect().bottom <= (header ? header.getBoundingClientRect().bottom : 0);
+  return y < (header ? header.getBoundingClientRect().bottom : 0);
 }
 
-// Change the row at once and scroll by what it grew or shrank.
 function songDockKeepView(row, change) {
+  const root = document.scrollingElement || document.documentElement;
+  root.style.overflowAnchor = "none";
   const before = row.getBoundingClientRect().height;
   change();
-  window.scrollBy(0, row.getBoundingClientRect().height - before);
+  const grown = row.getBoundingClientRect().height - before;
+  if (grown) window.scrollBy(0, grown);
+  requestAnimationFrame(() => requestAnimationFrame(() => { root.style.overflowAnchor = ""; }));
 }
 
 // Slide out: the drawer is laid out closed first, so "open" animates.
@@ -92,7 +93,7 @@ function openSongDock(row) {
   const cell = buildSongDock();
   SONG_DOCK.cell = cell;
   SONG_DOCK.chipsSig = "";
-  if (songDockAboveView(row)) {
+  if (songDockAboveView(row.getBoundingClientRect().bottom)) {
     cell.classList.add("instant");
     songDockKeepView(row, () => { row.appendChild(cell); row.classList.add("song-docked"); cell.classList.add("open"); });
     requestAnimationFrame(() => cell.classList.remove("instant"));
@@ -116,7 +117,10 @@ function closeSongDock() {
     cell.remove();
     if (row && !row.querySelector("td.song-dock")) row.classList.remove("song-docked");
   };
-  if (row && songDockAboveView(row)) { songDockKeepView(row, remove); return; }
+  if (row && row.isConnected && songDockAboveView(cell.getBoundingClientRect().top)) {
+    songDockKeepView(row, remove);
+    return;
+  }
   cell.classList.remove("open");
   cell.querySelectorAll("button").forEach(button => { button.disabled = true; });
   if (stageReducedMotion() || !cell.isConnected) remove();

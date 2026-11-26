@@ -656,6 +656,25 @@ des Ziel-PCs verwendet wird. Bei Netzwerkdateien muss der Pfad fuer dieses
 Benutzerkonto erreichbar sein; ein UNC-Pfad ist robuster als ein verbundenes
 Laufwerk.
 
+Damit die Musik sofort startet, spielt der Agent eine lokale Kopie der Quelle
+(`%LOCALAPPDATA%\MixerMuteDisplayAgent\audio-cache`, hoechstens 4 GB, je Datei
+hoechstens 1 GB, nur Audiodateien: mp3, wav, flac, m4a, aac, ogg, opus, wma;
+es bleiben immer mindestens 2 GB frei). Auf einem Google-Drive-Laufwerk
+(`I:\GoogleDrive`) laedt Drive eine Datei erst beim Oeffnen, mpv kann darauf
+warten. Bei YouTube-Links laedt yt-dlp den Ton einmal herunter. Die Kopien
+entstehen im Hintergrund: fuer die Audioquellen, die der Dienst bei jeder
+Abfrage von `/update/agents` mitschickt (jede offene Seite alle 30 s und bei
+jedem Update; der Agent schaut sich jede Quelle hoechstens alle 5 Minuten an
+und versucht eine fehlgeschlagene erst nach einer wachsenden Pause wieder,
+5 Minuten bis 1 Stunde), beim Start des Agenten fuer die zuletzt geschickte
+Liste, und nach einem Play ohne Kopie (das spielt dann noch direkt von der
+Quelle). Eine geaenderte Datei (Groesse oder Aenderungszeit) spielt nie die
+alte Kopie. Wo mpvs letzter Start
+Zeit gebraucht hat, liefert `GET /update/agents` pro Agent unter `audio_start`
+(aus mpvs eigenem Log: Sekunden bis Datei offen, Audioausgabe bereit, Ton
+laeuft, und die laengsten Pausen bis zum ersten Ton mit den Logzeilen davor
+und danach).
+
 Beispiel fuer eine Systemvariable auf dem Ziel-PC:
 
 ```powershell
@@ -847,7 +866,8 @@ bis er wieder antwortet (dann zeigt er gleich die aktuelle). Die Liedanzeige
 nennt ihn in Gelb mit Grund, die Leiste am Programmpunkt zeigt ⚠ (antippen nennt
 ihn), und beim ersten Mal kommt eine Meldung (auch beim Start eines
 Programmpunkts). Erst wenn kein Bildschirm erreichbar ist, bleibt die Folie
-stehen (502). Ältere Einstellungen (`target_ip` + `monitor`) gelten als ein
+stehen (502); die Tasten, die keinen Bildschirm erreicht haben, zählen dann
+nicht, und zurückkommende Bildschirme zeigen dieselbe Folie wie die Seite. Ältere Einstellungen (`target_ip` + `monitor`) gelten als ein
 Bildschirm; `target_ip` ist seither der PC mit der Bibliothek, `monitor` der
 des ersten Bildschirms; eine ältere Seite ändert damit nur den ersten
 Bildschirm. Ein ungültiger oder doppelter Bildschirm in `song_display.json`
