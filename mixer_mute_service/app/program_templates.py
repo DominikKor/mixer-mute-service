@@ -52,7 +52,7 @@ _ROW_FIELDS = (
     "time", "title", "person", "group", "playback", "translation", "lyrics",
     "playback_description", "translation_description", "lyrics_description", "song", "light",
     "cam1_preset", "cam2_preset", "camera_wait_seconds", "desktop", "cam1_scene", "cam2_scene", "beamer",
-    "shortcuts",
+    "shortcut", "shortcuts",  # "shortcuts": templates saved before (the first one is taken)
 )
 
 

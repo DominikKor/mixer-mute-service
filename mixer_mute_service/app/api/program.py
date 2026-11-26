@@ -18,16 +18,17 @@ from pydantic import ValidationError
 from ..camera_program import CAMERAS, DEFAULT_WAIT_SECONDS, obs_scene_names
 from ..actions import (
     PROGRAM_ACTION_FIELDS,
-    assigned_shortcuts,
     program_conflict_error,
     program_reference_error,
     press_native,
+    row_shortcut,
     run_action,
     run_profile,
+    with_shortcut,
 )
 from ..models import ProgramItemRequest, ShortcutRequest
 from ..native_controls import NativeControlError
-from ..program_items import ProgramItemError
+from ..program_items import ProgramItemError, validated_shortcut_id
 from ..responses import fail, respond, unwrap
 from ..lights import apply_scene
 from ..songs import show_slide
@@ -41,7 +42,7 @@ _PROGRAM_FILE_FIELDS = (
     "time", "title", "person", "group", "playback", "translation", "lyrics",
     "playback_description", "translation_description", "lyrics_description", "song", "light",
     "cam1_preset", "cam2_preset", "camera_wait_seconds", "desktop", "cam1_scene", "cam2_scene", "beamer",
-    "shortcuts",
+    "shortcut",  # files from before: "shortcuts", a list; the first becomes the shortcut
 )
 
 # One program start at a time: two quick "Weiter" presses must not both start
@@ -51,6 +52,11 @@ _program_lock = asyncio.Lock()
 
 async def _validate(body, request: Request):
     item = body.model_dump()
+    if "time" in item:  # a program row: its shortcut, also from the old list
+        try:
+            item["shortcut"] = validated_shortcut_id(item)
+        except ProgramItemError as exc:
+            return fail(str(exc), 400)
     reason = await program_reference_error(request, item)
     if reason is not None:
         return fail(reason, 404 if reason == "unknown group" else 400)
@@ -163,13 +169,17 @@ async def hide_program_item(item_id: str, request: Request, body: dict = Body(..
 
 @router.post("/program/items/{item_id}/shortcut")
 async def shortcut_from_program_item(item_id: str, request: Request):
-    """Save what the row does as a new shortcut (a copy: editing one leaves the other)."""
+    """Save what the row does as a new shortcut (a copy: editing one leaves
+    the other). A row with a shortcut does what that shortcut does."""
     store = _shortcut_store(request)
     if store is None:
         return fail("shortcuts unavailable", 503)
     item = await request.app.state.program_items.get(item_id)
     if item is None:
         return fail("unknown program item", 404)
+    shortcut = await row_shortcut(request, item)
+    if shortcut is not None:
+        item = with_shortcut(item, shortcut)
     try:
         shortcut = await store.create(item)
     except ProgramItemError as exc:
@@ -244,6 +254,7 @@ async def delete_shortcut(shortcut_id: str, request: Request):
         return fail("shortcuts unavailable", 503)
     if not await store.delete(shortcut_id):
         return fail("unknown shortcut", 404)
+    # Rows that used it run their own fields again; the answer says how many.
     rows = await request.app.state.program_items.drop_shortcut(shortcut_id)
     return {"ok": True, "shortcut_id": shortcut_id, "deleted": True, "program_items": rows}
 
@@ -329,32 +340,21 @@ async def _play(item_id: str, request: Request):
     broken = await program_reference_error(request, item)
     if broken:
         return fail(broken, 409, program_item_id=item_id)
-    shortcuts = await assigned_shortcuts(request, item)
+    summary = {"program_item_id": item_id, "title": item["title"]}
+    # A row with a shortcut runs the shortcut's fields instead of its own.
+    if item.get("shortcut"):
+        shortcut = await row_shortcut(request, item)
+        if shortcut is None:  # deleted since the check above
+            return fail("unknown shortcut", 409, program_item_id=item_id)
+        item = with_shortcut(item, shortcut)
+        summary["shortcut"] = {"id": shortcut["id"], "title": shortcut["title"]}
 
     async def started() -> dict:
         # Marked once its group is set: a refused group leaves "Weiter" on this row.
         played = await program_store.mark_played(item_id)
         return {"delay_seconds": played["last_delay_seconds"]}
 
-    result = await _run_steps(request, item, {"program_item_id": item_id, "title": item["title"]}, started)
-    if not isinstance(result, dict):
-        return result
-    # Then the row's shortcuts, in order; the first failure stops.
-    ran = []
-    for shortcut in shortcuts:
-        answer, status_code = unwrap(await _run_steps(
-            request, shortcut, {"shortcut_id": shortcut["id"], "title": shortcut["title"]}))
-        ran.append(answer)
-        if status_code != 200 or answer.get("ok") is False:
-            return fail(f"shortcut {shortcut['title']} failed: {answer.get('reason')}",
-                        status_code if status_code != 200 else 502, program_item_id=item_id,
-                        title=item["title"], delay_seconds=result.get("delay_seconds"), shortcuts=ran)
-    result["shortcuts"] = ran
-    # The page reports the camera part that ran last.
-    camera = next((answer["camera"] for answer in reversed(ran) if answer.get("camera")), None)
-    if camera is not None:
-        result["camera"] = camera
-    return result
+    return await _run_steps(request, item, summary, started)
 
 
 async def _run_steps(request: Request, item: dict, summary: dict, started=None):

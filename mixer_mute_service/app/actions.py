@@ -27,6 +27,7 @@ from .display_agent import AgentError
 from .file_actions import is_file_action, not_found_reason, run_file_action, runs_from_network_share
 from .mission_spotlight import profile_path
 from .native_controls import NativeControlError
+from .program_items import ACTION_KEYS
 from .responses import Result, controller_result
 
 log = logging.getLogger("mixer.actions")
@@ -294,9 +295,35 @@ async def run_action(request: Request, value: str) -> Result:
     return await press_button(request, value)
 
 
+async def row_shortcut(request: Request, item: dict) -> Optional[dict]:
+    """The shortcut a program row uses, or None (none set, or it is gone)."""
+    shortcut_id = item.get("shortcut")
+    store = getattr(request.app.state, "shortcuts", None)
+    return None if not shortcut_id or store is None else await store.get(shortcut_id)
+
+
+def with_shortcut(item: dict, shortcut: dict) -> dict:
+    """What a row with a shortcut runs: the shortcut's action fields instead
+    of its own (linked: an edited shortcut changes every row using it); the
+    row keeps its time, title and person."""
+    return {**item, **{key: shortcut.get(key) for key in ACTION_KEYS}}
+
+
 async def program_reference_error(request: Request, item: dict) -> Optional[str]:
-    """Reason why a program row cannot run, or None. Checked on save and
-    again before play, since a key or group may have been deleted since."""
+    """Reason why a program row (or a shortcut) cannot run, or None. Checked
+    on save and again before play, since a key or group may have been
+    deleted since. A row with a shortcut is checked by what it runs: the
+    shortcut's fields (its own stay saved, unused)."""
+    if item.get("shortcut"):
+        shortcut = await row_shortcut(request, item)
+        if shortcut is None:
+            return "unknown shortcut"
+        reason = await _reference_error(request, shortcut)
+        return f"shortcut {shortcut['title']}: {reason}" if reason else None
+    return await _reference_error(request, item)
+
+
+async def _reference_error(request: Request, item: dict) -> Optional[str]:
     state = request.app.state
     if item.get("group") and await state.groups.get(item["group"]) is None:
         return "unknown group"
@@ -320,30 +347,19 @@ async def program_reference_error(request: Request, item: dict) -> Optional[str]
     scenes = getattr(state, "light_scenes", None)
     if item.get("light") and (scenes is None or await scenes.get(item["light"]) is None):
         return "unknown light scene"
-    # Shortcuts a row runs (shortcuts themselves run no shortcuts).
-    for shortcut in await assigned_shortcuts(request, item):
-        if shortcut is None:
-            return "unknown shortcut"
-        reason = await program_reference_error(request, shortcut)
-        if reason:
-            return f"shortcut {shortcut['title']}: {reason}"
     return None
-
-
-async def assigned_shortcuts(request: Request, item: dict) -> list:
-    """The shortcuts a program row runs, in order; None for one that is gone."""
-    ids = item.get("shortcuts") or []
-    store = getattr(request.app.state, "shortcuts", None)
-    return [None if store is None else await store.get(sid) for sid in ids]
 
 
 async def program_conflict_error(request: Request, item: dict) -> Optional[str]:
     """Rows that would fight over the mutes: a row with a mute group sets
-    the mutes itself, so it may not also run a key that switches mutes."""
-    for shortcut in await assigned_shortcuts(request, item):
-        reason = shortcut and await program_conflict_error(request, shortcut)
-        if reason:
-            return f"shortcut {shortcut['title']}: {reason}"
+    the mutes itself, so it may not also run a key that switches mutes.
+    A row with a shortcut: checked on the shortcut's fields."""
+    if item.get("shortcut"):
+        shortcut = await row_shortcut(request, item)
+        if shortcut is None:
+            return None  # program_reference_error reports it
+        reason = await program_conflict_error(request, shortcut)
+        return f"shortcut {shortcut['title']}: {reason}" if reason else None
     if not item.get("group"):
         return None
     for field in PROGRAM_ACTION_FIELDS:

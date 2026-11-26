@@ -762,17 +762,31 @@ button.program-hide[aria-pressed="true"] { color: #ffbf4d; border-color: #4a3410
 .program-table td.pc-time { grid-area: 2 / 1; }
 .program-table td.pc-title { grid-area: 2 / 2; }
 .program-table td.pc-person { grid-area: 2 / 3; }
-.program-table td.pc-group { grid-area: 2 / 4; }
-.program-table td.pc-light { grid-area: 2 / 5 / 3 / 7; }
-.program-table td.pc-playback { grid-area: 3 / 1 / 4 / 3; }
-.program-table td.pc-translation { grid-area: 3 / 3 / 4 / 4; }
-.program-table td.pc-lyrics { grid-area: 3 / 4 / 4 / 7; }
-.program-table td.pc-camera { grid-area: 4 / 1 / 5 / 7; }
-.program-table td.pc-desktop { grid-area: 5 / 1 / 6 / 5; }
-.program-table td.pc-beamer { grid-area: 5 / 5 / 6 / 7; }
-.program-table td.pc-shortcuts { grid-area: 6 / 1 / 7 / 7; }
+.program-table td.pc-shortcut { grid-area: 2 / 4 / 3 / 7; }
+.program-table td.pc-group { grid-area: 3 / 1 / 4 / 3; }
+.program-table td.pc-light { grid-area: 3 / 3 / 4 / 5; }
+.program-table td.pc-beamer { grid-area: 3 / 5 / 4 / 7; }
+.program-table td.pc-playback { grid-area: 4 / 1 / 5 / 3; }
+.program-table td.pc-translation { grid-area: 4 / 3 / 5 / 4; }
+.program-table td.pc-lyrics { grid-area: 4 / 4 / 5 / 7; }
+.program-table td.pc-camera { grid-area: 5 / 1 / 6 / 7; }
+.program-table td.pc-desktop { grid-area: 6 / 1 / 7 / 7; }
+.program-table td.pc-linked { grid-area: 3 / 1 / 4 / 7; }
+/* With a shortcut the row runs the shortcut's fields: its own are hidden
+   (still saved) and the shortcut's configuration shows instead. */
+.program-table tr:not(.program-linked-row) td.pc-linked,
+.program-table tr.program-linked-row td:is(.pc-group, .pc-light, .pc-beamer, .pc-playback, .pc-translation, .pc-lyrics, .pc-camera, .pc-desktop) { display: none; }
+.program-linked {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; min-height: 56px; padding: 8px 8px 8px 14px; border-radius: 6px;
+  background: var(--lcd-bg); border: 1px solid #2a1d4d; box-shadow: var(--lcd-shadow);
+}
+.program-linked-text { flex: 1 1 260px; font-size: 13px; color: #9aa3b0; }
+.program-linked-text b { color: var(--lcd-text); font-weight: 800; }
+.program-linked .program-sum-chips { flex: 1 1 100%; order: 2; }
+.program-linked.missing { border-color: #4a3410; }
+.program-linked.missing .program-linked-text { color: #ffbf4d; }
 .program-table [hidden], .song-picker[hidden] { display: none !important; }
-/* Shortcut dialog: the same fields without time, person and shortcuts */
+/* Shortcut dialog: the same fields without time, person and shortcut */
 dialog.shortcut-dialog { width: min(1000px, calc(100vw - 32px)); }
 .program-table.shortcut-table tr {
   grid-template-columns: repeat(4, minmax(0, 1fr)); padding: 0; border: none; background: none; box-shadow: none;
@@ -817,6 +831,8 @@ dialog.shortcut-dialog { width: min(1000px, calc(100vw - 32px)); }
 .program-chip.desktop, .program-chip.beamer { border-color: #2a1d4d; }
 .program-chip.song, .program-chip.file { border-color: #0b3a1e; }
 .program-chip.none { color: var(--lcd-dim); font-weight: 500; }
+.program-chip.shortcut { border-color: #4d2a4a; }
+.program-chip.warn { color: #ffbf4d; border-color: #4a3410; }
 .program-sum-chevron { display: grid; place-items: center; color: #6f8a93; transition: transform .2s; }
 .program-open .program-sum-chevron { transform: rotate(180deg); color: #e6f4f8; }
 .program-draft-row .program-sum-chevron { visibility: hidden; }
@@ -866,8 +882,26 @@ dialog.shortcut-dialog { width: min(1000px, calc(100vw - 32px)); }
   color: #fff; border-color: #0a2550; background: linear-gradient(to bottom, #62adff, #3584e6 55%, #2a6cc4);
 }
 .program-table button.program-single svg { flex-shrink: 0; }
-/* Desktop profiles of a row: one switch per profile, lit when it runs with the row */
-.program-desktop { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
+/* Desktop profiles of a row: the chosen ones in run order (✕ removes one),
+   "+" opens the others below to add one */
+.program-desktop { display: grid; gap: 8px; min-width: 0; }
+.program-desktop-chosen { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; }
+.program-desktop-chip {
+  display: inline-flex; align-items: center; min-height: 44px; max-width: 100%; padding-left: 14px; border-radius: 5px;
+  color: #fff; border: 1px solid #0a2550; background: linear-gradient(to bottom, #62adff, #3584e6 55%, #2a6cc4);
+}
+.program-desktop-chip.missing { color: #ffbf4d; border-color: #4a3410; background: #1d1608; }
+.program-desktop-chip-label { min-width: 0; font-size: 12px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.program-table button.program-desktop-remove {
+  display: grid; place-items: center; flex-shrink: 0; width: 44px; height: 44px; padding: 0;
+  color: inherit; background: none; border: none; box-shadow: none;
+}
+.program-table button.program-desktop-add { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 0 14px; font-size: 12px; font-weight: 700; }
+.program-table button.program-desktop-add[aria-expanded="true"] { color: #fff; border-color: #0a2550; }
+.program-desktop-pick {
+  display: flex; flex-wrap: wrap; gap: 6px; padding: 8px; border-radius: 6px;
+  background: var(--lcd-bg); border: 1px dashed #2a3442; box-shadow: var(--lcd-shadow);
+}
 .program-table button.program-desktop-key {
   min-height: 44px; max-width: 100%; padding: 0 14px; font-size: 12px; font-weight: 700;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
@@ -1100,7 +1134,7 @@ button.program-go:disabled { opacity: .45; animation: none; }
   .program-table tr { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .program-table td.program-edit-cell, .program-table td.program-summary-cell, .program-table td.program-actions-cell { grid-area: auto; }
   .program-table td.program-summary-cell, .program-table td.pc-title, .program-table td.pc-lyrics,
-  .program-table td.pc-camera, .program-table td.pc-desktop, .program-table td.pc-shortcuts, .program-table td.program-actions-cell { grid-column: 1 / -1; }
+  .program-table td.pc-camera, .program-table td.pc-desktop, .program-table td.pc-shortcut, .program-table td.pc-linked, .program-table td.program-actions-cell { grid-column: 1 / -1; }
   .program-table td.program-actions-cell { order: 1; }
   .program-table td.program-edit-cell { order: 2; }
   .program-camera { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
