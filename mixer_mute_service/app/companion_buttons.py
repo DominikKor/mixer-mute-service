@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import uuid
 from copy import deepcopy
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 from .jsonstore import backup_corrupt, read_json, write_json_atomic
 
@@ -194,6 +195,42 @@ CAMERA_BUTTON_IDS = {button["id"] for button in CAMERA_BUTTONS}
 CATALOG_ONLY_BUTTONS = [b for b in COMPANION_BUTTONS if b.get("category_id") in ("light", "mixer")]
 CATALOG_ONLY_IDS = {button["id"] for button in CATALOG_ONLY_BUTTONS}
 NOT_IN_STEUERUNG_IDS = CAMERA_BUTTON_IDS | CATALOG_ONLY_IDS
+# VISCA preset numbers the service recalls and stores (as in native_controls).
+CAMERA_PRESET_MIN, CAMERA_PRESET_MAX = 1, 16
+# The catalog's preset key of each (camera, number).
+CATALOG_PRESET_IDS = {
+    (b["native_action"]["camera"], b["native_action"]["preset"]): b["id"]
+    for b in CAMERA_BUTTONS if b["native_action"]["type"] == "visca-preset"
+}
+PRESET_CAMERAS = tuple(sorted({camera for camera, _ in CATALOG_PRESET_IDS}))
+# A preset saved in the camera section at a number the catalog has no key for.
+_SAVED_PRESET_ID = re.compile(r"^native-(cam\d+)-preset-(\d+)$")
+
+
+def valid_camera_preset(value: object) -> bool:
+    return type(value) is int and CAMERA_PRESET_MIN <= value <= CAMERA_PRESET_MAX
+
+
+def saved_preset_id(camera: str, preset: int) -> str:
+    return f"native-{camera}-preset-{preset}"
+
+
+def _saved_preset_key(button_id: str) -> Optional[tuple]:
+    """(camera, number) of a saved (not catalog) preset ID, else None."""
+    match = _SAVED_PRESET_ID.match(button_id) if isinstance(button_id, str) else None
+    if match is None or match.group(2).startswith("0"):
+        return None
+    key = (match.group(1), int(match.group(2)))
+    if key[0] not in PRESET_CAMERAS or not valid_camera_preset(key[1]) or key in CATALOG_PRESET_IDS:
+        return None
+    return key
+
+
+def _clean_label(label) -> Optional[str]:
+    label = " ".join(label.split()) if isinstance(label, str) else None
+    if label is None or len(label) > 64:
+        raise ValueError("label must be text of at most 64 characters")
+    return label
 # Bump when catalog actions change; stored native keys then get the new action.
 # v3 added the keys below, v4 made the Overall macros switch the light on,
 # v5 added state-aware Beamer hide/unhide actions, v6 adds direct projector
@@ -306,6 +343,9 @@ class CompanionButtonStore:
         # Labels of the camera keys as they were stored in Steuerung before v7
         # (only those that differ from the catalog); the camera section uses them.
         self._camera_labels: dict = {}
+        # Presets saved in the camera section at a number without a catalog
+        # key: their ID (native-cam1-preset-9) -> label ("CAM1 Kanzel").
+        self._saved_presets: dict = {}
         self._catalog_version = _NATIVE_CATALOG_VERSION
         self._load()
 
@@ -325,6 +365,9 @@ class CompanionButtonStore:
             camera_labels = data.get("camera_labels", {})
             if not isinstance(camera_labels, dict):
                 raise ValueError("invalid camera labels")
+            saved_presets = data.get("saved_camera_presets", {})
+            if not isinstance(saved_presets, dict):
+                raise ValueError("invalid saved camera presets")
             if self._catalog_version < 2:
                 category_ids = {item["id"] for item in categories}
                 categories.extend(item for item in deepcopy(DEFAULT_CATEGORIES) if item["id"] not in category_ids)
@@ -383,6 +426,10 @@ class CompanionButtonStore:
                 key: value for key, value in camera_labels.items()
                 if key in CAMERA_BUTTON_IDS and isinstance(value, str) and value.strip()
             }
+            self._saved_presets = {
+                key: value for key, value in saved_presets.items()
+                if _saved_preset_key(key) and isinstance(value, str) and value.strip()
+            }
             if migrated:
                 self._persist()
         except (ValueError, TypeError, KeyError) as exc:
@@ -391,6 +438,7 @@ class CompanionButtonStore:
             self._categories = deepcopy(DEFAULT_CATEGORIES)
             self._buttons = deepcopy([b for b in COMPANION_BUTTONS if b["id"] not in NOT_IN_STEUERUNG_IDS])
             self._camera_labels = {}
+            self._saved_presets = {}
             self._persist()
 
     def _persist(self) -> None:
@@ -399,6 +447,7 @@ class CompanionButtonStore:
             "buttons": self._buttons,
             "native_catalog_version": self._catalog_version,
             "camera_labels": self._camera_labels,
+            "saved_camera_presets": self._saved_presets,
         })
 
     async def snapshot(self) -> dict:
@@ -406,30 +455,73 @@ class CompanionButtonStore:
             return {"categories": deepcopy(self._categories), "buttons": deepcopy(self._buttons)}
 
     async def camera_buttons(self) -> List[dict]:
-        """The catalog's camera keys, with the labels they had in Steuerung."""
+        """The catalog's camera keys, with the labels they had in Steuerung,
+        then the presets saved in the camera section."""
         async with self._lock:
-            buttons = deepcopy(CAMERA_BUTTONS)
-            for button in buttons:
-                button["default_label"] = button["label"]
-                button["label"] = self._camera_labels.get(button["id"], button["label"])
-            return buttons
+            return self._camera_buttons()
+
+    def _camera_buttons(self) -> List[dict]:
+        buttons = deepcopy(CAMERA_BUTTONS)
+        for button in buttons:
+            button["default_label"] = button["label"]
+            button["label"] = self._camera_labels.get(button["id"], button["label"])
+        for button_id, label in self._saved_presets.items():
+            camera, preset = _saved_preset_key(button_id)
+            buttons.append({
+                "id": button_id, "label": label, "default_label": label, "kind": "native",
+                "category_id": "cameras", "saved": True,
+                "native_action": {"type": "visca-preset", "camera": camera, "preset": preset},
+            })
+        return buttons
+
+    async def camera_preset(self, camera: str, preset: int) -> Optional[dict]:
+        """The key of a camera's preset number (catalog or saved), or None."""
+        button_id = CATALOG_PRESET_IDS.get((camera, preset), saved_preset_id(camera, preset))
+        async with self._lock:
+            return next((b for b in self._camera_buttons() if b["id"] == button_id), None)
+
+    async def save_camera_preset(self, camera: str, preset: int, label: str) -> dict:
+        """Name a preset number (after the camera stored its position there):
+        the catalog key's label, or a saved preset. ValueError: bad input."""
+        if camera not in PRESET_CAMERAS or not valid_camera_preset(preset):
+            raise ValueError("unknown camera or preset number")
+        label = _clean_label(label)
+        if not label:
+            raise ValueError("a preset needs a name")
+        async with self._lock:
+            button_id = CATALOG_PRESET_IDS.get((camera, preset))
+            if button_id is not None:
+                if label != COMPANION_BUTTONS_BY_ID[button_id]["label"]:
+                    self._camera_labels[button_id] = label
+                else:
+                    self._camera_labels.pop(button_id, None)
+            else:
+                button_id = saved_preset_id(camera, preset)
+                self._saved_presets[button_id] = label
+            self._persist()
+            return next(b for b in self._camera_buttons() if b["id"] == button_id)
 
     async def set_camera_label(self, button_id: str, label) -> dict:
-        """Rename a catalog camera key (camera section, program rows); an
-        empty label goes back to the catalog's. KeyError: not a camera key."""
-        if button_id not in CAMERA_BUTTON_IDS:
+        """Rename a camera key (camera section, program rows); an empty label
+        goes back to the catalog's (a saved preset needs a name). KeyError:
+        not a camera key."""
+        saved = _saved_preset_key(button_id) is not None
+        if button_id not in CAMERA_BUTTON_IDS and not (saved and button_id in self._saved_presets):
             raise KeyError(button_id)
-        label = " ".join(label.split()) if isinstance(label, str) else None
-        if label is None or len(label) > 64:
-            raise ValueError("label must be text of at most 64 characters")
+        label = _clean_label(label)
         async with self._lock:
-            if label and label != COMPANION_BUTTONS_BY_ID[button_id]["label"]:
+            if saved:
+                if button_id not in self._saved_presets:
+                    raise KeyError(button_id)
+                if not label:
+                    raise ValueError("a saved preset needs a name")
+                self._saved_presets[button_id] = label
+            elif label and label != COMPANION_BUTTONS_BY_ID[button_id]["label"]:
                 self._camera_labels[button_id] = label
             else:
                 self._camera_labels.pop(button_id, None)
             self._persist()
-            return {**deepcopy(COMPANION_BUTTONS_BY_ID[button_id]),
-                    "label": self._camera_labels.get(button_id, COMPANION_BUTTONS_BY_ID[button_id]["label"])}
+            return next(b for b in self._camera_buttons() if b["id"] == button_id)
 
     async def get_button(self, button_id: str):
         async with self._lock:

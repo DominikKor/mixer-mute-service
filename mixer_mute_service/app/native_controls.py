@@ -306,6 +306,22 @@ def artnet_status(host: Optional[str] = None) -> Optional[dict]:
     return _ARTNET.poll(host or ARTNET_HOST)
 
 
+# Memory commands, 81 01 04 3F 0p pp FF: 01 stores the current position as
+# preset pp, 02 drives to it. The service uses presets 1 to 16 (program rows
+# and Overall keys name them, app/camera_program.py).
+VISCA_PRESET_SET = 0x01
+VISCA_PRESET_RECALL = 0x02
+VISCA_PRESET_MIN, VISCA_PRESET_MAX = 1, 16
+
+
+def _visca_preset(camera: object, preset: object, operation: int) -> tuple:
+    """(host, port), payload of a preset command. Raises NativeControlError."""
+    target = VISCA_CAMERAS.get(camera) if isinstance(camera, str) else None
+    if target is None or type(preset) is not int or not VISCA_PRESET_MIN <= preset <= VISCA_PRESET_MAX:
+        raise NativeControlError("invalid VISCA preset")
+    return target, bytes((0x81, 0x01, 0x04, 0x3F, operation, preset, 0xFF))
+
+
 def _visca_tcp(host: str, port: int, payload: bytes) -> None:
     try:
         with socket.create_connection((host, port), timeout=2.5) as connection:
@@ -789,6 +805,16 @@ class NativeControlService:
         errors = await asyncio.gather(*(one(target, on) for target, on in states.items()))
         return {target: error for target, error in zip(states, errors) if error}
 
+    async def store_visca_preset(self, camera: str, preset: int) -> dict:
+        """The camera stores its current position as this preset number
+        (overwriting what was there). Raises NativeControlError."""
+        target, payload = _visca_preset(camera, preset, VISCA_PRESET_SET)
+        try:
+            await asyncio.to_thread(_visca_tcp, *target, payload)
+        except OSError as exc:
+            raise NativeControlError(f"VISCA preset store failed: {exc}") from exc
+        return {"ok": True}
+
     async def press(self, action: dict) -> dict:
         try:
             return await self._press(action)
@@ -908,11 +934,8 @@ class NativeControlService:
             return {"ok": True, "value": value}
 
         if action_type == "visca-preset":
-            target = VISCA_CAMERAS.get(action.get("camera"))
-            preset = action.get("preset")
-            if target is None or not isinstance(preset, int) or not 1 <= preset <= 16:
-                raise NativeControlError("invalid VISCA preset")
-            await asyncio.to_thread(_visca_tcp, *target, bytes((0x81, 0x01, 0x04, 0x3F, 0x02, preset, 0xFF)))
+            target, payload = _visca_preset(action.get("camera"), action.get("preset"), VISCA_PRESET_RECALL)
+            await asyncio.to_thread(_visca_tcp, *target, payload)
             return {"ok": True}
 
         if action_type == "visca-zoom":

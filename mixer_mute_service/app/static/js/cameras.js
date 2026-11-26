@@ -99,18 +99,38 @@ function cameraPresetLabel(label) {
   return label.replace(/^\s*cam\s*\d+\s*/i, "").replace(/^pset\s+/i, "").trim() || label;
 }
 
-function renderCameraControls() {
+// VISCA preset numbers the service recalls and stores (app/native_controls.py).
+const CAMERA_PRESET_MIN = 1;
+const CAMERA_PRESET_MAX = 16;
+
+// Each camera's presets (catalog keys and presets saved here), by number.
+function cameraPresetLists() {
   const presets = {};
   for (const button of COMPANION_DATA.camera_buttons || []) {
     const action = button.native_action;
     if (!action || action.type !== "visca-preset") continue;
     (presets[action.camera] = presets[action.camera] || []).push({
-      id: button.id, label: button.label, preset: action.preset, defaultLabel: button.default_label || button.label,
+      id: button.id, label: button.label, preset: action.preset, saved: Boolean(button.saved),
+      defaultLabel: button.default_label || button.label,
     });
   }
+  for (const list of Object.values(presets)) list.sort((a, b) => a.preset - b.preset);
+  return presets;
+}
+
+// A typed preset number, or null when it is not a whole number 1 to 16.
+function cameraPresetNumber(text) {
+  const value = String(text || "").trim();
+  if (!/^\d{1,2}$/.test(value)) return null;
+  const n = Number(value);
+  return n >= CAMERA_PRESET_MIN && n <= CAMERA_PRESET_MAX ? n : null;
+}
+
+function renderCameraControls() {
+  const presets = cameraPresetLists();
   for (const controls of document.querySelectorAll(".camera-controls")) {
     const cam = controls.dataset.viscaCamera;
-    const list = (presets[cam] || []).sort((a, b) => a.preset - b.preset);
+    const list = presets[cam] || [];
     // Only cameras the catalog knows (cam1, cam2) get controls.
     controls.hidden = !list.length;
     const name = controls.closest(".camera-card").querySelector(".camera-card-title").textContent;
@@ -127,12 +147,19 @@ function renderCameraControls() {
           title="${n} ${arrow.label}" aria-label="${n} ${arrow.label}, gedrückt halten">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${arrow.path}"/></svg></button>`).join("");
     controls.innerHTML = `
-      <div class="camera-controls-label">Presets</div>
+      <div class="camera-presets-head">
+        <div class="camera-controls-label">Presets</div>
+        <form class="camera-recall" data-camera-recall="${c}" novalidate>
+          <input type="text" inputmode="numeric" pattern="[0-9]*" maxlength="2" class="camera-recall-number" data-camera="${c}"
+            placeholder="Nr." autocomplete="off" aria-label="${n}: Preset-Nummer ${CAMERA_PRESET_MIN} bis ${CAMERA_PRESET_MAX}" title="Preset-Nummer ${CAMERA_PRESET_MIN} bis ${CAMERA_PRESET_MAX}" />
+          <button type="submit" class="camera-recall-go" aria-label="${n}: Preset mit dieser Nummer anfahren">Anfahren</button>
+        </form>
+      </div>
       <div class="rename-bar" data-camera-rename-bar hidden><span>Preset antippen zum Umbenennen</span><button type="button" class="primary" data-camera-rename-done="${c}">Fertig</button></div>
       <div class="camera-presets">${list.map(p => `
-        <button type="button" class="camera-preset" data-camera-preset="${escapeAttr(p.id)}" data-camera="${c}"
-          data-label="${escapeAttr(p.label)}" data-default-label="${escapeAttr(p.defaultLabel)}"
-          aria-pressed="${CAMERA_LAST_PRESET[cam] === p.id}" title="${escapeAttr(p.label)} (Preset ${p.preset})">${escapeHtml(cameraPresetLabel(p.label))}</button>`).join("")}
+        <button type="button" class="camera-preset" data-camera-preset="${escapeAttr(p.id)}" data-camera="${c}" data-preset="${p.preset}"
+          data-label="${escapeAttr(p.label)}" data-default-label="${escapeAttr(p.defaultLabel)}" data-saved="${p.saved}"
+          aria-pressed="${CAMERA_LAST_PRESET[cam] === p.id}" title="Preset ${p.preset}: ${escapeAttr(cameraPresetLabel(p.label))}"><b class="camera-preset-num">${p.preset}</b> · ${escapeHtml(cameraPresetLabel(p.label))}</button>`).join("")}
       </div>
       <div class="camera-controls-label">Schwenken &amp; Zoom – gedrückt halten</div>
       <div class="camera-ptz">${arrows}
@@ -169,8 +196,10 @@ function startCameraPresetRename(key) {
     key.replaceWith(slot);
     slot.appendChild(key);
   }
-  startInlineRename(slot, shown, {
-    placeholder: fallback, allowEmpty: true, maxLength: 58,
+  // A preset saved here has no catalog name to fall back to.
+  const saved = key.dataset.saved === "true";
+  startInlineRename(slot, saved ? cameraPresetLabel(key.dataset.label) : shown, {
+    placeholder: fallback, allowEmpty: !saved, maxLength: 58,
     save: async name => {
       const label = name ? `${cam.toUpperCase()} ${name}` : "";
       if (await saveName("PUT", `/camera-presets/${encodeURIComponent(key.dataset.cameraPreset)}/label`, label, "Preset")) {
@@ -191,12 +220,130 @@ async function pressCameraPreset(key) {
       toast(`${key.title}: ${result.data.reason || "HTTP " + result.status}`, false);
       return;
     }
-    CAMERA_LAST_PRESET[key.dataset.camera] = key.dataset.cameraPreset;
-    document.querySelectorAll(`[data-camera-preset][data-camera="${key.dataset.camera}"]`).forEach(b => {
-      b.setAttribute("aria-pressed", String(b === key));
-    });
+    markCameraPreset(key.dataset.camera, key.dataset.cameraPreset);
   } finally {
     key.disabled = false;
+  }
+}
+
+// The camera's last recalled preset stays lit (none: a number without a key).
+function markCameraPreset(cam, id) {
+  CAMERA_LAST_PRESET[cam] = id;
+  document.querySelectorAll(`[data-camera-preset][data-camera="${cam}"]`).forEach(b => {
+    b.setAttribute("aria-pressed", String(b.dataset.cameraPreset === id));
+  });
+}
+
+// "Nr. [  ] Anfahren": any preset number, also one without a name here. The
+// service runs it exactly like a preset key.
+async function recallCameraPresetNumber(form) {
+  const cam = form.dataset.cameraRecall;
+  const input = form.querySelector(".camera-recall-number");
+  const go = form.querySelector(".camera-recall-go");
+  const preset = cameraPresetNumber(input.value);
+  input.setAttribute("aria-invalid", String(preset === null));
+  if (preset === null) {
+    toast(`Preset-Nummer ${CAMERA_PRESET_MIN} bis ${CAMERA_PRESET_MAX} eingeben`, false);
+    input.focus();
+    return;
+  }
+  if (go.disabled) return;
+  go.disabled = true;
+  try {
+    const result = await api("POST", `/cameras/${encodeURIComponent(cam)}/preset/recall`, { preset });
+    if (!result.ok || result.data.ok === false) {
+      toast(`${cam.toUpperCase()} Preset ${preset}: ${result.data.reason || "HTTP " + result.status}`, false);
+      return;
+    }
+    const known = (cameraPresetLists()[cam] || []).find(p => p.preset === preset);
+    markCameraPreset(cam, known ? known.id : null);
+    input.blur();  // the iPad keyboard goes away
+  } finally {
+    go.disabled = false;
+  }
+}
+
+// ---- Aktuelle Position speichern -----------------------------------------
+// Number (the next free one is suggested) and name. The camera stores its
+// current position at that number, the service names it. A number that
+// already has a name here is only overwritten after asking.
+let CAMERA_PRESET_DIALOG = null;  // { cam, cameraName }
+
+function cameraPresetAt(cam, preset) {
+  return (cameraPresetLists()[cam] || []).find(p => p.preset === preset) || null;
+}
+
+function nextFreeCameraPreset(cam) {
+  const used = new Set((cameraPresetLists()[cam] || []).map(p => p.preset));
+  for (let n = CAMERA_PRESET_MIN; n <= CAMERA_PRESET_MAX; n++) if (!used.has(n)) return n;
+  return null;
+}
+
+function openCameraPresetDialog(cam, cameraName) {
+  CAMERA_PRESET_DIALOG = { cam, cameraName };
+  const free = nextFreeCameraPreset(cam);
+  $("camera-preset-title").textContent = `${cameraName}: aktuelle Position speichern`;
+  $("camera-preset-number").value = free === null ? "" : String(free);
+  $("camera-preset-name").value = "";
+  $("camera-preset-error").hidden = true;
+  updateCameraPresetHint();
+  $("camera-preset-dialog").showModal();
+  $("camera-preset-name").focus();
+}
+
+function updateCameraPresetHint() {
+  const state = CAMERA_PRESET_DIALOG;
+  if (!state) return;
+  const hint = $("camera-preset-hint");
+  const raw = $("camera-preset-number").value;
+  const preset = cameraPresetNumber(raw);
+  const existing = preset === null ? null : cameraPresetAt(state.cam, preset);
+  hint.classList.toggle("warn", Boolean(existing));
+  if (preset === null) {
+    hint.textContent = raw.trim() || nextFreeCameraPreset(state.cam) !== null
+      ? `Nummer ${CAMERA_PRESET_MIN} bis ${CAMERA_PRESET_MAX} eingeben.`
+      : `Alle Nummern ${CAMERA_PRESET_MIN} bis ${CAMERA_PRESET_MAX} haben schon einen Namen. Eine wählen, um sie zu überschreiben.`;
+  } else if (existing) {
+    hint.textContent = `Nr. ${preset} ist „${cameraPresetLabel(existing.label)}“. Speichern fragt, ob überschrieben werden soll.`;
+  } else {
+    hint.textContent = `Nr. ${preset} ist frei. Die Kamera speichert dort ihre aktuelle Position.`;
+  }
+}
+
+async function saveCameraPreset(event) {
+  event.preventDefault();
+  const state = CAMERA_PRESET_DIALOG;
+  if (!state) return;
+  const error = $("camera-preset-error");
+  const saveKey = $("camera-preset-save");
+  const preset = cameraPresetNumber($("camera-preset-number").value);
+  const name = $("camera-preset-name").value.trim().replace(/\s+/g, " ");
+  const problem = preset === null ? `Nummer ${CAMERA_PRESET_MIN} bis ${CAMERA_PRESET_MAX} eingeben.` : !name ? "Einen Namen eingeben." : "";
+  error.textContent = problem;
+  error.hidden = !problem;
+  if (problem) { (preset === null ? $("camera-preset-number") : $("camera-preset-name")).focus(); return; }
+  if (saveKey.disabled) return;
+  saveKey.disabled = true;
+  try {
+    const path = `/cameras/${encodeURIComponent(state.cam)}/presets`;
+    let result = await api("POST", path, { preset, name });
+    if (result.status === 409 && result.data.exists) {
+      const question = `Nr. ${preset} „${result.data.name}“ überschreiben? Die Kamera speichert dort ihre aktuelle Position.`;
+      if (!(await confirmDelete(saveKey, question, "Überschreiben"))) return;
+      result = await api("POST", path, { preset, name, overwrite: true });
+    }
+    if (!result.ok || result.data.ok === false) {
+      error.textContent = result.data.reason || `HTTP ${result.status}`;
+      error.hidden = false;
+      return;
+    }
+    $("camera-preset-dialog").close();
+    toast(`${state.cameraName}: Preset ${preset} · ${name} gespeichert`, true);
+    await loadCompanionButtons();
+    markCameraPreset(state.cam, result.data.button && result.data.button.id);
+    loadProgramItems();  // program rows list the presets by name
+  } finally {
+    saveKey.disabled = false;
   }
 }
 
@@ -456,6 +603,22 @@ async function deleteDesktopProfile(profileId, anchor) {
   await refresh();
 }
 
+const ICON_PRESET_SAVE = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M5 4h11l3 3v13H5z"/><path d="M8 4v5h7V4M8 20v-6h8v6"/></svg>`;
+
+$("camera-grid").addEventListener("submit", event => {
+  const form = event.target.closest("form[data-camera-recall]");
+  if (!form) return;
+  event.preventDefault();
+  recallCameraPresetNumber(form);
+});
+$("camera-grid").addEventListener("input", event => {
+  if (event.target.classList.contains("camera-recall-number")) event.target.removeAttribute("aria-invalid");
+});
+$("camera-preset-form").addEventListener("submit", saveCameraPreset);
+$("camera-preset-number").addEventListener("input", updateCameraPresetHint);
+$("camera-preset-cancel").addEventListener("click", () => $("camera-preset-dialog").close());
+$("camera-preset-dialog").addEventListener("close", () => { CAMERA_PRESET_DIALOG = null; });
+
 // The pencil next to "Presets": renaming on/off for that camera.
 $("camera-grid").addEventListener("click", event => {
   const done = event.target.closest("[data-camera-rename-done]");
@@ -475,6 +638,9 @@ $("camera-grid").addEventListener("click", event => {
         startRenameMode(controls, () => setCameraRenaming(cam, false));
         setCameraRenaming(cam, true);
       },
+    } : null,
+    controls && !controls.hidden ? {
+      label: "Aktuelle Position speichern", icon: ICON_PRESET_SAVE, run: () => openCameraPresetDialog(cam, camera.name),
     } : null,
     "-",
     { label: "Entfernen", icon: ICON_TRASH, danger: true, run: anchor => deleteCamera(camera.id, anchor) },

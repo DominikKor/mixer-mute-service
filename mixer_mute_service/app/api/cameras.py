@@ -1,4 +1,5 @@
-"""Cameras: the stream list (MediaMTX relay) and hold-to-move PTZ."""
+"""Cameras: the stream list (MediaMTX relay), hold-to-move PTZ, and VISCA
+presets by number (recall any number, save the current position)."""
 
 from __future__ import annotations
 
@@ -6,10 +7,13 @@ import logging
 
 from fastapi import APIRouter, Request
 
+from ..actions import press_native
 from ..camera_streams import CameraStreamError
-from ..models import CameraPanTiltRequest, CameraStreamRequest, CameraZoomRequest
+from ..companion_buttons import CATALOG_PRESET_IDS, saved_preset_id
+from ..models import (CameraPanTiltRequest, CameraPresetRecallRequest, CameraPresetSaveRequest,
+                      CameraStreamRequest, CameraZoomRequest)
 from ..native_controls import VISCA_CAMERAS, NativeControlError
-from ..responses import fail
+from ..responses import fail, reply
 
 router = APIRouter()
 log = logging.getLogger("mixer.api.cameras")
@@ -93,3 +97,53 @@ async def camera_pan_tilt(camera: str, body: CameraPanTiltRequest, request: Requ
         log.warning("Camera pan-tilt failed camera=%s direction=%s reason=%s", camera, body.direction, exc)
         return fail(str(exc), 503, camera=camera)
     return {**result, "camera": camera, "direction": body.direction}
+
+
+def _preset_name(label: str) -> str:
+    """ "CAM1 Kanzel" -> "Kanzel" (the camera section shows the name only)."""
+    words = label.split(" ", 1)
+    return words[1] if len(words) == 2 and words[0].lower().startswith("cam") else label
+
+
+@router.post("/cameras/{camera}/preset/recall")
+async def camera_preset_recall(camera: str, body: CameraPresetRecallRequest, request: Request):
+    """Drive to a preset by number, also one without a name in the app. Runs
+    exactly as a preset key (POST /companion/buttons/{id}/press)."""
+    if camera not in VISCA_CAMERAS:
+        return fail("unknown camera", 404)
+    button_id = CATALOG_PRESET_IDS.get((camera, body.preset), saved_preset_id(camera, body.preset))
+    action = {"type": "visca-preset", "camera": camera, "preset": body.preset}
+    result, status = await press_native(request, button_id, action)
+    return reply({**result, "camera": camera, "preset": body.preset}, status)
+
+
+@router.post("/cameras/{camera}/presets")
+async def camera_preset_save(camera: str, body: CameraPresetSaveRequest, request: Request):
+    """Store the camera's current position as preset number N, then name it
+    in the app. A number the app already names is only overwritten with
+    "overwrite": true; otherwise 409 says which name it has."""
+    store = request.app.state.companion_button_store
+    if store is None:
+        return fail("control keys are not available", 503)
+    if camera not in VISCA_CAMERAS:
+        return fail("unknown camera", 404)
+    name = " ".join(body.name.split())
+    if not name:
+        return fail("a preset needs a name", 400)
+    existing = await store.camera_preset(camera, body.preset)
+    if existing is not None and not body.overwrite:
+        return fail(f"preset {body.preset} exists", 409, exists=True, preset=body.preset,
+                    label=existing["label"], name=_preset_name(existing["label"]))
+    try:
+        await request.app.state.native_controls.store_visca_preset(camera, body.preset)
+    except NativeControlError as exc:
+        log.warning("Camera preset store failed camera=%s preset=%s reason=%s", camera, body.preset, exc)
+        return fail(str(exc), 503, camera=camera, preset=body.preset)
+    try:
+        button = await store.save_camera_preset(camera, body.preset, f"{camera.upper()} {name}")
+    except ValueError as exc:
+        return fail(str(exc), 400)
+    log.info("Camera preset stored camera=%s preset=%s name=%r overwrite=%s",
+             camera, body.preset, name, existing is not None)
+    return {"ok": True, "camera": camera, "preset": body.preset, "button": button,
+            "overwritten": existing is not None}
