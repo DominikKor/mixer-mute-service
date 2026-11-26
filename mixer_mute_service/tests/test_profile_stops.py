@@ -502,12 +502,33 @@ class AgentCloseTests(unittest.TestCase):
                                                       stamp="s2"), 1)
 
     def test_a_window_still_being_opened_is_kept(self):
-        agent._launching["ms"] = agent.time.monotonic() + 5
+        agent._launching["ms"] = (agent.time.monotonic() + 5, "t1")
         try:
             self.assertTrue(agent._keep_open("ms", "s2", {}.get), "no second window within the first's start")
+            agent._cancelled.add("ms")
+            self.assertFalse(agent._keep_open("ms", "s3", {}.get), "closed meanwhile: opened again")
         finally:
             agent._launching.clear()
+            agent._cancelled.clear()
         self.assertFalse(agent._keep_open("ms", "s3", {}.get))
+
+    def test_a_late_launch_leaves_a_newer_one_alone(self):
+        agent._launching["ms"] = (agent.time.monotonic() + 5, "new")
+        agent._cancelled.add("ms")
+        profile = {"id": "ms", "kind": "file", "path": "I:/x.pdf", "monitor": 1, "fullscreen": False,
+                   "position": "top-left", "args": [], "launch_token": "old"}
+        try:
+            with patch.object(agent, "_visible_windows", side_effect=RuntimeError("test")), \
+                    self.assertLogs(agent.logger, "ERROR"):
+                agent._launch_profile(profile)  # the older launch ends (here: fails)
+            self.assertEqual((agent._launching["ms"][1], "ms" in agent._cancelled), ("new", True))
+            with patch.object(agent, "_visible_windows", side_effect=RuntimeError("test")), \
+                    self.assertLogs(agent.logger, "ERROR"):
+                agent._launch_profile({**profile, "launch_token": "new"})
+            self.assertEqual(("ms" in agent._launching, "ms" in agent._cancelled), (False, False))
+        finally:
+            agent._launching.clear()
+            agent._cancelled.clear()
 
     def test_only_a_real_mpv_plays_videos(self):
         from pathlib import Path as WinPath
@@ -523,33 +544,35 @@ class AgentCloseTests(unittest.TestCase):
             with patch.object(agent, "_play_mpv", return_value=other), self.assertLogs(agent.logger, "WARNING"):
                 self.assertIsNone(agent._video_player(video, WinPath("I:/MS/01_Video.mp4")), f"default app: {other}")
 
-    def test_mpv_command_picks_the_screen_by_its_device_name(self):
+    def test_mpv_command_picks_the_screen_by_its_number(self):
         from pathlib import Path as WinPath
         video = {"title": "Spotlight", "monitor": 2, "fullscreen": True, "position": "top-left"}
         with patch.object(agent, "agent_log_directory", return_value=WinPath("/tmp")):
-            command = agent._video_command("mpv.exe", WinPath("I:/MS/01_Video.mp4"), video, "\\\\.\\DISPLAY2")
-            self.assertTrue({"--fs", "--fs-screen-name=\\\\.\\DISPLAY2", "--screen-name=\\\\.\\DISPLAY2",
-                             "--keep-open=yes"} <= set(command), command)
-            self.assertFalse(any(c.startswith("--geometry") for c in command), "mpv places itself")
+            command = agent._video_command("mpv.exe", WinPath("I:/MS/01_Video.mp4"), video, 0)
+            self.assertTrue({"--screen=0", "--fs-screen=0", "--fs", "--keep-open=yes"} <= set(command), command)
+            self.assertFalse(any("screen-name" in c or c.startswith("--geometry") for c in command),
+                             "mpv on Windows knows screens by number only")
             self.assertEqual(command[-2:], ["--", str(WinPath("I:/MS/01_Video.mp4"))])
             framed = agent._video_command("mpv.exe", WinPath("I:/v.mp4"), {**video, "fullscreen": False,
-                                                                           "position": "bottom-right"}, "\\\\.\\DISPLAY2")
+                                                                           "position": "bottom-right"}, 1)
+            self.assertIn("--screen=1", framed)
             self.assertIn("--geometry=100%:100%", framed)
             self.assertNotIn("--fs", framed)
-            # No device name: the monitor's rectangle, then full screen there.
-            with patch.object(agent, "monitor_bounds", return_value=(1920, 0, 3840, 1080)):
-                fallback = agent._video_command("mpv.exe", WinPath("I:/v.mp4"), video, None)
-            self.assertIn("--geometry=1920x1080+1920+0", fallback)
-            self.assertIn("--fs", fallback)
+            self.assertIn("--fs", agent._video_command("mpv.exe", WinPath("I:/v.mp4"), video, None))
 
-    def test_monitor_device_names_follow_the_image_order(self):
-        monitors = [((0, 0, 1920, 1080), (0, 0, 1920, 1040), "\\\\.\\DISPLAY1"),
-                    ((1920, 0, 3840, 1080), (1920, 0, 3840, 1080), "\\\\.\\DISPLAY2")]
-        with patch.object(agent, "_monitors", return_value=monitors):
-            self.assertEqual(agent.monitor_device_name(2), "\\\\.\\DISPLAY2")
+    def test_monitor_n_maps_to_mpvs_screen_number(self):
+        # Windows reports the right monitor first: our "monitor 2" (sorted
+        # left to right, as for images) is mpv's screen 0.
+        raw = [((1920, 0, 3840, 1080), (1920, 0, 3840, 1080), "\\\\.\\DISPLAY1", 0),
+               ((0, 0, 1920, 1080), (0, 0, 1920, 1040), "\\\\.\\DISPLAY2", 1)]
+        ordered = agent._order_monitors(raw)
+        self.assertEqual([entry[3] for entry in ordered], [1, 0])
+        with patch.object(agent, "_monitors", return_value=ordered):
+            self.assertEqual(agent.mpv_screen(2), (0, "\\\\.\\DISPLAY1"))
+            self.assertEqual(agent.mpv_screen(1), (1, "\\\\.\\DISPLAY2"))
             self.assertEqual(agent.monitor_bounds(2), (1920, 0, 3840, 1080), "the same monitor as for images")
             with self.assertRaises(RuntimeError):
-                agent.monitor_device_name(3)
+                agent.mpv_screen(3)
 
     def test_a_new_video_start_ends_the_one_still_playing(self):
         from pathlib import Path as WinPath
@@ -565,22 +588,36 @@ class AgentCloseTests(unittest.TestCase):
             self.assertEqual(closed, [100], "the old player is closed before the new one starts")
             return Process()
 
+        class Starting:
+            pid = 6
+            ended = False
+
+            def poll(self):
+                return None
+
+            def terminate(self):
+                Starting.ended = True
+
+        agent._video_processes["ms"] = Starting()  # an earlier start, its window not found yet
         video = {"id": "ms", "title": "Spotlight", "monitor": 2, "fullscreen": True, "position": "top-left"}
         with patch.object(agent, "_window_process_id", owners.get), patch.object(agent, "_post_close",
                                                                                lambda h: closed.append(h) or True), \
-                patch.object(agent, "monitor_device_name", return_value="\\\\.\\DISPLAY2"), \
+                patch.object(agent, "mpv_screen", return_value=(0, "\\\\.\\DISPLAY2")), \
                 patch.object(agent, "agent_log_directory", return_value=WinPath("/tmp")), \
                 patch.object(agent.subprocess, "Popen", popen), \
                 patch.object(agent, "_find_window", return_value=200), \
                 self.assertLogs(agent.logger, "INFO") as logs:
             agent._launch_video("mpv.exe", WinPath("I:/MS/01_Video.mp4"), video, set())
         self.assertEqual(agent._opened_windows, {"ms": {(200, 8)}}, "the new window is remembered, not placed")
+        self.assertTrue(Starting.ended, "the earlier mpv still starting is ended too")
+        self.assertIsInstance(agent._video_processes["ms"], Process)
+        agent._video_processes.clear()
         text = "\n".join(logs.output)
-        self.assertIn("DISPLAY2", text)
-        self.assertIn("--fs-screen-name=", text, "the full command line is in the log")
+        self.assertIn("mpv screen 0, \\\\.\\DISPLAY2", text, "the screen number and the device name are logged")
+        self.assertIn("--fs-screen=0", text, "the full command line is in the log")
 
     def test_a_close_while_opening_closes_the_window_once_it_is_there(self):
-        agent._launching["ms"] = agent.time.monotonic() + 5
+        agent._launching["ms"] = (agent.time.monotonic() + 5, "t1")
         try:
             self.assertEqual(agent._close_profile_windows("ms", {}.get, lambda h: True), 0)
             self.assertIn("ms", agent._cancelled)

@@ -84,6 +84,37 @@ def _clean_name(name) -> str:
     return name
 
 
+def _song_keys(library: Optional[dict]) -> set:
+    """The titles (any of a song's titles, normalized) of the song library."""
+    return {_row_key(title) for song in (library or {}).values()
+            for title in song.get("titles") or [song.get("title", "")] if title}
+
+
+def is_place_named(title: str, song_keys: frozenset = frozenset(), song: Optional[str] = None,
+                   slot_keys: frozenset = frozenset(), by_song: bool = False) -> bool:
+    """THE rule for a song slot's title: it is named by its place ("Lied 1",
+    "Lied 2", ...) unless the user gave it a custom name that is not a song title.
+
+    Used when a template is saved (slots are stored as "Lied N"), when an order
+    is applied (apply_order) and when a program is built (fill_template). A title
+    is not custom, so it becomes "Lied N", when it is
+    - empty, "Lied" or "Lied N" already,
+    - the title of a song of the library (the song the slot had),
+    - the file name of the row's own song (the library may not be loaded),
+    - one of slot_keys: the slot titles of a template saved before slots were
+      named by place (then they are last time's songs or names nobody can tell
+      apart without the library), or
+    - by_song: the row has a song (saving a template: its title is that song's).
+    "Eingangslied" and "Schlusslied" are always custom; so is any other name
+    that none of this explains ("Lobpreis" in a template that was saved by place).
+    """
+    key = _row_key(title)
+    if key in _PLAIN_SONG_TITLES:
+        return False
+    return (not key or re.fullmatch(r"lied\d*", key) is not None or key in song_keys or key in slot_keys
+            or by_song or bool(song) and key == _key(str(song).rsplit(".", 1)[0]))
+
+
 class ProgramTemplateStore:
     def __init__(self, path: Path, shortcuts: Optional[dict] = None) -> None:
         """shortcuts: id -> shortcut, for rows saved with a reference to one;
@@ -106,7 +137,8 @@ class ProgramTemplateStore:
                     rows.append(row)
                     if status:
                         unlinked.append(status)
-                self._templates.append({"id": str(entry["id"]), "name": _clean_name(entry["name"]), "rows": rows})
+                self._templates.append({"id": str(entry["id"]), "name": _clean_name(entry["name"]), "rows": rows,
+                                        **({"slot_names": "place"} if entry.get("slot_names") == "place" else {})})
             except (KeyError, TypeError, TemplateError, ProgramItemError) as exc:
                 log.warning("Skipping invalid program template in %s: %s", path, exc)
         self.migration = None
@@ -132,35 +164,37 @@ class ProgramTemplateStore:
             template = next((t for t in self._templates if t["id"] == template_id), None)
             return self._view(template) if template else None
 
-    async def save(self, name: str, items: List[dict], slot_ids: set, replace: bool = False) -> dict:
+    async def save(self, name: str, items: List[dict], slot_ids: set, replace: bool = False,
+                   songs: Optional[dict] = None) -> dict:
         """Save program rows as a template. An existing name is only replaced
-        with replace=True (KeyError otherwise)."""
+        with replace=True (KeyError otherwise). Slot rows are stored named by their
+        place (is_place_named), and the template is marked "slot_names": "place": from
+        then on a slot title in it that is not "Lied N" is a name the user chose;
+        templates without the mark were saved with the songs of that day as titles.
+        songs: the song library."""
         name = _clean_name(name)
         if not items:
             raise TemplateError("the program is empty")
         if len(items) > MAX_ROWS:
             raise TemplateError(f"at most {MAX_ROWS} rows")
         rows = [_template_row(item, item["id"] in slot_ids) for item in items]
-        number = 0
+        keys, number = _song_keys(songs), 0
         for item, row in zip(items, rows):
             if row["song_slot"]:
                 number += 1
-                # A slot is named by its place, not by the current song's title; a name the
-                # user gave the row ("Eingangslied", "Lobpreis") stays.
-                if _row_key(row["title"]) not in _PLAIN_SONG_TITLES and (
-                        item.get("song") or re.fullmatch(r"lied\d*", _row_key(row["title"]))):
+                if is_place_named(row["title"], keys, item.get("song"), by_song=bool(item.get("song"))):
                     row["title"] = f"Lied {number}"
         async with self._lock:
             existing = next((t for t in self._templates if t["name"].casefold() == name.casefold()), None)
             if existing and not replace:
                 raise KeyError(name)
             if existing:
-                existing.update({"name": name, "rows": rows})
+                existing.update({"name": name, "rows": rows, "slot_names": "place"})
                 template = existing
             else:
                 if len(self._templates) >= MAX_TEMPLATES:
                     raise TemplateError(f"at most {MAX_TEMPLATES} templates")
-                template = {"id": uuid.uuid4().hex, "name": name, "rows": rows}
+                template = {"id": uuid.uuid4().hex, "name": name, "rows": rows, "slot_names": "place"}
                 self._templates.append(template)
             self._persist()
             return self._view(template)
@@ -203,18 +237,27 @@ class ProgramTemplateStore:
             return True
 
 
-def fill_template(rows: List[dict], songs: List[dict]) -> List[dict]:
+def fill_template(rows: List[dict], songs: List[dict], library: Optional[dict] = None,
+                  old_names: bool = False) -> List[dict]:
     """Program rows from template rows and the songs of the day.
 
     songs: [{"song_id": file name or None, "text": the line as typed,
-    "title": the song's title}]. Songs
-    fill the slots in order; slots left over stay without a song; songs left
-    over are added right after the last slot as copies of it (or at the end
-    with the last row's time if the template has no slot). A song that is not
-    in the library keeps its line in the row title so nothing is lost.
+    "title": the song's title}]. Songs fill the slots in order; slots left over
+    stay without a song; songs left over are added right after the last slot as
+    copies of it (or at the end with the last row's time if the template has no
+    slot). The slots and the added rows are named "Lied 1", "Lied 2" ... by place
+    (is_place_named; library: the song library; old_names: the template was saved
+    before slots were named by place, so its slot titles are songs of that day, not
+    names to keep); a song that is not in the
+    library keeps its line in the title ("Lied 4: 300") so nothing is lost.
     """
     result = [{k: v for k, v in row.items() if k != "song_slot"} for row in deepcopy(rows)]
     slots = [i for i, row in enumerate(rows) if row.get("song_slot")]
+    keys = _song_keys(library)
+    slot_keys = frozenset(_row_key(rows[i]["title"]) for i in slots) if old_names else frozenset()
+    for number, index in enumerate(slots, 1):
+        if is_place_named(result[index]["title"], keys, slot_keys=slot_keys):
+            result[index]["title"] = f"Lied {number}"
 
     def put(row: dict, song: dict) -> None:
         if song.get("song_id"):
@@ -229,7 +272,7 @@ def fill_template(rows: List[dict], songs: List[dict]) -> List[dict]:
         if slots:
             model, at = result[slots[-1]], slots[-1] + 1
             # Copy of the slot as the template has it (not the song just put in).
-            model = {**model, "title": rows[slots[-1]]["title"], "song": None}
+            model = {**model, "title": result[slots[-1]]["title"].split(":")[0], "song": None}
         else:
             model = {field: "" for field in _ROW_FIELDS}
             model.update({"time": rows[-1]["time"] if rows else "10:00", "group": "",
@@ -237,9 +280,10 @@ def fill_template(rows: List[dict], songs: List[dict]) -> List[dict]:
                           "light": None})
             at = len(result)
         added = []
-        for song in extra:
+        for number, song in enumerate(extra, len(slots) + 1):
             row = dict(model)
             if slots:
+                row["title"] = f"Lied {number}"
                 put(row, song)
             else:  # no slot to copy: a plain row named after the song
                 row.update(title=(song.get("title") or song.get("text") or "Lied")[:120],
@@ -283,13 +327,6 @@ def _song_title(key: str, slot_keys: set) -> bool:
     return key in slot_keys or key in _PLAIN_SONG_TITLES or re.fullmatch(r"lied\d*", key) is not None
 
 
-def _renamable(title: str, slot_keys: set) -> bool:
-    """A slot row's title that is only a name by position or a stale song title
-    (not "Eingangslied" or what the user called the row)."""
-    key = _row_key(title)
-    return key not in _PLAIN_SONG_TITLES and (key in slot_keys or re.fullmatch(r"lied\d*", key) is not None)
-
-
 def song_rows(template_rows: List[dict], items: List[dict]) -> List[int]:
     """Indexes (in program order) of the program rows that are song slots.
 
@@ -327,7 +364,7 @@ def song_rows(template_rows: List[dict], items: List[dict]) -> List[int]:
 
 
 def apply_order(items: List[dict], template_rows: List[dict], songs: List[dict], persons: List[dict],
-                profiles: Optional[dict] = None) -> tuple:
+                profiles: Optional[dict] = None, library: Optional[dict] = None, old_names: bool = False) -> tuple:
     """(rows, unassigned, mission, slots): the program rows after the order was applied.
 
     items: the program rows in program order; a row of the result with an "id"
@@ -342,7 +379,8 @@ def apply_order(items: List[dict], template_rows: List[dict], songs: List[dict],
     it gets a song) and the rest become copies of the last slot (or rows at the
     end if there is none). A song not in the library goes into the slot's title
     (titled "Lied 4: text"); the slot rows and extra rows are named "Lied 1", "Lied 2"
-    ... by place, unless the user named a row ("Eingangslied"). slots: how many song
+    ... by place (is_place_named), unless the user named a row. library: the song
+    library; old_names: the template's slot titles are old songs (see fill_template). slots: how many song
     rows the program has that can take a song (hidden extras do not count).
     """
     slot_index = set(song_rows(template_rows, items))
@@ -359,7 +397,8 @@ def apply_order(items: List[dict], template_rows: List[dict], songs: List[dict],
     added = []
     slot_total = sum(bool(r.get("song_slot")) for r in template_rows)
     if songs:
-        slot_keys = {_row_key(r["title"]) for r in template_rows if r.get("song_slot")}
+        keys = _song_keys(library)
+        slot_keys = frozenset(_row_key(r["title"]) for r in template_rows if r.get("song_slot")) if old_names else frozenset()
 
         def put(row: dict, song: dict, base: str) -> None:
             if song.get("song_id"):
@@ -370,7 +409,8 @@ def apply_order(items: List[dict], template_rows: List[dict], songs: List[dict],
         # The slot rows are named by their place: "Lied 1", "Lied 2" ... (not by last time's song).
         for number, row in enumerate(slots, 1):
             base = row["title"].split(":")[0].strip()
-            row["song"], row["title"] = None, f"Lied {number}" if _renamable(base, slot_keys) else base
+            row["title"] = f"Lied {number}" if is_place_named(base, keys, row.get("song"), slot_keys) else base
+            row["song"] = None
         for row, song in zip(slots, songs):
             put(row, song, row["title"])
         for position, row in enumerate(slots):
@@ -562,7 +602,8 @@ async def save_template(request: Request, body: dict = Body(...)):
         return fail("unknown program item", 404)
     try:
         template = await request.app.state.program_templates.save(
-            body.get("name"), items, set(slots), replace=body.get("replace") is True)
+            body.get("name"), items, set(slots), replace=body.get("replace") is True,
+            songs=request.app.state.songs.songs)
     except KeyError:
         return fail("a template with this name already exists", 409)
     except (TemplateError, ProgramItemError) as exc:
@@ -605,16 +646,17 @@ async def apply_template(template_id: str, request: Request, body: dict = Body(.
     except PdfImportError as exc:
         return fail(str(exc))
     profiles = request.app.state.cfg.desktop_display.profiles
+    old_names = template.get("slot_names") != "place"  # saved before slots were named by place
     store = request.app.state.program_items
     current = await store.list()
     if current:  # the program is kept as it is: only person and song change (apply_order)
-        rows, unassigned, spotlight, slot_count = apply_order(current, template["rows"], cleaned, persons, profiles)
+        rows, unassigned, spotlight, slot_count = apply_order(current, template["rows"], cleaned, persons, profiles, library, old_names)
     else:
         mission = next((p["person"] for p in persons if p["id"] == "missionsbericht"), "")
         if _is_spotlight_person(mission):  # not a name for the row, see switch_spotlight
             persons = [{**p, "person": ""} if p["id"] == "missionsbericht" else p for p in persons]
         template_rows, unassigned = assign_persons(template["rows"], persons)
-        rows = fill_template(template_rows, cleaned)
+        rows = fill_template(template_rows, cleaned, library, old_names)
         slot_count = template["slot_count"]
         spotlight = switch_spotlight(rows, mission, profiles)
         for row in rows:

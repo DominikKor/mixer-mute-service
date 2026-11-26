@@ -139,8 +139,18 @@ miniatures, and **Standard** restores the original one.
   does, Play / hide / "⋮"); tapping the line opens its fields for editing
   (one row at a time, Esc or another tap closes it).
   Play activates the group first, then runs
-  the linked actions in order; the delay records the click offset from the
-  planned time. As soon as a row starts (Play, **Weiter**), the desktop
+  the rest **best effort per area**: the light, the cameras and the content
+  (beamer, the file / key fields, the desktop profiles, the song) side by
+  side, each on its own, so a light that does not answer or a mixer that is
+  not connected costs only that part (steps on the same PC keep their
+  order; other PCs do not wait for one that is off). The mixer part stays
+  all or nothing: a blocked group sends nothing to the mixer. A key, group,
+  profile or light scene deleted since only skips its own part. The row
+  counts as started in any case; the answer lists every area
+  (`areas: {mixer: {ok, reason}, …}`, `ok`, `partial`) and the page shows
+  one short line for what did not work ("„Predigt“ gestartet – Mischpult:
+  nicht verbunden; Licht: keine Antwort"). The delay records the click
+  offset from the planned time. As soon as a row starts (Play, **Weiter**), the desktop
   profiles the rows before started stop, unless the new row starts them
   itself (app/profile_stops.py): music fades out with its profile's fade,
   a file's window (e.g. the Mission Spotlight video) closes and an image is
@@ -608,7 +618,21 @@ desktop_display:
 ```
 
 Weitere Profile erhalten eigene IDs und Ziel-IPs. `kind` ist `image`,
-`program`, `file` oder `audio`. Bei `program` muss `path` auf eine `.exe` zeigen;
+`program`, `file` oder `audio`. Im Profilfenster wird die Art nicht mehr
+gewählt: der Dienst leitet sie beim Speichern aus dem Pfad ab
+(`app/profile_kind.py`), das Fenster zeigt sie vorher als „Erkannt: …“.
+Bildendungen, die der Agent zeigen kann (PNG, JPG, GIF, BMP, WebP, TIFF, ICO;
+nicht SVG und HEIC), ergeben `image`, Audioendungen und YouTube-Links `audio`
+(Groß-/Kleinschreibung von Schema und Host egal, gespeichert wird der Link
+klein), `.exe` `program`, alles andere `file` (Video, PDF, Folien, `.url` …;
+Windows öffnet die Datei mit der Standard-App, `.lnk`, `.bat` und `.cmd` führt
+es aus). Ein Pfad ohne Endung (z. B.
+`…\obs64*`) und ein Mission-Spotlight-Ordner sagen nichts: ein bestehendes
+Profil behält dann seine Art (Spotlight-Audio bleibt Audio, ein Programm wird
+mit Spotlight zu `file`), ein neues wird `file`. Ein
+bestehendes Profil behält seine gespeicherte Art, solange Pfad und Mission
+Spotlight gleich bleiben; ein `kind` von einer älteren Seite zählt nur bei
+einem Pfad ohne Endung. Bei `program` muss `path` auf eine `.exe` zeigen;
 `args` ist eine Liste separater Argumente, die ohne Shell gestartet werden.
 Bei `file` oeffnet Windows die Datei mit der Standardanwendung. `monitor` ist
 1-basiert; `fullscreen` aktiviert fuer Bilder bzw. Programmfenster den
@@ -630,8 +654,9 @@ Das Profilfenster zeigt das aktuelle Jahr, Quartal und die Woche.
 Videos (`.mp4`, `.mov`, `.mkv`, …; ein Datei-Profil wie Mission Spotlight
 oder eine Datei im Programmpunkt) spielt der Agent selbst in **mpv**, wenn er
 dort eine echte `mpv.exe` findet (nicht MPV.NET, keine Store-App): Vollbild per
-mpv (`--fs`) auf dem eingestellten Monitor, gewählt über dessen Gerätenamen
-(z. B. `\\.\DISPLAY2`, dieselbe Reihenfolge wie bei Bildern). Am Ende bleibt
+mpv (`--fs`) auf dem eingestellten Monitor (Monitor N wie bei Bildern; mpv
+bekommt dessen Nummer in Windows' eigener Reihenfolge, `--screen` /
+`--fs-screen`, denn `--screen-name` kennt mpv unter Windows nicht). Am Ende bleibt
 das letzte Bild stehen, bis der nächste Programmpunkt es schließt. So kennt der
 Agent das Fenster, schließt es, wenn das Programm weitergeht, und startet nie
 zwei Player für dasselbe Profil. Befehlszeile und Monitor stehen im Agent-Log.
@@ -643,8 +668,9 @@ auch eines Ordners, z. B. `I:\Musik\Ansage_*.mp3`,
 `C:\Program Files\obs-studio*\bin\64bit\obs64.exe` oder
 `C:\Users\*\foilpresenter Bibliothek`. Der Display-Agent setzt ihn auf dem
 Ziel-PC ein; passen mehrere Eintraege, gilt der zuletzt geaenderte. Ein
-Programmpfad darf statt auf `.exe` auch auf `*` enden, dann kommen nur
-`.exe`-Dateien in Frage. Programme auf Netzlaufwerken bleiben auch mit `*`
+Programmpfad schreibt den Platzhalter vor der Endung (`obs64*.exe`), sonst wird
+er nicht als Programm erkannt; ein älteres Profil, das auf `*` endet, bleibt
+Programm, dann kommen nur `.exe`-Dateien in Frage. Programme auf Netzlaufwerken bleiben auch mit `*`
 gesperrt. Der Platzhalter braucht den aktuellen Display-Agent auf dem Ziel-PC;
 die Update-Taste aktualisiert die Display-Agents aller PCs mit und startet sie
 immer neu, auch wenn sie schon aktuell sind (dann über `POST /restart` am

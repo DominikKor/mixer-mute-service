@@ -14,6 +14,21 @@ YOUTUBE_URL_RE = re.compile(
 )
 
 
+_SCHEME_HOST_RE = re.compile(r"^([A-Za-z]+://[^/?#\s]*)")
+
+
+def normalize_youtube_url(value):
+    """A link typed with capitals in scheme or host ("HTTPS://YouTube.com/…")
+    with those lower-cased when that makes it a YouTube link; anything else
+    unchanged. Profiles store the normalised link, so the display agent
+    (its own strict copy of the check) recognises it too."""
+    if not isinstance(value, str):
+        return value
+    text = value.strip()
+    lowered = _SCHEME_HOST_RE.sub(lambda m: m.group(1).lower(), text, count=1)
+    return lowered if lowered != text and is_youtube_url(lowered) else value
+
+
 def is_youtube_url(value) -> bool:
     return (isinstance(value, str) and len(value) <= 500
             and not any(ord(c) < 32 for c in value) and YOUTUBE_URL_RE.match(value) is not None)

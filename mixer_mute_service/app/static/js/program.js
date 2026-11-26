@@ -1223,11 +1223,56 @@ async function deleteProgramItem(itemId, button) {
   renderProgramItems();
 }
 
+// A row runs best effort per area (app/api/program.py): what did not work,
+// named briefly, in one line.
+const PROGRAM_AREA_LABELS = {
+  mixer: "Mischpult", light: "Licht", beamer: "Beamer", playback: "Playback", translation: "Übersetzung",
+  lyrics: "Liedtext", desktop: "Desktop", song: "Lied", cameras: "Kameras",
+};
+const PROGRAM_AREA_REASONS = [
+  [/no mixer connection|not connected/i, "nicht verbunden"],
+  [/link stale|no data from mixer/i, "keine Daten vom Pult"],
+  [/panic/i, "Panic aktiv"],
+  [/display agent unavailable|unavailable|timed? ?out|no answer/i, "keine Antwort"],
+  [/^unknown group$/i, "Mutegruppe gelöscht"],
+  [/^unknown button$/i, "Taste gelöscht"],
+  [/^unknown light scene$/i, "Lichtszene gelöscht"],
+  [/^unknown song$/i, "Lied nicht gefunden"],
+  [/^unknown desktop profile/i, "Profil gelöscht"],
+  [/song library not loaded/i, "Liedbibliothek nicht geladen"],
+  [/switches mutes/i, "Taste schaltet Mutes (die Mutegruppe des Punkts tut das)"],
+];
+
+function programReasonText(reason) {
+  const known = PROGRAM_AREA_REASONS.find(([pattern]) => pattern.test(reason));
+  return known ? known[1] : reason;
+}
+
+// "Desktop: Logo: keine Antwort" – the desktop area names its profiles.
+function programAreaText(area, entry) {
+  const parts = String(entry.reason || "fehlgeschlagen").split("; ").map(part => {
+    const named = area === "desktop" && /^(.+?): (.+)$/.exec(part);
+    return named ? `${named[1]}: ${programReasonText(named[2])}` : programReasonText(part);
+  });
+  return `${PROGRAM_AREA_LABELS[area] || area}: ${parts.join(", ")}`;
+}
+
 function programPlayToast(result) {
   const title = result.data && result.data.title ? `„${result.data.title}“` : "Programmpunkt";
   // What the camera part said is in this toast; later outcomes come from the status.
   const cameraSeq = result.data && result.data.camera && result.data.camera.seq;
   if (typeof cameraSeq === "number") PROGRAM_CAMERA_SEQ = Math.max(PROGRAM_CAMERA_SEQ ?? 0, cameraSeq);
+  const areas = result.ok && result.data && result.data.areas;
+  if (areas && result.data.ok === false) {
+    // Some areas did not work: one line with all of them, the rest ran.
+    const failed = Object.entries(areas).filter(([, entry]) => !entry.ok).map(([area, entry]) => programAreaText(area, entry));
+    const ran = Object.values(areas).some(entry => entry.ok || entry.partial);
+    toast(`${title} ${ran ? "gestartet" : "– nichts ausgeführt"} – ${failed.join("; ")}`, false);
+    noteSongScreensFailed(result.data.song);
+    const wait = result.data.camera && result.data.camera.switch_in_seconds;
+    if (wait) setTimeout(checkCameraProgram, (wait + 4) * 1000);
+    return;
+  }
   if (!result.ok || result.data.ok === false) {
     // Name the action that failed and why (e.g. a file missing on the target PC).
     const failed = ((result.data && result.data.linked_actions) || []).find(action => action.ok === false);

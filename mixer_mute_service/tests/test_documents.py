@@ -69,6 +69,21 @@ class ConversionTests(unittest.TestCase):
         agent_suffixes = documents.PDF_SUFFIXES | documents.POWERPOINT_SUFFIXES | documents.WORD_SUFFIXES
         self.assertEqual(service.DOCUMENT_SUFFIXES, agent_suffixes)
 
+    def test_the_page_knows_the_same_suffixes(self):
+        import re
+
+        from app import documents as service
+
+        script = (Path(service.__file__).parent / "static" / "js" / "doc-dock.js").read_text(encoding="utf-8")
+        pattern = re.search(r"DOC_DOCK_SUFFIX_RE = /(.+)/i;", script).group(1)
+        regex = re.compile(pattern, re.I)
+        for suffix in service.DOCUMENT_SUFFIXES:
+            self.assertTrue(regex.search(f"C:\\a\\Predigt{suffix}"), suffix)
+        for name in ("Video.mp4", "Bild.png", "Lied.foil", "x.pdfa"):
+            self.assertIsNone(regex.search(name), name)
+        css = (Path(service.__file__).parent / "static" / "css" / "doc-dock.css").read_text(encoding="utf-8")
+        self.assertIn(".doc-dock button { min-height: 52px;", css, "keys as high as the song dock's")
+
     def test_a_pdf_is_shown_as_it_is(self):
         def never(*_args):
             raise AssertionError("a PDF is never converted")
@@ -527,9 +542,14 @@ class ServiceTests(unittest.TestCase):
             self.play(client, ids[2])
             self.assertNotIn("keep_if_open", agents.of("/display")[2][1], "another file is opened, never kept")
             time.sleep(0.1)
-            self.assertEqual(agents.of("/close"), [], "it replaces the one before (one document per PC)")
+            # It replaces the one before (one document per PC); a close sent
+            # meanwhile names the earlier start, which the agent ignores once
+            # the new one is there.
+            earlier = agents.of("/display")[1][1]["stamp"]
+            self.assertTrue(all(body["stamp"] == earlier for _pc, body in agents.of("/close")))
+            before = len(agents.of("/close"))
             self.play(client, ids[3])
-            closes = agents.wait_closes(1)
+            closes = agents.wait_closes(before + 1)[before:]
             self.assertEqual([body["id"] for _pc, body in closes], ["doc-192-168-188-11"], "a row without it")
             self.assertEqual(closes[0][1]["stamp"], agents.of("/display")[2][1]["stamp"], "the last start's")
 

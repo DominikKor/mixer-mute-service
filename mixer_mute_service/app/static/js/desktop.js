@@ -9,13 +9,15 @@
 let DESKTOP_PROFILES = [];
 // Today's quarter and week from the service: {year, quarter, week, subfolder, file_prefix}.
 let MISSION_SPOTLIGHT = null;
-const PROFILE_FORM = { mode: "create", id: null, idTouched: false, kind: "image", monitors: [1], position: "top-left" };
+// kind: taken from the path (profileKindFor); stored: the edited profile as
+// it was ({path, kind, mission_spotlight}), null for a new one.
+const PROFILE_FORM = { mode: "create", id: null, idTouched: false, kind: "file", stored: null, monitors: [1], position: "top-left" };
 const MAX_MONITORS = 5;
 const KIND_INFO = {
   image: { placeholder: "I:\\Bilder\\GemeindegabenQR.png",
            hint: "Bilddatei (PNG, JPG …) auf dem Ziel-PC. Der Desktop-Agent zeigt sie an; Esc blendet sie aus." },
   program: { placeholder: "C:\\Program Files\\App\\app.exe",
-             hint: "Pfad zur .exe auf dem Ziel-PC. Argumente werden einzeln und ohne Shell übergeben." },
+             hint: "Pfad zur .exe auf dem Ziel-PC (ein unbekannter Teil mit *, aber mit Endung: obs64*.exe). Argumente werden einzeln und ohne Shell übergeben." },
   file: { placeholder: "D:\\Folien\\Predigt.pptx",
           hint: "Beliebige Datei auf dem Ziel-PC – Windows öffnet sie mit der Standard-App (PowerPoint, PDF …)." },
   audio: { placeholder: "I:\\Musik\\Lied.mp3 oder https://youtu.be/…",
@@ -40,10 +42,67 @@ function isYoutubeUrl(value) {
   return value.length <= 500 && YOUTUBE_URL_RE.test(value);
 }
 
-// Typing or pasting a YouTube link makes the profile an audio profile.
+// Capitals in scheme or host ("HTTPS://YouTube.com/…") lower-cased when that
+// makes a YouTube link, as the service does when saving (app/youtube.py).
+function normalizeYoutubeUrl(value) {
+  const lowered = value.replace(/^([A-Za-z]+:\/\/[^\/?#\s]*)/, m => m.toLowerCase());
+  return lowered !== value && isYoutubeUrl(lowered) ? lowered : value;
+}
+
+// ---- the kind comes from the path ---------------------------------------------
+// Same rules as the service (app/profile_kind.py, which decides on saving;
+// tests/test_profile_kind.py checks both agree): a YouTube link is audio,
+// image and audio extensions image and audio, .exe a program, everything
+// else a file (Windows opens it with its default app). A path without an
+// extension and a Mission Spotlight folder say nothing: an edited profile
+// keeps its kind, a new one is a file.
+// Only what the display agent can show (Pillow): .svg and .heic are files.
+const PROFILE_IMAGE_EXT = new Set([".png", ".jpg", ".jpeg", ".jfif", ".gif", ".bmp", ".webp", ".tif", ".tiff", ".ico"]);
+const PROFILE_AUDIO_EXT = new Set([".mp3", ".wav", ".flac", ".m4a", ".aac", ".ogg", ".oga", ".opus", ".wma", ".aif", ".aiff", ".mka"]);
+const PROFILE_PROGRAM_EXT = new Set([".exe"]);
+// What a file profile opens, for the label only.
+const PROFILE_FILE_LABELS = {
+  ".mp4": "Video", ".mov": "Video", ".mkv": "Video", ".avi": "Video", ".wmv": "Video", ".webm": "Video",
+  ".m4v": "Video", ".mpg": "Video", ".mpeg": "Video", ".pdf": "PDF", ".ppt": "Präsentation",
+  ".pptx": "Präsentation", ".pps": "Präsentation", ".ppsx": "Präsentation", ".odp": "Präsentation",
+  ".doc": "Dokument", ".docx": "Dokument", ".odt": "Dokument", ".txt": "Text", ".xls": "Tabelle", ".xlsx": "Tabelle",
+  ".lnk": "Verknüpfung (wird von Windows ausgeführt)", ".url": "Internet-Verknüpfung",
+  ".bat": "Skript (wird von Windows ausgeführt)", ".cmd": "Skript (wird von Windows ausgeführt)", ".html": "Webseite", ".htm": "Webseite",
+};
+const PROFILE_KIND_LABELS = { image: "Bild", audio: "Audio", program: "Programm", file: "Datei" };
+
+// {kind, label} the path asks for, or null when it says nothing (no extension).
+function profileKindOf(path, spotlight) {
+  const value = normalizeYoutubeUrl((path || "").trim());
+  if (isYoutubeUrl(value)) return { kind: "audio", label: "YouTube-Audio" };
+  if (spotlight) return null;  // a folder: the kind is not in the path
+  const name = value.split(/[\\/]/).pop();
+  if (!name || name.endsWith("*") || !name.replace(/^\.+|\.+$/g, "").includes(".")) return null;
+  const ext = "." + name.split(".").pop().toLowerCase();
+  if (PROFILE_IMAGE_EXT.has(ext)) return { kind: "image", label: "Bild" };
+  if (PROFILE_AUDIO_EXT.has(ext)) return { kind: "audio", label: "Audio" };
+  if (PROFILE_PROGRAM_EXT.has(ext)) return { kind: "program", label: "Programm" };
+  return { kind: "file", label: PROFILE_FILE_LABELS[ext] || "Datei" };
+}
+
+// The kind the service will store (app/profile_kind.profile_kind): an edited
+// profile keeps its kind while path and Mission Spotlight stay; a path that
+// says nothing keeps the old kind, a new profile then becomes a file.
+function profileKindFor(path, spotlight, stored) {
+  if (stored && (stored.path || "") === (path || "") && !!stored.mission_spotlight === !!spotlight) {
+    return { ...(profileKindOf(path, spotlight) || {}), kind: stored.kind, label: PROFILE_KIND_LABELS[stored.kind], kept: true };
+  }
+  const found = profileKindOf(path, spotlight);
+  if (found) return found;
+  // Mission Spotlight keeps an image or audio profile as it is (a program
+  // cannot be one); a new one opens the week's file.
+  const keep = stored && !(spotlight && stored.kind === "program");
+  const kind = keep ? stored.kind : "file";
+  if (spotlight) return { kind, label: `${PROFILE_KIND_LABELS[kind]} der Woche (Mission Spotlight)`, kept: !!keep };
+  return { kind, label: PROFILE_KIND_LABELS[kind], kept: !!keep, unknown: true };
+}
+
 function syncProfilePath() {
-  const youtube = isYoutubeUrl($("pf-path").value.trim());
-  if (youtube && PROFILE_FORM.kind !== "audio") PROFILE_FORM.kind = "audio";
   syncProfileForm();
 }
 
@@ -103,25 +162,34 @@ function pickMonitor(n) {
 }
 
 function syncProfileForm() {
-  const kind = PROFILE_FORM.kind;
-  setRadio($("pf-kind"), "data-kind", kind);
+  const pathValue = $("pf-path").value.trim();
+  const detected = profileKindFor(pathValue, $("pf-spotlight").checked, PROFILE_FORM.stored);
+  const kind = PROFILE_FORM.kind = detected.kind;
+  // What the path makes of the profile, read-only (there is no choice).
+  const label = $("pf-kind-detected");
+  label.hidden = !pathValue;
+  label.textContent = detected.unknown
+    ? `${detected.kept ? "Bleibt" : "Erkannt"}: ${detected.label} – keine Dateiendung erkannt`
+    : `Erkannt: ${detected.label}`;
+  label.dataset.kind = kind;
   // Mission Spotlight: the path is a folder; the week's file is picked by date.
-  $("pf-spotlight-row").hidden = kind === "program";
-  const spotlight = kind !== "program" && $("pf-spotlight").checked;
+  $("pf-spotlight-row").hidden = kind === "program" && !$("pf-spotlight").checked;
+  const spotlight = $("pf-spotlight").checked;
   $("pf-spotlight-text").textContent = spotlight ? "Ein" : "Aus";
   const now = MISSION_SPOTLIGHT;
   $("pf-spotlight-hint").textContent = now
     ? `Heute: ${now.year} · ${now.quarter}. Quartal · Woche ${now.week} des Quartals`
     : "Quartal und Woche werden geladen…";
   $("pf-path-label").textContent = spotlight ? "Ordner auf dem Ziel-PC" : "Pfad auf dem Ziel-PC";
-  $("pf-path").placeholder = spotlight ? "I:\\Mission Spotlight" : KIND_INFO[kind].placeholder;
+  $("pf-path").placeholder = spotlight ? "I:\\Mission Spotlight" : "z. B. I:\\Bilder\\QR.png, D:\\Videos\\Intro.mp4 oder https://youtu.be/…";
   const youtube = kind === "audio" && isYoutubeUrl($("pf-path").value.trim());
   const folder = $("pf-path").value.trim().replace(/[\\/]+$/, "") || "Ordner";
   $("pf-path-hint").textContent = spotlight
     ? `Ordner mit den Unterordnern „${now ? now.year : "JJJJ"}_1.Quartal“ … „${now ? now.year : "JJJJ"}_4.Quartal“. Gewählt wird die Datei, deren Name mit der zweistelligen Woche beginnt`
       + (now ? `, jetzt: ${folder}\\${now.subfolder}\\${now.file_prefix}… (z. B. ${now.file_prefix}_Video.mp4)` : "")
       + ". Passen mehrere, gilt die neueste."
-    : youtube ? YOUTUBE_HINT : KIND_INFO[kind].hint + WILDCARD_HINT;
+    : youtube ? YOUTUBE_HINT : pathValue ? KIND_INFO[kind].hint + WILDCARD_HINT
+      : "Die Art ergibt sich aus der Dateiendung: Bild, Audio (auch YouTube-Link), Programm (.exe), sonst öffnet Windows die Datei mit der Standard-App." + WILDCARD_HINT;
   $("pf-path-hint").classList.toggle("youtube", youtube && !spotlight);
   $("pf-args-wrap").hidden = kind !== "program";
   $("pf-display-row").hidden = kind === "audio";
@@ -238,13 +306,14 @@ function openProfileDialog(profileId) {
   const existing = profileId ? DESKTOP_PROFILES.find(p => p.id === profileId) : null;
   if (profileId && !existing) return toast("Profil nicht gefunden", false);
   const p = existing || {
-    title: "", kind: "image", path: "", args: [], fullscreen: true, monitor: 1, position: "top-left",
+    title: "", kind: "file", path: "", args: [], fullscreen: true, monitor: 1, position: "top-left",
     fade: false, fade_seconds: 5,
     target_ip: (TARGET_PCS.find(pc => pc.id === "display") || TARGET_PCS[0]).ip,
   };
   Object.assign(PROFILE_FORM, {
     mode: existing ? "edit" : "create", id: existing ? existing.id : null, idTouched: false,
     kind: p.kind, monitors: p.monitors && p.monitors.length ? [...p.monitors] : [p.monitor], position: p.position,
+    stored: existing ? { path: existing.path || "", kind: existing.kind, mission_spotlight: !!existing.mission_spotlight } : null,
   });
   $("profile-title").textContent = existing ? `Profil bearbeiten` : "Neues Profil";
   $("pf-title").value = p.title;
@@ -268,21 +337,22 @@ function openProfileDialog(profileId) {
 function readProfileForm() {
   const title = $("pf-title").value.trim();
   const id = $("pf-id").value.trim();
-  const path = $("pf-path").value.trim();
+  const path = normalizeYoutubeUrl($("pf-path").value.trim());
   const ip = $("pf-ip").value.trim();
+  syncProfileForm();
   const kind = PROFILE_FORM.kind;
   const args = kind === "program"
     ? $("pf-args").value.split(/\r?\n/).map(a => a.trim()).filter(Boolean) : [];
   if (!title) return profileFormError("Bitte einen Namen eingeben.", $("pf-title"));
   if (!PROFILE_ID_RE.test(id)) return profileFormError("ID: nur Buchstaben, Ziffern, - und _ (max. 64).", $("pf-id"));
   const youtube = isYoutubeUrl(path);
-  const spotlight = kind !== "program" && $("pf-spotlight").checked;
+  const spotlight = $("pf-spotlight").checked;
   if (spotlight && (youtube || !WIN_ABS_PATH_RE.test(path) || path.includes("*"))) {
     return profileFormError("Mission Spotlight: vollständigen Ordner angeben (ohne *), z. B. I:\\Mission Spotlight", $("pf-path"));
   }
   if (youtube && kind !== "audio") return profileFormError("Ein YouTube-Link spielt nur als Audio.", $("pf-path"));
   if (!youtube && !WIN_ABS_PATH_RE.test(path)) return profileFormError("Pfad: vollständiger Windows-Pfad, z. B. " + KIND_INFO[kind].placeholder.split(" oder ")[0] + (kind === "audio" ? ", oder ein YouTube-Link" : ""), $("pf-path"));
-  if (kind === "program" && !/(\.exe|\*)$/i.test(path)) return profileFormError("Ein Programm muss auf eine .exe zeigen (oder auf * enden).", $("pf-path"));
+  if (kind === "program" && !/(\.exe|\*)$/i.test(path)) return profileFormError("Ein Programm muss auf eine .exe zeigen, mit * z. B. obs64*.exe.", $("pf-path"));
   if (!IPV4_RE.test(ip)) return profileFormError("Bitte einen Ziel-PC wählen.", $("pf-ip"));
   // Only audio fades; other kinds keep the defaults (and config.yaml stays short).
   const fade = kind === "audio" && $("pf-fade").checked;
@@ -294,7 +364,8 @@ function readProfileForm() {
   if (PROFILE_FORM.monitors.some(m => m > MAX_MONITORS)) return profileFormError(`Monitor: 1 bis ${MAX_MONITORS}`, $("pf-monitor"));
   const monitors = kind === "image" ? PROFILE_FORM.monitors : PROFILE_FORM.monitors.slice(0, 1);
   return {
-    id, title, kind, path, args, target_ip: ip, fullscreen: $("pf-fullscreen").checked,
+    // No kind: the service takes it from the path (as shown in the dialog).
+    id, title, path, args, target_ip: ip, fullscreen: $("pf-fullscreen").checked,
     monitor: monitors[0], monitors: monitors.length > 1 ? monitors : [], position: PROFILE_FORM.position,
     fade, fade_seconds: fadeSeconds, mission_spotlight: spotlight,
   };

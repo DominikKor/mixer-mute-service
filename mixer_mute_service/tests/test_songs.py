@@ -271,7 +271,8 @@ def main():
               and agent.last()["title"] == "Lobe den Herren" and r.json()["song"]["slide"] == 0)
         agent.fail = True
         r = client.post(f"/program/items/{item_id}/play")
-        check("display PC down: row start reports it", r.status_code == 502 and "song could not be shown" in r.json()["reason"])
+        check("display PC down: row start reports it", r.status_code == 200 and r.json()["areas"]["song"]["ok"] is False
+              and r.json()["reason"].startswith("song: "))
         agent.fail = False
 
         print("== title slide ==")
