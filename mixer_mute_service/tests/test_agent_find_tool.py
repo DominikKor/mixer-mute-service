@@ -177,6 +177,10 @@ class InfoTests(unittest.TestCase):
         saved = dict(agent._tool_cache)
         self.addCleanup(lambda: agent._tool_cache.update(saved))
         agent._tool_refreshing.clear()
+        # /info reports mpv's last start from its log: never the real one.
+        log = patch.object(agent, "mpv_log_path", return_value=Path(tempfile.gettempdir()) / "no-such-mpv.log")
+        log.start()
+        self.addCleanup(log.stop)
 
     def test_reports_the_cached_players_and_restored_variables(self):
         agent._tool_cache.update(at=agent.time.monotonic(), mpv=r"C:\Program Files\mpv\mpv.exe", ytdlp=None)

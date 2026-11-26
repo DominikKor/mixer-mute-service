@@ -10,7 +10,9 @@ others (the answer and /songs/live name it with its reason, the live state
 moves on), all failing leaves the live state alone; a screen that HANGS
 costs a step at most the 1 s timeout once, then steps do not wait for it at
 all, three quick steps land in order on the live screen, and the hanging
-screen gets only the newest slide; the library stays on its own PC. No
+screen gets only the newest slide; with all screens down, presses that
+reach no screen are dropped everywhere (page and returning screens agree);
+the library stays on its own PC. No
 request leaves the process (display_agent._post is replaced).
 
 Run from mixer_mute_service:  python -m tests.test_song_screens
@@ -256,6 +258,34 @@ class ScreensTest(unittest.TestCase):
         self.assertEqual(r.json()["reason"], "display agent unavailable")
         self.assertEqual([s["ok"] for s in r.json()["screens"]], [False, False])
         self.assertEqual(self.client.get("/songs/live").json()["slide"], 0)
+
+    def test_screens_come_back_on_the_slide_the_page_shows(self):
+        """All screens down: the presses reach no screen, so the page stays on
+        its slide, and the screens get that one (not the failed steps, not
+        "Aus") when they come back."""
+        import app.songs as songs
+        retry, songs.SONG_SCREEN_RETRY = songs.SONG_SCREEN_RETRY, 0.1
+        try:
+            self.client.post("/songs/show", json={"song_id": "Testlied.foil", "slide": 0})
+            self.agents.down.update({ANZEIGE, STREAMING})
+            for path in ("/songs/next", "/songs/next", "/songs/next", "/songs/hide"):
+                self.assertEqual(self.client.post(path).status_code, 502, path)
+            live = self.client.get("/songs/live").json()
+            self.assertEqual((live["song_id"], live["slide"], live["blank"]), ("Testlied.foil", 0, False))
+            self.agents.down.clear()
+            deadline = time.monotonic() + 3
+            while not all(s["ok"] for s in self.client.get("/songs/live").json()["screens"]) and time.monotonic() < deadline:
+                time.sleep(0.02)
+            time.sleep(0.3)   # anything still queued
+            for ip in (ANZEIGE, STREAMING):
+                last = [p for sent_ip, p in self.agents.song_calls() if sent_ip == ip][-1]
+                self.assertEqual((last["action"], last.get("text")), ("show", "Eins"), ip)
+            live = self.client.get("/songs/live").json()
+            self.assertEqual(live["slide"], 0)
+            self.assertTrue(all(s["ok"] for s in live["screens"]))
+        finally:
+            songs.SONG_SCREEN_RETRY = retry
+            self.agents.down.clear()
 
     def test_library_stays_on_its_pc(self):
         self.client.put("/songs/settings", json={"target_ip": ANZEIGE,

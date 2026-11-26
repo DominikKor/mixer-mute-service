@@ -3,6 +3,7 @@ browser asked (127.0.0.1 for its own PC), compares its version with the agent
 files it ships, pushes them through the agent's self-update and waits until
 the new version answers. Agents from before the self-update need the .cmd."""
 
+import json
 import os
 import tempfile
 import unittest
@@ -245,6 +246,52 @@ class AgentRestartTests(unittest.TestCase):
                     agent = next(a for a in r["agents"] if a["pc"] == "192.168.188.20")
                     self.assertFalse(r["ok"])
                     self.assertEqual(agent["error"], "display agent did not come back after the restart")
+
+    def test_info_carries_the_audio_sources_of_each_pc(self):
+        """Each agent gets the audio sources of its own PC's audio profiles
+        (it keeps local copies of them, so the music starts at once)."""
+        with tempfile.TemporaryDirectory() as directory:
+            config_path = Path(directory) / "config.yaml"
+            profile = "    {id}:\n      title: {id}\n      kind: {kind}\n      path: '{path}'\n      target_ip: {ip}\n"
+            config_path.write_text(
+                "mixer:\n  ip: 127.0.0.1\n  port: 9\n  max_channels: 8\n"
+                "desktop_display:\n  enabled: true\n  profiles:\n"
+                + profile.format(id="musik", kind="audio", path=r"I:\GoogleDrive\Musik.mp3", ip="192.168.188.20")
+                + profile.format(id="musik2", kind="audio", path=r"I:\GoogleDrive\Musik.mp3", ip="192.168.188.11")
+                + profile.format(id="lied", kind="audio", path="https://youtu.be/dQw4w9WgXcQ", ip="192.168.188.11")
+                + profile.format(id="bild", kind="image", path=r"I:\Bild.png", ip="192.168.188.11"),
+                encoding="utf-8",
+            )
+            fake = FakeAgent()
+            fake.agents.update({"192.168.188.20": "v9", "192.168.188.11": "v9"})
+            env = {"MIXER_CONFIG": str(config_path), "DESKTOP_AGENT_TOKEN": "t", "MIXER_BUILD_ID": "v9"}
+            with patch.dict(os.environ, env), patch("app.display_agent._post", fake):
+                from fastapi.testclient import TestClient
+                from app.main import app
+
+                with TestClient(app, client=("127.0.0.1", 50000)) as here:
+                    here.get("/update/agents")
+        sent = {ip: payload for ip, path, payload in fake.calls if path == "/info"}
+        self.assertEqual(sent["192.168.188.20"], {"audio": [r"I:\GoogleDrive\Musik.mp3"]})
+        self.assertEqual(sent["192.168.188.11"],
+                         {"audio": [r"I:\GoogleDrive\Musik.mp3", "https://youtu.be/dQw4w9WgXcQ"]})
+
+    def test_audio_sources_stay_within_the_agents_request_limit(self):
+        from types import SimpleNamespace
+
+        from app.agent_update import MAX_AUDIO_SOURCES, MAX_AUDIO_SOURCES_BYTES, audio_sources
+
+        def request(paths):
+            profiles = {str(i): SimpleNamespace(kind="audio", target_ip="10.0.0.1", path=p, mission_spotlight=False)
+                        for i, p in enumerate(paths)}
+            cfg = SimpleNamespace(desktop_display=SimpleNamespace(profiles=profiles))
+            return SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(cfg=cfg)))
+
+        many = audio_sources(request([f"C:/m/{i}.mp3" for i in range(50)]), "10.0.0.1")
+        self.assertEqual(len(many), MAX_AUDIO_SOURCES)
+        long = audio_sources(request(["C:/" + "x" * 900 + f"{i}.mp3" for i in range(15)]), "10.0.0.1")
+        self.assertLessEqual(len(json.dumps(long)), MAX_AUDIO_SOURCES_BYTES)
+        self.assertGreater(len(long), 0)
 
 
 if __name__ == "__main__":

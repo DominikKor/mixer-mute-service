@@ -195,11 +195,13 @@ class SongService:
         self.errors: list = library.get("errors", []) if isinstance(library.get("errors"), list) else []
         self.live = {"song_id": None, "slide": 0, "blank": False}
         # One sender per screen's PC (ScreenSender), and the step numbers:
-        # live is set when a step is sent, confirmed once a screen took it.
+        # live is set when a step is sent, confirmed once a screen took it:
+        # (seq, live, {ip: request}) of the last step a screen showed (each
+        # screen's own request: its layout and monitor).
         self.senders: dict = {}
         self.seq = 0
         self.live_seq = 0
-        self.confirmed = (0, dict(self.live))
+        self.confirmed = (0, dict(self.live), {})
         # Song layouts (app/slide_layout.py), newest last: song_id -> plan.
         self.layouts: dict = {}
         self.layout_rev = 0
@@ -620,6 +622,19 @@ class ScreenSender:
             self.task = loop.create_task(self._run(), name=f"song screen {self.ip}")
         return future
 
+    def reset(self, cfg, payload: Optional[dict]) -> None:
+        """Forget the steps not sent yet; the screen is to show ``payload``
+        (what the screens last showed), also after a send still on its way."""
+        self.queue.clear()
+        self.latest = (cfg, payload) if payload is not None else None
+        if payload is None:
+            return
+        self.queue.append((self.done_seq, cfg, payload))
+        if self.wake is not None:
+            self.wake.set()
+        if self.task is None or self.task.done():
+            self.task = asyncio.get_running_loop().create_task(self._run(), name=f"song screen {self.ip}")
+
     def close(self) -> None:
         if self.task is not None:
             self.task.cancel()
@@ -663,6 +678,12 @@ class ScreenSender:
             self.waiters = waiting
 
 
+def _for_screen(payload: dict, target: SongTarget) -> dict:
+    """The request for one screen with its own monitor (the payload is that
+    screen's: with its layout)."""
+    return payload if payload["action"] == "hide" else {**payload, "monitor": target.monitor}
+
+
 async def _step(request: Request, plan):
     """One show/blank/hide on every screen. ``plan(service)`` runs under the
     lock (a coroutine: awaited) and returns (payload, new live state, log
@@ -671,7 +692,9 @@ async def _step(request: Request, plan):
     lock is held only to decide and queue (the next press steps on from the
     new state); then the step waits for the screens that are up, at most
     SONG_SCREEN_TIMEOUT, never for one that is down. If no screen took it,
-    the live state goes back to the last one a screen took."""
+    the live state AND every screen's queue go back to the last step a screen
+    took: the page and the screens (also the ones that come back later)
+    always agree, and the presses that reached no screen are dropped."""
     service: SongService = request.app.state.songs
     cfg = request.app.state.cfg.desktop_display
     async with service.lock:
@@ -686,10 +709,10 @@ async def _step(request: Request, plan):
         targets = list(service.settings.targets)
         senders = {target.ip: service.sender(target.ip) for target in targets}
         up = [target.ip for target in targets if senders[target.ip].up]
-        bodies = [payload(index) if callable(payload) else payload for index in range(len(targets))]
-        futures = {target.ip: senders[target.ip].submit(
-            seq, cfg, body if body["action"] == "hide" else {**body, "monitor": target.monitor})
-            for target, body in zip(targets, bodies)}
+        # Each screen's own request (its layout, its monitor).
+        bodies = {target.ip: _for_screen(payload(index) if callable(payload) else payload, target)
+                  for index, target in enumerate(targets)}
+        futures = {target.ip: senders[target.ip].submit(seq, cfg, bodies[target.ip]) for target in targets}
         service.live, service.live_seq = live, seq
     waited = [futures[ip] for ip in (up or futures)]
     await asyncio.wait(waited, timeout=SONG_SCREEN_TIMEOUT + 0.2)
@@ -708,9 +731,13 @@ async def _step(request: Request, plan):
     reached = any(entry["ok"] for entry in screens)
     async with service.lock:
         if reached and seq > service.confirmed[0]:
-            service.confirmed = (seq, dict(live))
+            service.confirmed = (seq, dict(live), bodies)
         elif not reached and service.live_seq == seq:
-            service.live = dict(service.confirmed[1])
+            _, confirmed_live, confirmed_bodies = service.confirmed
+            service.live = dict(confirmed_live)
+            for target in service.settings.targets:
+                # A screen added since then has no request of its own: it shows nothing new.
+                service.sender(target.ip).reset(cfg, confirmed_bodies.get(target.ip))
     if not reached:
         result, status = failure
         return reply({**result, "screens": screens}, status)
