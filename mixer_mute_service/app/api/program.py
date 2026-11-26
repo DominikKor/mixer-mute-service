@@ -26,7 +26,7 @@ from ..actions import (
 )
 from ..models import ProgramItemRequest, ShortcutRequest
 from ..native_controls import NativeControlError
-from ..program_items import ProgramItemError, apply_shortcut, linked_shortcut_id
+from ..program_items import ProgramItemError, unlink_shortcut
 from ..responses import fail, respond, unwrap
 from ..lights import apply_scene
 from ..songs import show_slide
@@ -92,19 +92,21 @@ async def import_program(request: Request, body: dict = Body(...)):
         return fail(f"at most {_MAX_PROGRAM_FILE_ITEMS} program items", 400)
 
     imported = []
+    shortcuts = None  # read once, when a row refers to shortcuts
     for index, row in enumerate(rows):
         if not isinstance(row, dict):
             return fail(f"item {index + 1} must be an object", 400)
         hidden = row.get("hidden", False)
         if type(hidden) is not bool:
             return fail(f"item {index + 1}: hidden must be true or false", 400)
-        # A file from when rows referred to shortcuts: the shortcut's fields
-        # are copied in (what the row ran then); a deleted one is left out.
-        shortcut_id = linked_shortcut_id(row)
+        # A file from when rows referred to shortcuts: their fields are taken
+        # in as the stored rows' are (app/program_items.py unlink_shortcut);
+        # deleted ones are left out.
         store = _shortcut_store(request)
-        shortcut = await store.get(shortcut_id) if shortcut_id and store is not None else None
-        if shortcut is not None:
-            row = apply_shortcut(row, shortcut)
+        if store is not None:
+            if shortcuts is None:
+                shortcuts = {shortcut["id"]: shortcut for shortcut in await store.list()}
+            row, _status = unlink_shortcut(f"Imported row {index + 1}", row, row, shortcuts, lambda merged: merged)
         try:
             item = ProgramItemRequest.model_validate(row)
         except ValidationError:

@@ -131,38 +131,101 @@ def apply_shortcut(item: dict, shortcut: dict) -> dict:
 
 
 def linked_shortcut_id(entry: dict) -> Optional[str]:
-    """The shortcut a row saved before referred to: "shortcut" (v1.2.1-210:
-    it ran instead of the row's own fields) or the first of "shortcuts"
-    (before: a list run after them)."""
+    """The shortcut a row of v1.2.1-210 referred to ("shortcut": it ran
+    instead of the row's own fields)."""
     shortcut = entry.get("shortcut")
-    if not shortcut and isinstance(entry.get("shortcuts"), list) and entry["shortcuts"]:
-        shortcut = entry["shortcuts"][0]
     return shortcut if isinstance(shortcut, str) and _SHORTCUT_ID_RE.fullmatch(shortcut) else None
 
 
+def listed_shortcut_ids(entry: dict) -> list:
+    """The shortcuts a row from before v1.2.1-210 listed ("shortcuts": they
+    ran after the row's own steps, in this order)."""
+    listed = entry.get("shortcuts")
+    if not isinstance(listed, list):
+        return []
+    return [s for s in listed if isinstance(s, str) and _SHORTCUT_ID_RE.fullmatch(s)]
+
+
+def _empty(value) -> bool:
+    return value is None or value == "" or value == []
+
+
+def merge_shortcut(item: dict, shortcut: dict, label: str = "") -> dict:
+    """A shortcut that ran after the row's own steps (the oldest format):
+    its fields are added to the row's. What the shortcut leaves empty stays
+    the row's; where both set something, the shortcut's wins (it ran last;
+    logged); its desktop profiles follow the row's. The song stays the row's
+    and keeps the shortcut's Liedtext file out."""
+    result = deepcopy(item)
+    title = shortcut.get("title", shortcut.get("id"))
+    for key in SHORTCUT_KEYS:
+        value = shortcut.get(key)
+        if key in ("desktop", "camera_wait_seconds") or _empty(value):
+            continue
+        if key == "lyrics" and result.get("song"):
+            continue
+        if not _empty(result.get(key)) and result[key] != value:
+            log.warning("%s: %s %r replaced by %r from shortcut „%s“ (it ran after the row)",
+                        label, key, result[key], value, title)
+        result[key] = deepcopy(value)
+    # The wait belongs to the camera presets: only with the shortcut's own.
+    if shortcut.get("cam1_preset") or shortcut.get("cam2_preset"):
+        result["camera_wait_seconds"] = shortcut.get("camera_wait_seconds", result.get("camera_wait_seconds"))
+    desktop = list(dict.fromkeys([*(result.get("desktop") or []), *(shortcut.get("desktop") or [])]))
+    if len(desktop) > MAX_DESKTOP_PROFILES:
+        log.warning("%s: desktop profiles %s left out (at most %s)", label,
+                    ", ".join(desktop[MAX_DESKTOP_PROFILES:]), MAX_DESKTOP_PROFILES)
+        desktop = desktop[:MAX_DESKTOP_PROFILES]
+    result["desktop"] = desktop
+    return result
+
+
 def unlink_shortcut(what: str, entry: dict, row: dict, shortcuts: dict, validate) -> tuple:
-    """A row saved with a shortcut reference gets that shortcut's fields
-    copied into its own once, so it keeps doing what it did; the reference
-    goes. Returns (row, "copied" / "missing" / None when it had none)."""
+    """A row saved with shortcut references gets their fields into its own
+    once, so it keeps doing what it did; the references go. v1.2.1-210
+    ("shortcut", run instead of the row's own fields): the shortcut's fields
+    replace the row's. Before ("shortcuts", run after the row's own steps,
+    in order): each one's fields are merged in (merge_shortcut). Returns
+    (row, "copied" / "merged" / "missing" / "none", or None without any)."""
     if not any(key in entry for key in _LINK_KEYS):
         return row, None
+    when = f"{row.get('time', '')} {row.get('title', '')}".strip()
+    label = f"{what} {row['id']} ({when})" if row.get("id") else f"{what} ({when})"
     shortcut_id = linked_shortcut_id(entry)
-    if not shortcut_id:
+    if shortcut_id:
+        shortcut = shortcuts.get(shortcut_id)
+        if shortcut is None:
+            log.warning("%s: its shortcut %s no longer exists; it keeps its own fields", label, shortcut_id)
+            return row, "missing"
+        log.warning("%s: shortcut „%s“ copied into its own fields", label, shortcut.get("title", shortcut_id))
+        return validate(apply_shortcut(row, shortcut)), "copied"
+    listed = listed_shortcut_ids(entry)
+    if not listed:
         return row, "none"
-    label = f"{row['id']} ({row['time']} {row['title']})" if row.get("id") else f"({row['time']} {row['title']})"
-    shortcut = shortcuts.get(shortcut_id)
-    if shortcut is None:
-        log.warning("%s %s: its shortcut %s no longer exists; it keeps its own fields", what, label, shortcut_id)
-        return row, "missing"
-    log.warning("%s %s: shortcut „%s“ copied into its own fields", what, label, shortcut.get("title", shortcut_id))
-    return validate(apply_shortcut(row, shortcut)), "copied"
+    merged, used = row, 0
+    for listed_id in listed:
+        shortcut = shortcuts.get(listed_id)
+        if shortcut is None:
+            log.warning("%s: listed shortcut %s no longer exists; dropped", label, listed_id)
+            continue
+        merged = merge_shortcut(merged, shortcut, label)
+        used += 1
+        log.warning("%s: shortcut „%s“ (ran after its own steps) merged into its fields",
+                    label, shortcut.get("title", listed_id))
+    return (validate(merged), "merged") if used else (row, "missing")
+
+
+def keep_references(entry: dict, row: dict) -> dict:
+    """The shortcuts could not be read: the references stay for a later start."""
+    return {**row, **{key: entry[key] for key in _LINK_KEYS if key in entry}}
 
 
 def log_unlink_migration(what: str, results: list) -> dict:
     """The counts of unlink_shortcut() over one store, logged once."""
-    counts = {status: results.count(status) for status in ("copied", "missing", "none")}
-    log.info("%ss without shortcut references now: %s rows, %s got their shortcut's fields, "
-             "%s referred to a deleted shortcut", what, len(results), counts["copied"], counts["missing"])
+    counts = {status: results.count(status) for status in ("copied", "merged", "missing", "none")}
+    log.info("%ss without shortcut references now: %s rows, %s got their shortcut's fields, %s merged "
+             "listed shortcuts, %s referred only to deleted shortcuts", what, len(results), counts["copied"],
+             counts["merged"], counts["missing"])
     return {"rows": len(results), **counts}
 
 
@@ -172,10 +235,11 @@ class ProgramItemStore:
         self._lock = asyncio.Lock()
         self._items: List[dict] = []
         self.migration: Optional[dict] = None  # what the last load migrated (unlink_shortcut)
-        self._load(shortcuts or {})
+        self._load(shortcuts)
 
-    def _load(self, shortcuts: dict) -> None:
-        """shortcuts: id -> shortcut, for rows saved with a reference to one."""
+    def _load(self, shortcuts: Optional[dict]) -> None:
+        """shortcuts: id -> shortcut, for rows saved with a reference to one;
+        None when the shortcuts could not be read: references stay then."""
         items = []
         unlinked = []
         for entry in read_json(self._path, list, default=[]):
@@ -199,6 +263,9 @@ class ProgramItemStore:
                 "last_played_at": entry.get("last_played_at"),
                 "hidden": entry.get("hidden") is True,
             })
+            if shortcuts is None:
+                items[-1] = keep_references(entry, items[-1])
+                continue
             items[-1], status = unlink_shortcut("Program row", entry, items[-1], shortcuts,
                                                 lambda row: {**row, **self._validated_fields(row)})
             if status:

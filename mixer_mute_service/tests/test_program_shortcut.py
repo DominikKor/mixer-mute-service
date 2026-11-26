@@ -12,6 +12,7 @@ from unittest.mock import patch
 
 from app.program_items import SHORTCUT_KEYS, ProgramItemStore, apply_shortcut, linked_shortcut_id
 from app.program_templates import ProgramTemplateStore
+from app.shortcuts import ShortcutStore
 
 from tests.helpers import app_client
 
@@ -62,8 +63,7 @@ class CopyTests(unittest.TestCase):
 
     def test_linked_shortcut_id(self):
         self.assertEqual(linked_shortcut_id({"shortcut": A}), A)
-        self.assertEqual(linked_shortcut_id({"shortcuts": [B, A]}), B)
-        for entry in ({}, {"shortcut": None}, {"shortcut": "x"}, {"shortcuts": []}, {"shortcuts": "a" * 32}):
+        for entry in ({}, {"shortcut": None}, {"shortcut": "x"}, {"shortcuts": [B, A]}):
             self.assertIsNone(linked_shortcut_id(entry), entry)
 
 
@@ -90,11 +90,12 @@ class MigrationTests(unittest.IsolatedAsyncioTestCase):
                              "it keeps doing what it did: the shortcut's fields, its own person and song")
             self.assertEqual((rows["song"]["song"], rows["song"]["lyrics"], rows["song"]["beamer"]),
                              ("lied-12.foil", None, "hide"), "a song keeps the shortcut's Liedtext file out")
-            self.assertEqual((rows["list"]["desktop"], rows["list"]["beamer"]), (["qr"], "unhide"))
+            self.assertEqual((rows["list"]["desktop"], rows["list"]["beamer"], rows["list"]["group"]),
+                             (["qr", "logo"], "hide", "Predigt"), "the old list: merged, in order")
             self.assertEqual(rows["missing"]["beamer"], "hide", "a deleted shortcut: its own fields stay")
             self.assertEqual(rows["fell-back"]["desktop"], ["logo"])
             self.assertEqual(rows["plain"]["group"], "")
-            self.assertEqual(store.migration, {"rows": 5, "copied": 3, "missing": 1, "none": 1})
+            self.assertEqual(store.migration, {"rows": 5, "copied": 2, "merged": 1, "missing": 1, "none": 1})
             text = "\n".join(logs.output)
             self.assertIn("„Predigt“ copied", text)
             self.assertIn(f"{C} no longer exists", text)
@@ -119,12 +120,65 @@ class MigrationTests(unittest.IsolatedAsyncioTestCase):
             rows = (await store.get("t"))["rows"]
             self.assertEqual([(r["title"], r["desktop"], r["song_slot"]) for r in rows],
                              [("Begrüßung", ["qr"], False), ("Lied", ["logo"], True), ("Frei", ["qr"], False)])
-            self.assertEqual(store.migration, {"rows": 2, "copied": 2, "missing": 0, "none": 0})
+            self.assertEqual(store.migration, {"rows": 2, "copied": 1, "merged": 1, "missing": 0, "none": 0})
             saved = json.loads(path.read_text(encoding="utf-8"))
             self.assertTrue(all("shortcut" not in r and "shortcuts" not in r for r in saved[0]["rows"]))
             before = path.read_text(encoding="utf-8")
             self.assertIsNone(ProgramTemplateStore(path, SHORTCUTS).migration)
             self.assertEqual(path.read_text(encoding="utf-8"), before)
+
+    async def test_the_old_list_adds_to_the_rows_own_fields(self):
+        # Before v1.2.1-210 a row ran its own steps, then each listed shortcut.
+        with tempfile.TemporaryDirectory() as name:
+            path = Path(name) / "program.json"
+            path.write_text(json.dumps([{
+                **row(title="Begrüßung", group="Band", light="warm", desktop=["bild", "qr"], song="lied.foil",
+                      cam2_preset=4), **TEXTS, "id": "old", "shortcuts": [B, C, A]}]), encoding="utf-8")
+            with self.assertLogs("mixer.program", logging.INFO) as logs:
+                store = ProgramItemStore(path, SHORTCUTS)
+            item = await store.get("old")
+            self.assertEqual(item["desktop"], ["bild", "qr", "logo"], "the row's own first, then each shortcut's, once")
+            self.assertEqual((item["light"], item["cam2_preset"], item["song"]), ("warm", 4, "lied.foil"),
+                             "what the shortcuts leave empty stays the row's")
+            self.assertEqual((item["group"], item["beamer"], item["cam1_preset"], item["camera_wait_seconds"]),
+                             ("Predigt", "hide", 3, 7.0), "where both set something, the later shortcut's wins")
+            self.assertIsNone(item["lyrics"], "the song keeps the shortcut's Liedtext file out")
+            text = "\n".join(logs.output)
+            self.assertIn("group 'Band' replaced by 'Predigt' from shortcut „Predigt“", text)
+            self.assertIn("beamer 'unhide' replaced by 'hide' from shortcut „Predigt“", text)
+            self.assertIn(f"listed shortcut {C} no longer exists; dropped", text)
+            self.assertIn("„Kollekte“ (ran after its own steps) merged", text)
+            self.assertEqual(store.migration["merged"], 1)
+
+    async def test_unreadable_shortcuts_keep_the_references(self):
+        with tempfile.TemporaryDirectory() as name:
+            folder = Path(name)
+            (folder / "shortcuts.json").write_text("[{kaputt", encoding="utf-8")
+            shortcuts = ShortcutStore(folder / "shortcuts.json")
+            self.assertIsNone(shortcuts.by_id(), "not all shortcuts could be read")
+            path = folder / "program.json"
+            stored = [{**row(title="Verlinkt"), **TEXTS, "id": "linked", "shortcut": A},
+                      {**row(title="Liste"), **TEXTS, "id": "list", "shortcuts": [B]}]
+            path.write_text(json.dumps(stored), encoding="utf-8")
+            store = ProgramItemStore(path, shortcuts.by_id())
+            self.assertIsNone(store.migration)
+            await store.update("linked", row(title="Geändert"))  # saved meanwhile
+            saved = {entry["id"]: entry for entry in json.loads(path.read_text(encoding="utf-8"))}
+            self.assertEqual((saved["linked"]["shortcut"], saved["list"]["shortcuts"]), (A, [B]),
+                             "kept for a later start")
+            # A later start with the shortcuts readable again migrates them.
+            later = ProgramItemStore(path, SHORTCUTS)
+            self.assertEqual(later.migration["copied"] + later.migration["merged"], 2)
+            self.assertEqual((await later.get("linked"))["title"], "Geändert")
+            # Templates likewise.
+            templates = folder / "templates.json"
+            templates.write_text(json.dumps([{"id": "t", "name": "GD", "rows": [{**row(title="X"), **TEXTS, "shortcut": A}]}]),
+                                 encoding="utf-8")
+            self.assertIsNone(ProgramTemplateStore(templates, None).migration)
+            self.assertEqual((await ProgramTemplateStore(templates, None).get("t"))["rows"][0]["shortcut"], A)
+            self.assertEqual(ProgramTemplateStore(templates, SHORTCUTS).migration["copied"], 1)
+        with tempfile.TemporaryDirectory() as name:
+            self.assertEqual(ShortcutStore(Path(name) / "shortcuts.json").by_id(), {}, "no file yet: complete")
 
     async def test_a_song_or_a_lyrics_file_not_both(self):
         with tempfile.TemporaryDirectory() as name:

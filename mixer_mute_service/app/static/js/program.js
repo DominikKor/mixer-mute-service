@@ -443,11 +443,19 @@ const SHORTCUT_FIELDS = [
   "group", "playback", "translation", "lyrics", "light", "cam1_preset", "cam2_preset",
   "camera_wait_seconds", "desktop", "cam1_scene", "cam2_scene", "beamer",
 ];
-let SHORTCUT_LOAD_ROW = null;  // the row (or the new-row draft) the picker fills
+// The row the picker fills: its id, or "" for the new-row draft. Found again
+// when a shortcut is chosen (the list may have been redrawn meanwhile).
+let SHORTCUT_LOAD_TARGET = null;
+
+function shortcutLoadRow(target) {
+  if (target === null) return null;
+  return target ? $("program-items").querySelector(`tr[data-program-id="${CSS.escape(target)}"]`)
+    : $("program-items").querySelector(".program-draft-row");
+}
 
 function openShortcutLoad(row) {
   if (!row || !row.isConnected) return;
-  SHORTCUT_LOAD_ROW = row;
+  SHORTCUT_LOAD_TARGET = row.dataset.programId || "";
   const title = row.querySelector('[data-program-field="title"]').value.trim();
   $("shortcut-load-title").textContent = title ? `Shortcut laden: ${title}` : "Shortcut laden";
   const list = $("shortcut-load-list");
@@ -481,8 +489,9 @@ function loadShortcutIntoRow(row, shortcut) {
   if (current.song) loaded.lyrics = null;
   fillProgramFields(row, loaded, true);
   if (row.dataset.programId) {
-    updateProgramItem(row);  // saved like any edit of the row
-    toast(`Shortcut „${shortcut.title}“ geladen`, true);
+    // Saved like any edit of the row; the toast once it is saved (a failed
+    // save has its own toast and shows what the service has).
+    updateProgramItem(row).then(saved => { if (saved) toast(`Shortcut „${shortcut.title}“ geladen`, true); });
   } else {
     renderProgramSummary(row, { ...loaded, title: loaded.title || "Neuer Programmpunkt" });
     toast(`Shortcut „${shortcut.title}“ geladen – mit ✓ speichern`, true);
@@ -799,7 +808,7 @@ function updateProgramRowState(row, item) {
     hide.setAttribute("aria-label", `${label} ${hidden ? "wieder einblenden" : "ausblenden und überspringen"}`);
   }
   const menu = row.querySelector('[data-program-action="menu"]');
-  if (menu) menu.setAttribute("aria-label", `${label}: duplizieren, Shortcut oder löschen`);
+  if (menu) menu.setAttribute("aria-label", `${label}: duplizieren, als Shortcut speichern, Shortcut laden oder löschen`);
 }
 
 // Rows are kept and updated in place (focus, cursor and the draft row
@@ -1136,10 +1145,23 @@ async function cloneProgramItem(itemId, button) {
 
 // One save per item at a time; an edit made while a save is in flight is sent
 // right after it (with the row's values at that moment), never dropped.
-async function updateProgramItem(row) {
+// Resolves true once the row (with this edit) is saved, false if not.
+const PROGRAM_SAVE_RUNS = new Map();  // item id -> the running save's promise
+
+function updateProgramItem(row) {
   const itemId = row.dataset.programId;
-  if (!itemId) return;
-  if (PROGRAM_SAVING.has(itemId)) { PROGRAM_RESAVE.add(itemId); return; }
+  if (!itemId) return Promise.resolve(false);
+  if (PROGRAM_SAVING.has(itemId)) {
+    PROGRAM_RESAVE.add(itemId);  // the running save sends it right after
+    return PROGRAM_SAVE_RUNS.get(itemId) || Promise.resolve(false);
+  }
+  const run = saveProgramItem(row, itemId);
+  PROGRAM_SAVE_RUNS.set(itemId, run);
+  run.finally(() => { if (PROGRAM_SAVE_RUNS.get(itemId) === run) PROGRAM_SAVE_RUNS.delete(itemId); });
+  return run;
+}
+
+async function saveProgramItem(row, itemId) {
   PROGRAM_SAVING.add(itemId);
   let result;
   try {
@@ -1158,9 +1180,10 @@ async function updateProgramItem(row) {
   if (result.ok && result.data.ok !== false && result.data.item) {
     PROGRAM_ITEMS = PROGRAM_ITEMS.map(item => item.id === itemId ? result.data.item : item);
     renderProgramItems();
-  } else {
-    await loadProgramItems();  // show what the service really has
+    return true;
   }
+  await loadProgramItems();  // show what the service really has
+  return false;
 }
 
 async function toggleProgramHidden(itemId, button) {
@@ -1380,9 +1403,13 @@ $("shortcut-load-list").addEventListener("click", event => {
   const button = event.target.closest("[data-shortcut-load]");
   const shortcut = button && PROGRAM_SHORTCUTS.find(s => s.id === button.dataset.shortcutLoad);
   if (!shortcut) return;
+  const row = shortcutLoadRow(SHORTCUT_LOAD_TARGET);
+  SHORTCUT_LOAD_TARGET = null;
   $("shortcut-load-dialog").close();
-  loadShortcutIntoRow(SHORTCUT_LOAD_ROW, shortcut);
+  loadShortcutIntoRow(row, shortcut);
 });
-$("shortcut-load-cancel").addEventListener("click", () => $("shortcut-load-dialog").close());
-$("shortcut-load-dialog").addEventListener("close", () => { SHORTCUT_LOAD_ROW = null; });
+$("shortcut-load-cancel").addEventListener("click", () => {
+  SHORTCUT_LOAD_TARGET = null;
+  $("shortcut-load-dialog").close();
+});
 $("shortcut-cancel").addEventListener("click", () => $("shortcut-dialog").close());

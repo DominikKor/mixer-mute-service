@@ -38,7 +38,9 @@ from fastapi import APIRouter, Body, Request
 from .actions import program_reference_error
 from .jsonstore import read_json, write_json_atomic
 from .responses import fail
-from .program_items import _ACTION_FIELDS, ProgramItemError, ProgramItemStore, log_unlink_migration, unlink_shortcut
+from .program_items import (
+    _ACTION_FIELDS, ProgramItemError, ProgramItemStore, keep_references, log_unlink_migration, unlink_shortcut,
+)
 from .program_pdf import PdfImportError, assign_persons, validated_persons
 from .target_pcs import retarget_file_action
 
@@ -75,7 +77,8 @@ def _clean_name(name) -> str:
 
 class ProgramTemplateStore:
     def __init__(self, path: Path, shortcuts: Optional[dict] = None) -> None:
-        """shortcuts: id -> shortcut, for rows saved with a reference to one."""
+        """shortcuts: id -> shortcut, for rows saved with a reference to one;
+        None when the shortcuts could not be read: references stay then."""
         self._path = path
         self._lock = asyncio.Lock()
         self._templates: List[dict] = []
@@ -85,8 +88,11 @@ class ProgramTemplateStore:
                 rows = []
                 for old in entry["rows"]:
                     slot = bool(old.get("song_slot"))
+                    if shortcuts is None:
+                        rows.append(keep_references(old, _template_row(old, slot)))
+                        continue
                     row, status = unlink_shortcut(
-                        f"Template row {entry['name']}", old, _template_row(old, slot), shortcuts or {},
+                        f"Template row {entry['name']}", old, _template_row(old, slot), shortcuts,
                         lambda copied, slot=slot: _template_row(copied, slot))
                     rows.append(row)
                     if status:

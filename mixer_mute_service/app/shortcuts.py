@@ -12,7 +12,7 @@ from copy import deepcopy
 from pathlib import Path
 from typing import List, Optional
 
-from .jsonstore import read_json, write_json_atomic
+from .jsonstore import CorruptJSONError, read_json, write_json_atomic
 from .program_items import _ACTION_FIELDS, ProgramItemError, validated_actions
 from .target_pcs import retarget_file_action
 
@@ -33,18 +33,31 @@ class ShortcutStore:
         self._path = path
         self._lock = asyncio.Lock()
         self._items: List[dict] = []
-        for entry in read_json(path, list, default=[]):
+        # False when the file or a shortcut in it could not be read: rows that
+        # refer to shortcuts then keep their references (by_id() is None).
+        self.complete = True
+        try:
+            entries = read_json(path, list)
+        except FileNotFoundError:
+            entries = []
+        except CorruptJSONError:
+            entries, self.complete = [], False
+        for entry in entries:
             if not isinstance(entry, dict) or not isinstance(entry.get("id"), str):
                 log.warning("Skipping invalid shortcut in %s: %r", path, entry)
+                self.complete = False
                 continue
             try:
                 self._items.append({"id": entry["id"], **validated_shortcut(entry)})
             except ProgramItemError as exc:
                 log.warning("Skipping invalid shortcut %s: %s", entry.get("id"), exc)
+                self.complete = False
 
-    def by_id(self) -> dict:
+    def by_id(self) -> Optional[dict]:
         """Shortcut id -> shortcut (for rows saved with a reference to one, see
-        app/program_items.py unlink_shortcut)."""
+        app/program_items.py unlink_shortcut); None unless all could be read."""
+        if not self.complete:
+            return None
         return {item["id"]: deepcopy(item) for item in self._items}
 
     def _persist(self) -> None:
