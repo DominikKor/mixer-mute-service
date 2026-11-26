@@ -24,6 +24,11 @@ would have been sent.
 
 plays a room light circuit that is off the network (every call hangs for
 the connect timeout, then fails) and a delay for the others' answers.
+
+    python -m tools.run_local_test --dead-agent 192.168.188.20
+
+plays a PC whose display agent is off: every call to it hangs until its
+timeout (song lyrics on several screens: the others must not wait).
 """
 
 from __future__ import annotations
@@ -90,6 +95,7 @@ class FakeDevices:
         self.preview = "Cam 2"   # studio mode, as on the streaming PC
         self.transition_ms = 300
         self.agent_started = {}  # "ip:port" of a fake display agent -> its start time
+        self.dead_agents = set()  # IPs whose display agent never answers
         self.artnet_frames = 0
         self.artnet_last = [0] * 16
         self.scenes = ["Willkommen (neu)", "Cam 1", "Cam 2", "PC2", "BeamerVonVorne", "Ende (neu)", "Preview Scene"]
@@ -166,6 +172,10 @@ class FakeDevices:
 
     def agent(self, url, token, payload, timeout):
         path = "/" + url.split("/", 3)[3]
+        if url.split("/")[2].split(":")[0] in self.dead_agents:
+            # A PC that is off: no answer at all until the timeout (not a quick refusal).
+            time.sleep(timeout)
+            raise TimeoutError("fake display agent is off")
         if path == "/info":
             from app.agent_download import agent_dir
             version_file = agent_dir() / "version.txt"
@@ -236,6 +246,8 @@ def main() -> None:
     parser.add_argument("--data", type=Path, default=ROOT / "local-test", help="data folder (default local-test/)")
     parser.add_argument("--dead-shelly", action="append", default=[], metavar="CIRCUIT",
                         help="room light circuit that never answers, e.g. light-front (repeatable)")
+    parser.add_argument("--dead-agent", action="append", default=[], metavar="IP",
+                        help="PC whose display agent never answers, e.g. 192.168.188.20 (repeatable)")
     parser.add_argument("--shelly-delay", type=float, default=0.0, metavar="SECONDS",
                         help="time every other fake Shelly takes to answer")
     args = parser.parse_args()
@@ -255,6 +267,7 @@ def main() -> None:
         parser.error(f"unknown circuit {unknown}; known: {', '.join(native.SHELLY_HOSTS)}")
     fakes.dead_hosts = {native.SHELLY_HOSTS[c] for c in args.dead_shelly}
     fakes.shelly_delay = max(0.0, args.shelly_delay)
+    fakes.dead_agents = set(args.dead_agent)
     start_fake_mixer(args.mixer_port)
 
     import uvicorn

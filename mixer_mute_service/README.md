@@ -115,30 +115,20 @@ miniatures, and **Standard** restores the original one.
 - **Programm**: a cue list with planned time, title, person, mute group
   (optional: a row without one changes no mutes), light scene, a file each
   for playback and translation, for lyrics a song *or* a file (small keys
-  "Lied" / "Datei", ✕ removes it; a row saved with both keeps the song,
-  and a row's own song also wins over its shortcut's file), camera presets with an OBS scene per
-  camera, desktop profiles (only the chosen ones show, numbered in the
-  order they run, ✕ removes one, ‹ moves one earlier, **+** adds another
-  at the end), and the
-  beamer (hide before the row shows anything, unhide after its files,
-  desktop profiles and song; "Beamer bleibt" leaves it alone). A row may
-  instead use a **shortcut** as its whole configuration: it then runs the
-  shortcut's fields instead of its own (linked: editing the shortcut
-  changes every row using it); time, title, person and the **song** stay
-  the row's (a template's song slots fill it; a shortcut's own song only
-  runs from its Desktop key). Its own fields are hidden but stay saved and
-  come back with "Kein Shortcut" or when the shortcut is deleted; a new
-  row created with a shortcut saves none (the editor's pre-filled group
-  would otherwise run unseen later). A row whose shortcut was deleted says
-  so on every device ("Shortcut „X“ gelöscht – läuft mit eigenen
-  Einstellungen") until it is saved again (or "OK"), and is checked for
-  mute conflicts before it starts. A PUT without `shortcut` (a page from
-  before) keeps the row's shortcut. A row whose shortcut is gone without
-  that (e.g. an imported file) refuses to start ("unknown shortcut"). Rows
-  saved with the older list of shortcuts (run after the row's own steps)
-  take the first one as their shortcut when the service starts, program
-  templates likewise (both saved once); rows that change what they do by
-  this are logged as warnings with the shortcuts' names. A
+  "Lied" / "Datei", ✕ removes it; a row saved with both keeps the song),
+  camera presets with an OBS scene per camera, desktop profiles (only the
+  chosen ones show, numbered in the order they run, ✕ removes one, ‹ moves
+  one earlier, **+** adds another at the end), and the beamer (hide before
+  the row shows anything, unhide after its files, desktop profiles and
+  song; "Beamer bleibt" leaves it alone). A row always runs its own fields.
+  **Shortcut laden** (row's "⋮"; a new row has the key next to ✓) copies a
+  shortcut's fields into them: a copy, they stay visible and can be
+  changed, and later edits of the shortcut change no row. Time, title,
+  person and song stay the row's; with a song the shortcut's Liedtext file
+  is left out. Rows and templates saved while rows could refer to a
+  shortcut (v1.2.1-210 and before) get that shortcut's fields copied in
+  once when the service starts (logged as warnings, a deleted shortcut is
+  just dropped); an imported program file of that time too. A
   choice with only one entry (e.g. one light scene) is a key that
   switches it on and off instead of a dropdown (not the OBS scenes).
   Each row is one compact line (time, delay, title, person, chips of what it
@@ -322,7 +312,7 @@ The connection closes when the service stops.
 | POST | `/program/items/{item_id}/hidden` | `{"hidden": true}` greys a row out, `/program/next` skips it |
 | POST | `/program/items/{item_id}/shortcut` | save what the row does as a new shortcut |
 | GET/POST | `/shortcuts` | list shortcuts / create one (`title` and the row's action fields) |
-| PUT/DELETE | `/shortcuts/{id}` | edit / delete (rows that used it run their own fields again; `program_items`: how many) |
+| PUT/DELETE | `/shortcuts/{id}` | edit / delete (program rows keep what they loaded from it) |
 | POST | `/shortcuts/{id}/duplicate`, `/shortcuts/{id}/play` | copy ("… (Kopie)") / run now |
 | GET  | `/program/obs-scenes` | OBS's scenes for a row's OBS scene (503 if OBS is not reachable) |
 | GET  | `/program/status` | `current_id` (started last today) and `next_id` (hidden rows skipped) |
@@ -646,6 +636,25 @@ des Ziel-PCs verwendet wird. Bei Netzwerkdateien muss der Pfad fuer dieses
 Benutzerkonto erreichbar sein; ein UNC-Pfad ist robuster als ein verbundenes
 Laufwerk.
 
+Damit die Musik sofort startet, spielt der Agent eine lokale Kopie der Quelle
+(`%LOCALAPPDATA%\MixerMuteDisplayAgent\audio-cache`, hoechstens 4 GB, je Datei
+hoechstens 1 GB, nur Audiodateien: mp3, wav, flac, m4a, aac, ogg, opus, wma;
+es bleiben immer mindestens 2 GB frei). Auf einem Google-Drive-Laufwerk
+(`I:\GoogleDrive`) laedt Drive eine Datei erst beim Oeffnen, mpv kann darauf
+warten. Bei YouTube-Links laedt yt-dlp den Ton einmal herunter. Die Kopien
+entstehen im Hintergrund: fuer die Audioquellen, die der Dienst bei jeder
+Abfrage von `/update/agents` mitschickt (jede offene Seite alle 30 s und bei
+jedem Update; der Agent schaut sich jede Quelle hoechstens alle 5 Minuten an
+und versucht eine fehlgeschlagene erst nach einer wachsenden Pause wieder,
+5 Minuten bis 1 Stunde), beim Start des Agenten fuer die zuletzt geschickte
+Liste, und nach einem Play ohne Kopie (das spielt dann noch direkt von der
+Quelle). Eine geaenderte Datei (Groesse oder Aenderungszeit) spielt nie die
+alte Kopie. Wo mpvs letzter Start
+Zeit gebraucht hat, liefert `GET /update/agents` pro Agent unter `audio_start`
+(aus mpvs eigenem Log: Sekunden bis Datei offen, Audioausgabe bereit, Ton
+laeuft, und die laengsten Pausen bis zum ersten Ton mit den Logzeilen davor
+und danach).
+
 Beispiel fuer eine Systemvariable auf dem Ziel-PC:
 
 ```powershell
@@ -795,8 +804,8 @@ Der Agent schickt dafür nur die XML-Teile der Folien (höchstens 200 Folien,
 4 MB entpackt); dafür muss er aktualisiert sein.
 
 In der Weboberfläche unter **Liedanzeige → Einstellungen…** (gilt für alle Lieder,
-gespeichert in `song_display.json`): Ordner auf dem Anzeige-PC, Anzeige-PC (IP),
-Monitor, Vollbild, Schrift, größte Schriftgröße (px bei 1080p, lange Folien werden
+gespeichert in `song_display.json`): Ordner der Bibliothek und der PC, auf dem
+sie liegt, **Liedtext zeigen auf** (siehe unten), Vollbild, Schrift, größte Schriftgröße (px bei 1080p, lange Folien werden
 kleiner), Text- und Hintergrundfarbe, Titel und Copyright auf der ersten Folie,
 Ausrichtung (links, mittig, rechts) und **Vorschau nächste Folie**: wo unter dem
 Text Platz bleibt, stehen dort in Grau (Textfarbe in den Hintergrund gemischt)
@@ -826,6 +835,24 @@ startet mit ihr. Der Schalter *Titel* (Titel oben auf der ersten Liedfolie) gilt
 nur ohne Titelfolie. Die Titelfolie wird als normale, zentrierte Folie geschickt,
 jeder Display-Agent zeigt sie also ohne Update.
 **Speichern und Bibliothek laden** liest die Bibliothek (neu) ein.
+**Mehrere Bildschirme**: Unter *Liedtext zeigen auf* wird je PC ein Schalter
+(und dann dessen Monitor) gewählt, z. B. der Beamer am Anzeige-PC und ein Monitor
+am Streaming-PC (`targets`: bis zu 4, je PC einer – ein Display-Agent hat ein
+Liedfenster). Jede Folie, Schwarz und Aus geht gleichzeitig an alle, je
+Bildschirm der Reihe nach; jeder Agent passt den Text an seinen eigenen
+Bildschirm an. Ein Schritt wartet höchstens 1 s und nie auf einen PC, der schon
+nicht geantwortet hat: der bekommt nur die jeweils neueste Folie, alle 5 s neu,
+bis er wieder antwortet (dann zeigt er gleich die aktuelle). Die Liedanzeige
+nennt ihn in Gelb mit Grund, die Leiste am Programmpunkt zeigt ⚠ (antippen nennt
+ihn), und beim ersten Mal kommt eine Meldung (auch beim Start eines
+Programmpunkts). Erst wenn kein Bildschirm erreichbar ist, bleibt die Folie
+stehen (502); die Tasten, die keinen Bildschirm erreicht haben, zählen dann
+nicht, und zurückkommende Bildschirme zeigen dieselbe Folie wie die Seite. Ältere Einstellungen (`target_ip` + `monitor`) gelten als ein
+Bildschirm; `target_ip` ist seither der PC mit der Bibliothek, `monitor` der
+des ersten Bildschirms; eine ältere Seite ändert damit nur den ersten
+Bildschirm. Ein ungültiger oder doppelter Bildschirm in `song_display.json`
+fällt allein weg. Im Test-Dienst spielt `--dead-agent IP` einen PC, dessen
+Agent aus ist (jeder Aufruf hängt bis zum Timeout).
 
 Ein Programmpunkt bekommt sein Lied in der Spalte *Liedtext* („♪ Lied wählen“,
 Suche nach Titel oder Liederbuch-Nummer; eine eingetippte Nummer zeigt die Lieder
@@ -836,6 +863,14 @@ Aus** sowie *Lied zeigen…*, *Neues Lied…* und *Einstellungen…*. Er wird wi
 alle anderen Bereiche auf- und zugeklappt und mit *Anordnen* platziert.
 Im Stage-Modus ist er ein eigener Bereich wie alle anderen. Nach
 der letzten Folie schaltet *Weiter* auf schwarz.
+**Am laufenden Programmpunkt**: Hat der laufende Programmpunkt ein Lied, fährt
+unter seiner Zeile eine schmale Leiste aus (`js/song-dock.js`): Zurück, je Folie
+ein Knopf (T, 1, R, 2 …; antippen = anzeigen), die erste Zeile der gezeigten
+Folie, Schwarz, Aus und ein großes Weiter. Sie steuert dasselbe Lied wie der Bereich
+Liedanzeige (gleiche Aufrufe, beide zeigen immer dasselbe). Ist ein anderes oder
+kein Lied auf dem Bildschirm, bleibt eine Zeile mit *Zeigen* (das Lied des
+Programmpunkts ab der ersten Folie); läuft ein anderer Programmpunkt, fährt sie
+wieder ein.
 
 Tastatur und Presenter (immer, solange die Seite offen ist; nicht beim Tippen in
 einem Feld oder bei offenem Dialog):
@@ -866,7 +901,7 @@ Der Agent braucht dafür die neue Version (Weboberfläche auf dem Anzeige-PC:
 | GET/PUT | `/songs/settings` | Liedanzeige-Einstellungen |
 | POST | `/songs/library/reload` | Bibliothek vom Anzeige-PC lesen |
 | GET | `/songs`, `/songs/{datei}` | Liste, ein Lied mit allen Folien |
-| GET | `/songs/live` | was gerade angezeigt wird |
+| GET | `/songs/live` | was gerade angezeigt wird; `screens`: je Bildschirm ok oder Grund |
 | POST | `/songs/create` `{"title", "copyright", "slides", "refrain", "order"}` | neues Lied in der Bibliothek speichern |
 | POST | `/songs/show` `{"song_id", "slide"}` | Folie anzeigen |
 | POST | `/songs/next`, `/songs/prev`, `/songs/blank`, `/songs/hide` | weiter, zurück, schwarz, aus |

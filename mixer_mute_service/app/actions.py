@@ -27,7 +27,6 @@ from .display_agent import AgentError
 from .file_actions import is_file_action, not_found_reason, run_file_action, runs_from_network_share
 from .mission_spotlight import profile_path
 from .native_controls import NativeControlError
-from .program_items import SHORTCUT_KEYS
 from .responses import Result, controller_result
 
 log = logging.getLogger("mixer.actions")
@@ -296,39 +295,10 @@ async def run_action(request: Request, value: str) -> Result:
     return await press_button(request, value)
 
 
-async def row_shortcut(request: Request, item: dict) -> Optional[dict]:
-    """The shortcut a program row uses, or None (none set, or it is gone)."""
-    shortcut_id = item.get("shortcut")
-    store = getattr(request.app.state, "shortcuts", None)
-    return None if not shortcut_id or store is None else await store.get(shortcut_id)
-
-
-def with_shortcut(item: dict, shortcut: dict) -> dict:
-    """What a row with a shortcut runs: the shortcut's action fields instead
-    of its own (linked: an edited shortcut changes every row using it); the
-    row keeps its time, title, person and song. Liedtext is a song or a
-    file, not both: with a song of its own the shortcut's file does not run."""
-    ran = {**item, **{key: shortcut.get(key) for key in SHORTCUT_KEYS}}
-    if item.get("song"):
-        ran["lyrics"] = None
-    return ran
-
-
 async def program_reference_error(request: Request, item: dict) -> Optional[str]:
     """Reason why a program row (or a shortcut) cannot run, or None. Checked
     on save and again before play, since a key or group may have been
-    deleted since. A row with a shortcut is checked by what it runs: the
-    shortcut's fields (its own stay saved, unused)."""
-    if item.get("shortcut"):
-        shortcut = await row_shortcut(request, item)
-        if shortcut is None:
-            return "unknown shortcut"
-        reason = await _reference_error(request, with_shortcut(item, shortcut))
-        return f"shortcut {shortcut['title']}: {reason}" if reason else None
-    return await _reference_error(request, item)
-
-
-async def _reference_error(request: Request, item: dict) -> Optional[str]:
+    deleted since."""
     state = request.app.state
     if item.get("group") and await state.groups.get(item["group"]) is None:
         return "unknown group"
@@ -357,14 +327,7 @@ async def _reference_error(request: Request, item: dict) -> Optional[str]:
 
 async def program_conflict_error(request: Request, item: dict) -> Optional[str]:
     """Rows that would fight over the mutes: a row with a mute group sets
-    the mutes itself, so it may not also run a key that switches mutes.
-    A row with a shortcut: checked on the shortcut's fields."""
-    if item.get("shortcut"):
-        shortcut = await row_shortcut(request, item)
-        if shortcut is None:
-            return None  # program_reference_error reports it
-        reason = await program_conflict_error(request, with_shortcut({**item, "shortcut": None}, shortcut))
-        return f"shortcut {shortcut['title']}: {reason}" if reason else None
+    the mutes itself, so it may not also run a key that switches mutes."""
     if not item.get("group"):
         return None
     for field in PROGRAM_ACTION_FIELDS:

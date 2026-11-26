@@ -38,7 +38,9 @@ from fastapi import APIRouter, Body, Request
 from .actions import program_reference_error
 from .jsonstore import read_json, write_json_atomic
 from .responses import fail
-from .program_items import _ACTION_FIELDS, ProgramItemError, ProgramItemStore, log_shortcut_migration
+from .program_items import (
+    _ACTION_FIELDS, ProgramItemError, ProgramItemStore, keep_references, log_unlink_migration, unlink_shortcut,
+)
 from .program_pdf import PdfImportError, assign_persons, validated_persons
 from .target_pcs import retarget_file_action
 
@@ -52,7 +54,6 @@ _ROW_FIELDS = (
     "time", "title", "person", "group", "playback", "translation", "lyrics",
     "playback_description", "translation_description", "lyrics_description", "song", "light",
     "cam1_preset", "cam2_preset", "camera_wait_seconds", "desktop", "cam1_scene", "cam2_scene", "beamer",
-    "shortcut", "shortcuts",  # "shortcuts": templates saved before (the first one is taken)
 )
 
 
@@ -75,25 +76,35 @@ def _clean_name(name) -> str:
 
 
 class ProgramTemplateStore:
-    def __init__(self, path: Path, shortcut_titles: Optional[dict] = None) -> None:
+    def __init__(self, path: Path, shortcuts: Optional[dict] = None) -> None:
+        """shortcuts: id -> shortcut, for rows saved with a reference to one;
+        None when the shortcuts could not be read: references stay then."""
         self._path = path
         self._lock = asyncio.Lock()
         self._templates: List[dict] = []
-        migrated = []  # rows still saved with the old list of shortcuts
+        unlinked = []
         for entry in read_json(path, list, default=[]):
             try:
-                rows = [_template_row(row, bool(row.get("song_slot"))) for row in entry["rows"]]
+                rows = []
+                for old in entry["rows"]:
+                    slot = bool(old.get("song_slot"))
+                    if shortcuts is None:
+                        rows.append(keep_references(old, _template_row(old, slot)))
+                        continue
+                    row, status = unlink_shortcut(
+                        f"Template row {entry['name']}", old, _template_row(old, slot), shortcuts,
+                        lambda copied, slot=slot: _template_row(copied, slot))
+                    rows.append(row)
+                    if status:
+                        unlinked.append(status)
                 self._templates.append({"id": str(entry["id"]), "name": _clean_name(entry["name"]), "rows": rows})
             except (KeyError, TypeError, TemplateError, ProgramItemError) as exc:
                 log.warning("Skipping invalid program template in %s: %s", path, exc)
-                continue
-            migrated += [(old, {**new, "id": entry["name"]}) for old, new in zip(entry["rows"], rows)
-                         if "shortcuts" in old]
         self.migration = None
-        if migrated:
+        if unlinked:
             # As the program rows (app/program_items.py): once, then saved
-            # without the old list.
-            self.migration = log_shortcut_migration("Template row", migrated, shortcut_titles or {})
+            # without the references.
+            self.migration = log_unlink_migration("Template row", unlinked)
             self._persist()
 
     def _persist(self) -> None:
