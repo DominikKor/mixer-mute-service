@@ -79,6 +79,9 @@ class CacheTestCase(unittest.TestCase):
             patch.dict(agent._prefetch_failures, clear=True),
             patch.dict(agent._sources_checked, clear=True),
             patch.dict(agent._tool_cache, at=0.0),
+            # /info starts a background search: never a real one (the Mac's
+            # PATH) that could fill the cache a play reads.
+            patch.object(agent, "refresh_tool_cache", side_effect=agent._tool_refreshing.clear),
         ]
         for item in patches:
             item.start()
@@ -95,7 +98,6 @@ class CacheTestCase(unittest.TestCase):
             agent._play_audio("music", str(path), fade)
         command = popen.call_args.args[0]
         return command[-1], command
-
 
 
 @unittest.skipIf(tkinter is None, "this Python has no tkinter; the desktop agent needs it")
@@ -116,8 +118,9 @@ class FileCopyTests(CacheTestCase):
         mpv = self.cache.parent / "MPV Player" / "mpv.exe"
         mpv.parent.mkdir(parents=True)
         mpv.write_bytes(b"")
-        agent._tool_cache.update(at=agent.time.monotonic(), mpv=str(mpv))
-        with patch.object(agent, "_find_mpv", side_effect=AssertionError("searched before the start")):
+        agent._tool_cache.update(at=agent.time.monotonic(), mpv=str(mpv), variables={})
+        with patch.object(agent, "_find_mpv", side_effect=AssertionError("searched before the start")), \
+                patch.object(agent, "_tool_variables", return_value={}):
             _, command = self.play(self.source)
         self.assertEqual(command[0], str(mpv))
 

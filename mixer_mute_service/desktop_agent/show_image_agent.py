@@ -643,21 +643,32 @@ def restore_user_environment() -> list:
 # every 30 s with a 2 s timeout. So it runs at start and in the background
 # when older than TOOL_CACHE_SECONDS; /info answers with the last result.
 TOOL_CACHE_SECONDS = 300.0
-_tool_cache = {"at": 0.0, "mpv": None, "ytdlp": None, "mpv_search": []}
+_tool_cache = {"at": 0.0, "mpv": None, "ytdlp": None, "mpv_search": [], "variables": None}
+# The variables naming a player: a play takes the cached path only while
+# they are as they were at the search.
+_TOOL_VARIABLES = ("MPV_PATH", "YTDLP_PATH")
 _tool_cache_lock = threading.Lock()
 _tool_refreshing = threading.Event()
 
 
+def _tool_variables() -> dict:
+    """MPV_PATH and YTDLP_PATH as find_tool sees them now."""
+    env = _windows_environment()
+    return {name: env.get(name, "").strip().strip('"') for name in _TOOL_VARIABLES}
+
+
 def refresh_tool_cache() -> None:
     trace: list = []
+    variables = None
     try:
+        variables = _tool_variables()
         mpv = _find_mpv(trace)
         ytdlp = _find_ytdlp(mpv)
     except Exception:  # noqa: BLE001 - a diagnosis must never break the agent
         logger.exception("Searching mpv / yt-dlp failed")
         mpv = ytdlp = None
     with _tool_cache_lock:
-        _tool_cache.update(at=time.monotonic(), mpv=mpv, ytdlp=ytdlp, mpv_search=trace)
+        _tool_cache.update(at=time.monotonic(), mpv=mpv, ytdlp=ytdlp, mpv_search=trace, variables=variables)
     _tool_refreshing.clear()
 
 
@@ -680,17 +691,23 @@ def cached_tools() -> dict:
 
 def _cached_tool(name: str) -> str | None:
     """The path the last search found for ``name`` ("mpv", "ytdlp") while
-    that search is younger than TOOL_CACHE_SECONDS and the file is still
-    there; None means: search again. A play then needs no registry reads and
-    no globs over the install folders before mpv starts."""
+    that search is younger than TOOL_CACHE_SECONDS, the file is still there
+    and MPV_PATH / YTDLP_PATH are unchanged; None means: search again. A play
+    then needs no globs over the install folders before mpv starts.
+    A last resort (MPV.NET, a Store app) is never taken from the cache: a
+    real mpv installed since is used at once."""
     with _tool_cache_lock:
-        at, path = _tool_cache["at"], _tool_cache.get(name)
-    if not at or not path or time.monotonic() - at > TOOL_CACHE_SECONDS:
+        at, path, variables = _tool_cache["at"], _tool_cache.get(name), _tool_cache.get("variables")
+    if not at or not path or variables is None or time.monotonic() - at > TOOL_CACHE_SECONDS:
+        return None
+    if _last_resort_note("yt-dlp" if name == "ytdlp" else name, path):
         return None
     try:
-        return path if Path(path).is_file() else None
-    except OSError:
+        if not Path(path).is_file() or _tool_variables() != variables:
+            return None
+    except Exception:  # noqa: BLE001 - when in doubt, search in full
         return None
+    return path
 
 
 def _play_mpv() -> str | None:

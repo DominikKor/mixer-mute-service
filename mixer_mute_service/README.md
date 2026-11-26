@@ -657,8 +657,9 @@ Aufruf-Aliasse). Die Registry wird in der 64- und der 32-Bit-Ansicht gelesen,
 auch wenn kein Eintrag passt. Statt
 `mpv.com` (Konsolen-Huelle) wird das `mpv.exe` daneben gestartet. yt-dlp (fuer
 YouTube-Links) genauso, zuerst neben mpv. Ein Play nimmt den Pfad der letzten
-Suche im Hintergrund (hoechstens 5 Minuten alt, Datei noch vorhanden) und sucht
-nur sonst neu, damit mpv ohne Registry- und Ordnersuche startet. Startet der Agent ohne die Umgebung des Benutzers (nach dem Selbst-Update
+Suche im Hintergrund (hoechstens 5 Minuten alt, Datei noch vorhanden,
+`MPV_PATH`/`YTDLP_PATH` unveraendert, kein MPV.NET und keine Store-App) und
+sucht nur sonst neu, damit mpv ohne Ordnersuche startet. Startet der Agent ohne die Umgebung des Benutzers (nach dem Selbst-Update
 startet ihn Windows ueber WMI neu), uebernimmt er fehlende Benutzer- und
 System-Variablen und PATH-Eintraege beim Start aus der Registry. Findet er mpv
 nicht, nennt die Meldung die durchsuchten Orte; der Update-Dialog zeigt pro PC

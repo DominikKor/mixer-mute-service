@@ -292,9 +292,13 @@ class CachedToolTests(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.mpv = touch(Path(self.tmp.name) / "MPV Player" / "mpv.exe")
         self.ytdlp = touch(Path(self.tmp.name) / "MPV Player" / "yt-dlp.exe")
-        cache = patch.dict(agent._tool_cache, at=agent.time.monotonic(), mpv=str(self.mpv), ytdlp=str(self.ytdlp))
-        cache.start()
-        self.addCleanup(cache.stop)
+        self.variables = {"MPV_PATH": "", "YTDLP_PATH": ""}
+        cache = patch.dict(agent._tool_cache, at=agent.time.monotonic(), mpv=str(self.mpv), ytdlp=str(self.ytdlp),
+                           variables=dict(self.variables))
+        now = patch.object(agent, "_tool_variables", side_effect=lambda: dict(self.variables))
+        for item in (cache, now):
+            item.start()
+            self.addCleanup(item.stop)
 
     def test_fresh_cache_is_used(self):
         with patch.object(agent, "_find_mpv", side_effect=AssertionError("searched again")), \
@@ -310,6 +314,32 @@ class CachedToolTests(unittest.TestCase):
             self.assertEqual(agent._play_ytdlp("searched"), "searched too")
         find.assert_called_once_with()
         find_ytdlp.assert_called_once_with("searched")
+
+    def test_changed_variable_means_a_full_search(self):
+        """MPV_PATH set or changed since the search: it counts at once."""
+        for name in ("MPV_PATH", "YTDLP_PATH"):
+            with self.subTest(name):
+                self.variables[name] = r"C:\Program Files\MPV Player\mpv.exe"
+                with patch.object(agent, "_find_mpv", return_value="searched"), \
+                        patch.object(agent, "_find_ytdlp", return_value="searched"):
+                    self.assertEqual(agent._play_mpv(), "searched")
+                    self.assertEqual(agent._play_ytdlp(None), "searched")
+                self.variables[name] = ""
+
+    def test_last_resort_is_never_taken_from_the_cache(self):
+        """MPV.NET or a Store app found earlier: a real mpv installed since
+        must be used at once, so the search runs again."""
+        for path in (Path(self.tmp.name) / "MpvNet" / "mpvnet.exe",
+                     Path(self.tmp.name) / "WindowsApps" / "Some.mpv_1.0" / "mpv.exe"):
+            with self.subTest(path.name):
+                agent._tool_cache["mpv"] = str(touch(path))
+                with patch.object(agent, "_find_mpv", return_value="searched"):
+                    self.assertEqual(agent._play_mpv(), "searched")
+
+    def test_unknown_variables_mean_a_full_search(self):
+        agent._tool_cache["variables"] = None
+        with patch.object(agent, "_find_mpv", return_value="searched"):
+            self.assertEqual(agent._play_mpv(), "searched")
 
     def test_gone_file_or_nothing_cached_means_a_full_search(self):
         self.mpv.unlink()
@@ -457,6 +487,12 @@ class InfoTests(unittest.TestCase):
                     break
                 agent.time.sleep(0.02)
         self.assertEqual(agent.cached_tools()["mpv"], r"C:\mpv\mpv.exe")
+
+    def test_search_remembers_the_variables(self):
+        with patch.object(agent, "_tool_variables", return_value={"MPV_PATH": "x", "YTDLP_PATH": ""}), \
+                patch.object(agent, "_find_mpv", return_value=None), patch.object(agent, "_find_ytdlp", return_value=None):
+            agent.refresh_tool_cache()
+        self.assertEqual(agent._tool_cache["variables"], {"MPV_PATH": "x", "YTDLP_PATH": ""})
 
     def test_a_failing_search_leaves_nothing_found(self):
         with patch.object(agent, "_find_mpv", side_effect=OSError("access denied")):
