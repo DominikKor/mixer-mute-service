@@ -879,6 +879,11 @@ und merkt sie sich; gesetzt wird im Service (in einem eigenen Thread, auch
 Einstellungen oder Breiten ändern; dabei bleibt die gezeigte Folie bei ihrer
 Strophe (aus „2.2“ wird z. B. „2“, nicht die nächste Strophe), und ein Sprung
 von einer Seite mit älterer Nummerierung (`rev`) landet auf dem gemeinten Teil.
+Nach dem Speichern geänderter Einstellungen zeigen die Bildschirme die
+aktuelle Folie gleich neu (nicht erst beim nächsten Weiter; nichts, solange
+schwarz oder ausgeblendet). Gemessen wird je Bildschirm für höchstens vier
+Schriften (die Einstellungs-Vorschau misst jeden getippten Schriftnamen); die
+zuletzt benutzten und die gespeicherte bleiben.
 **Mehrere Bildschirme**: Geteilt wird zuerst für den Bildschirm, der die
 meisten Folien braucht, dann weiter, wo ein anderer es noch braucht – so
 zeigen alle dieselben Folien, bleiben im Takt und keiner wird kleiner als
@@ -892,7 +897,9 @@ fragen dafür `POST /songs/layout`. **Ältere Display-Agents** kennen weder
 Agent passt sie wie früher selbst ein) und merkt sich das je PC für 10 Minuten,
 damit jede Folie nur eine Anfrage braucht – aber nur bei einer Absage wegen
 eines unbekannten Felds (400), und vergessen, sobald der Agent mit einer
-anderen Startzeit antwortet (aktualisiert oder neu gestartet). Die Liste der
+anderen Startzeit antwortet (aktualisiert oder neu gestartet). Lehnt ein
+aktueller Agent einen Wert ab (422), bekommt er diese Folie gleich noch einmal
+ohne `layout`, statt dunkel zu bleiben; gemerkt wird das nicht. Die Liste der
 Lieder zählt Strophen und Refrains (`slide_count`), nicht die geteilten Folien.
 **Titelfolie** (Standard: an): Jedes Lied beginnt mit einer eigenen Folie, auf
 der der Titel in der Mitte steht und das Copyright darunter (mit dem Schalter
