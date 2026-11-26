@@ -90,6 +90,11 @@ class LightsApiTests(unittest.TestCase):
         self.assertTrue(data["ok"])
         self.assertTrue(data["merging"])
         self.assertEqual(data["host"], native_mod.ARTNET_HOST)
+        # Silent until the first stage command, then the frame is kept alive.
+        self.assertEqual(data["sending"], {"active": False, "running": True, "error": None})
+        self.client.post("/lights/stage", json={"zones": {"left": 30}})
+        with mock.patch("app.api.lights.artnet_status", return_value=node):
+            self.assertTrue(self.client.get("/lights/artnet").json()["sending"]["active"])
         with mock.patch("app.api.lights.artnet_status", return_value=None):
             self.assertEqual(self.client.get("/lights/artnet").status_code, 504)
         with mock.patch("app.api.lights.artnet_status", side_effect=native_mod.NativeControlError("port taken")):

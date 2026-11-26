@@ -852,12 +852,30 @@ weiter über `/companion/buttons/{id}/press` drücken.
   Warm und Kalt für alle Zonen; *Alle an* (auf die Einschalthelligkeit, eine
   schon leuchtende Zone bleibt) und *Alle aus*. Beim Ziehen folgt das Licht
   direkt, Tasten und Szenen blenden mit dem eingestellten Übergang.
-  Art-Net: alle Pakete gehen über einen Socket mit festem Absender-Port 6454
-  und mit Sequenznummer; ein Regler schickt höchstens alle 60 ms und nie zwei
-  Werte gleichzeitig (sonst konnten sie sich überholen und das Licht flackerte).
-  Flackert es trotzdem, sendet wahrscheinlich ein zweites Programm (z. B. ein
-  altes Companion) an den Knoten: `GET /lights/artnet` fragt ihn per ArtPoll und
-  meldet mit `"merging": true`, dass er zwei Quellen mischt.
+  Art-Net wie in Companion (Verbindung `generic-artnet`): Knoten
+  192.168.188.48, Universe 0, je Scheinwerfer Kanal 1 Helligkeit, 2 Warm,
+  3 Kalt (Links 1–3, Mitte links 5–7, Mitte rechts 9–11, Rechts 13–15).
+  Ein Frame hat immer alle 512 Kanäle, Sequenz 0. Wie Companion schickt der
+  Dienst den aktuellen Frame **jede Sekunde neu**, auch ohne Änderung, und
+  beim Blenden alle 40 ms. Ohne dieses Dauersenden fällt die Bühne nach
+  wenigen Sekunden auf schwarz. Das Dauersenden beginnt mit dem ersten
+  Bühnenbefehl aus der App und läuft danach auch nach einem Neustart weiter
+  (`stage_active` in `native_control_state.json`). Bis dahin sendet der
+  Dienst nichts, damit er ein noch genutztes Companion nicht stört.
+  Alle Pakete gehen über einen Socket mit festem Absender-Port 6454. Ein Regler
+  schickt höchstens alle 60 ms und nie zwei Werte gleichzeitig (sonst konnten
+  sie sich überholen und das Licht flackerte).
+  **Nur ein Programm darf die Bühne steuern: In Companion muss die
+  Verbindung „artnet“ dauerhaft deaktiviert sein.** Der Knoten (Electroconcept
+  „Node 1“) mischt zwei Quellen nach HTP, pro Kanal gewinnt der höhere Wert:
+  Solange Companion mitsendet, kann die App nicht unter Companions Werte
+  dimmen oder ausschalten. Jeder Bühnenbefehl schaltet das Dauersenden ein,
+  auch eine Programmzeile mit Lichtszene oder eine Overall-Taste, und es
+  bleibt an. Ein Zurückgeben an Companion gibt es nicht. Ist der gespeicherte
+  Frame nach einem Neustart ungültig, wartet das Dauersenden auf den nächsten
+  Befehl (kein Null-Frame, keine Verdunkelung). `GET /lights/artnet` fragt den Knoten per ArtPoll und
+  meldet mit `"merging": true`, dass er zwei Quellen mischt; `"sending"` zeigt,
+  ob der Dienst die Bühne hält und ob das Senden scheitert.
 - **Raumlicht** (Shelly, 7 Kreise): An/Aus je Kreis mit dem Zustand, den der
   Shelly meldet (alle paar Sekunden gefragt); ein Kreis, der nicht antwortet,
   zeigt „Offline“ und wird über der Section genannt („Raumlicht nicht
@@ -888,7 +906,7 @@ startet die Zeile nicht mehr („unknown light scene“), bis eine andere gewäh
 | GET | `/lights/scenes` | nur die Szenen |
 | POST | `/lights/scenes` `{"name", "replace"}` | aktuelles Licht als Szene speichern |
 | POST | `/lights/scenes/{id}/apply` | Szene einblenden |
-| GET  | `/lights/artnet` | Bühnen-Knoten per ArtPoll fragen: Name, `merging` (zweiter Sender) |
+| GET  | `/lights/artnet` | Bühnen-Knoten per ArtPoll fragen: Name, `merging` (zweiter Sender), `sending` (Dauersenden aktiv, Fehler) |
 | DELETE | `/lights/scenes/{id}` | Szene löschen |
 
 ## Umbenennen
