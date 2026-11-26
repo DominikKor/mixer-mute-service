@@ -625,13 +625,21 @@ muss mpv installiert sein. Der Agent sucht es in dieser Reihenfolge: die
 Variable `MPV_PATH`, `PATH` (auch der Benutzer- und System-PATH aus der
 Registry), der Agent-Ordner, WinGet (Links und Pakete, Benutzer und System),
 scoop, Chocolatey, `Program Files`, `Program Files (x86)` und
-`%LOCALAPPDATA%\Programs`. yt-dlp (fuer YouTube-Links) genauso, zuerst neben
-mpv. Startet der Agent ohne die Umgebung des Benutzers (nach dem Selbst-Update
+`%LOCALAPPDATA%\Programs` (dort auch Ordner, deren Name „mpv“ enthaelt: winget
+`shinchiro.mpv` installiert nach `C:\Program Files\MPV Player` und setzt kein
+PATH). Ein echtes `mpv.exe` geht immer vor MPV.NET (`mpvnet.exe`, auch wenn
+`MPV_PATH` darauf zeigt): MPV.NET startet langsam, und sein Steuerkanal
+antwortet nicht; es wird nur genommen, wenn sonst nichts da ist. Statt
+`mpv.com` (Konsolen-Huelle) wird das `mpv.exe` daneben gestartet. yt-dlp (fuer
+YouTube-Links) genauso, zuerst neben mpv. Startet der Agent ohne die Umgebung des Benutzers (nach dem Selbst-Update
 startet ihn Windows ueber WMI neu), uebernimmt er fehlende Benutzer- und
 System-Variablen und PATH-Eintraege beim Start aus der Registry. Findet er mpv
 nicht, nennt die Meldung die durchsuchten Orte; der Update-Dialog zeigt pro PC
 „mpv nicht gefunden“, und `GET /update/agents` liefert pro Agent `mpv`, `ytdlp`
-(Pfad oder `null`) und `restored_env` (beim Start ergaenzte Variablen). Die Audio-Kachel spielt den Titel ohne Player-Fenster ab; ein
+(Pfad oder `null`), `restored_env` (beim Start ergaenzte Variablen),
+`mpv_search` (jeder durchsuchte Ort mit dem Fund) und `agent_user` /
+`agent_localappdata` (das Windows-Konto, unter dem der Agent laeuft: ein
+Programm, das ein anderes Konto nur fuer sich installiert hat, findet er nicht). Die Audio-Kachel spielt den Titel ohne Player-Fenster ab; ein
 erneuter Play-Klick ersetzt die laufende, vom Agenten gestartete Wiedergabe.
 Stop beendet nur diesen Agenten-Player, keine anderen mpv-Instanzen. Der Agent
 laeuft im angemeldeten Benutzerkonto, sodass die normale Windows-Audioausgabe

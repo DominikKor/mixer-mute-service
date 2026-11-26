@@ -105,6 +105,55 @@ class FindToolTests(unittest.TestCase):
         self.assertTrue(message.endswith("install it (winget install mpv) or set MPV_PATH"))
 
 
+    def test_winget_shinchiro_mpv_in_program_files_mpv_player(self):
+        """winget's shinchiro.mpv is an Inno installer for the machine: it
+        installs to %ProgramFiles%\\MPV Player and does not touch PATH (the
+        Anzeige PC found no mpv)."""
+        for base in ("PF", "PF86"):
+            with self.subTest(base):
+                expected = touch(self.root / base / "MPV Player" / "mpv.exe")
+                found, _ = self.find(self.env())
+                self.assertEqual(Path(found), expected)
+                expected.unlink()
+
+    def test_real_mpv_before_mpv_net(self):
+        """MPV_PATH named MPV.NET's mpvnet.exe on the streaming PC: slow to
+        start, and its control channel never answered. A real mpv.exe wins."""
+        mpvnet = touch(self.root / "WindowsApps" / "MPV.NETMediaPlayer_7.1" / "MpvNet.Windows" / "mpvnet.exe")
+        real = touch(self.root / "PF" / "MPV Player" / "mpv.exe")
+        trace = []
+        found, _ = self.find(self.env(MPV_PATH=str(mpvnet)), trace=trace)
+        self.assertEqual(Path(found), real)
+        first = trace[0]
+        self.assertEqual((first["place"], Path(first["found"])), ("MPV_PATH", mpvnet))
+        self.assertIn("not mpv itself", first["note"])
+        self.assertEqual(Path(trace[-1]["found"]), real)
+
+    def test_mpv_net_only_when_nothing_else_is_there(self):
+        mpvnet = touch(self.root / "WindowsApps" / "MpvNet.Windows" / "mpvnet.exe")
+        found, _ = self.find(self.env(MPV_PATH=str(mpvnet)))
+        self.assertEqual(Path(found), mpvnet)
+
+    def test_mpv_exe_instead_of_its_console_wrapper(self):
+        """mpv.com starts mpv.exe as a child, which would outlive a stop."""
+        folder = self.root / "bin"
+        touch(folder / "mpv.exe")
+        wrapper = touch(folder / "mpv.com")
+        found, _ = self.find(self.env(MPV_PATH=str(wrapper)))
+        self.assertEqual(Path(found), folder / "mpv.exe")
+
+    def test_trace_names_every_place_looked_at(self):
+        trace = []
+        found, _ = self.find(self.env(), trace=trace)
+        self.assertIsNone(found)
+        places = [entry["place"] for entry in trace]
+        for place in ("PATH", "the agent folder", "WinGet links (user)", "Program Files", "Program Files (x86)"):
+            self.assertIn(place, places)
+        self.assertTrue(any("MPV Player" in entry["looked"] or "[mM][pP][vV]" in entry["looked"]
+                            for entry in trace))
+        self.assertTrue(all(entry["found"] is None for entry in trace))
+
+
 @unittest.skipIf(tkinter is None, "this Python has no tkinter; the desktop agent needs it")
 class WindowsEnvironmentTests(unittest.TestCase):
     """What a WMI-started process lacks is filled in from the registry."""
@@ -183,20 +232,27 @@ class InfoTests(unittest.TestCase):
         self.addCleanup(log.stop)
 
     def test_reports_the_cached_players_and_restored_variables(self):
-        agent._tool_cache.update(at=agent.time.monotonic(), mpv=r"C:\Program Files\mpv\mpv.exe", ytdlp=None)
+        search = [{"place": "MPV_PATH", "looked": "x", "found": None}]
+        agent._tool_cache.update(at=agent.time.monotonic(), mpv=r"C:\Program Files\mpv\mpv.exe", ytdlp=None,
+                                 mpv_search=search)
         with patch.object(agent, "_find_mpv", side_effect=AssertionError("searched in the request")), \
-                patch.object(agent, "RESTORED_ENV", ["PATH", "MPV_PATH"]):
+                patch.object(agent, "RESTORED_ENV", ["PATH", "MPV_PATH"]), \
+                patch.dict(os.environ, {"LOCALAPPDATA": r"C:\Users\Beamer\AppData\Local"}), \
+                patch.object(agent.getpass, "getuser", return_value="Beamer"):
             status, answer = info()
         self.assertEqual(status, 200)
         self.assertEqual((answer["mpv"], answer["ytdlp"], answer["restored_env"]),
                          (r"C:\Program Files\mpv\mpv.exe", None, ["PATH", "MPV_PATH"]))
+        self.assertEqual(answer["mpv_search"], search)
+        self.assertEqual((answer["agent_user"], answer["agent_localappdata"]),
+                         ("Beamer", r"C:\Users\Beamer\AppData\Local"))
 
     def test_nothing_said_before_the_first_search_is_done(self):
         """Right after a restart the service asks /info before the background
         search ends: "mpv: null" there showed a false "mpv nicht gefunden"."""
         agent._tool_cache.update(at=0.0, mpv=None, ytdlp=None)
         release = threading.Event()
-        with patch.object(agent, "_find_mpv", side_effect=lambda: release.wait(5) and r"C:\mpv\mpv.exe"), \
+        with patch.object(agent, "_find_mpv", side_effect=lambda *_: release.wait(5) and r"C:\mpv\mpv.exe"), \
                 patch.object(agent, "_find_ytdlp", return_value=None):
             status, answer = info()
             self.assertEqual(status, 200)
@@ -219,7 +275,7 @@ class InfoTests(unittest.TestCase):
         agent._tool_cache.update(at=0.0, mpv=None, ytdlp=None)
         found = threading.Event()
 
-        def slow_find():
+        def slow_find(*_trace):
             found.set()
             return r"C:\mpv\mpv.exe"
 
