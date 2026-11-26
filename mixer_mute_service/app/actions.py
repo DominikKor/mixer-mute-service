@@ -398,3 +398,40 @@ async def program_conflict_error(request: Request, item: dict) -> Optional[str]:
         if button is not None and switches_mutes(button):
             return f"{field}: this key switches mutes; a row with a mute group sets them itself"
     return None
+
+
+async def program_area_problems(request: Request, item: dict) -> dict:
+    """Per area of a program row (or shortcut), why it cannot run: "mixer",
+    "playback", "translation", "lyrics", "desktop" (profiles that are gone;
+    the others run), "song", "light". A row runs every area without one
+    (app/api/program.py), so a deleted key or light scene costs only its
+    own part. A key that switches mutes in a row with a mute group is
+    skipped too (the group sets the mutes itself)."""
+    state = request.app.state
+    problems = {}
+    if item.get("group") and await state.groups.get(item["group"]) is None:
+        problems["mixer"] = "unknown group"
+    for field in PROGRAM_ACTION_FIELDS:
+        value = item.get(field)
+        if not value or is_file_action(value):
+            continue
+        if value.startswith(DESKTOP_PREFIX):
+            profile_id = value.removeprefix(DESKTOP_PREFIX)
+            if not profile_id or profile_id not in state.cfg.desktop_display.profiles:
+                problems[field] = "unknown desktop profile"
+            continue
+        button = await pressable_button(request, value)
+        if button is None:
+            problems[field] = "unknown button"
+        elif item.get("group") and switches_mutes(button):
+            problems[field] = "this key switches mutes; the row's mute group sets them itself"
+    gone = [p for p in item.get("desktop") or [] if p not in state.cfg.desktop_display.profiles]
+    if gone:
+        problems["desktop"] = "unknown desktop profile " + ", ".join(gone)
+    songs = state.songs.songs
+    if item.get("song") and songs and item["song"] not in songs:
+        problems["song"] = "unknown song"
+    scenes = getattr(state, "light_scenes", None)
+    if item.get("light") and (scenes is None or await scenes.get(item["light"]) is None):
+        problems["light"] = "unknown light scene"
+    return problems

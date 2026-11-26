@@ -139,8 +139,18 @@ miniatures, and **Standard** restores the original one.
   does, Play / hide / "⋮"); tapping the line opens its fields for editing
   (one row at a time, Esc or another tap closes it).
   Play activates the group first, then runs
-  the linked actions in order; the delay records the click offset from the
-  planned time. As soon as a row starts (Play, **Weiter**), the desktop
+  the rest **best effort per area**: the light, the cameras and the content
+  (beamer, the file / key fields, the desktop profiles, the song) side by
+  side, each on its own, so a light that does not answer or a mixer that is
+  not connected costs only that part (steps on the same PC keep their
+  order; other PCs do not wait for one that is off). The mixer part stays
+  all or nothing: a blocked group sends nothing to the mixer. A key, group,
+  profile or light scene deleted since only skips its own part. The row
+  counts as started in any case; the answer lists every area
+  (`areas: {mixer: {ok, reason}, …}`, `ok`, `partial`) and the page shows
+  one short line for what did not work ("„Predigt“ gestartet – Mischpult:
+  nicht verbunden; Licht: keine Antwort"). The delay records the click
+  offset from the planned time. As soon as a row starts (Play, **Weiter**), the desktop
   profiles the rows before started stop, unless the new row starts them
   itself (app/profile_stops.py): music fades out with its profile's fade,
   a file's window (e.g. the Mission Spotlight video) closes and an image is
