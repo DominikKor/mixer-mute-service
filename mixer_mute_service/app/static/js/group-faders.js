@@ -107,9 +107,12 @@ $("new-person-name").addEventListener("keydown", (e) => {
   if (e.key === "Enter") { e.preventDefault(); savePerson(); }
   if (e.key === "Escape") { closePersonCreateRow(); }
 });
-$("panic-btn").addEventListener("click", () => {
-  const path = SERVICE_ENABLED === false ? "/panic/enable" : "/panic/disable";
-  act("POST", path, undefined, "Panic");
+$("panic-btn").addEventListener("click", async () => {
+  const enable = SERVICE_ENABLED === false;
+  const result = await api("POST", enable ? "/panic/enable" : "/panic/disable");
+  if (result.ok && result.data.ok !== false) toast(enable ? "Senden wieder erlaubt" : "Senden gesperrt", true);
+  else toast(`Panic: ${result.data.reason || "HTTP " + result.status}`, false);
+  await refresh();
 });
 $("desktop-profiles").addEventListener("click", (event) => {
   const trigger = event.target.closest("button[data-profile-menu]");

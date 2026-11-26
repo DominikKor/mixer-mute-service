@@ -29,9 +29,10 @@ function closeDeleteConfirm(confirmed) {
 // Resolves true when "Löschen" is pressed, false otherwise.
 function confirmDelete(anchor, question, okLabel = "Löschen") {
   closeDeleteConfirm(false);
-  // An entry of a "⋮" menu that has closed meanwhile: ask at the menu's key.
+  // An entry of a "⋮" menu (open or already closed): ask at the menu's key,
+  // which stays where it is when the menu goes.
   const menu = anchor && anchor.closest(".tile-menu");
-  if (menu && menu.hidden && menu._trigger && menu._trigger.isConnected) anchor = menu._trigger;
+  if (menu && menu._trigger && menu._trigger.isConnected) anchor = menu._trigger;
   return new Promise(resolve => {
     const pop = document.createElement("div");
     pop.className = "delete-confirm";

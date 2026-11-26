@@ -188,13 +188,41 @@ document.addEventListener("click", event => {
   if (OPEN_MENU && OPEN_MENU.trigger === trigger) closeTileMenu();
   else openTileMenu(trigger, $(trigger.dataset.panelMenu));
 });
-// Close on any tap elsewhere, and when the page or a list scrolls or resizes.
-document.addEventListener("pointerdown", event => {
+// A tap elsewhere only closes the menu: it must not also press the key,
+// fader or camera arrow under the finger. So that tap is swallowed whole:
+// its pointerdown here (capture, before any other handler) and the click
+// that follows it (finger: pointerdown, pointerup, click; mouse the same).
+// The swallowing ends with that click, a cancelled touch (it became a
+// scroll), a new pointerdown, or 400 ms after the finger lifted.
+const MENU_SWALLOW = { active: false, timer: 0 };
+
+function endMenuSwallow() {
+  MENU_SWALLOW.active = false;
+  clearTimeout(MENU_SWALLOW.timer);
+}
+
+window.addEventListener("pointerdown", event => {
+  endMenuSwallow();
   if (!OPEN_MENU || OPEN_MENU.menu.contains(event.target)) return;
   const key = event.target.closest("[data-menu-key]");
   if (OPEN_MENU.trigger.contains(event.target) || (key && OPEN_MENU.key && key.dataset.menuKey === OPEN_MENU.key)) return;
   closeTileMenu();
-});
+  event.stopPropagation();
+  MENU_SWALLOW.active = true;
+  MENU_SWALLOW.timer = setTimeout(endMenuSwallow, 10000);  // never stuck, even if no pointerup comes
+}, true);
+window.addEventListener("pointerup", () => {
+  if (!MENU_SWALLOW.active) return;
+  clearTimeout(MENU_SWALLOW.timer);
+  MENU_SWALLOW.timer = setTimeout(endMenuSwallow, 400);
+}, true);
+window.addEventListener("pointercancel", endMenuSwallow, true);
+window.addEventListener("click", event => {
+  if (!MENU_SWALLOW.active) return;
+  endMenuSwallow();
+  event.preventDefault();
+  event.stopPropagation();
+}, true);
 // Any scroll that moves the key (the page, the stage, a list) closes the
 // menu; a scroll elsewhere (a song list following the slide) does not.
 document.addEventListener("scroll", () => {

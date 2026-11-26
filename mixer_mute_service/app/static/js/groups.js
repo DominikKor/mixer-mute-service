@@ -516,7 +516,7 @@ async function runGroupAction(label, buildSteps) {
     }
     sent++;
   }
-  toast(`${label}: ${sent} ${sent === 1 ? "Kanal" : "Kanäle"} gesetzt`, true);
+  toast(`${label}: ${sent} ${sent === 1 ? "Kanal" : "Kanäle"} geschaltet`, true);
   await refresh();
 }
 

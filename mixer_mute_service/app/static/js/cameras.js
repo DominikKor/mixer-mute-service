@@ -459,7 +459,7 @@ async function deleteDesktopProfile(profileId, anchor) {
 // The pencil next to "Presets": renaming on/off for that camera.
 $("camera-grid").addEventListener("click", event => {
   const done = event.target.closest("[data-camera-rename-done]");
-  if (done) { setCameraRenaming(done.dataset.cameraRenameDone, false); return; }
+  if (done) { endRenameMode(); return; }
   const trigger = event.target.closest("[data-camera-menu]");
   if (!trigger) return;
   const camera = CAMERA_STREAMS.find(item => item.id === trigger.dataset.cameraMenu);
@@ -470,7 +470,11 @@ $("camera-grid").addEventListener("click", event => {
     { label: "Bearbeiten", icon: ICON_PENCIL, run: () => openCameraDialog(camera.id) },
     controls && !controls.hidden ? {
       label: CAMERA_RENAMING.has(cam) ? "Umbenennen beenden" : "Presets umbenennen", icon: ICON_EDIT_LIST,
-      run: () => setCameraRenaming(cam, !CAMERA_RENAMING.has(cam)),
+      run: () => {
+        if (CAMERA_RENAMING.has(cam)) { endRenameMode(); return; }
+        startRenameMode(controls, () => setCameraRenaming(cam, false));
+        setCameraRenaming(cam, true);
+      },
     } : null,
     "-",
     { label: "Entfernen", icon: ICON_TRASH, danger: true, run: anchor => deleteCamera(camera.id, anchor) },

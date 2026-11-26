@@ -1350,7 +1350,8 @@ button.companion-key[data-value]::after { content: attr(data-value); display: bl
 /* "Bearbeiten": every key, category and target shows its "⋮" */
 .companion-button-item { position: relative; }
 .companion-categories:not(.editing) .edit-only, .power-off-panel:not(.editing) .edit-only { display: none; }
-.companion-categories.editing button.companion-key { padding-right: 36px; }
+/* Editing: keys do not fire (a tap opens their menu), so they look inert */
+.companion-categories.editing button.companion-key { padding-right: 36px; cursor: context-menu; border-style: dashed; border-color: #4a5160; filter: saturate(.55); }
 .power-off-panel.editing .power-agent-shutdown { display: none; }
 .companion-create-dialog { width: min(520px, calc(100vw - 32px)); }
 @media (max-width: 760px) {

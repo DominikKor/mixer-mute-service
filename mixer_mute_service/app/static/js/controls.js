@@ -430,6 +430,15 @@ $("companion-categories").addEventListener("click", async (event) => {
   }
   const button = event.target.closest("[data-companion-press]");
   if (!button) return;
+  // "Bearbeiten": a key never fires (a tap that misses its "⋮" by a few
+  // pixels would otherwise switch the mixer, OBS or the beamer); it opens
+  // the key's menu instead.
+  if (companionEditing()) {
+    const info = COMPANION_DATA.buttons.find(item => item.id === button.dataset.companionPress);
+    const menu = button.closest(".companion-button-item")?.querySelector("[data-companion-menu]");
+    if (info && menu) toggleActionMenu(menu, () => companionKeyMenuItems(info));
+    return;
+  }
   const pressId = button.dataset.companionPress;
   if (COMPANION_BUTTON_BUSY.has(pressId)) return;
   COMPANION_BUTTON_BUSY.add(pressId);
@@ -527,6 +536,10 @@ $("power-off-selected").addEventListener("click", async event => {
   }
   await refresh();
 });
+function companionEditing() {
+  return $("companion-categories").classList.contains("editing");
+}
+
 // A key's "⋮" (with "Bearbeiten"): rename, move to another category, delete.
 function companionKeyMenuItems(info) {
   const others = COMPANION_DATA.categories.filter(category => category.id !== info.category_id);

@@ -3,6 +3,8 @@
 // of index.html; main.js runs last and starts everything.
 
 let PROGRAM_ITEMS = [];
+// The empty list's help text (index.html), shown again after a failed load.
+const PROGRAM_EMPTY_TEXT = $("program-empty").textContent;
 let PROGRAM_GROUPS = {};
 let PROGRAM_BUTTONS = [];
 let PROGRAM_BUTTON_ALIASES = {};
@@ -1015,7 +1017,7 @@ async function loadProgramItems() {
     $("program-empty").textContent = "Programmdaten konnten nicht geladen werden";
     return;
   }
-  $("program-empty").textContent = "Noch keine Programmpunkte.";
+  $("program-empty").textContent = PROGRAM_EMPTY_TEXT;
   PROGRAM_ITEMS = items.data;
   PROGRAM_GROUPS = groups.data;
   // Camera presets and the light and mixer keys left Steuerung but program

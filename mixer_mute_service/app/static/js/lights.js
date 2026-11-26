@@ -516,6 +516,12 @@ async function deleteLightScene(scene, anchor) {
 // Rename mode of the stage lights or the room light circuits (their block's
 // "⋮"): a tap on a name opens it as a field; "Fertig" ends it.
 function setLightRenaming(which) {
+  if (which) startRenameMode($(which === "stage" ? "light-fixtures" : "light-circuits"), () => showLightRenaming(null));
+  else if (LIGHTS.renaming) endRenameMode();
+  showLightRenaming(which);
+}
+
+function showLightRenaming(which) {
   LIGHTS.renaming = which;
   for (const bar of document.querySelectorAll("[data-rename-bar]")) bar.hidden = bar.dataset.renameBar !== which;
   $("light-fixtures").classList.toggle("renaming", which === "stage");
