@@ -356,7 +356,7 @@ class StoreTests(unittest.IsolatedAsyncioTestCase):
                 '[{"id": "a", "time": "09:00", "title": "Alt", "person": "", "group": ""}]', encoding="utf-8")
             old = await ProgramItemStore(Path(name) / "old.json").get("a")
             self.assertEqual((old["cam1_preset"], old["cam2_preset"], old["camera_wait_seconds"]), (None, None, 5.0))
-            self.assertEqual((old["desktop"], old["cam1_scene"], old["shortcuts"]), ([], None, []))
+            self.assertEqual((old["desktop"], old["cam1_scene"], old["shortcut"]), ([], None, None))
 
     async def test_desktop_and_scene(self):
         with tempfile.TemporaryDirectory() as name:
@@ -367,7 +367,7 @@ class StoreTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual((await store.create(row(cam1_scene="")))["cam1_scene"], None)
             for bad in ({"desktop": "qr"}, {"desktop": ["a b"]}, {"desktop": [f"p{i}" for i in range(9)]},
                         {"cam1_scene": "x" * 101}, {"cam2_scene": "a\nb"}, {"cam1_scene": 3},
-                        {"shortcuts": ["nope"]}, {"shortcuts": "a" * 32}):
+                        {"shortcuts": ["nope"]}, {"shortcuts": "a" * 32}, {"shortcut": "nope"}, {"shortcut": ["a" * 32]}):
                 with self.assertRaises(ProgramItemError, msg=bad):
                     await store.create(row(**bad))
 
@@ -508,19 +508,19 @@ class ApiTests(unittest.TestCase):
             self.assertEqual(client.get("/program/status").json()["current_id"], status_before["current_id"],
                              "a shortcut leaves the program's run order alone")
 
-            self.assertEqual(client.post("/program/items", json=row(shortcuts=["0" * 32])).status_code, 400)
-            plain = client.post("/program/items", json=row(title="Lied", shortcuts=[copy["id"], saved["id"]])).json()["item"]
+            self.assertEqual(client.post("/program/items", json=row(shortcut="0" * 32)).status_code, 400)
+            plain = client.post("/program/items", json=row(title="Lied", shortcut=copy["id"])).json()["item"]
             ran.clear()
             with patch("app.api.program.run_profile", fake_run_profile):
                 played = client.post(f"/program/items/{plain['id']}/play").json()
             self.assertTrue(played["ok"], played)
-            self.assertEqual(ran, ["qr", "qr"])
-            self.assertEqual([s["shortcut_id"] for s in played["shortcuts"]], [copy["id"], saved["id"]])
+            self.assertEqual(ran, ["qr"])
+            self.assertEqual(played["shortcut"], {"id": copy["id"], "title": "QR zeigen (Kopie)"})
 
             deleted = client.delete(f"/shortcuts/{copy['id']}").json()
             self.assertEqual(deleted["program_items"], 1)
             rows = {i["id"]: i for i in client.get("/program/items").json()}
-            self.assertEqual(rows[plain["id"]]["shortcuts"], [saved["id"]])
+            self.assertIsNone(rows[plain["id"]]["shortcut"])
 
 
 if __name__ == "__main__":

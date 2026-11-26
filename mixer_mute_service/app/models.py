@@ -118,7 +118,11 @@ class ProgramActionFields(BaseModel):
 class ProgramItemRequest(ProgramActionFields):
     time: str
     person: str = ""
-    shortcuts: List[str] = Field(default_factory=list)  # shortcut ids, run after the row's own steps
+    # A shortcut id: the row runs the shortcut's fields instead of its own.
+    shortcut: Optional[str] = None
+    # Before: a list of shortcuts run after the row's own steps; the first
+    # one is taken as the shortcut when "shortcut" is not given.
+    shortcuts: Optional[List[str]] = None
 
 
 class ShortcutRequest(ProgramActionFields):
