@@ -53,20 +53,17 @@ The service serves a single-page control panel at `/`, built for a 13-inch
 iPad in Safari (both orientations) and desktop browsers alike. Every section
 head (Desktop, Channels, Mute Gruppen, Programm, Liedanzeige, Steuerung) folds its section
 in and out; the choice is remembered per device. **Anordnen** (switch in the
-header) shows ◀ ▲ ▼ ▶ in every section head. Sections sit in rows, up to three
-side by side (single column below 900 px width). A row sets width and column:
-of two sections the first is the left half, the second the right half. On the
-page every section moves up as far as its own columns allow (masonry), so a
-short section (e.g. Mute Gruppen next to a long Programm) gets the following
-rows' sections under it; a row stays level when its sections would start less
-than 120 px apart. A section that straddles a step (a third under two halves)
-starts under the step; the others in its row still move up. A section never
-changes column. The arrows follow the screen:
-◀ ▶ swap a section with its neighbour in the row, and a section alone in its
-row joins the row above on the left (◀) or right (▶); ▲ ▼ swap a section with
-the one right above or below it (a whole-width section with the row above or
-below), and a section sharing a row with nothing above or below it gets the
-whole width at the top or bottom. The
+header) turns the page into an editable gallery: you set only the order of the
+sections and a width for each (⅓, ½, ⅔ or whole); every section then drops
+into the place of its width where it can start highest (masonry), so short
+sections stack under each other next to a tall one. Every section head shows
+⠿ (drag it to another place, finger or mouse), ◀ ▶ (earlier / later in the
+order, as many steps as it takes for the page to change) and the width key
+(⅓ → ½ → ⅔ → whole). Below 1100 px page width (iPad upright) ⅓ and ½ show as
+half, ⅔ and whole as whole; below 900 px everything is one column. A section
+keeps its place while only contents change (program rows, song text), so the
+page stays calm during a service; opening or closing a section, a new order
+or width, and "Anordnen" itself let sections move into free space again. The
 arrangement is remembered per device, also sets the order of the Stage
 miniatures, and **Standard** restores the original one.
 

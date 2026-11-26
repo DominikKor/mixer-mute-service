@@ -1427,6 +1427,10 @@ body.stage-anim .stage-thumb-screen .panel.stage-flying { position: absolute; }
 body.arranging .section-move { display: flex; }
 .section-move button { width: 44px; min-height: 44px; padding: 0; font-size: 13px; }
 .panel:not(.open) .panel-head .section-move { margin-left: auto; }
+/* Dragging a section by its ⠿ key (app.js): the finger must not scroll the page. */
+.section-move [data-section-drag] { touch-action: none; cursor: grab; }
+.section-move [data-section-drag][hidden] { display: none; }
+body:not(.stage-on) .page > .panel.section-dragging { position: relative; z-index: 6; opacity: .92; cursor: grabbing; }
 button.arrange-reset { min-height: 44px; padding: 0 14px; font-size: 12px; }
 /* Steuerung on stage: categories packed as tiles (big ones span several
    lanes, see layoutStageCompanion), slimmer keys (50 px, at least 44 px
