@@ -975,6 +975,7 @@ button.shortcut-load-item {
 }
 .slide-title, .slide-copy { white-space: normal; padding: 0 6%; transform: translateY(-50%); }
 .slide-copy { white-space: pre-line; line-height: 1.2; }  /* lines as on the display PC */
+.slide-line.slide-plain { white-space: pre-wrap; line-height: 1.25; }  /* not laid out yet */
 .sg-samples { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 .sg-samples.single { grid-template-columns: minmax(0, 1fr); }
 .compact-switch.off { opacity: .45; }
@@ -1011,6 +1012,12 @@ button.song-thumb {
 button.song-thumb:active:not(:disabled) { transform: none; box-shadow: none; }
 button.song-thumb.current { border-color: #3ee07f; box-shadow: 0 0 0 1px #3ee07f, 0 0 10px rgba(62,224,127,.35); }
 .song-thumb .slide-box { border-radius: 3px; }
+/* A slide too long even at the smallest size: wrapped and cut, on the display PC too */
+.slide-box.slide-overflow { box-shadow: inset 0 0 0 2px #e0a03e; }
+.slide-box.slide-overflow::before {
+  content: "zu lang"; position: absolute; left: 6px; top: 5px; z-index: 1; pointer-events: none;
+  font: 800 10px/1 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: #e0a03e;
+}
 /* Song choice in a program row and its search popover */
 button.song-pick-btn {
   width: 100%; min-height: 44px; margin-bottom: 6px; padding: 4px 10px; text-align: left; font-size: 12px;

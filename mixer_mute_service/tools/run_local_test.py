@@ -192,6 +192,12 @@ class FakeDevices:
             self.agent_started[host] = self.agent_started.get(host, 1000.0) + 1.0
         if path == "/songs/library":
             return {"ok": True, "files": []}
+        if path == "/song/metrics":
+            # A 1920 x 1080 monitor and Verdana-like widths (the service's estimate).
+            from app.slide_layout import estimate_metrics
+            widths = estimate_metrics()
+            return {"ok": True, "width": 1920, "height": 1080, "ref": 100,
+                    "widths": [widths.ref_width(c) for c in payload["chars"]]}
         log.info("FAKE display agent %s %s", url, {k: v for k, v in payload.items() if k != "files"})
         return {"ok": True, "action": payload.get("action"), "restarting": path == "/update"}
 

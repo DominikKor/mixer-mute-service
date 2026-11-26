@@ -64,20 +64,31 @@ class FakeAgent:
         self.calls = []
         self.fail = False
         self.old = False   # an agent from before the preview/alignment
+        self.no_layout = False  # an agent from before the service's layout (no /song/metrics)
         self.files = []
 
     def __call__(self, url, token, payload, timeout):
         self.calls.append((url, token, payload))
         if self.fail:
             raise urllib.error.URLError("down")
-        if self.old and ("next" in payload or "align" in payload.get("style", {})):
+        if url.endswith("/song/metrics"):
+            if self.old or self.no_layout:
+                raise urllib.error.HTTPError(url, 404, "Not Found", None, None)
+            # 0.6 em per character at 100 px, a 1920 x 1080 screen.
+            return {"ok": True, "width": 1920, "height": 1080, "ref": 100, "widths": [60] * len(payload["chars"])}
+        if self.old and ("next" in payload or "align" in payload.get("style", {}) or "layout" in payload):
+            raise urllib.error.HTTPError(url, 400, "Bad Request", None, None)
+        if self.no_layout and "layout" in payload:
             raise urllib.error.HTTPError(url, 400, "Bad Request", None, None)
         if url.endswith("/songs/library"):
             return {"ok": True, "files": self.files, "truncated": False}
         return {"ok": True, "action": payload["action"]}
 
     def last(self):
-        return self.calls[-1][2]
+        return [c for c in self.calls if not c[0].endswith("/song/metrics")][-1][2]
+
+    def song_calls(self):
+        return [c for c in self.calls if c[0].endswith("/song")]
 
 
 def main():
@@ -154,6 +165,13 @@ def main():
               and p["style"] == {"font": "Verdana", "font_size": 72, "text_color": "#ffff00",
                                  "background_color": "#000000", "align": "center"})
         check("next slide sent as preview", p["next"] == "Erste Strophe\nzweite Zeile")
+        check("laid out by the service: lines and size for the agent's 1920x1080 screen",
+              p["layout"]["screen"] == [1920, 1080] and p["layout"]["lines"] == ["Refrain"]
+              and p["layout"]["px"] == 72 and p["layout"]["preview"]["lines"] == ["Erste Strophe", "zweite Zeile"])
+        metrics = [c for c in agent.calls if c[0].endswith("/song/metrics")]
+        check("font widths asked once, for the song's characters", len(metrics) == 1
+              and set("Erste Strophe") <= set(metrics[0][2]["chars"]) and metrics[0][2]["font"] == "Verdana"
+              and metrics[0][2]["monitor"] == 3)
         check("live state", r.json()["song_id"] == "Allein deine Gnade.foil" and r.json()["slide"] == 0
               and r.json()["song"]["title"] == "Allein deine Gnade")
         client.post("/songs/next")
@@ -189,15 +207,42 @@ def main():
 
         print("== older display agent ==")
         agent.old = True
-        n = len(agent.calls)
+        service = app.state.songs
+        service.agent_memory.clear()
+        service.metrics.clear()
+        n = len(agent.song_calls())
         r = client.post("/songs/show", json={"song_id": "Allein deine Gnade.foil", "slide": 1})
-        retried = agent.calls[n:]
-        check("refused new format, plain slide shown instead", r.status_code == 200 and len(retried) == 2
+        retried = agent.song_calls()[n:]
+        check("old agent: no layout (no font widths), plain slide after one refusal",
+              r.status_code == 200 and len(retried) == 2
+              and "layout" not in retried[0][2] and "next" in retried[0][2]
               and "next" not in retried[1][2] and "align" not in retried[1][2]["style"]
               and retried[1][2]["text"] == "Erste Strophe\nzweite Zeile")
+        n = len(agent.calls)
+        client.post("/songs/next")
+        check("remembered: the next slide in one request, no font widths asked again",
+              len(agent.calls) == n + 1 and "next" not in agent.last() and agent.last()["text"] == "Refrain")
         r = client.post("/songs/blank")
         check("blank works on the old agent too", r.status_code == 200 and "next" not in agent.last())
         agent.old = False
+        service.agent_memory.clear()
+        service.metrics.clear()
+        agent.no_layout = True
+        n = len(agent.song_calls())
+        r = client.post("/songs/show", json={"song_id": "Allein deine Gnade.foil", "slide": 1})
+        retried = agent.song_calls()[n:]
+        check("agent before the service's layout: slide with preview, without layout", r.status_code == 200
+              and len(retried) == 1 and "layout" not in retried[0][2] and retried[0][2]["next"] == "Refrain"
+              and retried[0][2]["style"]["align"] == "center")
+        agent.no_layout = False
+        service.agent_memory.clear()
+        service.metrics.clear()
+        agent.no_layout = False
+        # Agent fine again, but a stale memory says it refuses layouts: it
+        # gets the older form for AGENT_MEMORY_SECONDS, then the new one.
+        service.agent_memory[("192.168.188.11", "song_level")] = (1, songs.time.monotonic() - songs.AGENT_MEMORY_SECONDS - 1)
+        client.post("/songs/show", json={"song_id": "Allein deine Gnade.foil", "slide": 1})
+        check("an agent's refusal is forgotten after a while (updated agent)", "layout" in agent.last())
         client.post("/songs/show", json={"song_id": "Allein deine Gnade.foil", "slide": 2})
 
         print("== agent down ==")
@@ -253,8 +298,10 @@ def main():
         r = client.post(f"/program/items/{item_id}/play")
         check("a program row starts with the title slide", r.status_code == 200 and agent.last()["text"] == "Lobe den Herren"
               and agent.last()["title"] == "" and r.json()["song"]["slide"] == 0)
-        legacy = songs.legacy_song_payload(agent.last())
-        check("older display agents get it as a plain slide", "next" not in legacy and "align" not in legacy["style"]
+        current, without_layout, legacy = songs.song_payload_levels(agent.last())
+        check("older display agents get it without layout, then as a plain slide",
+              "layout" in current and "layout" not in without_layout and without_layout["next"] == ""
+              and "next" not in legacy and "align" not in legacy["style"] and "layout" not in legacy
               and legacy["text"] == "Lobe den Herren")
 
     print(f"\n{PASS} passed, {FAIL} failed")

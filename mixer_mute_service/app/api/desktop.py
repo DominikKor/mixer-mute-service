@@ -17,7 +17,7 @@ from ..config import DesktopProfileConfig, default_config_path
 from ..desktop_profiles import ProfileEditError, add_profile, delete_profile, duplicate_profile, update_profile
 from ..models import StagePreferenceRequest
 from ..responses import fail, reply
-from ..songs import SongSettings, clean_targets
+from ..songs import SongSettings, clean_targets, relayout_live
 from ..target_pcs import TargetPcError
 
 router = APIRouter()
@@ -213,6 +213,9 @@ async def _move_targets(request: Request, moves: dict) -> dict:
             else:
                 songs.save_settings(moved_songs)
                 result["songs"] = True
+        if result["songs"]:
+            # Other screens may split the live song differently (its slide follows).
+            await relayout_live(request)
     if state.power_control is not None:
         result["power"] = await state.power_control.retarget(moves)
     if state.program_items is not None:

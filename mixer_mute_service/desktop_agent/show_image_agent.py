@@ -1833,6 +1833,46 @@ def _save_song(path: str, name: str, xml: str) -> Path:
     return target
 
 
+SONG_REQUEST_BYTES = 262144
+MAX_LAYOUT_LINES = 200
+
+
+def _valid_lines(lines) -> bool:
+    return (isinstance(lines, list) and len(lines) <= MAX_LAYOUT_LINES
+            and all(isinstance(line, str) and len(line) <= 2000 for line in lines))
+
+
+def _valid_size(px) -> bool:
+    return isinstance(px, (int, float)) and not isinstance(px, bool) and 1 <= px <= 1000
+
+
+def _valid_layout(layout) -> bool:
+    """"layout": what the service laid out for this screen: the window size
+    it measured ("screen"), the text size and lines, the grey preview."""
+    if not isinstance(layout, dict) or set(layout) != {"screen", "px", "lines", "preview"}:
+        return False
+    screen, preview = layout["screen"], layout["preview"]
+    return (
+        isinstance(screen, list) and len(screen) == 2
+        and all(type(v) is int and 100 <= v <= 20000 for v in screen)
+        and _valid_size(layout["px"]) and _valid_lines(layout["lines"])
+        and (preview is None or (isinstance(preview, dict) and set(preview) == {"px", "lines"}
+                                 and _valid_size(preview["px"]) and _valid_lines(preview["lines"])))
+    )
+
+
+SONG_KEYS = {"action", "monitor", "fullscreen", "style", "text", "title", "copyright", "next", "layout"}
+SONG_STYLE_KEYS = {"font", "font_size", "text_color", "background_color", "align"}
+
+
+def _known_song_fields(body) -> bool:
+    """Only fields this agent knows: a request it refuses all the same has a
+    value it does not take (422), not a newer field (400: the service then
+    sends an older form)."""
+    return (isinstance(body, dict) and set(body) <= SONG_KEYS
+            and (not isinstance(body.get("style"), dict) or set(body["style"]) <= SONG_STYLE_KEYS))
+
+
 def _valid_song_request(body) -> bool:
     if not isinstance(body, dict) or body.get("action") not in ("show", "blank", "hide"):
         return False
@@ -1841,10 +1881,12 @@ def _valid_song_request(body) -> bool:
     style = body.get("style")
     base = {"action", "monitor", "fullscreen", "style", "text", "title", "copyright"}
     style_base = {"font", "font_size", "text_color", "background_color"}
-    # "next" (preview of the next slide) and style "align" are newer and
-    # optional, so an older service still works with this agent.
+    # "next" (preview of the next slide), "layout" (lines and size laid out
+    # by the service) and style "align" are newer and optional, so an older
+    # service still works with this agent.
     return (
-        base <= set(body) <= base | {"next"}
+        base <= set(body) <= base | {"next", "layout"}
+        and ("layout" not in body or _valid_layout(body["layout"]))
         and isinstance(body["monitor"], int) and not isinstance(body["monitor"], bool) and body["monitor"] >= 1
         and isinstance(body["fullscreen"], bool)
         and all(isinstance(body.get(k, ""), str) and len(body.get(k, "")) <= 8000
@@ -1864,8 +1906,8 @@ SLIDE_PAD_X, SLIDE_PAD_Y = 0.06, 0.07
 SLIDE_TITLE_H, SLIDE_COPY_H = 0.12, 0.08
 SLIDE_LINE = 1.25
 # Smallest lyrics size in px on a 1080 px high screen (never above the set
-# largest size): smaller is unreadable from the back. Text that does not fit
-# even then is wrapped, not shrunk further.
+# size): smaller is unreadable from the back. Text that does not fit even
+# then is wrapped, not shrunk further (and cut at the bottom).
 SLIDE_MIN_PX = 40
 # Preview of the next slide: grey (text colour mixed into the background),
 # at most half the slide's text size and never below 20 px on 1080 lines; only
@@ -1954,27 +1996,66 @@ def _slide_sizes(max_px: float, min_px: float):
         px *= 0.94
 
 
-def _fit_text(measure, text: str, max_px: float, min_px: float, box_w: float, box_h: float):
-    """(size, lines) of the lyrics: wrapped at the largest size where the text
-    fits; the file's own lines instead if they fit at OWN_LINES_KEEP of that
-    size or more (and not below min_px); at min_px wrapped regardless.
-    Same as fitSlideText() in app/static/js/songs.js."""
+def _fit_size(measure, text: str, max_px: float, min_px: float, box_w: float, box_h: float):
+    """The largest size where the lyrics fit, or None if they do not fit even
+    at min_px: wrapped at the largest size where the text fits; the file's own
+    lines instead if they fit at OWN_LINES_KEEP of that size or more.
+    _wrap_lines() at that size gives the lines (the own ones where they fit).
+    Only for a service from before it laid songs out itself (no "layout")."""
     paragraphs = text.split("\n")
     min_px = min(min_px, max_px)
     own = next((px for px in _slide_sizes(max_px, min_px)
                 if max(measure(line, px) for line in paragraphs) <= box_w
                 and len(paragraphs) * px * SLIDE_LINE <= box_h), None)
-    wrapped = None
-    for px in _slide_sizes(max_px, min_px):
-        lines = _wrap_lines(measure, paragraphs, px, box_w)
-        if len(lines) * px * SLIDE_LINE <= box_h:
-            wrapped = (px, lines)
-            break
-    if own is not None and (wrapped is None or own >= OWN_LINES_KEEP * wrapped[0]):
-        return own, paragraphs
-    if wrapped is not None:
-        return wrapped
-    return min_px, _wrap_lines(measure, paragraphs, min_px, box_w)
+    wrapped = next((px for px in _slide_sizes(max_px, min_px)
+                    if len(_wrap_lines(measure, paragraphs, px, box_w)) * px * SLIDE_LINE <= box_h), None)
+    if own is not None and (wrapped is None or own >= OWN_LINES_KEEP * wrapped):
+        return own
+    return wrapped
+
+
+def _fit_text(measure, text: str, max_px: float, min_px: float, box_w: float, box_h: float):
+    """(size, lines) of one slide on its own: at _fit_size(), at min_px
+    wrapped regardless where nothing fits (an older service)."""
+    px = _fit_size(measure, text, max_px, min_px, box_w, box_h)
+    if px is None:
+        px = min(min_px, max_px)
+    return px, _wrap_lines(measure, text.split("\n"), px, box_w)
+
+
+def _slide_box(width: float, height: float, title: bool, copyright: bool):
+    """(box_w, box_h) of the lyrics: the screen less the margins and the
+    title and copyright rows of this slide (app/slide_layout.slide_box)."""
+    box_w = width - 2 * SLIDE_PAD_X * width
+    box_h = (height - 2 * SLIDE_PAD_Y * height - (SLIDE_TITLE_H * height if title else 0)
+             - (SLIDE_COPY_H * height if copyright else 0))
+    return box_w, box_h
+
+
+_LAYOUT_MISMATCH_LOGGED: set = set()
+
+
+def _slide_layout(measure, body: dict, width: int, height: int, box_w: float, box_h: float):
+    """(size, lines, preview) to draw: the service's layout where it was
+    made for this window size (a line that would run past the margin is
+    wrapped all the same: a font the service measured differently); else,
+    from an older service, the slide fitted on its own as before."""
+    layout = body.get("layout")
+    if layout is not None and layout["screen"] == [width, height]:
+        px = layout["px"]
+        lines = _wrap_lines(measure, layout["lines"], px, box_w + SLIDE_PAD_X * width)
+        preview = layout["preview"]
+        return px, lines, (preview["px"], preview["lines"]) if preview else None
+    if layout is not None and (tuple(layout["screen"]), width, height) not in _LAYOUT_MISMATCH_LOGGED:
+        # Once per size pair (the service lays out for the new size from the next slide on).
+        _LAYOUT_MISMATCH_LOGGED.add((tuple(layout["screen"]), width, height))
+        logger.warning("Song layout made for %s, window is %sx%s: fitting the slide here",
+                       layout["screen"], width, height)
+    px, lines = _fit_text(measure, body["text"], body["style"]["font_size"] * height / 1080,
+                          SLIDE_MIN_PX * height / 1080, box_w, box_h)
+    next_text = body.get("next", "")
+    preview = _preview_layout(measure, lines, next_text.split("\n") if next_text else [], px, box_w, box_h, height)
+    return px, lines, preview
 
 
 def _visible_lines(count: int, top: float, px: float, bottom: float) -> int:
@@ -2015,8 +2096,7 @@ def _draw_slide(canvas: tk.Canvas, width: int, height: int, body: dict) -> None:
     pad_x, pad_y = SLIDE_PAD_X * width, SLIDE_PAD_Y * height
     title_h = SLIDE_TITLE_H * height if body["title"] else 0
     copy_h = SLIDE_COPY_H * height if body["copyright"] else 0
-    box_w = width - 2 * pad_x
-    box_h = height - 2 * pad_y - title_h - copy_h
+    box_w, box_h = _slide_box(width, height, bool(body["title"]), bool(body["copyright"]))
     # x and anchors for the alignment: line tops ("n") and centred blocks
     x = {"left": pad_x, "center": width / 2, "right": width - pad_x}[align]
     top_anchor = {"left": "nw", "center": "n", "right": "ne"}[align]
@@ -2029,8 +2109,7 @@ def _draw_slide(canvas: tk.Canvas, width: int, height: int, body: dict) -> None:
             fonts[key] = tkfont.Font(family=style["font"], size=-key)
         return fonts[key].measure(text)
 
-    px, lines = _fit_text(measure, body["text"], style["font_size"] * height / 1080,
-                          SLIDE_MIN_PX * height / 1080, box_w, box_h)
+    px, lines, preview = _slide_layout(measure, body, width, height, box_w, box_h)
     font = tkfont.Font(family=style["font"], size=-max(1, round(px)))
     # Centred in the box; text taller than the box starts at its top.
     top = pad_y + title_h + max(0.0, (box_h - len(lines) * px * SLIDE_LINE) / 2)
@@ -2039,8 +2118,6 @@ def _draw_slide(canvas: tk.Canvas, width: int, height: int, body: dict) -> None:
     for i, line in enumerate(lines[:shown]):
         canvas.create_text(x, top + i * px * SLIDE_LINE, text=line, anchor=top_anchor,
                            fill=style["text_color"], font=font, justify=align)
-    next_text = body.get("next", "")
-    preview = _preview_layout(measure, lines, next_text.split("\n") if next_text else [], px, box_w, box_h, height)
     if preview:
         pp, shown = preview
         preview_font = tkfont.Font(family=style["font"], size=-max(1, round(pp)))
@@ -2082,18 +2159,47 @@ def _show_widget(root: tk.Tk, widget: tk.Widget) -> None:
         widget.pack(fill="both", expand=True)
 
 
+def _song_window(monitor: int, fullscreen: bool) -> tuple[int, int, int, int]:
+    """(width, height, x, y) of the song window on that monitor: the whole
+    monitor, or a 1280 x 720 window in its middle. Raises RuntimeError for a
+    monitor that is not there."""
+    left, top, right, bottom = monitor_bounds(monitor)
+    if fullscreen:
+        return right - left, bottom - top, left, top
+    width, height = min(1280, right - left), min(720, bottom - top)
+    x, y = _window_position((left, top, right, bottom), width, height, "center")
+    return width, height, x, y
+
+
+# Fonts are measured at this size (the service scales: app/slide_layout.REF_PX).
+METRICS_REF_PX = 100
+MAX_METRICS_CHARS = 4000
+METRICS_TIMEOUT_SECONDS = 5
+
+
+def _valid_metrics_request(body) -> bool:
+    return (
+        isinstance(body, dict) and set(body) == {"font", "monitor", "fullscreen", "chars"}
+        and isinstance(body["font"], str) and 0 < len(body["font"]) <= 60 and not any(ord(c) < 32 for c in body["font"])
+        and type(body["monitor"]) is int and 1 <= body["monitor"] <= 16
+        and isinstance(body["fullscreen"], bool)
+        and isinstance(body["chars"], str) and 0 < len(body["chars"]) <= MAX_METRICS_CHARS
+    )
+
+
+def _measure_chars(font: str, chars: str) -> list[int]:
+    """Width of each character in px at METRICS_REF_PX (needs the Tk thread)."""
+    measuring = tkfont.Font(family=font, size=-METRICS_REF_PX)
+    return [measuring.measure(c) for c in chars]
+
+
 def _show_song(root: tk.Tk, canvas: tk.Canvas, body: dict) -> None:
     _close_mirrors()
     if body["action"] == "hide":
         root.withdraw()
         logger.info("Song window hidden")
         return
-    left, top, right, bottom = monitor_bounds(body["monitor"])
-    if body["fullscreen"]:
-        width, height, x, y = right - left, bottom - top, left, top
-    else:
-        width, height = min(1280, right - left), min(720, bottom - top)
-        x, y = _window_position((left, top, right, bottom), width, height, "center")
+    width, height, x, y = _song_window(body["monitor"], body["fullscreen"])
     _show_widget(root, canvas)
     root.configure(background=body["style"]["background_color"])
     root.withdraw()
@@ -2127,8 +2233,8 @@ def _show_song(root: tk.Tk, canvas: tk.Canvas, body: dict) -> None:
 
 class DisplayHandler(BaseHTTPRequestHandler):
     def do_POST(self):
-        if self.path not in ("/display", "/audio", "/song", "/songs/library", "/songs/save", "/power",
-                             "/info", "/update", "/restart", "/pick-file"):
+        if self.path not in ("/display", "/audio", "/song", "/song/metrics", "/songs/library", "/songs/save",
+                             "/power", "/info", "/update", "/restart", "/pick-file"):
             self.send_error(404)
             return
 
@@ -2140,7 +2246,7 @@ class DisplayHandler(BaseHTTPRequestHandler):
 
         try:
             length = int(self.headers.get("Content-Length", "0"))
-            limit = {"/song": 32768, "/songs/save": MAX_SONG_FILE_BYTES + 8192,
+            limit = {"/song": SONG_REQUEST_BYTES, "/song/metrics": 65536, "/songs/save": MAX_SONG_FILE_BYTES + 8192,
                      "/update": MAX_UPDATE_BYTES}.get(self.path, 8192)
             if not 0 < length <= limit:
                 raise ValueError("invalid request size")
@@ -2182,12 +2288,26 @@ class DisplayHandler(BaseHTTPRequestHandler):
         if self.path == "/songs/save":
             self._handle_song_save(body)
             return
+        if self.path == "/song/metrics":
+            self._handle_song_metrics(body)
+            return
         if self.path == "/song":
             if not _valid_song_request(body):
-                self.send_error(400)
+                if _known_song_fields(body):
+                    self._send_json(422, {"ok": False, "reason": "invalid song request"})
+                else:
+                    self.send_error(400)
                 return
             requests.put({"kind": "song", "id": "song", **body})
-            self._send_json(202, {"ok": True, "action": body["action"]})
+            answer = {"ok": True, "action": body["action"], "started_at": STARTED_AT}
+            if body["action"] != "hide":
+                try:
+                    # The window the slide is drawn in: the service lays out for this size.
+                    width, height, _x, _y = _song_window(body["monitor"], body["fullscreen"])
+                    answer["window"] = [body["monitor"], width, height]
+                except Exception:  # noqa: BLE001 - the slide is shown (or fails) on the Tk thread
+                    pass
+            self._send_json(202, answer)
             return
         if self.path == "/power":
             self._handle_power(body)
@@ -2279,6 +2399,30 @@ class DisplayHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(encoded)))
         self.end_headers()
         self.wfile.write(encoded)
+
+    def _handle_song_metrics(self, body: dict) -> None:
+        """The song window's size on a monitor and the font's character
+        widths, so the service can lay songs out for this screen. Measured on
+        the Tk thread (a short job between two slides)."""
+        if not _valid_metrics_request(body):
+            self.send_error(400)
+            return
+        try:
+            width, height, _x, _y = _song_window(body["monitor"], body["fullscreen"])
+        except RuntimeError as exc:
+            self._send_json(409, {"ok": False, "reason": str(exc)})
+            return
+        reply: queue.Queue = queue.Queue(maxsize=1)
+        requests.put({"kind": "measure", "id": "measure", "font": body["font"], "chars": body["chars"], "reply": reply})
+        try:
+            widths = reply.get(timeout=METRICS_TIMEOUT_SECONDS)
+        except queue.Empty:
+            widths = None
+        if widths is None:
+            self._send_json(503, {"ok": False, "reason": "the font could not be measured"})
+            return
+        self._send_json(200, {"ok": True, "width": width, "height": height, "ref": METRICS_REF_PX, "widths": widths,
+                              "started_at": STARTED_AT})
 
     def _handle_song_library(self, body: dict) -> None:
         if not isinstance(body, dict) or set(body) != {"path"} or not isinstance(body["path"], str):
@@ -2466,6 +2610,12 @@ def drain_requests(root: tk.Tk, image_label: tk.Label, canvas: tk.Canvas) -> Non
             try:
                 if profile["kind"] == "song":
                     _show_song(root, canvas, profile)
+                elif profile["kind"] == "measure":
+                    try:
+                        profile["reply"].put_nowait(_measure_chars(profile["font"], profile["chars"]))
+                    except Exception:  # noqa: BLE001 - the request gets its 503
+                        profile["reply"].put_nowait(None)
+                        raise
                 elif profile["kind"] == "image":
                     _show_image(root, image_label, profile)
                 else:

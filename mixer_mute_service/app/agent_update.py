@@ -38,6 +38,7 @@ from fastapi import APIRouter, Request
 
 from . import display_agent
 from .agent_download import SCRIPT_NAME, _agent_files, _version, agent_dir
+from .songs import note_agent
 from .mission_spotlight import profile_path
 from .responses import fail
 
@@ -103,6 +104,10 @@ async def _agent_info(request: Request, target: str) -> dict:
             # Answers, but does not know /info: an agent from before.
             return {**base, "present": True, "version": None, "current": False, "self_update": False}
         return {**base, "present": False, "reason": "no display agent on this device"}
+    songs = getattr(request.app.state, "songs", None)
+    if songs is not None:
+        # A restarted or updated agent may now take what it refused before (song layouts).
+        note_agent(songs.agent_memory, target, answer)
     version = str(answer.get("version") or "unknown")
     info = {**base, "present": True, "version": version, "current": version == latest, "self_update": True}
     # Agents since 1.2.1-16x say which mpv / yt-dlp they find (None: not
