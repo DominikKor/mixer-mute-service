@@ -118,7 +118,7 @@ function syncProfileForm() {
   const youtube = kind === "audio" && isYoutubeUrl($("pf-path").value.trim());
   const folder = $("pf-path").value.trim().replace(/[\\/]+$/, "") || "Ordner";
   $("pf-path-hint").textContent = spotlight
-    ? `Ordner mit den Unterordnern „${now ? now.year : "JJJJ"}_1. Quartal“ … „${now ? now.year : "JJJJ"}_4. Quartal“. Gewählt wird die Datei, deren Name mit der zweistelligen Woche beginnt`
+    ? `Ordner mit den Unterordnern „${now ? now.year : "JJJJ"}_1.Quartal“ … „${now ? now.year : "JJJJ"}_4.Quartal“. Gewählt wird die Datei, deren Name mit der zweistelligen Woche beginnt`
       + (now ? `, jetzt: ${folder}\\${now.subfolder}\\${now.file_prefix}… (z. B. ${now.file_prefix}_Video.mp4)` : "")
       + ". Passen mehrere, gilt die neueste."
     : youtube ? YOUTUBE_HINT : KIND_INFO[kind].hint + WILDCARD_HINT;

@@ -1,7 +1,7 @@
 """Mission Spotlight: a desktop profile whose path is a folder; the file of
 the current week is picked by date.
 
-    <folder>\\<YYYY>_<Q>. Quartal\\<WW>*   e.g. I:\\Spotlight\\2026_3. Quartal\\01_Testvideo.mp4
+    <folder>\\<YYYY>_<Q>.Quartal\\<WW>*   e.g. I:\\Spotlight\\2026_3.Quartal\\01_Testvideo.mp4
 
 YYYY is the year and Q the quarter of today's date (one folder per year and
 quarter, no fallback to a folder without the year), WW the week within the
@@ -25,7 +25,7 @@ def quarter_and_week(today: Optional[date] = None) -> tuple[int, int]:
 
 
 def subfolder(year: int, quarter: int) -> str:
-    return f"{year}_{quarter}. Quartal"
+    return f"{year}_{quarter}.Quartal"
 
 
 def week_prefix(week: int) -> str:

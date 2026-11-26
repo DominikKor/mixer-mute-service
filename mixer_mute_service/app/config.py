@@ -155,7 +155,7 @@ class DesktopProfileConfig(BaseModel):
     # a leftover ``fade_db`` key in an old config.yaml is ignored.
     fade: bool = False
     fade_seconds: float = Field(default=5.0, ge=0.5, le=30.0)
-    # Mission Spotlight: ``path`` is a folder; in its "<year>_<Q>. Quartal"
+    # Mission Spotlight: ``path`` is a folder; in its "<year>_<Q>.Quartal"
     # subfolder the file of the current quarter week is picked when the profile runs (app/mission_spotlight.py).
     mission_spotlight: bool = False
 

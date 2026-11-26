@@ -120,12 +120,12 @@ class ServiceWildcardTests(unittest.TestCase):
 
     def test_no_match_names_the_pattern_folder_and_pc(self):
         from app.file_actions import agent_version_tuple, not_found_reason
-        path = "I:\\Missionsbericht Videos\\2026_4. Quartal\\09*"
+        path = "I:\\Missionsbericht Videos\\2026_4.Quartal\\09*"
         self.assertEqual(not_found_reason(path, "Anzeige PC"),
-                         "Keine Datei „09…“ in I:\\Missionsbericht Videos\\2026_4. Quartal auf dem Anzeige PC gefunden.")
+                         "Keine Datei „09…“ in I:\\Missionsbericht Videos\\2026_4.Quartal auf dem Anzeige PC gefunden.")
         week = {"week": 9, "quarter": 4, "year": 2026}
         self.assertEqual(not_found_reason(path, "Anzeige PC", week),
-                         "Keine Datei „09…“ in I:\\Missionsbericht Videos\\2026_4. Quartal auf dem Anzeige PC gefunden"
+                         "Keine Datei „09…“ in I:\\Missionsbericht Videos\\2026_4.Quartal auf dem Anzeige PC gefunden"
                          " (Woche 09, 4. Quartal 2026).")
         self.assertNotIn("Version", not_found_reason(path, "Anzeige PC", week))
         old = not_found_reason(path, "Anzeige PC", week, old_agent=True)
