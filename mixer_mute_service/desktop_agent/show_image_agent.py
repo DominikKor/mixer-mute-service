@@ -705,6 +705,47 @@ def _mpv_error_line(log_path: Path) -> str:
     return ""
 
 
+_MPV_LOG_LINE_RE = re.compile(r"^\[\s*([\d.]+)\]\[(\w)\]\[([^\]]*)\]\s*(.*)$")
+_MPV_MILESTONES = (
+    ("opened", "Opening done"),
+    ("audio_out", "AO: ["),
+    ("playing", "starting audio playback"),
+)
+MPV_REPORT_BYTES = 256 * 1024
+
+
+def mpv_start_report(log_path: Path | None = None) -> dict | None:
+    """Where the last mpv start spent its time, from mpv's own log (time
+    stamps in seconds since mpv started): when the file was open, the audio
+    output ready and the sound playing, and the longest pauses between two
+    log lines with the lines around them. Sent with /info, so a slow start
+    on a PC can be read remotely (GET /update/agents)."""
+    log_path = mpv_log_path() if log_path is None else log_path
+    try:
+        written = log_path.stat().st_mtime
+        with open(log_path, "rb") as log_file:
+            lines = log_file.read(MPV_REPORT_BYTES).decode("utf-8", "replace").splitlines()
+    except OSError:
+        return None
+    report: dict = {"written_at": written}
+    gaps = []
+    previous = None
+    for line in lines:
+        match = _MPV_LOG_LINE_RE.match(line.strip())
+        if not match:
+            continue
+        stamp, text = float(match.group(1)), f"[{match.group(3)}] {match.group(4)}"[:160]
+        for key, marker in _MPV_MILESTONES:
+            if key not in report and marker in match.group(4):
+                report[key] = stamp
+        if previous is not None and stamp - previous[0] >= 1.0:
+            gaps.append({"seconds": round(stamp - previous[0], 2), "at": previous[0],
+                         "before": previous[1], "after": text})
+        previous = (stamp, text)
+    report["gaps"] = sorted(gaps, key=lambda gap: -gap["seconds"])[:3]
+    return report
+
+
 def _start_failure(process: subprocess.Popen, what: str) -> AudioStartError:
     code = process.poll()
     detail = _mpv_error_line(mpv_log_path())
@@ -906,18 +947,285 @@ def _fade_out(playback: _Playback, seconds: float) -> None:
     logger.info("Audio faded out profile=%s", playback.profile_id)
 
 
+# -- local copies of the audio (start without waiting) -----------------------
+# The music lives on I:\GoogleDrive, a Google Drive drive that fetches a file
+# only when it is opened: mpv then waits until Drive has downloaded it (about
+# a minute for the background music) before the first sound. A YouTube link
+# likewise waits for yt-dlp and the stream. So the agent keeps a local copy
+# of each audio source and plays that; the copy is made in the background
+# (for the sources the service sends with /info, at agent start for the
+# sources known from before, and on a play that finds none, which still
+# plays the source directly).
+# A file's copy is named after its source's size and modification time: a
+# changed source never plays an old copy, and a copy mpv has open is never
+# overwritten (Windows refuses that) - a new name is written instead.
+AUDIO_CACHE_MAX_BYTES = 4 * 1024 ** 3
+AUDIO_CACHE_MAX_FILE_BYTES = 1024 ** 3
+AUDIO_COPY_CHUNK = 1024 * 1024
+YTDLP_DOWNLOAD_SECONDS = 900
+_audio_cache_lock = threading.Lock()
+_audio_cache_busy: set[str] = set()   # keys being copied right now
+
+
+def audio_cache_directory() -> Path:
+    return agent_log_directory() / "audio-cache"
+
+
+def _cache_key(source: str) -> str:
+    import hashlib
+    # Windows paths are case-insensitive.
+    return hashlib.sha1(source.casefold().encode("utf-8")).hexdigest()[:20]
+
+
+def _file_cache_name(target: Path, stat: os.stat_result) -> str:
+    suffix = re.sub(r"[^A-Za-z0-9.]", "", target.suffix)[:10]
+    return f"{_cache_key(str(target))}-{stat.st_size}-{stat.st_mtime_ns}{suffix}"
+
+
+def _youtube_cache_prefix(url: str) -> str:
+    return f"{_cache_key(url)}-yt."
+
+
+def cached_audio(source) -> Path | None:
+    """The local copy to play for ``source`` (a Path to a file, or a YouTube
+    link), or None while there is no current one."""
+    directory = audio_cache_directory()
+    if isinstance(source, Path):
+        try:
+            stat = source.stat()
+        except OSError:
+            return None
+        candidate = directory / _file_cache_name(source, stat)
+        try:
+            return candidate if candidate.is_file() and candidate.stat().st_size == stat.st_size else None
+        except OSError:
+            return None
+    prefix = _youtube_cache_prefix(source)
+    try:
+        matches = sorted(p for p in directory.glob(prefix + "*")
+                         if p.is_file() and not p.name.endswith((".part", ".json", ".ytdl")))
+    except OSError:
+        return None
+    return matches[0] if matches else None
+
+
+def _write_cache_meta(key: str, source: str, kind: str) -> None:
+    meta = audio_cache_directory() / f"{key}.json"
+    temp = meta.with_suffix(".json.tmp")
+    temp.write_text(json.dumps({"source": source, "kind": kind}), encoding="utf-8")
+    os.replace(temp, meta)
+
+
+def _drop_other_copies(key: str, keep: Path) -> None:
+    """Older copies of the same source (one mpv still plays stays: Windows
+    refuses to delete it; the next cleanup gets it)."""
+    for old in audio_cache_directory().glob(f"{key}-*"):
+        if old != keep:
+            try:
+                old.unlink()
+            except OSError:
+                pass
+
+
+def _trim_audio_cache() -> None:
+    """Delete the least recently played copies above AUDIO_CACHE_MAX_BYTES."""
+    files = []
+    for path in audio_cache_directory().glob("*"):
+        if path.suffix in (".json", ".tmp") or path.name.endswith(".part") or "-download." in path.name:
+            continue  # bookkeeping, or a copy still being made
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
+        files.append((stat.st_mtime, stat.st_size, path))
+    total = sum(size for _, size, _ in files)
+    for _, size, path in sorted(files):
+        if total <= AUDIO_CACHE_MAX_BYTES:
+            break
+        try:
+            path.unlink()
+        except OSError:
+            continue
+        total -= size
+
+
+def _copy_file_to_cache(target: Path) -> Path | None:
+    stat = target.stat()
+    if stat.st_size > AUDIO_CACHE_MAX_FILE_BYTES:
+        logger.info("Audio %s is too large to keep a local copy (%s bytes)", target, stat.st_size)
+        return None
+    directory = audio_cache_directory()
+    directory.mkdir(parents=True, exist_ok=True)
+    final = directory / _file_cache_name(target, stat)
+    if final.is_file() and final.stat().st_size == stat.st_size:
+        return final
+    part = final.with_name(final.name + ".part")
+    started = time.monotonic()
+    with open(target, "rb") as source, open(part, "wb") as copy:
+        shutil.copyfileobj(source, copy, AUDIO_COPY_CHUNK)
+    if part.stat().st_size != stat.st_size:
+        part.unlink()
+        raise OSError(f"{target} changed while it was copied")
+    os.replace(part, final)
+    key = _cache_key(str(target))
+    _write_cache_meta(key, str(target), "file")
+    _drop_other_copies(key, final)
+    logger.info("Audio %s copied locally in %.1fs (%s bytes)", target, time.monotonic() - started, stat.st_size)
+    return final
+
+
+def _download_youtube_to_cache(url: str) -> Path | None:
+    existing = cached_audio(url)
+    if existing is not None:
+        return existing
+    mpv = _find_mpv()
+    ytdlp = _find_ytdlp(mpv)
+    if not ytdlp:
+        logger.info("No local copy of %s: yt-dlp was not found", url)
+        return None
+    directory = audio_cache_directory()
+    directory.mkdir(parents=True, exist_ok=True)
+    key = _cache_key(url)
+    temp = directory / f"{key}-download"
+    started = time.monotonic()
+    result = subprocess.run(
+        [ytdlp, "--no-playlist", "--no-progress", "--quiet", "--no-warnings",
+         "-f", "bestaudio/best", "--max-filesize", str(AUDIO_CACHE_MAX_FILE_BYTES),
+         "-o", f"{temp}.%(ext)s", "--", url],
+        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0), timeout=YTDLP_DOWNLOAD_SECONDS,
+    )
+    done = [p for p in directory.glob(f"{key}-download.*")
+            if p.is_file() and not p.name.endswith((".part", ".ytdl"))]
+    if result.returncode != 0 or not done:
+        for leftover in directory.glob(f"{key}-download*"):
+            try:
+                leftover.unlink()
+            except OSError:
+                pass
+        detail = result.stderr.decode("utf-8", "replace").strip().splitlines()[-1:] if result.stderr else []
+        raise OSError(f"yt-dlp could not download {url}: exit {result.returncode} {' '.join(detail)}"[:300])
+    final = directory / (_youtube_cache_prefix(url) + done[0].suffix.lstrip("."))
+    os.replace(done[0], final)
+    _write_cache_meta(key, url, "youtube")
+    logger.info("Audio %s downloaded locally in %.1fs", url, time.monotonic() - started)
+    return final
+
+
+def _prefetch_now(source) -> None:
+    key = _cache_key(str(source))
+    with _audio_cache_lock:
+        if key in _audio_cache_busy:
+            return
+        _audio_cache_busy.add(key)
+    try:
+        if isinstance(source, Path):
+            _copy_file_to_cache(source)
+        else:
+            _download_youtube_to_cache(source)
+        _trim_audio_cache()
+    except (OSError, subprocess.SubprocessError) as exc:
+        logger.warning("No local copy of %s: %s", source, exc)
+    except Exception:  # noqa: BLE001 - a background copy must never break the agent
+        logger.exception("Local copy of %s failed", source)
+    finally:
+        with _audio_cache_lock:
+            _audio_cache_busy.discard(key)
+
+
+def prefetch_audio(source) -> threading.Thread | None:
+    """Make the local copy of ``source`` in the background (None: it is
+    current already or being made)."""
+    if cached_audio(source) is not None:
+        return None
+    with _audio_cache_lock:
+        if _cache_key(str(source)) in _audio_cache_busy:
+            return None
+    thread = threading.Thread(target=_prefetch_now, args=(source,), daemon=True)
+    thread.start()
+    return thread
+
+
+def refresh_audio_cache() -> None:
+    """At agent start: bring the copies of every known source up to date (a
+    file changed on Drive meanwhile, or a copy cut off by a restart)."""
+    for part in audio_cache_directory().glob("*.part"):
+        try:
+            part.unlink()
+        except OSError:
+            pass
+    for meta in sorted(audio_cache_directory().glob("*.json")):
+        try:
+            info = json.loads(meta.read_text(encoding="utf-8"))
+            source = info["source"]
+            if info.get("kind") == "youtube":
+                if is_youtube_url(source):
+                    _prefetch_now(source)
+                continue
+            target = Path(source)
+            if target.is_file():
+                _prefetch_now(target)
+        except (OSError, ValueError, KeyError, TypeError):
+            logger.warning("Audio cache entry %s skipped", meta.name)
+
+
+MAX_PREFETCH_SOURCES = 20
+_prefetching_sources = threading.Event()
+
+
+def _prefetch_sources_now(sources: list) -> None:
+    try:
+        for source in sources:
+            try:
+                target = _audio_target(source)
+            except ValueError:
+                continue  # not there (yet): the play reports it
+            if cached_audio(target) is None:
+                _prefetch_now(target)
+    except Exception:  # noqa: BLE001 - a background copy must never break the agent
+        logger.exception("Local copies of the audio sources failed")
+    finally:
+        _prefetching_sources.clear()
+
+
+def prefetch_sources(sources: list) -> threading.Thread | None:
+    """Local copies of ``sources`` (paths or YouTube links), one after the
+    other in one background thread; None if such a run is still going (the
+    service sends the list again with its next /info)."""
+    if not sources or _prefetching_sources.is_set():
+        return None
+    _prefetching_sources.set()
+    thread = threading.Thread(target=_prefetch_sources_now, args=(list(sources),), daemon=True)
+    thread.start()
+    return thread
+
+
+def _audio_target(path: str):
+    """A YouTube link as it is, or the resolved Path of an audio file."""
+    if is_youtube_url(path):
+        return path
+    try:
+        target = resolve_path(path)
+    except FileNotFoundError:
+        raise ValueError("Configured audio file is not available") from None
+    if not target.is_absolute() or not target.is_file():
+        raise ValueError("Configured audio file is not available")
+    return target
+
+
 def _play_audio(profile_id: str, path: str, fade: dict | None = None) -> None:
     global _playback
-    stream = is_youtube_url(path)
-    if stream:
-        target = path
-    else:
+    target = _audio_target(path)
+    local = cached_audio(target)
+    if local is not None:
         try:
-            target = resolve_path(path)
-        except FileNotFoundError:
-            raise ValueError("Configured audio file is not available") from None
-        if not target.is_absolute() or not target.is_file():
-            raise ValueError("Configured audio file is not available")
+            os.utime(local)  # most recently played: trimmed last
+        except OSError:
+            pass
+    else:
+        # Plays the source this time; the next start plays the copy.
+        prefetch_audio(target)
+    stream = local is None and isinstance(target, str)
     mpv = _find_mpv()
     if not mpv:
         _, searched = find_tool("mpv", "MPV_PATH", "mpv", "mpv")
@@ -962,7 +1270,7 @@ def _play_audio(profile_id: str, path: str, fade: dict | None = None) -> None:
     with _audio_lock:
         _stop_audio_locked()
         process = subprocess.Popen(
-            command + ["--", str(target)],
+            command + ["--", str(local or target)],
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -978,7 +1286,8 @@ def _play_audio(profile_id: str, path: str, fade: dict | None = None) -> None:
         _playback = playback
         if fade:
             threading.Thread(target=_connect_ipc, args=(playback, address), daemon=True).start()
-    logger.info("Audio started profile=%s path=%s pid=%s fade=%s", profile_id, target, process.pid, fade)
+    logger.info("Audio started profile=%s path=%s local=%s pid=%s fade=%s",
+                profile_id, target, local, process.pid, fade)
 
 
 def _stop_audio(fade: dict | None = None) -> bool:
@@ -1668,6 +1977,11 @@ class DisplayHandler(BaseHTTPRequestHandler):
             self.send_error(400)
             return
         if self.path == "/info":
+            # The service sends the audio sources of this PC's profiles:
+            # their local copies are made in the background (see above).
+            sources = body.get("audio") if isinstance(body, dict) else None
+            if isinstance(sources, list):
+                prefetch_sources([s for s in sources[:MAX_PREFETCH_SOURCES] if isinstance(s, str)])
             info = {"ok": True, "version": agent_version(),
                     # POST /restart is there (the Update key restarts current
                     # agents); this process's start time shows a restart happened.
@@ -1675,7 +1989,7 @@ class DisplayHandler(BaseHTTPRequestHandler):
             try:
                 # Remote diagnosis: which players this agent finds (None: not
                 # found), and what of the user's environment it filled in at start.
-                info.update(cached_tools(), restored_env=RESTORED_ENV)
+                info.update(cached_tools(), restored_env=RESTORED_ENV, audio_start=mpv_start_report())
             except Exception:  # noqa: BLE001 - the version must always come back
                 logger.exception("/info diagnosis failed")
             self._send_json(200, info)
@@ -2024,6 +2338,8 @@ def main() -> None:
     except Exception:  # noqa: BLE001 - the agent must start in any case
         logger.exception("Could not read the user's environment")
     cached_tools()  # first search in the background, for /info
+    # Local copies of the audio sources known from before (see above).
+    threading.Thread(target=refresh_audio_cache, daemon=True).start()
     if RESTORED_ENV:
         logger.info("Filled in from the user's environment: %s", ", ".join(RESTORED_ENV))
     if not os.environ.get("DESKTOP_AGENT_TOKEN"):

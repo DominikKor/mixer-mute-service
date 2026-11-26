@@ -630,6 +630,20 @@ des Ziel-PCs verwendet wird. Bei Netzwerkdateien muss der Pfad fuer dieses
 Benutzerkonto erreichbar sein; ein UNC-Pfad ist robuster als ein verbundenes
 Laufwerk.
 
+Damit die Musik sofort startet, spielt der Agent eine lokale Kopie der Quelle
+(`%LOCALAPPDATA%\MixerMuteDisplayAgent\audio-cache`, hoechstens 4 GB, je Datei
+hoechstens 1 GB). Auf einem Google-Drive-Laufwerk (`I:\GoogleDrive`) laedt Drive
+eine Datei erst beim Oeffnen, mpv wartete darauf bis zu einer Minute. Bei
+YouTube-Links laedt yt-dlp den Ton einmal herunter. Die Kopien entstehen im
+Hintergrund: fuer die Audioquellen, die der Dienst bei jeder Abfrage von
+`/update/agents` mitschickt (beim Laden der Seite und bei jedem Update), beim
+Start des Agenten fuer die schon bekannten Quellen, und nach einem Play ohne
+Kopie (das spielt dann noch direkt von der Quelle). Eine geaenderte Datei
+(Groesse oder Aenderungszeit) spielt nie die alte Kopie. Wo mpvs letzter Start
+Zeit gebraucht hat, liefert `GET /update/agents` pro Agent unter `audio_start`
+(aus mpvs eigenem Log: Sekunden bis Datei offen, Audioausgabe bereit, Ton
+laeuft, und die laengsten Pausen mit den Logzeilen davor und danach).
+
 Beispiel fuer eine Systemvariable auf dem Ziel-PC:
 
 ```powershell
