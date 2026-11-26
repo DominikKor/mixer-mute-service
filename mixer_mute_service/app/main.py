@@ -145,14 +145,16 @@ async def lifespan(app: FastAPI):
         app, "group presets", lambda: GroupPresetStore(data_dir / "group_presets.json"))
     app.state.channel_settings = _optional(
         app, "channel settings", lambda: ChannelSettingsStore(data_dir / "channel_settings.json"))
-    # Shortcuts first: the program's migration log names them (app/program_items.py).
+    # Shortcuts first: rows saved with a reference to one get its fields
+    # copied in once (app/program_items.py unlink_shortcut).
     app.state.shortcuts = _optional(app, "shortcuts", lambda: ShortcutStore(data_dir / "shortcuts.json"))
-    shortcut_titles = app.state.shortcuts.titles() if app.state.shortcuts is not None else {}
+    # None (shortcuts unreadable): the references stay for a later start.
+    shortcuts_by_id = app.state.shortcuts.by_id() if app.state.shortcuts is not None else None
     app.state.program_items = _optional(
-        app, "program", lambda: ProgramItemStore(data_dir / "program_items.json", shortcut_titles))
+        app, "program", lambda: ProgramItemStore(data_dir / "program_items.json", shortcuts_by_id))
     app.state.songs = _optional(app, "songs", lambda: SongService(data_dir))
     app.state.program_templates = _optional(
-        app, "program templates", lambda: ProgramTemplateStore(data_dir / "program_templates.json", shortcut_titles))
+        app, "program templates", lambda: ProgramTemplateStore(data_dir / "program_templates.json", shortcuts_by_id))
     app.state.program_pdf = _optional(
         app, "program PDF import", lambda: ProgramPdfStore(data_dir / "program_pdf.json"))
     camera_ptz = _optional(app, "camera pan/tilt", PanTiltControl)

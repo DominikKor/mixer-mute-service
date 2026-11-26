@@ -775,40 +775,16 @@ button.program-hide[aria-pressed="true"] { color: #ffbf4d; border-color: #4a3410
 .program-table td.pc-time { grid-area: 2 / 1; }
 .program-table td.pc-title { grid-area: 2 / 2; }
 .program-table td.pc-person { grid-area: 2 / 3; }
-.program-table td.pc-shortcut { grid-area: 2 / 4 / 3 / 7; }
-.program-table td.pc-group { grid-area: 3 / 1 / 4 / 3; }
-.program-table td.pc-light { grid-area: 3 / 3 / 4 / 5; }
-.program-table td.pc-beamer { grid-area: 3 / 5 / 4 / 7; }
-.program-table td.pc-playback { grid-area: 4 / 1 / 5 / 3; }
-.program-table td.pc-translation { grid-area: 4 / 3 / 5 / 4; }
-.program-table td.pc-lyrics { grid-area: 4 / 4 / 5 / 7; }
-.program-table td.pc-camera { grid-area: 5 / 1 / 6 / 7; }
-.program-table td.pc-desktop { grid-area: 6 / 1 / 7 / 7; }
-.program-table td.pc-linked { grid-area: 3 / 1 / 4 / 7; }
-/* With a shortcut the row runs the shortcut's fields: its own are hidden
-   (still saved) and the shortcut's configuration shows instead. */
-.program-table tr:not(.program-linked-row) td.pc-linked,
-.program-table tr.program-linked-row td:is(.pc-group, .pc-light, .pc-beamer, .pc-playback, .pc-translation, .pc-camera, .pc-desktop) { display: none; }
-/* Linked: the song stays the row's, at the start of the line under the configuration */
-.program-table tr.program-linked-row td.pc-lyrics { grid-area: 4 / 1 / 5 / 4; }
-.program-shortcut-pick { display: grid; gap: 6px; min-width: 0; }
-.program-fallback {
-  display: flex; align-items: center; gap: 8px 10px; padding: 4px 4px 4px 12px; border-radius: 6px;
-  font-size: 12px; line-height: 1.35; color: #ffbf4d; background: #1d1608; border: 1px solid #4a3410;
-}
-.program-fallback span { flex: 1; min-width: 0; }
-.program-table .program-fallback button { flex-shrink: 0; min-width: 52px; min-height: 44px; padding: 0 12px; font-size: 12px; font-weight: 700; }
-.program-linked {
-  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; min-height: 56px; padding: 8px 8px 8px 14px; border-radius: 6px;
-  background: var(--lcd-bg); border: 1px solid #2a1d4d; box-shadow: var(--lcd-shadow);
-}
-.program-linked-text { flex: 1 1 260px; font-size: 13px; color: #9aa3b0; }
-.program-linked-text b { color: var(--lcd-text); font-weight: 800; }
-.program-linked .program-sum-chips { flex: 1 1 100%; order: 2; }
-.program-linked.missing { border-color: #4a3410; }
-.program-linked.missing .program-linked-text { color: #ffbf4d; }
+.program-table td.pc-group { grid-area: 2 / 4; }
+.program-table td.pc-light { grid-area: 2 / 5 / 3 / 7; }
+.program-table td.pc-playback { grid-area: 3 / 1 / 4 / 3; }
+.program-table td.pc-translation { grid-area: 3 / 3 / 4 / 4; }
+.program-table td.pc-lyrics { grid-area: 3 / 4 / 4 / 7; }
+.program-table td.pc-camera { grid-area: 4 / 1 / 5 / 7; }
+.program-table td.pc-desktop { grid-area: 5 / 1 / 6 / 5; }
+.program-table td.pc-beamer { grid-area: 5 / 5 / 6 / 7; }
 .program-table [hidden], .song-picker[hidden] { display: none !important; }
-/* Shortcut dialog: the same fields without time, person and shortcut */
+/* Shortcut dialog: the same fields without time and person */
 dialog.shortcut-dialog { width: min(1000px, calc(100vw - 32px)); }
 .program-table.shortcut-table tr {
   grid-template-columns: repeat(4, minmax(0, 1fr)); padding: 0; border: none; background: none; box-shadow: none;
@@ -853,8 +829,6 @@ dialog.shortcut-dialog { width: min(1000px, calc(100vw - 32px)); }
 .program-chip.desktop, .program-chip.beamer { border-color: #2a1d4d; }
 .program-chip.song, .program-chip.file { border-color: #0b3a1e; }
 .program-chip.none { color: var(--lcd-dim); font-weight: 500; }
-.program-chip.shortcut { border-color: #4d2a4a; }
-.program-chip.warn { color: #ffbf4d; border-color: #4a3410; }
 .program-sum-chevron { display: grid; place-items: center; color: #6f8a93; transition: transform .2s; }
 .program-open .program-sum-chevron { transform: rotate(180deg); color: #e6f4f8; }
 .program-draft-row .program-sum-chevron { visibility: hidden; }
@@ -945,6 +919,15 @@ dialog.shortcut-dialog { width: min(1000px, calc(100vw - 32px)); }
 .program-actions { display: flex; align-items: center; gap: 6px; }
 .program-actions button { display: grid; place-items: center; width: 52px; height: 52px; padding: 0; }
 .program-actions button.program-play { width: 92px; font-size: 15px; }
+/* The new-row draft: "Shortcut laden" before save and cancel */
+.program-actions button.program-load-shortcut { display: inline-flex; gap: 6px; width: auto; padding: 0 14px; font-size: 12px; font-weight: 700; white-space: nowrap; }
+/* "Shortcut laden": one key per shortcut, with what it sets */
+dialog.shortcut-load-dialog { width: min(720px, calc(100vw - 32px)); }
+.shortcut-load-list { display: grid; gap: 8px; max-height: min(60vh, 560px); overflow: auto; padding: 2px; }
+button.shortcut-load-item {
+  display: grid; gap: 6px; justify-items: start; width: 100%; min-height: 56px; padding: 10px 14px; text-align: left;
+}
+.shortcut-load-name { font-size: 14px; font-weight: 800; }
 .program-next button.program-play { animation: program-next-glow 1.6s ease-in-out infinite; }
 @keyframes program-next-glow { 50% { box-shadow: 0 0 22px rgba(46,204,113,.75), inset 0 1px 0 rgba(255,255,255,.35); } }
 @media (prefers-reduced-motion: reduce) { .program-next button.program-play { animation: none; } }
@@ -1148,7 +1131,7 @@ button.program-go:disabled { opacity: .45; animation: none; }
   .program-table tr { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .program-table td.program-edit-cell, .program-table td.program-summary-cell, .program-table td.program-actions-cell { grid-area: auto; }
   .program-table td.program-summary-cell, .program-table td.pc-title, .program-table td.pc-lyrics,
-  .program-table td.pc-camera, .program-table td.pc-desktop, .program-table td.pc-shortcut, .program-table td.pc-linked, .program-table td.program-actions-cell { grid-column: 1 / -1; }
+  .program-table td.pc-camera, .program-table td.pc-desktop, .program-table td.program-actions-cell { grid-column: 1 / -1; }
   .program-table td.program-actions-cell { order: 1; }
   .program-table td.program-edit-cell { order: 2; }
   .program-camera { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
