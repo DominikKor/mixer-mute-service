@@ -146,11 +146,13 @@ miniatures, and **Standard** restores the original one.
   hidden (agent `POST /close`; only windows of the process the agent
   started itself: a file handed to an app that was already running, e.g.
   a single-instance player, cannot be closed and is logged). A profile the
-  new row starts again that an earlier row has running is left as it is
-  (no new fade-in, no reopened video); playing the same row again starts
-  it anew. Music is never stopped on a PC where the new row starts audio
-  itself (a profile or a file), and the stop names its profile, so a newer
-  track keeps playing. What the operator started by hand (a Desktop key,
+  new row starts again is sent again, and the agent decides: music that
+  still plays and a video window still open stay as they are (no new
+  fade-in, no reopened video), music that ended starts again, an image is
+  shown again. Music is never stopped on a PC where the new row starts
+  audio itself (a profile or a file). Every start carries a stamp and a
+  stop names the start it means, so the agent never lets a late stop end
+  a newer start; no start waits for a stop. What the operator started by hand (a Desktop key,
   a shortcut key) keeps running, also a profile the program started whose
   Desktop key was used by hand since. Programs (e.g. OBS),
   song windows, files of the row's file fields, the beamer and the light

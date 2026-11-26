@@ -3,32 +3,32 @@
 
 Only what a program row started counts (Play, "Weiter", the dock, Companion:
 app/api/program.py runs the row inside program_starts(row id)). The service
-notes each image, file and audio profile such a row starts (programs such
-as OBS are never noted: they are never closed). Whatever the operator starts
-by hand (a Desktop key, a shortcut key) is not noted and keeps running; a
+notes each image, file and audio profile such a row started once the agent
+accepted it (programs such as OBS are never noted: they are never closed;
+a start without an answer is not noted). Whatever the operator starts by
+hand (a Desktop key, a shortcut key) is not noted and keeps running; a
 profile the program started becomes the operator's once its Desktop key is
 used by hand. Notes live in memory only: after a restart nothing is noted,
 so nothing is stopped.
 
 When a program row starts, everything noted that the new row does not start
-itself is stopped, in the background: the new row's own steps never wait
-for it. A profile the new row starts again that an earlier row already has
-running is left as it is (no new fade-in, no reopened video).
+itself is stopped, in the background: the new row never waits for it. What
+the new row starts again it sends again; the agent leaves music that still
+plays ("keep_if_playing") and a video window still open ("keep_if_open") as
+they are, so nothing restarts; an image is simply shown again.
 
 - audio: the agent's normal stop with the profile's fade-out, naming the
-  profile ("only_if": the agent stops only that one, never a newer track);
-  never on a PC where the new row starts audio itself (a desktop profile or
-  a file in its Playback / Übersetzung / Liedtext fields): its start
-  replaces the old track anyway;
+  profile ("only_if"); never on a PC where the new row starts audio itself
+  (a desktop profile or a file in its Playback / Übersetzung / Liedtext
+  fields): its start replaces the old track anyway;
 - image and file: POST /close (desktop_agent): the windows a file opened get
   closed, an image is hidden if it is still the one shown.
 
-Ordering: each start of a profile counts up its generation. A stop sent for
-a profile holds that profile's lock while it is on its way and is dropped if
-the profile was started again meanwhile; a start of the same profile waits
-for it (at most the short stop timeout), so a stop never lands after a newer
-start of the same profile. A stop that did not reach the agent is noted
-again for the next row, unless the profile was started since.
+Ordering without waiting: every start carries a stamp (a random id) that the
+agent keeps with the track, window or image. A stop names the stamp of the
+start it means, and the agent ignores it once a newer start (or a kept one)
+of that profile came in. A stop that did not reach the agent is noted again
+for the next row, unless the profile was started since.
 
 Every stop has a short timeout. An agent that does not answer is marked
 down for DOWN_SECONDS and skipped meanwhile, so a PC that is off never holds
@@ -41,6 +41,7 @@ import asyncio
 import contextvars
 import logging
 import time
+import uuid
 from contextlib import contextmanager
 from typing import Optional
 
@@ -78,78 +79,58 @@ class ShownProfiles:
     """The desktop profiles program rows started that may still be showing."""
 
     def __init__(self) -> None:
-        self._shown: dict[str, tuple[str, str, str]] = {}  # profile id -> (target ip, kind, row id)
-        self._generation: dict[str, int] = {}
-        self._locks: dict[str, asyncio.Lock] = {}
+        self._shown: dict[str, tuple[str, str, str]] = {}  # profile id -> (target ip, kind, stamp)
+        self._latest: dict[str, str] = {}  # profile id -> stamp of its latest start
         self._down_until: dict[str, float] = {}
         self._tasks: set = set()
 
     # -- starts (app/actions.py) ---------------------------------------------
-    def lock(self, profile_id: str) -> asyncio.Lock:
-        """Orders a profile's stop and its next start (see above)."""
-        return self._locks.setdefault(profile_id, asyncio.Lock())
-
-    def generation(self, profile_id: str) -> int:
-        return self._generation.get(profile_id, 0)
-
-    def running_from_earlier_row(self, profile_id: str, row_id: str) -> bool:
-        """An earlier program row started it and it was not stopped since:
-        the new row leaves it running (and it is now this row's)."""
-        noted = self._shown.get(profile_id)
-        if noted is None or noted[2] == row_id:
-            return False
-        self._shown[profile_id] = (noted[0], noted[1], row_id)
-        return True
-
-    def starting(self, profile_id: str, target_ip: str, kind: str) -> int:
-        """A start is about to be sent. A program row's start is noted now,
-        before the agent answers (a slow answer cannot lose it); one by hand
-        takes the profile over: it is no longer the program's. Returns the
-        generation to pass to accepted() / refused()."""
-        generation = self.generation(profile_id) + 1
-        self._generation[profile_id] = generation
-        row_id = program_row()
-        if row_id is not None and kind != "program":
-            self._shown[profile_id] = (target_ip, kind, row_id)
-        else:
+    def starting(self, profile_id: str) -> str:
+        """A start is about to be sent: its stamp. One by hand takes the
+        profile over at once: it is no longer the program's."""
+        stamp = uuid.uuid4().hex
+        self._latest[profile_id] = stamp
+        if program_row() is None:
             self._shown.pop(profile_id, None)
-        return generation
+        return stamp
 
-    def accepted(self, profile_id: str, target_ip: str, kind: str) -> None:
-        """The agent took the start: on that PC it replaced the audio (or
-        the image) before, which is then no longer the program's to stop."""
+    def latest(self, profile_id: str) -> Optional[str]:
+        return self._latest.get(profile_id)
+
+    def accepted(self, profile_id: str, target_ip: str, kind: str, stamp: str) -> None:
+        """The agent took the start. A program row's is noted now; on that PC
+        it replaced the audio (or the image) before, which is then no longer
+        the program's to stop."""
         if kind in _ONE_PER_PC:
-            for other, (ip, other_kind, _row) in list(self._shown.items()):
+            for other, (ip, other_kind, _stamp) in list(self._shown.items()):
                 if other != profile_id and ip == target_ip and other_kind == kind:
                     del self._shown[other]
+        if program_row() is not None and kind != "program" and self._latest.get(profile_id) == stamp:
+            self._shown[profile_id] = (target_ip, kind, stamp)
 
-    def refused(self, profile_id: str, generation: int) -> None:
-        """The agent refused the start: nothing new runs."""
-        if self.generation(profile_id) == generation:
-            self._shown.pop(profile_id, None)
-
-    def audio_stopped(self, target_ip: str) -> None:
-        """The music on that PC was stopped by hand (one track per PC)."""
-        for other, (ip, kind, _row) in list(self._shown.items()):
+    def audio_replaced(self, target_ip: str) -> None:
+        """The music on that PC was stopped by hand or replaced by a file's
+        (one track per PC): no program audio to stop there any more."""
+        for other, (ip, kind, _stamp) in list(self._shown.items()):
             if ip == target_ip and kind == "audio":
                 del self._shown[other]
+
+    audio_stopped = audio_replaced
 
     # -- stops -------------------------------------------------------------
     def shown(self) -> dict:
         """Profile id -> (target ip, kind) of what program rows started."""
-        return {profile_id: (ip, kind) for profile_id, (ip, kind, _row) in self._shown.items()}
+        return {profile_id: (ip, kind) for profile_id, (ip, kind, _stamp) in self._shown.items()}
 
     def take(self, profile_id: str) -> tuple:
-        """Forget it (a stop goes out); returns (ip, kind, row id, generation)."""
-        ip, kind, row_id = self._shown.pop(profile_id)
-        return ip, kind, row_id, self.generation(profile_id)
+        """Forget it (a stop goes out); returns (ip, kind, stamp)."""
+        return self._shown.pop(profile_id)
 
     def restore(self, profile_id: str, noted: tuple) -> None:
         """A stop that did not reach the agent: try again on the next row,
         unless the profile was started (or taken over by hand) since."""
-        ip, kind, row_id, generation = noted
-        if self.generation(profile_id) == generation and profile_id not in self._shown:
-            self._shown[profile_id] = (ip, kind, row_id)
+        if self._latest.get(profile_id) == noted[2] and profile_id not in self._shown:
+            self._shown[profile_id] = noted
 
     def is_down(self, target_ip: str) -> bool:
         return self._down_until.get(target_ip, 0.0) > time.monotonic()
@@ -209,45 +190,45 @@ async def _stop_all(state, tracker: ShownProfiles, stops: list) -> None:
 
 
 async def _stop_one(state, tracker: ShownProfiles, profile_id: str, noted: tuple) -> None:
-    target_ip, kind, _row, generation = noted
+    target_ip, kind, stamp = noted
+    if tracker.latest(profile_id) != stamp:
+        log.info("Not stopping %s: started again meanwhile", profile_id)
+        return
     if tracker.is_down(target_ip):
         log.info("Not stopping %s on %s: the agent did not answer a moment ago", profile_id, target_ip)
         tracker.restore(profile_id, noted)
         return
-    async with tracker.lock(profile_id):
-        if tracker.generation(profile_id) != generation:
-            log.info("Not stopping %s: started again meanwhile", profile_id)
-            return
-        try:
-            answer = await _send_stop(state, profile_id, target_ip, kind)
-            log.info("Program moved on: %s %s on %s stopped (%s)", kind, profile_id, target_ip, answer)
-        except AgentError as exc:
-            if exc.agent_status is None and exc.status == 502:
-                tracker.mark_down(target_ip)
-                tracker.restore(profile_id, noted)
-                log.warning("Program moved on: %s on %s not stopped, agent unavailable (skipped for %.0f s)",
-                            profile_id, target_ip, DOWN_SECONDS)
-            elif exc.agent_status == 404:
-                log.warning("Program moved on: %s on %s not closed, the agent is older than POST /close "
-                            "(update the desktop agent)", profile_id, target_ip)
-            else:
-                log.warning("Program moved on: %s on %s not stopped: %s", profile_id, target_ip, exc.reason)
+    try:
+        answer = await _send_stop(state, profile_id, target_ip, kind, stamp)
+        log.info("Program moved on: %s %s on %s stopped (%s)", kind, profile_id, target_ip, answer)
+    except AgentError as exc:
+        if exc.agent_status is None and exc.status == 502:
+            tracker.mark_down(target_ip)
+            tracker.restore(profile_id, noted)
+            log.warning("Program moved on: %s on %s not stopped, agent unavailable (skipped for %.0f s)",
+                        profile_id, target_ip, DOWN_SECONDS)
+        elif exc.agent_status == 404:
+            log.warning("Program moved on: %s on %s not closed, the agent is older than POST /close "
+                        "(update the desktop agent)", profile_id, target_ip)
+        else:
+            log.warning("Program moved on: %s on %s not stopped: %s", profile_id, target_ip, exc.reason)
 
 
-async def _send_stop(state, profile_id: str, target_ip: str, kind: str) -> dict:
+async def _send_stop(state, profile_id: str, target_ip: str, kind: str, stamp: str) -> dict:
     from .actions import AUDIO_FADE_FULL_DB  # actions imports this module
 
     cfg = state.cfg.desktop_display
     if kind != "audio":
-        return await display_agent.call(cfg, target_ip, "/close", {"id": profile_id}, timeout=CLOSE_TIMEOUT_SECONDS)
+        return await display_agent.call(cfg, target_ip, "/close", {"id": profile_id, "stamp": stamp},
+                                        timeout=CLOSE_TIMEOUT_SECONDS)
     profile = cfg.profiles.get(profile_id)
     payload = {"id": profile_id, "action": "stop", "path": None}
     if profile is not None and profile.fade:
         # Its normal fade-out (app/actions.py control_audio).
         payload["fade"] = {"db": AUDIO_FADE_FULL_DB, "seconds": profile.fade_seconds}
     try:
-        # Only this profile's track: never one started since.
-        return await display_agent.call(cfg, target_ip, "/audio", {**payload, "only_if": True},
+        # Only this profile's track, and only the start noted: never one started since.
+        return await display_agent.call(cfg, target_ip, "/audio", {**payload, "only_if": True, "stamp": stamp},
                                         timeout=AUDIO_STOP_TIMEOUT_SECONDS)
     except AgentError as exc:
         if exc.agent_status != 400:

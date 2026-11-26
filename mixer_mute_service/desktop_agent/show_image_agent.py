@@ -416,6 +416,23 @@ _opened_windows: dict[str, set[tuple[int, int]]] = {}  # profile id -> {(hwnd, p
 _unknown_windows: set[str] = set()
 _opened_lock = threading.Lock()
 _shown_image: str | None = None  # the profile whose image the window shows (tk thread only)
+_shown_image_stamp: str | None = None
+# Start stamps: the service names each start of a profile (a random id); a
+# stop or close names the start it means and is ignored once a newer start
+# (or a kept one) of that profile came in since.
+_opened_stamps: dict[str, str] = {}  # profile id -> stamp of its latest open (file kind)
+
+
+def _valid_stamp(value) -> bool:
+    return isinstance(value, str) and 0 < len(value) <= 64 and value.replace("-", "").replace("_", "").isalnum()
+
+
+def _profile_window_open(profile_id: str, window_pid=None) -> bool:
+    """Whether a window the profile opened is still there (keep_if_open)."""
+    window_pid = window_pid or _window_process_id
+    with _opened_lock:
+        windows = set(_opened_windows.get(profile_id, ()))
+    return any(window_pid(hwnd) == process_id for hwnd, process_id in windows)
 
 
 def _remember_window(profile_id: str, hwnd: int, process_id: int, window_pid=None) -> None:
@@ -457,13 +474,19 @@ def _post_close(hwnd: int) -> bool:
     return bool(ctypes.windll.user32.PostMessageW(wintypes.HWND(hwnd), WM_CLOSE, 0, 0))
 
 
-def _close_profile_windows(profile_id: str, window_pid=None, post_close=None) -> int:
+def _close_profile_windows(profile_id: str, window_pid=None, post_close=None, stamp: str | None = None) -> int:
     """Ask the windows a profile opened to close (as their close button
     does). A window that is gone, or whose handle now belongs to another
-    process, is left alone. Returns how many were asked."""
+    process, is left alone; so is everything when the close names an older
+    start than the latest open of the profile. Returns how many were asked."""
     window_pid = window_pid or _window_process_id
     post_close = post_close or _post_close
     with _opened_lock:
+        latest = _opened_stamps.get(profile_id)
+        if stamp is not None and latest is not None and latest != stamp:
+            logger.info("Close profile=%s ignored: opened again since", profile_id)
+            return 0
+        _opened_stamps.pop(profile_id, None)
         windows = _opened_windows.pop(profile_id, set())
         unknown = profile_id in _unknown_windows
         _unknown_windows.discard(profile_id)
@@ -972,6 +995,7 @@ class _Playback:
         # mpv starts at the profile's level; afade does the fade-in.
         self.volume_db = fade["db"] if fade else 0.0
         self.stop_fade = threading.Event()   # ends a running fade early
+        self.stamp: str | None = None        # the service's start stamp (see _valid_stamp)
 
     def set_db(self, db: float) -> None:
         self.ipc.command("set_property", "volume", db_to_mpv_volume(db))
@@ -1391,8 +1415,19 @@ def _audio_target(path: str):
     return target
 
 
-def _play_audio(profile_id: str, path: str, fade: dict | None = None) -> None:
+def _play_audio(profile_id: str, path: str, fade: dict | None = None, stamp: str | None = None,
+                keep_if_playing: bool = False) -> bool:
+    """Start the profile's track (any other one ends). With keep_if_playing a
+    track of the same profile that still plays is kept as it is: no restart,
+    no fade-in; it takes the new stamp. Returns True when it was kept."""
     global _playback
+    if keep_if_playing:
+        with _audio_lock:
+            playback = _playback
+            if playback is not None and playback.profile_id == profile_id and playback.process.poll() is None:
+                playback.stamp = stamp
+                logger.info("Audio kept playing profile=%s", profile_id)
+                return True
     target = _audio_target(path)
     local = cached_audio(target)
     if local is not None:
@@ -1461,21 +1496,26 @@ def _play_audio(profile_id: str, path: str, fade: dict | None = None) -> None:
         time.sleep(START_CHECK_SECONDS)
         if process.poll() is not None:
             raise _start_failure(process, "mpv ended at once")
+        playback.stamp = stamp
         _playback = playback
         if fade:
             threading.Thread(target=_connect_ipc, args=(playback, address), daemon=True).start()
     logger.info("Audio started profile=%s path=%s local=%s pid=%s fade=%s",
                 profile_id, target, local, process.pid, fade)
+    return False
 
 
-def _stop_audio(fade: dict | None = None, only_profile: str | None = None) -> bool:
+def _stop_audio(fade: dict | None = None, only_profile: str | None = None, stamp: str | None = None) -> bool:
     """Stop playback; with a fade (and a track started with one) it fades
     out in the background and the call returns at once. With only_profile
-    only that profile's track: a newer one keeps playing."""
+    only that profile's track, and with a stamp only the start it names: a
+    newer track (or a newer start of the same one) keeps playing."""
     global _playback
     with _audio_lock:
         playback = _playback
-        if only_profile is not None and (playback is None or playback.profile_id != only_profile):
+        if only_profile is not None and (
+                playback is None or playback.profile_id != only_profile
+                or (stamp is not None and playback.stamp != stamp)):
             logger.info("Audio stop for profile=%s ignored: %s plays", only_profile,
                         playback.profile_id if playback else "nothing")
             return False
@@ -2213,7 +2253,11 @@ class DisplayHandler(BaseHTTPRequestHandler):
         required = {
             "id", "title", "kind", "path", "args", "fullscreen", "monitor", "position"
         }
-        if not isinstance(body, dict) or set(body) - {"monitors"} != required:
+        if not isinstance(body, dict) or set(body) - {"monitors", "keep_if_open", "stamp"} != required:
+            self.send_error(400)
+            return
+        if ("stamp" in body and not _valid_stamp(body["stamp"])) or (
+                "keep_if_open" in body and (body["keep_if_open"] is not True or body.get("kind") != "file")):
             self.send_error(400)
             return
         if "monitors" in body and not _valid_monitors(body):
@@ -2235,6 +2279,14 @@ class DisplayHandler(BaseHTTPRequestHandler):
         ):
             self.send_error(400)
             return
+        if body.get("keep_if_open") and _profile_window_open(body["id"]):
+            # The program's next row starts it again: its window stays as it is.
+            with _opened_lock:
+                if "stamp" in body:
+                    _opened_stamps[body["id"]] = body["stamp"]
+            logger.info("Profile %s kept open", body["id"])
+            self._send_json(202, {"ok": True, "profile": body["id"], "display": body["monitor"], "kept": True})
+            return
         program = body["kind"] == "program"
         try:
             target = resolve_path(body["path"], suffixes=(".exe",) if program else ())
@@ -2248,6 +2300,12 @@ class DisplayHandler(BaseHTTPRequestHandler):
             self.send_error(403, "Programs on a network share are not started")
             return
 
+        if body["kind"] == "file":
+            with _opened_lock:
+                if "stamp" in body:
+                    _opened_stamps[body["id"]] = body["stamp"]
+                else:
+                    _opened_stamps.pop(body["id"], None)
         # Profiles open the file the path resolved to ("*" filled in).
         requests.put({**body, "path": str(target)})
         result = json.dumps({"ok": True, "profile": body["id"], "display": body["monitor"]}).encode()
@@ -2262,23 +2320,27 @@ class DisplayHandler(BaseHTTPRequestHandler):
         is still shown (app/profile_stops.py). Answers at once."""
         if (
             not isinstance(body, dict)
-            or set(body) != {"id"}
+            or set(body) - {"stamp"} != {"id"}
             or not isinstance(body["id"], str)
             or not body["id"].replace("-", "").replace("_", "").isalnum()
+            or ("stamp" in body and not _valid_stamp(body["stamp"]))
         ):
             self.send_error(400)
             return
-        closed = _close_profile_windows(body["id"])
-        requests.put({"kind": "close", "id": body["id"]})
+        closed = _close_profile_windows(body["id"], stamp=body.get("stamp"))
+        requests.put({"kind": "close", "id": body["id"], "stamp": body.get("stamp")})
         self._send_json(200, {"ok": True, "profile": body["id"], "windows_closed": closed})
 
     def _handle_audio(self, body: dict) -> None:
         if (
             not isinstance(body, dict)
-            or set(body) - {"fade", "only_if"} != {"id", "action", "path"}
+            or set(body) - {"fade", "only_if", "keep_if_playing", "stamp"} != {"id", "action", "path"}
             or ("fade" in body and not _valid_fade(body["fade"]))
-            # "only_if": stop only this profile's track (app/profile_stops.py).
+            # "only_if": stop only this profile's track; "keep_if_playing":
+            # leave it running if it plays; "stamp": which start (app/profile_stops.py).
             or ("only_if" in body and (body["only_if"] is not True or body["action"] != "stop"))
+            or ("keep_if_playing" in body and (body["keep_if_playing"] is not True or body["action"] != "play"))
+            or ("stamp" in body and not _valid_stamp(body["stamp"]))
             or not isinstance(body["id"], str)
             or not body["id"].replace("-", "").replace("_", "").isalnum()
             or body["action"] not in ("play", "stop")
@@ -2289,11 +2351,15 @@ class DisplayHandler(BaseHTTPRequestHandler):
             return
         try:
             if body["action"] == "play":
-                _play_audio(body["id"], body["path"], body.get("fade"))
-                result = {"ok": True, "playing": True, "profile": body["id"]}
+                if "stamp" in body or "keep_if_playing" in body:
+                    kept = _play_audio(body["id"], body["path"], body.get("fade"), stamp=body.get("stamp"),
+                                       keep_if_playing=body.get("keep_if_playing", False))
+                else:
+                    kept = _play_audio(body["id"], body["path"], body.get("fade"))
+                result = {"ok": True, "playing": True, "profile": body["id"], "kept": bool(kept)}
             else:
                 if body.get("only_if"):
-                    stopped = _stop_audio(body.get("fade"), only_profile=body["id"])
+                    stopped = _stop_audio(body.get("fade"), only_profile=body["id"], stamp=body.get("stamp"))
                 else:
                     stopped = _stop_audio(body.get("fade"))
                 result = {"ok": True, "playing": False, "stopped": stopped}
@@ -2510,16 +2576,18 @@ def drain_requests(root: tk.Tk, image_label: tk.Label, canvas: tk.Canvas) -> Non
 def handle_request(root, image_label, canvas, profile: dict) -> None:
     """One request on the tk thread: a song slide, an image, a close (POST
     /close) or a program / file started in the background."""
-    global _shown_image
+    global _shown_image, _shown_image_stamp
     if profile["kind"] == "song":
         _shown_image = None  # the window shows the song now
         _show_song(root, canvas, profile)
     elif profile["kind"] == "image":
         _show_image(root, image_label, profile)
-        _shown_image = profile["id"]
+        _shown_image, _shown_image_stamp = profile["id"], profile.get("stamp")
     elif profile["kind"] == "close":
-        # Only the image of that profile: a newer image or a song stays.
-        if _shown_image == profile["id"]:
+        # Only the image of that profile, and only the start the close names:
+        # a newer image, the same one shown again, or a song stays.
+        stamp = profile.get("stamp")
+        if _shown_image == profile["id"] and (stamp is None or _shown_image_stamp in (None, stamp)):
             _hide_all(root)
             logger.info("Image hidden profile=%s", profile["id"])
     else:

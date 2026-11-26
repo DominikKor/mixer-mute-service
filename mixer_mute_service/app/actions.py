@@ -239,8 +239,8 @@ async def show_profile(request: Request, profile_id: str) -> Result:
             return {"ok": False, "reason": "several monitors are only possible for images"}, 400
         payload["monitors"] = profile.monitors
     try:
-        answer = await _tracked_start(request, profile_id, profile, lambda: display_agent.call(
-            cfg, profile.target_ip, "/display", payload))
+        answer = await _tracked_start(request, profile_id, profile, lambda extra: display_agent.call(
+            cfg, profile.target_ip, "/display", {**payload, **extra}))
     except AgentError as exc:
         if exc.agent_status == 503:
             return {"ok": False, "reason": not_found_reason(payload["path"])}, 502
@@ -254,32 +254,33 @@ def _shown_profiles(request: Request):
 
 
 async def _tracked_start(request: Request, profile_id: str, profile, send) -> dict:
-    """Send a profile's start (send(): the agent call) through the notes of
-    app/profile_stops.py. A program row's start is noted (it stops when the
-    program moves on); one by hand takes the profile over (it keeps running).
-    A profile an earlier program row has running is left as it is: no new
-    fade-in, no reopened window. Waits for a stop of the same profile still
-    on its way, so the start lands after it. Raises AgentError as send()."""
+    """Send a profile's start (send(extra): the agent call, extra fields
+    added) through the notes of app/profile_stops.py. A program row's start
+    is noted once the agent accepted it (it stops when the program moves
+    on); one by hand takes the profile over (it keeps running). A program
+    row asks the agent to keep music that still plays and a video window
+    still open as they are. Never waits for a stop. Raises AgentError as
+    send()."""
     shown = _shown_profiles(request)
     if shown is None:
-        return await send()
-    row_id = program_row()
-    if row_id is not None and shown.running_from_earlier_row(profile_id, row_id):
-        return {"ok": True, "profile": profile_id, "kept_running": True}
-    generation = shown.starting(profile_id, profile.target_ip, profile.kind)
-    async with shown.lock(profile_id):
-        try:
-            answer = await send()
-        except AgentError as exc:
-            # One that did not answer in time may still have started it:
-            # kept, so the next row stops it. A refusal started nothing.
-            if not (exc.agent_status is None and exc.status == 502):
-                shown.refused(profile_id, generation)
+        return await send({})
+    stamp = shown.starting(profile_id)
+    extra = {"stamp": stamp}
+    if program_row() is not None:
+        if profile.kind == "audio":
+            extra["keep_if_playing"] = True
+        elif profile.kind == "file":
+            extra["keep_if_open"] = True
+    try:
+        answer = await send(extra)
+    except AgentError as exc:
+        if exc.agent_status != 400:
             raise
-    if answer.get("ok") is False:
-        shown.refused(profile_id, generation)
-    else:
-        shown.accepted(profile_id, profile.target_ip, profile.kind)
+        # An agent from before stamps: the start as it knows it.
+        log.warning("Agent %s is older than start stamps (update the desktop agent)", profile.target_ip)
+        answer = await send({})
+    if answer.get("ok") is not False:
+        shown.accepted(profile_id, profile.target_ip, profile.kind, stamp)
     return answer
 
 
@@ -299,11 +300,12 @@ async def control_audio(request: Request, profile_id: str, action: str) -> Resul
         payload["fade"] = {"db": AUDIO_FADE_FULL_DB, "seconds": profile.fade_seconds}
     cfg = request.app.state.cfg.desktop_display
 
-    def send():
-        return display_agent.call(cfg, profile.target_ip, "/audio", payload, timeout=display_agent.AUDIO_TIMEOUT_SECONDS)
+    def send(extra: dict):
+        return display_agent.call(cfg, profile.target_ip, "/audio", {**payload, **extra},
+                                  timeout=display_agent.AUDIO_TIMEOUT_SECONDS)
 
     try:
-        answer = await (_tracked_start(request, profile_id, profile, send) if action == "play" else send())
+        answer = await (_tracked_start(request, profile_id, profile, send) if action == "play" else send({}))
     except AgentError as exc:
         if exc.agent_status is None:
             return exc.answer(), exc.status

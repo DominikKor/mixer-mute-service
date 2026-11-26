@@ -52,8 +52,13 @@ class FakeAgents:
         return {"ok": True}
 
     def stops(self):
-        return [(pc, path, payload) for pc, path, payload, _t in self.calls
+        """The stops sent, without their (random) start stamps."""
+        return [(pc, path, {k: v for k, v in payload.items() if k != "stamp"}) for pc, path, payload, _t in self.calls
                 if path == "/close" or (path == "/audio" and payload["action"] == "stop")]
+
+    def starts(self):
+        return [(pc, path, payload) for pc, path, payload, _t in self.calls
+                if path == "/display" or (path == "/audio" and payload["action"] == "play")]
 
     def wait_for(self, count, seconds=3.0):
         end = time.monotonic() + seconds
@@ -151,22 +156,68 @@ class AdvanceTests(unittest.TestCase):
             plays = [(pc, p["id"]) for pc, path, p, _t in agents.calls if path == "/audio" and p["action"] == "play"]
             self.assertEqual(plays, [(MUSIC_PC, "musik"), (MUSIC_PC, "program-file")])
 
-    def test_a_profile_still_running_is_left_alone_by_the_next_row(self):
+    def test_what_the_next_row_starts_again_is_sent_with_keep(self):
+        # The agent decides: music that still plays and a video window still
+        # open stay as they are; one that ended starts again; images show again.
         agents = FakeAgents()
         with app_client(PROFILES, env=ENV) as (client, _folder), patch("app.display_agent._post", agents.post):
-            first = client.post("/program/items", json=row("Spotlight", desktop=["musik", "spotlight"])).json()["item"]
+            first = client.post("/program/items", json=row("Spotlight", desktop=["musik", "spotlight", "qr"])).json()["item"]
             second = client.post("/program/items", json=row("Ansage", desktop=["musik", "spotlight", "qr"])).json()["item"]
             self.play(client, first["id"])
             agents.calls.clear()
-            answer = self.play(client, second["id"])
-            self.assertEqual([(path, p["id"]) for _pc, path, p, _t in agents.calls], [("/display", "qr")],
-                             "no new fade-in for the music, no reopened video")
-            kept = [a for a in answer["linked_actions"] if a.get("kept_running")]
-            self.assertEqual([a["profile"] for a in kept], ["musik", "spotlight"])
-            # Played again on purpose: the same row starts them anew.
-            agents.calls.clear()
             self.play(client, second["id"])
-            self.assertEqual(sorted(p["id"] for _pc, _path, p, _t in agents.calls), ["musik", "qr", "spotlight"])
+            sent = {p["id"]: p for _pc, _path, p in agents.starts()}
+            self.assertEqual(set(sent), {"musik", "spotlight", "qr"}, "always sent: the agent knows what still runs")
+            self.assertTrue(sent["musik"]["keep_if_playing"])
+            self.assertTrue(sent["spotlight"]["keep_if_open"])
+            self.assertNotIn("keep_if_open", sent["qr"], "an image is simply shown again")
+            self.assertEqual(agents.stops(), [])
+            # By hand: no keep, the operator means to start it (anew).
+            agents.calls.clear()
+            client.post("/desktop/musik/audio/play")
+            self.assertNotIn("keep_if_playing", agents.starts()[0][2])
+
+    def test_jingle_then_the_music_again(self):
+        # Row A music, row B a jingle (file field) on the same PC, row C the
+        # music again: C must start it (the jingle replaced it).
+        agents = FakeAgents()
+        with app_client(PROFILES, env=ENV) as (client, _folder), patch("app.display_agent._post", agents.post):
+            a = client.post("/program/items", json=row("Vorspiel", desktop=["musik"])).json()["item"]
+            b = client.post("/program/items", json=row("Jingle", playback=f"file:{MUSIC_PC}|C:\\Musik\\jingle.mp3")).json()["item"]
+            c = client.post("/program/items", json=row("Nachspiel", desktop=["musik"])).json()["item"]
+            self.play(client, a["id"])
+            self.play(client, b["id"])
+            self.assertEqual(client.app.state.shown_profiles.shown(), {}, "the jingle replaced the program's music")
+            self.play(client, c["id"])
+            time.sleep(0.2)
+            plays = [p["id"] for _pc, path, p in agents.starts() if path == "/audio"]
+            self.assertEqual(plays, ["musik", "program-file", "musik"])
+            self.assertEqual(agents.stops(), [])
+
+    def test_an_image_is_shown_again(self):
+        agents = FakeAgents()
+        with app_client(PROFILES, env=ENV) as (client, _folder), patch("app.display_agent._post", agents.post):
+            first = client.post("/program/items", json=row("QR", desktop=["qr"])).json()["item"]
+            second = client.post("/program/items", json=row("QR noch mal", desktop=["qr"])).json()["item"]
+            self.play(client, first["id"])
+            self.play(client, second["id"])
+            self.assertEqual([p["id"] for _pc, _path, p in agents.starts()], ["qr", "qr"])
+            self.assertEqual(client.app.state.shown_profiles.shown(), {"qr": (VIDEO_PC, "image")})
+
+    def test_older_agents_get_the_start_without_the_new_fields(self):
+        calls = []
+
+        def post(url, token, payload, timeout):
+            calls.append(payload)
+            if "stamp" in payload:
+                raise urllib.error.HTTPError(url, 400, "Bad Request", None, None)
+            return {"ok": True}
+
+        with app_client(PROFILES, env=ENV) as (client, _folder), patch("app.display_agent._post", post):
+            item = client.post("/program/items", json=row("Musik", desktop=["musik"])).json()["item"]
+            self.play(client, item["id"])
+            self.assertEqual([("stamp" in c, "keep_if_playing" in c) for c in calls], [(True, True), (False, False)])
+            self.assertEqual(client.app.state.shown_profiles.shown(), {"musik": (MUSIC_PC, "audio")})
 
     def test_a_refused_new_track_keeps_the_old_one_noted(self):
         agents = FakeAgents()
@@ -192,7 +243,7 @@ class AdvanceTests(unittest.TestCase):
 
         def post(url, token, payload, timeout):
             if url.endswith("/close"):  # the video PC hangs on the close
-                agents.calls.append((url, "/close", payload, timeout))
+                agents.calls.append((VIDEO_PC, "/close", payload, timeout))
                 time.sleep(0.5)
                 raise urllib.error.URLError("timed out")
             return agents.post(url, token, payload, timeout)
@@ -203,24 +254,28 @@ class AdvanceTests(unittest.TestCase):
             self.play(client, first["id"])
             self.play(client, second["id"])
             time.sleep(0.1)  # the close is on its way ...
+            started = time.monotonic()
             self.assertTrue(client.post("/desktop/spotlight/open").json()["ok"], "... the operator shows it by hand")
+            self.assertLess(time.monotonic() - started, 0.3, "a start never waits for a stop")
             time.sleep(0.6)
             self.assertEqual(client.app.state.shown_profiles.shown(), {},
                              "the failed stop does not note it again: it is the operator's now")
-            opens = [i for i, call in enumerate(agents.calls) if call[1] in ("/close", "/display") and call[2]["id"] == "spotlight"]
-            self.assertEqual([agents.calls[i][1] for i in opens], ["/display", "/close", "/display"],
-                             "the start by hand waited for the close on its way")
+            close = next(p for _pc, path, p, _t in agents.calls if path == "/close")
+            by_hand = [p for _pc, path, p in agents.starts() if path == "/display"][-1]
+            self.assertNotEqual(close["stamp"], by_hand["stamp"],
+                                "the close names the program's start: the agent ignores it for the newer one")
 
-    def test_a_slow_agent_at_the_start_does_not_lose_the_profile(self):
+    def test_a_timed_out_start_is_not_noted(self):
         agents = FakeAgents(dead={VIDEO_PC})
         with app_client(PROFILES, env=ENV) as (client, _folder), patch("app.display_agent._post", agents.post):
             first = client.post("/program/items", json=row("Spotlight", desktop=["spotlight"])).json()["item"]
             second = client.post("/program/items", json=row("Predigt")).json()["item"]
-            client.post(f"/program/items/{first['id']}/play")  # no answer in time: it may have started
-            self.assertIn("spotlight", client.app.state.shown_profiles.shown())
+            client.post(f"/program/items/{first['id']}/play")  # no answer in time
+            self.assertEqual(client.app.state.shown_profiles.shown(), {})
             agents.dead = set()
             self.play(client, second["id"])
-            self.assertEqual(agents.wait_for(1), [(VIDEO_PC, "/close", {"id": "spotlight"})])
+            time.sleep(0.2)
+            self.assertEqual(agents.stops(), [])
 
     def test_a_refused_start_is_not_noted(self):
         def post(url, token, payload, timeout):
@@ -271,6 +326,7 @@ class AdvanceTests(unittest.TestCase):
             # Noted again (e.g. shown by hand just before it went off), then the
             # program moves on: the PC marked down is skipped, not waited for.
             client.app.state.shown_profiles._shown["spotlight"] = (VIDEO_PC, "file", "earlier")
+            client.app.state.shown_profiles._latest["spotlight"] = "earlier"
             calls = len(agents.calls)
             self.play(client, first_again["id"])
             time.sleep(0.2)
@@ -302,6 +358,7 @@ class AgentCloseTests(unittest.TestCase):
     def setUp(self):
         agent._opened_windows.clear()
         agent._unknown_windows.clear()
+        agent._opened_stamps.clear()
 
     def test_only_the_started_process_windows_are_remembered(self):
         owners = {100: 7, 200: 9}
@@ -329,23 +386,68 @@ class AgentCloseTests(unittest.TestCase):
                 Root.hidden += 1
 
         root = Root()
-        agent._shown_image = "qr"
+        agent._shown_image, agent._shown_image_stamp = "qr", "s2"
         agent.handle_request(root, None, None, {"kind": "close", "id": "logo"})
         self.assertEqual(Root.hidden, 0, "a newer image stays")
+        agent.handle_request(root, None, None, {"kind": "close", "id": "qr", "stamp": "s1"})
+        self.assertEqual(Root.hidden, 0, "a close for an earlier showing of the same image is ignored")
+        agent.handle_request(root, None, None, {"kind": "close", "id": "qr", "stamp": "s2"})
+        self.assertEqual(Root.hidden, 1)
+        agent._shown_image = "qr"
         agent.handle_request(root, None, None, {"kind": "close", "id": "qr"})
-        self.assertEqual((Root.hidden, agent._shown_image), (1, None))
+        self.assertEqual((Root.hidden, agent._shown_image), (2, None))
         agent.handle_request(root, None, None, {"kind": "close", "id": "qr"})
-        self.assertEqual(Root.hidden, 1, "already hidden")
+        self.assertEqual(Root.hidden, 2, "already hidden")
 
     def test_a_targeted_audio_stop_spares_a_newer_track(self):
         class Playback:
             profile_id = "lied"
+            stamp = "s2"
 
         with patch.object(agent, "_playback", Playback()), patch.object(agent, "_stop_audio_locked") as stop:
             self.assertFalse(agent._stop_audio(None, only_profile="musik"))
+            self.assertFalse(agent._stop_audio(None, only_profile="lied", stamp="s1"), "an earlier start of it")
             stop.assert_not_called()
-            agent._stop_audio(None, only_profile="lied")
+            agent._stop_audio(None, only_profile="lied", stamp="s2")
             stop.assert_called_once()
+
+    def test_keep_if_playing(self):
+        class Process:
+            code = None
+
+            def poll(self):
+                return self.code
+
+        class Playback:
+            profile_id = "musik"
+            stamp = "s1"
+            process = Process()
+
+        playback = Playback()
+        with patch.object(agent, "_playback", playback), \
+                patch.object(agent, "_audio_target", side_effect=RuntimeError("started")) as start:
+            self.assertTrue(agent._play_audio("musik", "C:\\a.mp3", None, stamp="s2", keep_if_playing=True))
+            self.assertEqual(playback.stamp, "s2", "kept, with the new start's stamp")
+            start.assert_not_called()
+            with self.assertRaisesRegex(RuntimeError, "started"):
+                agent._play_audio("lied", "C:\\b.mp3", None, stamp="s3", keep_if_playing=True)
+            playback.process.code = 0  # the music ended
+            with self.assertRaisesRegex(RuntimeError, "started", msg="music that ended starts again"):
+                agent._play_audio("musik", "C:\\a.mp3", None, stamp="s4", keep_if_playing=True)
+
+    def test_keep_if_open_and_close_by_stamp(self):
+        owners = {100: 7}
+        agent._remember_window("spotlight", 100, 7, owners.get)
+        self.assertTrue(agent._profile_window_open("spotlight", owners.get))
+        owners[100] = 0  # closed on the PC (Escape, the player ended)
+        self.assertFalse(agent._profile_window_open("spotlight", owners.get), "opened again then")
+        owners[100] = 7
+        agent._opened_stamps["spotlight"] = "s2"
+        posted = []
+        self.assertEqual(agent._close_profile_windows("spotlight", owners.get, posted.append, stamp="s1"), 0)
+        self.assertEqual((posted, set(agent._opened_windows)), ([], {"spotlight"}), "opened again since: stays")
+        self.assertEqual(agent._close_profile_windows("spotlight", owners.get, lambda h: posted.append(h) or True,
+                                                      stamp="s2"), 1)
 
     def test_closes_only_the_profiles_own_windows_still_there(self):
         owners = {100: 7, 101: 7, 102: 7, 200: 9}
