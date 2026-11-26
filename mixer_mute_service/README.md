@@ -819,8 +819,32 @@ wird). Desktop-Profile wählt die Zeile *Desktop* des Programmpunkts. **Datei od
 Pfad…** wählen, den vollständigen Pfad auf dem Ziel-PC eintragen und den PC
 wählen (*Streaming-PC (dieser Service)* oder ein PC aus den Desktop-Profilen).
 Musikdateien (mp3, wav, m4a, aac, flac, ogg, opus, wma) spielt der Display-Agent
-dort ohne Fenster mit mpv, `.exe` startet er, alles andere öffnet Windows mit
-der Standard-App. Gespeichert wird `file:<ip>|<pfad>` im jeweiligen Feld.
+dort ohne Fenster mit mpv, `.exe` startet er, Dokumente zeigt er selbst (siehe
+unten), alles andere öffnet Windows mit der Standard-App. Gespeichert wird
+`file:<ip>|<pfad>` im jeweiligen Feld.
+
+**Dokumente (PDF, PowerPoint, Word) als Vollbild:** `.pdf`, `.ppt/.pptx/.pps/.ppsx/.odp`
+und `.doc/.docx/.odt/.rtf` öffnet der Display-Agent nicht mit der Standard-App,
+sondern zeigt die Seiten selbst im Vollbild auf dem richtigen Monitor (dieselbe
+Nummerierung wie bei Bildern), in einem eigenen Fenster über Bild und Liedanzeige.
+Eine Datei im Programmpunkt geht auf den Monitor der Liedanzeige dieses PCs
+(Anzeige-PC: der Beamer), sonst Monitor 1; ein Desktop-Profil nimmt seinen
+eigenen Monitor. PDFs rendert der Agent mit `pypdfium2`; PowerPoint- und
+Word-Dateien wandelt einmal das installierte Office (unsichtbar, per COM) oder
+sonst LibreOffice in ein PDF um. Die Kopie liegt unter
+`%LOCALAPPDATA%\MixerMuteDisplayAgent\documents`, ein zweites Öffnen geht sofort.
+Animationen und Übergänge aus PowerPoint gibt es dabei nicht.
+Blättern: `POST /documents/next` bzw. `prev`, `first`, `last` (optional
+`{"pc": ip}`, sonst der PC, der zuletzt ein Dokument geöffnet hat),
+`GET /documents/current` liefert Seite und Seitenzahl; am Anzeige-PC selbst
+blättern Pfeiltasten, Bild auf/ab, Leertaste und ein Presenter, Esc blendet
+aus. Geht das Programm weiter, schließt der nächste Programmpunkt das Dokument;
+zeigt er dieselbe Datei, bleibt sie auf ihrer Seite stehen. Fehlt `pypdfium2`,
+installiert der Agent es beim Start selbst (`pip`, im Hintergrund; das Update
+über den UPDATE-Knopf führt kein pip aus). Kann der Agent ein Dokument nicht
+anzeigen (kein pypdfium2, weder Office noch LibreOffice, älterer Agent), öffnet
+es wie bisher die Standard-App; der Grund steht im Agent-Log, `/info` meldet unter
+`documents`, was vorhanden ist.
 
 **Durchsuchen…** gibt es nur, wenn die Weboberfläche auf dem Streaming-PC selbst
 geöffnet ist (`http://127.0.0.1:8765`). Es öffnet dort den normalen

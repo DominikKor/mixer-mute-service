@@ -10,6 +10,7 @@ from ..agent_update import router as agent_update_router
 from ..camera_hls import router as camera_hls_router
 from ..camera_webrtc import router as camera_webrtc_router
 from ..channel_colors import router as channel_colors_router
+from ..documents import router as documents_router
 from ..file_actions import router as file_actions_router
 from ..program_pdf import router as program_pdf_router
 from ..program_templates import router as program_templates_router
@@ -36,6 +37,7 @@ for _sub in (
     program_templates_router,
     program_pdf_router,
     file_actions_router,
+    documents_router,
     camera_hls_router,
     camera_webrtc_router,
 ):

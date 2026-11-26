@@ -25,7 +25,12 @@ left open by hand is opened again.
   (a desktop profile or a file in its Playback / Übersetzung / Liedtext
   fields): its start replaces the old track anyway;
 - image and file: POST /close (desktop_agent): the windows a file opened get
-  closed, an image is hidden if it is still the one shown.
+  closed, an image is hidden if it is still the one shown, a document the
+  agent shows page by page is hidden.
+
+A document in a file field (file:<ip>|<path>, app/documents.py) counts like
+a file profile under its PC's document id; the next row keeps it (on its
+page) only when it shows the same file on that PC.
 
 Ordering without waiting: every start carries a stamp (a random id) that the
 agent keeps with the track, window or image. A stop names the stamp of the
@@ -52,6 +57,7 @@ from typing import Optional
 
 from . import display_agent
 from .display_agent import AgentError
+from .documents import document_id, is_document
 from .file_actions import file_kind, is_file_action, parse_file_action
 
 log = logging.getLogger("mixer.profile_stops")
@@ -87,6 +93,8 @@ class ShownProfiles:
         # profile id -> (target ip, kind, stamp, confirmed: the agent answered)
         self._shown: dict[str, tuple[str, str, str, bool]] = {}
         self._latest: dict[str, str] = {}  # profile id -> stamp of its latest start
+        # Document ids of file fields -> the field's value ("file:<ip>|<path>") shown.
+        self._sources: dict[str, str] = {}
         self._down_until: dict[str, float] = {}
         self._tasks: set = set()
 
@@ -119,6 +127,19 @@ class ShownProfiles:
         Noted all the same; its stop names the profile only."""
         if program_row() is not None and kind != "program" and self._latest.get(profile_id) == stamp:
             self._shown[profile_id] = (target_ip, kind, stamp, False)
+
+    def note_source(self, profile_id: str, value: str) -> None:
+        """What a file field's document id shows now (app/documents.py)."""
+        self._sources[profile_id] = value
+
+    def source(self, profile_id: str) -> Optional[str]:
+        """The file field value the program showed under this id, if still noted."""
+        return self._sources.get(profile_id) if profile_id in self._shown else None
+
+    def forget(self, profile_id: str) -> None:
+        """Not the program's to keep or stop any more (another file replaces it)."""
+        self._shown.pop(profile_id, None)
+        self._sources.pop(profile_id, None)
 
     def program_has(self, profile_id: str) -> bool:
         """An earlier program row started it and it was not stopped since."""
@@ -166,6 +187,21 @@ def row_profiles(row: dict) -> set:
     return ids
 
 
+def row_documents(row: dict) -> dict:
+    """Document id -> file field value of the documents a row's file fields show."""
+    shown = {}
+    for field in ("playback", "translation", "lyrics"):
+        value = row.get(field)
+        if is_file_action(value):
+            try:
+                target, path = parse_file_action(value)
+            except ValueError:
+                continue
+            if file_kind(path) == "file" and is_document(path):
+                shown[document_id(target)] = value
+    return shown
+
+
 def row_audio_pcs(row: dict, profiles: dict) -> set:
     """The PCs on which a program row starts audio: audio desktop profiles
     and audio files in its file fields."""
@@ -190,6 +226,8 @@ def stop_previous(state, row: dict) -> Optional[asyncio.Task]:
     if tracker is None:
         return None
     keep = row_profiles(row)
+    # A document of a file field stays only if the row shows the same file there.
+    keep |= {doc_id for doc_id, value in row_documents(row).items() if tracker.source(doc_id) == value}
     audio_pcs = row_audio_pcs(row, state.cfg.desktop_display.profiles)
     stops = [(profile_id, tracker.take(profile_id)) for profile_id, (ip, kind) in tracker.shown().items()
              if profile_id not in keep and not (kind == "audio" and ip in audio_pcs)]

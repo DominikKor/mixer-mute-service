@@ -164,6 +164,8 @@ async def lifespan(app: FastAPI):
     app.state.camera_ptz = camera_ptz
     # Desktop profiles shown or playing; stopped when the program moves on.
     app.state.shown_profiles = ShownProfiles()
+    # The PC that showed a document last: paging goes there (app/documents.py).
+    app.state.document_shown = None
     app.state.native_controls = _optional(
         app, "native controls", lambda: NativeControlService(data_dir / "native_control_state.json"))
     camera_program = None

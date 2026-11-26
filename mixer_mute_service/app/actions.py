@@ -20,7 +20,7 @@ from typing import Optional
 
 from fastapi import Request
 
-from . import display_agent
+from . import display_agent, documents
 from .camera_program import CAMERAS, DEFAULT_WAIT_SECONDS
 from .companion_buttons import CATALOG_ONLY_IDS, COMPANION_BUTTONS_BY_ID, resolve_alias
 from .display_agent import AgentError
@@ -254,6 +254,9 @@ async def show_profile(request: Request, profile_id: str) -> Result:
         if exc.agent_status == 503:
             return {"ok": False, "reason": await _no_file_reason(request, profile, payload["path"])}, 502
         return exc.answer(), exc.status
+    if profile.kind == "file" and documents.is_document(profile.path) and answer.get("ok") is not False:
+        # Shown page by page by the agent: paging goes there (app/documents.py).
+        documents.note_shown(request.app.state, profile.target_ip, profile_id)
     return answer, 200
 
 

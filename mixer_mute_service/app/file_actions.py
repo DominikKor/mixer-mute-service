@@ -3,7 +3,9 @@
 A program action (playback, translation, lyrics) may hold
 "file:<ip>|<path>" instead of a key: the file at <path> on the PC <ip> (whose
 display agent runs it). Music files play there with mpv (like an audio
-profile), .exe files start, anything else opens with its Windows default app.
+profile), .exe files start, documents (PDF, PowerPoint, Word) are shown
+page by page, full screen, by the agent itself (app/documents.py), anything
+else opens with its Windows default app.
 "|" cannot occur in a Windows path, so it separates the two parts.
 
 POST /files/pick {"start": folder}  opens the real Windows "open file" dialog
@@ -35,7 +37,7 @@ from typing import Optional, Tuple
 from fastapi import APIRouter, Body, Request
 from fastapi.responses import JSONResponse
 
-from . import agent_update, display_agent, mission_spotlight
+from . import agent_update, display_agent, documents, mission_spotlight
 from .display_agent import AgentError
 
 router = APIRouter()
@@ -108,6 +110,8 @@ async def run_file_action(request: Request, value: str) -> Tuple[dict, int]:
     name = PureWindowsPath(path).name
     if kind == "audio":
         route, payload = "/audio", {"id": "program-file", "action": "play", "path": path}
+    elif kind == "file" and documents.is_document(path):
+        return await _run_document(request, value, target, path)
     else:
         route, payload = "/display", {
             "id": "program-file", "title": name, "kind": kind, "path": path,
@@ -130,6 +134,42 @@ async def run_file_action(request: Request, value: str) -> Tuple[dict, int]:
         # It replaced the music on that PC (app/profile_stops.py).
         shown.audio_replaced(target)
     return {"ok": result.get("ok", True) is not False, "file": name, "kind": kind, "target": target}, 200
+
+
+async def _run_document(request: Request, value: str, target: str, path: str) -> Tuple[dict, int]:
+    """A document from a file field: full screen on the Liedanzeige monitor of
+    that PC, under that PC's document id, noted for the program's next row
+    like a profile (app/profile_stops.py). An older agent opens it with its
+    default app on that monitor."""
+    from types import SimpleNamespace
+
+    from .actions import _shown_profiles, _tracked_start  # actions imports this module
+
+    state = request.app.state
+    cfg = state.cfg.desktop_display
+    profile_id = documents.document_id(target)
+    name = PureWindowsPath(path).name
+    payload = {"id": profile_id, "title": name, "kind": "file", "path": path, "args": [],
+               "fullscreen": True, "monitor": documents.document_monitor(state, target), "position": "top-left"}
+    shown = _shown_profiles(request)
+    if shown is not None and shown.source(profile_id) not in (None, value):
+        # Another document of an earlier row on that PC: never kept for this one.
+        shown.forget(profile_id)
+    try:
+        result = await _tracked_start(request, profile_id, SimpleNamespace(kind="file", target_ip=target),
+                                      lambda extra: display_agent.call(cfg, target, "/display", {**payload, **extra}))
+    except AgentError as exc:
+        if exc.agent_status == 503:
+            return {"ok": False, "reason": await no_file_reason(request, target, path), "file": name}, 502
+        return {**exc.answer(), "file": name}, exc.status
+    ok = result.get("ok", True) is not False
+    if ok:
+        if shown is not None:
+            shown.note_source(profile_id, value)
+        documents.note_shown(state, target, profile_id)
+    log.info("FILE document %s on %s monitor %s%s", path, target, payload["monitor"],
+             " (kept)" if result.get("kept") else "")
+    return {"ok": ok, "file": name, "kind": "document", "target": target}, 200
 
 
 # The first Display Service that fills in "*" in a path.
