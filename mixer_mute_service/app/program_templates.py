@@ -3,11 +3,15 @@
 A template is a copy of the program rows. Rows marked as song slots
 ("Liedplatz") get the songs of the day when the template is applied: the
 songs fill the slots in order, songs beyond the last slot are added after it
-as copies of that slot. A program that is already there keeps everything on its
-rows (camera presets, light, desktop profiles ...): applying only changes the
-person and the song of a row (apply_in_place); a program without rows is built
-from the template. The Missionsbericht person "Mission Spotlight" shows the
-Mission Spotlight row and hides the Missionsbericht, any other name the reverse
+as copies of that slot. A program that is already there is never replaced: the
+order only updates the rows it maps to (apply_order). Such a row keeps its
+place, ID, play state and every setting (camera presets, light, desktop
+profiles ...); only its person changes (the order's person, also an empty one),
+and for a song slot its song and title. Rows are matched by their title or the
+point of the order, never by position, and none is deleted or renamed. Extra
+songs become copies of the last song row. A program without rows is built from
+the template. The Missionsbericht person "Mission Spotlight" shows the Mission
+Spotlight row and hides the Missionsbericht, any other name the reverse
 (switch_spotlight).
 
 Songs usually arrive as a list of titles, one per line. POST /songs/match
@@ -34,7 +38,6 @@ import re
 import unicodedata
 import uuid
 from copy import deepcopy
-from difflib import SequenceMatcher
 from pathlib import Path
 from typing import List, Optional
 
@@ -191,7 +194,7 @@ class ProgramTemplateStore:
             return True
 
 
-def fill_template(rows: List[dict], songs: List[dict], trace: bool = False) -> List[dict]:
+def fill_template(rows: List[dict], songs: List[dict]) -> List[dict]:
     """Program rows from template rows and the songs of the day.
 
     songs: [{"song_id": file name or None, "text": the line as typed,
@@ -202,9 +205,6 @@ def fill_template(rows: List[dict], songs: List[dict], trace: bool = False) -> L
     in the library keeps its line in the row title so nothing is lost.
     """
     result = [{k: v for k, v in row.items() if k != "song_slot"} for row in deepcopy(rows)]
-    if trace:  # each row remembers the template row it came from (apply_in_place)
-        for row, source in zip(result, rows):
-            row["_tpl"] = deepcopy(source)
     slots = [i for i, row in enumerate(rows) if row.get("song_slot")]
 
     def put(row: dict, song: dict) -> None:
@@ -221,8 +221,6 @@ def fill_template(rows: List[dict], songs: List[dict], trace: bool = False) -> L
             model, at = result[slots[-1]], slots[-1] + 1
             # Copy of the slot as the template has it (not the song just put in).
             model = {**model, "title": rows[slots[-1]]["title"], "song": None}
-            if trace:
-                model["_tpl"] = {**deepcopy(rows[slots[-1]]), "song": None}
         else:
             model = {field: "" for field in _ROW_FIELDS}
             model.update({"time": rows[-1]["time"] if rows else "10:00", "group": "",
@@ -237,86 +235,81 @@ def fill_template(rows: List[dict], songs: List[dict], trace: bool = False) -> L
             else:  # no slot to copy: a plain row named after the song
                 row.update(title=(song.get("title") or song.get("text") or "Lied")[:120],
                            song=song.get("song_id"))
-            if trace and "_tpl" not in row:
-                row["_tpl"] = dict(row)
             added.append(row)
         result[at:at] = added
     return result
 
 
-# ---- the template applied to the program that is already there ----------------
+# ---- the order applied to the program that is already there ------------------------
 
 def _row_key(title: str) -> str:
-    # Without the ": song text" a row gets when its song is not in the library.
+    # Without the ": song text" a song row gets when its song is not in the library.
     return _key(title.split(":")[0])
 
 
-def _aligned(filled: List[dict], current: List[dict]) -> dict:
-    """{index in filled: index in current}: the rows that are the same row, found
-    by their titles in order (the earliest of equal titles first, so extra songs
-    come last). Between two found rows, as many changed titles on both sides are
-    paired by position (a renamed row keeps its settings); anything else is new
-    or gone."""
-    a = [_row_key(row["_tpl"]["title"]) for row in filled]
-    b = [_row_key(row["title"]) for row in current]
-    n, m = len(a), len(b)
-    best = [[0] * (m + 1) for _ in range(n + 1)]
-    for i in range(n - 1, -1, -1):
-        for j in range(m - 1, -1, -1):
-            best[i][j] = (best[i + 1][j + 1] + 1) if a[i] == b[j] else max(best[i + 1][j], best[i][j + 1])
-    matches, i, j = [], 0, 0
-    while i < n and j < m:
-        if a[i] == b[j]:
-            matches.append((i, j))
-            i, j = i + 1, j + 1
-        elif best[i + 1][j] >= best[i][j + 1]:
-            i += 1
-        else:
-            j += 1
-    pairs = dict(matches)
-    previous = (-1, -1)
-    for i, j in matches + [(n, m)]:
-        if i - previous[0] == j - previous[1]:  # the gap has as many rows on both sides
-            pairs.update(zip(range(previous[0] + 1, i), range(previous[1] + 1, j)))
-        previous = (i, j)
-    return pairs
+def apply_order(items: List[dict], slot_titles: List[str], songs: List[dict], persons: List[dict],
+                profiles: Optional[dict] = None) -> tuple:
+    """(rows, unassigned, mission): the program rows after the order was applied.
 
-
-def apply_in_place(filled: List[dict], current: List[dict]) -> List[dict]:
-    """The rows of the program after the template was applied to the one that
-    exists: a row that is already there keeps everything it has (time, camera
-    presets, OBS scenes, wait time, desktop profiles, light, group, beamer,
-    shortcut, hidden) and only takes the person the order names and, for a song
-    slot, the song and its title. Rows the program does not have yet come from
-    the template; rows the template does not have any more are dropped.
-
-    filled: fill_template(..., trace=True) rows; current: ProgramItemStore rows
-    ordered like the program.
+    items: the program rows in program order; a row of the result with an "id"
+    is that row (all its settings unchanged except what is said below), one
+    without is a new row. slot_titles: titles of the template's song slots; a
+    program row with such a title is a song slot. persons: [{id, person}] of the
+    order. A row a point of the order maps to (by its title, see assign_persons)
+    takes that point's person, empty too: last week's name is wrong. Without
+    songs the song rows stay; with songs they fill the song slots in order (a
+    slot left over loses its song) and the rest become copies of the last slot
+    (or rows at the end if there is none). A song not in the library goes into
+    the slot's title ("Lied: text").
     """
-    pairs = _aligned(filled, current)
-    result = []
-    for index, row in enumerate(filled):
-        source = row["_tpl"]
-        row = {k: v for k, v in row.items() if k != "_tpl"}
-        old = current[pairs[index]] if index in pairs else None
-        if old is not None:
-            merged = {field: old[field] for field in _ROW_FIELDS if field in old and field != "shortcuts"}
-            merged["hidden"] = old.get("hidden") is True
-            if row.get("_named"):  # the order names someone for this row
-                merged["person"] = row["person"]
-            if source.get("song_slot"):
-                merged["song"], merged["title"] = row["song"], row["title"]
-            if merged.get("song"):
-                merged["lyrics"] = None  # a song or a Liedtext file, never both
-            row = {**row, **merged}
-        result.append(row)
-    return result
+    slot_keys = {_row_key(title) for title in slot_titles}
+    rows = [{**deepcopy(item), "song_slot": _row_key(item["title"]) in slot_keys} for item in items]
+    mission = next((p["person"] for p in persons if p["id"] == "missionsbericht"), "")
+    if _is_spotlight_person(mission):  # not a name for the row, see switch_spotlight
+        persons = [{**p, "person": ""} if p["id"] == "missionsbericht" else p for p in persons]
+    rows, unassigned = assign_persons(rows, persons)
+    named = {p["id"]: p["person"] for p in persons}
+    for row in rows:
+        if row.get("_point") and not _spotlight_row(row, profiles or {}):
+            row["person"] = named[row["_point"]]
+    slots = [row for row in rows if row["song_slot"]]
+    added = []
+    if songs:
+        def put(row: dict, song: dict, base: str) -> None:
+            if song.get("song_id"):
+                row["song"], row["title"] = song["song_id"], base
+            else:
+                row["song"], row["title"] = None, f"{base}: {song['text']}"[:120]
+
+        for row in slots:
+            row["song"], row["title"] = None, row["title"].split(":")[0].strip()
+        for row, song in zip(slots, songs):
+            put(row, song, row["title"])
+        for song in songs[len(slots):]:
+            if slots:
+                model = {k: v for k, v in deepcopy(slots[-1]).items() if k != "id"}
+                put(model, song, slots[-1]["title"].split(":")[0].strip())
+                model.update(person="", hidden=False)
+            else:  # no slot: a plain row named after the song, at the end
+                model = {"time": rows[-1]["time"] if rows else "10:00", "person": "", "hidden": False,
+                         "song": song.get("song_id"),
+                         "title": (song.get("title") or song.get("text") or "Lied")[:120]}
+            added.append(model)
+        if added:
+            at = rows.index(slots[-1]) + 1 if slots else len(rows)
+            rows[at:at] = added
+    spotlight = switch_spotlight(rows, mission, profiles or {})
+    for row in rows:
+        for key in ("_point", "song_slot"):
+            row.pop(key, None)
+    return rows, unassigned, spotlight
 
 
 # ---- Missionsbericht or Mission Spotlight ------------------------------------------
 
 def _is_spotlight_person(person: str) -> bool:
-    return _key(person) == "missionspotlight"
+    """"Mission Spotlight", also "Missions-Spotlight", any case and spacing."""
+    return re.fullmatch(r"missions?spotlight", _key(person)) is not None
 
 
 def _spotlight_row(row: dict, profiles: dict) -> bool:
@@ -389,15 +382,17 @@ def _score(line: str, words: set, numbers: set, song: dict) -> int:
 
 
 # When one number exists in several songbooks and the line names no book, this
-# one is taken (the church mostly sings from it). Matches the book's name or its
-# initials: "GHS" = "Glauben Hoffen Singen".
+# one is taken (the church mostly sings from it). A book counts when its name
+# is, or starts with, one of these as whole words: "GHS", "GHS 2", "GHS (2015)",
+# "Glauben Hoffen Singen" (how the song library spells it). No initials: they
+# would match other books by chance.
 PREFERRED_BOOK = "GHS"
+PREFERRED_BOOK_NAMES = ("GHS", "Glauben Hoffen Singen")
 
 
 def _is_preferred_book(name: str) -> bool:
-    words = _norm(name).split()
-    wanted = _norm(PREFERRED_BOOK).replace(" ", "")
-    return bool(words) and ("".join(words) == wanted or "".join(w[0] for w in words) == wanted)
+    words = _norm(name)
+    return any(words == alias or words.startswith(alias + " ") for alias in map(_norm, PREFERRED_BOOK_NAMES))
 
 
 def _preferred_choice(top: List[str], numbers: set, songs: dict) -> Optional[str]:
@@ -423,7 +418,8 @@ def match_lines(lines: List[str], songs: dict) -> List[dict]:
             ((_score(norm, words, numbers, song), song_id) for song_id, song in songs.items()),
             key=lambda pair: (-pair[0], songs[pair[1]]["title"].casefold()),
         )
-        scored = [pair for pair in scored if pair[0] >= 30][:5]
+        scored = [pair for pair in scored if pair[0] >= 30]
+        everyone, scored = scored, scored[:5]  # the preferred book is looked for among all of them
         song_id = None
         preferred = False
         # Only a clear winner is taken; anything else is left to the user ...
@@ -431,9 +427,11 @@ def match_lines(lines: List[str], songs: dict) -> List[dict]:
             song_id = scored[0][1]
         elif scored and scored[0][0] >= 70:
             # ... except a tie between songbooks, where the preferred one wins if it is the only one.
-            top = [sid for score, sid in scored if score == scored[0][0]]
+            top = [sid for score, sid in everyone if score == scored[0][0]]
             song_id = _preferred_choice(top, numbers, songs)
             preferred = song_id is not None
+            if preferred and all(sid != song_id for _, sid in scored):
+                scored = scored[:4] + [(scored[0][0], song_id)]  # still one of the candidates to choose from
         results.append({
             "line": line,
             "song_id": song_id,
@@ -513,35 +511,38 @@ async def apply_template(template_id: str, request: Request, body: dict = Body(.
         persons = validated_persons(body.get("persons") or [])
     except PdfImportError as exc:
         return fail(str(exc))
-    # "Mission Spotlight" as the Missionsbericht's person is not a name for the row:
-    # it switches which of the two rows is shown (switch_spotlight below).
-    mission = next((p["person"] for p in persons if p["id"] == "missionsbericht"), "")
-    if _is_spotlight_person(mission):
-        persons = [{**p, "person": ""} if p["id"] == "missionsbericht" else p for p in persons]
-    template_rows, unassigned = assign_persons(template["rows"], persons)
-    rows = fill_template(template_rows, cleaned, trace=True)
-    current = await request.app.state.program_items.list()
-    if current:  # the program is kept as it is, only person and song change
-        rows = apply_in_place(rows, current)
+    profiles = request.app.state.cfg.desktop_display.profiles
+    store = request.app.state.program_items
+    current = await store.list()
+    if current:  # the program is kept as it is: only person and song change (apply_order)
+        slot_titles = [row["title"] for row in template["rows"] if row.get("song_slot")]
+        rows, unassigned, spotlight = apply_order(current, slot_titles, cleaned, persons, profiles)
     else:
-        rows = [{k: v for k, v in row.items() if k != "_tpl"} for row in rows]
-    spotlight = switch_spotlight(rows, mission, request.app.state.cfg.desktop_display.profiles)
-    for row in rows:
-        row.pop("_point", None)
-        row.pop("_named", None)
+        mission = next((p["person"] for p in persons if p["id"] == "missionsbericht"), "")
+        if _is_spotlight_person(mission):  # not a name for the row, see switch_spotlight
+            persons = [{**p, "person": ""} if p["id"] == "missionsbericht" else p for p in persons]
+        template_rows, unassigned = assign_persons(template["rows"], persons)
+        rows = fill_template(template_rows, cleaned)
+        spotlight = switch_spotlight(rows, mission, profiles)
+        for row in rows:
+            row.pop("_point", None)
     if len(rows) > MAX_ROWS:
         return fail(f"at most {MAX_ROWS} rows")
     if body.get("dry_run") is True:  # preview: the rows, nothing changed
         return {"ok": True, "rows": sorted(rows, key=lambda row: row["time"]), "unassigned": unassigned,
                 "mission": spotlight}
     try:
-        items = await request.app.state.program_items.replace_all(rows, preserve_hidden=True)
+        if current:
+            items = await store.update_from_order(rows)
+        else:
+            items = await store.replace_all(rows, preserve_hidden=True)
     except ProgramItemError as exc:
         return fail(str(exc))
+    known = {item["id"] for item in current}
     # Keys or groups deleted since the template was saved: the program is
     # applied anyway (those rows refuse to start until fixed), but say so.
     warnings = []
-    for item in items:
+    for item in (i for i in items if i["id"] not in known):
         reason = await program_reference_error(request, item)
         if reason:
             warnings.append({"id": item["id"], "title": item["title"], "reason": reason})

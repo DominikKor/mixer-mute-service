@@ -19,7 +19,7 @@ os.environ["MIXER_CONFIG"] = str(_tmp / "config.yaml")
 from fastapi.testclient import TestClient  # noqa: E402
 
 from app.main import app  # noqa: E402
-from app.program_templates import clean_line, match_lines  # noqa: E402
+from app.program_templates import _is_preferred_book, clean_line, match_lines  # noqa: E402
 
 PASS = 0
 FAIL = 0
@@ -94,6 +94,17 @@ def ghs_matching():
           and m["GHS 200"]["preferred_book"] is None)
     check("another book named in the line wins", m["Wir loben Gott 200"]["song_id"] == "a_wlg.foil"
           and m["Wir loben Gott 200"]["preferred_book"] is None)
+    for name, expected in [("GHS", True), ("GHS 2", True), ("ghs (2015)", True), ("Glauben Hoffen Singen", True),
+                           ("Glauben Hoffen Singen 2", True), ("GHSX", False), ("Das GHS", False),
+                           ("Gemeinde Heil Segen", False), ("Wir loben Gott", False), ("", False)]:
+        check(f"book name {name!r} {'is' if expected else 'is not'} the preferred book",
+              _is_preferred_book(name) is expected)
+    many = {f"b{i}.foil": song(f"Lied {i}", [("Wir loben Gott", "600")]) for i in range(9)}
+    many["z_ghs.foil"] = song("Zuletzt im GHS", [("GHS 2", "600")])
+    r = match_lines(["600"], many)[0]
+    check("GHS candidate found beyond the first five, and offered among the candidates",
+          r["song_id"] == "z_ghs.foil" and len(r["candidates"]) == 5
+          and "z_ghs.foil" in [c["song_id"] for c in r["candidates"]])
     t = match_lines(["Großer Gott"], LIBRARY)[0]
     check("title ties are not touched", t["song_id"] is None and t["preferred_book"] is None)
     return lib
@@ -177,14 +188,14 @@ def api(ghs_lib):
                   ("Ende", None),
               ])
         check("extra rows copy the slot", items[3]["time"] == "10:10" and items[3]["lyrics_description"] == "")
-        check("program replaced, start times reset",
-              len(client.get("/program/items").json()) == 8 and all(i["last_played_at"] is None for i in items)
-              and client.get("/program/status").json()["next_id"] == items[0]["id"])
+        check("program updated in place: IDs and play state kept",
+              len(client.get("/program/items").json()) == 8 and [i["id"] for i in items][:2] == ids[:2]
+              and items[0]["last_played_at"] is not None and client.get("/program/status").json()["current_id"] == ids[0])
         r = apply([{"song_id": "Dir sei Ehre.foil"}])
         check("fewer songs: other slots stay empty",
               [i["song"] for i in r.json()["items"]][1:3] == ["Dir sei Ehre.foil", None])
         check("unknown song refused, program kept",
-              apply([{"song_id": "Fehlt.foil"}]).status_code == 404 and len(client.get("/program/items").json()) == 6)
+              apply([{"song_id": "Fehlt.foil"}]).status_code == 404 and len(client.get("/program/items").json()) == 8)
         check("unknown template", client.post("/program/templates/nope/apply", json={"songs": []}).status_code == 404)
 
         print("== template without slots ==")

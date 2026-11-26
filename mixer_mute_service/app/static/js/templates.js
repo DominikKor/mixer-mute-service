@@ -107,9 +107,11 @@ function renderTemplateMatches() {
   TEMPLATES.matches.forEach((match, i) => {
     const song = songs[i].song_id ? songById(songs[i].song_id) : null;
     const li = document.createElement("li");
-    // The number was in several songbooks: the preferred one is taken, shown in orange.
+    // The number was in several songbooks: the preferred one is taken (calm amber, badge);
+    // a line that still needs a choice is the strong orange one.
     const defaulted = !!song && !!match.preferred_book && !TEMPLATES.picked.has(match.line);
-    li.className = "tp-match" + (song ? "" : " missing") + (defaulted ? " ambiguous" : "");
+    const undecided = !song && match.candidates.length > 0;
+    li.className = "tp-match" + (song ? "" : " missing") + (defaulted ? " ambiguous" : "") + (undecided ? " choose" : "");
     const no = document.createElement("span");
     no.className = "tp-no";
     no.textContent = String(i + 1);
@@ -122,6 +124,12 @@ function renderTemplateMatches() {
     found.className = "tp-song";
     found.textContent = song ? `♪ ${song.title}`
       : match.candidates.length ? "Nicht eindeutig – bitte wählen" : "Nicht gefunden – kommt als Text in den Titel";
+    if (defaulted) {
+      const badge = document.createElement("span");
+      badge.className = "tp-badge";
+      badge.textContent = match.preferred_book;
+      found.prepend(badge);
+    }
     texts.append(found, line);
     const choose = document.createElement("button");
     choose.type = "button";
@@ -202,7 +210,7 @@ async function updateTemplatePreview() {
     unassigned.length ? `Ohne passenden Programmpunkt: ${unassigned.map(p => `${p.title} (${p.person})`).join(", ")}.` : "",
     result.data.mission === "spotlight" ? "Mission Spotlight: die Spotlight-Zeile wird gezeigt, der Missionsbericht ausgeblendet." : "",
     result.data.mission === "normal" ? "Missionsbericht: mit Namen gezeigt, Mission Spotlight ausgeblendet." : "",
-    PROGRAM_ITEMS.length ? `Das aktuelle Programm (${PROGRAM_ITEMS.length} Punkte) behält alle Einstellungen; nur Personen und Lieder ändern sich.` : "",
+    PROGRAM_ITEMS.length ? `Das Programm (${PROGRAM_ITEMS.length} Punkte) bleibt, wie es ist: nur Personen und Lieder werden eingetragen, keine Zeile wird gelöscht oder umbenannt.` : "",
   ].filter(Boolean).join(" ");
 }
 
@@ -342,7 +350,7 @@ $("tp-apply-btn").addEventListener("click", async event => {
   if (!template) return;
   // The same question as every other replace or delete: at the key, "Ersetzen" to go on.
   if (PROGRAM_ITEMS.length && !(await confirmDelete(button,
-    `Personen und Lieder der Vorlage „${template.name}“ ins aktuelle Programm (${PROGRAM_ITEMS.length} Punkte) übernehmen? Kamera-Presets, Licht und alle anderen Einstellungen bleiben; Zeilen, die nur im Programm stehen, entfallen.`, "Übernehmen"))) return;
+    `Den Ablauf (Personen und Lieder) ins aktuelle Programm (${PROGRAM_ITEMS.length} Punkte) übernehmen? Zeilen, Reihenfolge und alle Einstellungen bleiben; nichts wird gelöscht.`, "Übernehmen"))) return;
   button.disabled = true;
   try {
     const result = await api("POST", `/program/templates/${encodeURIComponent(template.id)}/apply`, { songs: templateSongs(), persons: TEMPLATES.persons });

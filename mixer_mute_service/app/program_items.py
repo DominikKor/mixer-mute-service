@@ -386,6 +386,45 @@ class ProgramItemStore:
             self._persist()
             return deepcopy(self._ordered())
 
+    async def update_from_order(self, rows: List[dict]) -> List[dict]:
+        """An order (Gottesdienstablauf) applied to the program, all or nothing.
+
+        rows: the program in its new state; a row with an "id" is that row, one
+        without is new and is put right after the row before it. Of an existing
+        row only the person, the title, the song (and with a song no Liedtext
+        file) and "hidden" are taken; everything else, its ID and when it ran
+        stay. No row is removed.
+        """
+        async with self._lock:
+            by_id = {item["id"]: item for item in self._items}
+            if any(row.get("id") is not None and row["id"] not in by_id for row in rows):
+                raise ProgramItemError("a program row was removed meanwhile")
+            changes, new = [], []
+            for row in rows:
+                if row.get("id") is None:
+                    new.append((row, self._validated_fields(row)))
+                    continue
+                item = by_id[row["id"]]
+                fields = self._validated_fields({**item, **{k: row[k] for k in ("title", "person", "song") if k in row}})
+                changes.append((item, {k: fields[k] for k in ("title", "person", "song", "lyrics")},
+                                row.get("hidden", item.get("hidden")) is True))
+            for item, fields, hidden in changes:
+                item.update(fields)
+                item["hidden"] = hidden
+            previous = None
+            for row in rows:
+                if row.get("id") is None:
+                    fields = next(f for r, f in new if r is row)
+                    item = {"id": uuid.uuid4().hex, **fields, "last_delay_seconds": None, "last_played_at": None,
+                            "hidden": row.get("hidden") is True}
+                    self._items.insert(self._items.index(by_id[previous]) + 1 if previous else 0, item)
+                    by_id[item["id"]] = item
+                    previous = item["id"]
+                else:
+                    previous = row["id"]
+            self._persist()
+            return deepcopy(self._ordered())
+
     async def set_hidden(self, item_id: str, hidden: bool) -> Optional[dict]:
         """Grey a row out (it stays in the list but "Weiter" skips it) or show it again."""
         async with self._lock:

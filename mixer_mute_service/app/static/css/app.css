@@ -1064,8 +1064,13 @@ dialog.template-dialog { width: min(980px, calc(100vw - 32px)); max-height: calc
 .tp-match .tp-texts { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .tp-match .tp-line { font-size: 11px; color: #8d96a3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tp-match .tp-song { font-size: 14px; font-weight: 700; color: #7ff0a8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.tp-match.missing .tp-song, .tp-match.ambiguous .tp-song { color: #ffb36b; }
-.tp-match.ambiguous .tp-line { color: #ffb36b; }
+.tp-match.missing .tp-song { color: #ffb36b; }
+/* GHS taken by default: calm amber with a badge. Still to choose: strong orange with an outline. */
+.tp-match.ambiguous { box-shadow: inset 3px 0 0 #c9a24a; }
+.tp-match.ambiguous .tp-song, .tp-match.ambiguous .tp-line { color: #e0c27a; }
+.tp-match .tp-badge { display: inline-block; margin-right: 6px; padding: 1px 6px; border-radius: 4px; background: #4a3d17; color: #f0d58a; font: 800 11px/1.4 var(--mono); }
+.tp-match.choose { box-shadow: inset 0 0 0 2px #ff7a2e; }
+.tp-match.choose .tp-song { color: #ff9448; }
 .tp-match button { min-height: 44px; min-width: 88px; padding: 0 12px; font-size: 12px; }
 .tp-preview li {
   display: grid; grid-template-columns: 52px minmax(0, 1fr) minmax(0, 1fr); gap: 10px; align-items: center;

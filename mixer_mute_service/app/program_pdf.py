@@ -141,7 +141,7 @@ def parse_ablauf(fields: Dict[str, str]) -> dict:
 
 def is_spotlight_title(title: str) -> bool:
     """The Mission Spotlight row (instead of the Missionsbericht): never gets a person from the PDF."""
-    return "missionspotlight" in _key(title)
+    return re.search(r"missions?spotlight", _key(title)) is not None
 
 
 def _row_score(point_id: str, title: str) -> int:
@@ -159,8 +159,8 @@ def assign_persons(rows: List[dict], persons: List[dict]) -> Tuple[List[dict], L
     Each point goes to at most one row and the order is kept (best overall
     match of the titles), so a template without e.g. "Gebet im Knien" does
     not shift everything after it. Song slots and the Mission Spotlight row are
-    left out. Returns the rows (copies; "_point" marks the row a point found,
-    "_named" one that got a name from it) and the points with a name that found no row.
+    left out. Returns the rows (copies; "_point" marks the row a point found)
+    and the points with a name that found no row.
     """
     candidates = [i for i, row in enumerate(rows)
                   if not row.get("song_slot") and not is_spotlight_title(row["title"])]
@@ -179,7 +179,6 @@ def assign_persons(rows: List[dict], persons: List[dict]) -> Tuple[List[dict], L
             result[candidates[b]]["_point"] = persons[a]["id"]  # which row the point found (also without a name)
             if persons[a]["person"]:
                 result[candidates[b]]["person"] = persons[a]["person"]
-                result[candidates[b]]["_named"] = True
             a, b = a + 1, b + 1
         elif b < m and best[a][b] == best[a][b + 1]:
             b += 1
