@@ -625,6 +625,24 @@
   </form>
 </dialog>
 
+<dialog id="camera-preset-dialog" class="update-dialog companion-create-dialog camera-preset-dialog" aria-labelledby="camera-preset-title">
+  <form id="camera-preset-form" class="update-body" novalidate>
+    <h3 id="camera-preset-title">Aktuelle Position speichern</h3>
+    <div class="pf-grid camera-preset-fields">
+      <label class="pf-field"><span>Nummer (1–16)</span>
+        <input id="camera-preset-number" class="pf-input" type="number" inputmode="numeric" min="1" max="16" step="1" required /></label>
+      <label class="pf-field"><span>Name</span>
+        <input id="camera-preset-name" class="pf-input" type="text" maxlength="58" autocomplete="off" required /></label>
+    </div>
+    <div id="camera-preset-hint" class="pf-hint"></div>
+    <div id="camera-preset-error" class="update-lcd err" hidden></div>
+    <div class="update-actions">
+      <button id="camera-preset-cancel" type="button">Abbrechen</button>
+      <button id="camera-preset-save" type="submit" class="primary">Speichern</button>
+    </div>
+  </form>
+</dialog>
+
 <div id="shortcut-menu" class="tile-menu" role="menu" hidden>
   <button type="button" role="menuitem" data-menu-action="edit"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/></svg>Bearbeiten</button>
   <button type="button" role="menuitem" data-menu-action="duplicate"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/></svg>Duplizieren</button>

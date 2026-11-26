@@ -354,6 +354,23 @@ body:not(.stage-on) .page > .panel { grid-column: 1 / -1; min-width: 0; }
 .camera-controls-label { font-size: 10px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; color: var(--label); }
 .camera-presets { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 6px; }
 button.camera-preset { min-height: 44px; padding: 6px 8px; font-size: 12px; line-height: 1.2; overflow-wrap: anywhere; }
+button.camera-preset .camera-preset-num { font-weight: 800; font-variant-numeric: tabular-nums; }
+/* "Presets" with "Nr. [ ] Anfahren" at its right end: any preset number */
+.camera-presets-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 44px; }
+.camera-recall { display: flex; align-items: stretch; gap: 6px; margin: 0; }
+.camera-recall-number {
+  width: 64px; min-height: 44px; padding: 0 10px; border: 1px solid #000; border-radius: 5px;
+  background: #0b1418; color: var(--lcd-text); font: 700 15px/1 var(--mono); text-align: center;
+  box-shadow: inset 0 2px 4px rgba(0,0,0,.8), 0 1px 0 rgba(255,255,255,.05);
+}
+.camera-recall-number::placeholder { color: var(--lcd-dim); font-weight: 600; }
+.camera-recall-number:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.camera-recall-number[aria-invalid="true"] { outline: 2px solid var(--red); outline-offset: 1px; }
+button.camera-recall-go { min-height: 44px; padding: 0 14px; font-size: 12px; }
+.camera-preset-dialog .pf-input { min-height: 44px; }
+.camera-preset-dialog .update-actions button { min-height: 44px; }
+.pf-grid.camera-preset-fields { grid-template-columns: 120px minmax(0, 1fr); }
+.pf-hint.warn { color: var(--amber); }
 .camera-ptz {
   display: grid; gap: 6px;
   grid-template-columns: repeat(3, minmax(44px, 1fr)) minmax(76px, 1.3fr);

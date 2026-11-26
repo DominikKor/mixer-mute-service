@@ -22,7 +22,7 @@ from fastapi import Request
 
 from . import display_agent
 from .camera_program import CAMERAS, DEFAULT_WAIT_SECONDS
-from .companion_buttons import CAMERA_BUTTON_IDS, CATALOG_ONLY_IDS, COMPANION_BUTTONS_BY_ID, resolve_alias
+from .companion_buttons import CATALOG_ONLY_IDS, COMPANION_BUTTONS_BY_ID, resolve_alias
 from .display_agent import AgentError
 from .file_actions import is_file_action, not_found_reason, run_file_action, runs_from_network_share
 from .mission_spotlight import profile_path
@@ -55,8 +55,9 @@ async def pressable_button(request: Request, button_id: str) -> Optional[dict]:
     # An old duplicate OBS key ID (catalog v10) is its native key: it runs
     # while that key is in Steuerung (the migration put it there).
     button = await store.get_button(resolve_alias(button_id))
-    if button is None and button_id in CAMERA_BUTTON_IDS:
-        button = next(item for item in await store.camera_buttons() if item["id"] == button_id)
+    if button is None and button_id.startswith("native-cam"):
+        # A catalog camera key or a preset saved in the camera section.
+        button = next((item for item in await store.camera_buttons() if item["id"] == button_id), None)
     if button is None and button_id in CATALOG_ONLY_IDS:
         button = deepcopy(COMPANION_BUTTONS_BY_ID[button_id])
     return button
