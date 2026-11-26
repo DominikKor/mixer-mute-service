@@ -19,7 +19,7 @@ os.environ["MIXER_CONFIG"] = str(_tmp / "config.yaml")
 from fastapi.testclient import TestClient  # noqa: E402
 
 from app.main import app  # noqa: E402
-from app.program_templates import clean_line, match_lines  # noqa: E402
+from app.program_templates import _is_preferred_book, clean_line, match_lines  # noqa: E402
 
 PASS = 0
 FAIL = 0
@@ -64,11 +64,75 @@ def matching():
     check("empty library: nothing matched", match_lines(["Dir sei Ehre"], {})[0]["song_id"] is None)
 
 
+def ghs_matching():
+    print("== several songbooks: GHS is the default ==")
+    lib = {
+        "a_ghs.foil": song("Lied im GHS", [("Glauben Hoffen Singen", "200")]),
+        "a_wlg.foil": song("Lied im WLG", [("Wir loben Gott", "200")]),
+        "a_lq.foil": song("Lied im LQ", [("Leben aus der Quelle", "200")]),
+        "b_ghs1.foil": song("Zwei im GHS A", [("Glauben Hoffen Singen", "300")]),
+        "b_ghs2.foil": song("Zwei im GHS B", [("GHS", "300")]),
+        "b_wlg.foil": song("Drei im WLG", [("Wir loben Gott", "300")]),
+        "c_wlg.foil": song("Nur WLG", [("Wir loben Gott", "400")]),
+        "c_lq.foil": song("Nur LQ", [("Leben aus der Quelle", "400")]),
+        "d_ghs.foil": song("Einzig GHS", [("Glauben Hoffen Singen", "500")]),
+        # GHS number differs: "200" is not its GHS number
+        "e.foil": song("Anderes Buch", [("Glauben Hoffen Singen", "7"), ("Feiert Jesus 1", "400")]),
+    }
+    m = {r["line"]: r for r in match_lines(["200", "300", "400", "500", "GHS 200", "Wir loben Gott 200"], lib)}
+    check("ambiguous + one GHS candidate -> GHS preselected",
+          m["200"]["song_id"] == "a_ghs.foil" and m["200"]["preferred_book"] == "GHS"
+          and m["200"]["title"] == "Lied im GHS")
+    check("all candidates stay listed so another can be chosen",
+          {c["song_id"] for c in m["200"]["candidates"]} == {"a_ghs.foil", "a_wlg.foil", "a_lq.foil"})
+    check("several GHS candidates -> still ambiguous",
+          m["300"]["song_id"] is None and m["300"]["preferred_book"] is None and len(m["300"]["candidates"]) == 3)
+    check("no GHS candidate -> still ambiguous",
+          m["400"]["song_id"] is None and m["400"]["preferred_book"] is None and len(m["400"]["candidates"]) == 3)
+    check("unique number unchanged (not marked)", m["500"]["song_id"] == "d_ghs.foil" and m["500"]["preferred_book"] is None)
+    check("book named in the line is not a default", m["GHS 200"]["song_id"] == "a_ghs.foil"
+          and m["GHS 200"]["preferred_book"] is None)
+    check("another book named in the line wins", m["Wir loben Gott 200"]["song_id"] == "a_wlg.foil"
+          and m["Wir loben Gott 200"]["preferred_book"] is None)
+    for name, expected in [("GHS", True), ("GHS 2", True), ("ghs (2015)", True), ("Glauben Hoffen Singen", True),
+                           ("Glauben Hoffen Singen 2", True), ("GHSX", False), ("Das GHS", False),
+                           ("Gemeinde Heil Segen", False), ("Wir loben Gott", False), ("", False)]:
+        check(f"book name {name!r} {'is' if expected else 'is not'} the preferred book",
+              _is_preferred_book(name) is expected)
+    many = {f"b{i}.foil": song(f"Lied {i}", [("Wir loben Gott", "600")]) for i in range(9)}
+    many["z_ghs.foil"] = song("Zuletzt im GHS", [("GHS 2", "600")])
+    r = match_lines(["600"], many)[0]
+    check("GHS candidate found beyond the first five, and offered among the candidates",
+          r["song_id"] == "z_ghs.foil" and len(r["candidates"]) == 5
+          and "z_ghs.foil" in [c["song_id"] for c in r["candidates"]])
+    t = match_lines(["Großer Gott"], LIBRARY)[0]
+    check("title ties are not touched", t["song_id"] is None and t["preferred_book"] is None)
+    return lib
+
+
+def ghs_apply(client, lib):
+    print("== GHS default is used when the program is created ==")
+    app.state.songs.songs = dict(lib)
+    for item in client.get("/program/items").json():
+        client.delete(f"/program/items/{item['id']}")
+    ids = [client.post("/program/items", json={"time": "10:00", "title": "Lied", "person": "", "group": ""}).json()["item"]["id"]]
+    tpl = client.post("/program/templates", json={"name": "GHS-Test", "slots": ids}).json()["template"]
+    matches = client.post("/songs/match", json={"lines": ["200", "300"]}).json()["matches"]
+    # what the page sends: the match as it is, nothing picked by hand
+    songs = [{"song_id": x["song_id"], "text": x["line"]} for x in matches]
+    r = client.post(f"/program/templates/{tpl['id']}/apply", json={"songs": songs})
+    items = r.json()["items"]
+    check("created without further interaction", r.status_code == 200 and items[-2]["song"] == "a_ghs.foil")
+    check("still ambiguous number comes as text", items[-1]["song"] is None and "300" in items[-1]["title"])
+    client.delete(f"/program/templates/{tpl['id']}")
+    app.state.songs.songs = dict(LIBRARY)
+
+
 def row(time, title, **extra):
     return {"time": time, "title": title, "person": "", "group": "", **extra}
 
 
-def api():
+def api(ghs_lib):
     with TestClient(app) as client:
         app.state.songs.songs = dict(LIBRARY)
         print("== save ==")
@@ -124,14 +188,14 @@ def api():
                   ("Ende", None),
               ])
         check("extra rows copy the slot", items[3]["time"] == "10:10" and items[3]["lyrics_description"] == "")
-        check("program replaced, start times reset",
-              len(client.get("/program/items").json()) == 8 and all(i["last_played_at"] is None for i in items)
-              and client.get("/program/status").json()["next_id"] == items[0]["id"])
+        check("program updated in place: IDs and play state kept",
+              len(client.get("/program/items").json()) == 8 and [i["id"] for i in items][:2] == ids[:2]
+              and items[0]["last_played_at"] is not None and client.get("/program/status").json()["current_id"] == ids[0])
         r = apply([{"song_id": "Dir sei Ehre.foil"}])
         check("fewer songs: other slots stay empty",
               [i["song"] for i in r.json()["items"]][1:3] == ["Dir sei Ehre.foil", None])
         check("unknown song refused, program kept",
-              apply([{"song_id": "Fehlt.foil"}]).status_code == 404 and len(client.get("/program/items").json()) == 6)
+              apply([{"song_id": "Fehlt.foil"}]).status_code == 404 and len(client.get("/program/items").json()) == 8)
         check("unknown template", client.post("/program/templates/nope/apply", json={"songs": []}).status_code == 404)
 
         print("== template without slots ==")
@@ -142,6 +206,8 @@ def api():
         tail = [(i["time"], i["title"], i["song"]) for i in r.json()["items"]][-2:]
         check("songs added at the end, named after the song", tail == [
             ("11:05", "Dir sei Ehre", "Dir sei Ehre.foil"), ("11:05", "Fehlt noch", None)])
+
+        ghs_apply(client, ghs_lib)
 
         print("== match endpoint, delete ==")
         r = client.post("/songs/match", json={"lines": ["Dir sei Ehre", "xyz"]})
@@ -157,7 +223,8 @@ def api():
 
 def main():
     matching()
-    api()
+    lib = ghs_matching()
+    api(lib)
     print(f"\n{PASS} passed, {FAIL} failed")
     raise SystemExit(1 if FAIL else 0)
 

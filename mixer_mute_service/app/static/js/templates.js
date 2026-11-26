@@ -7,7 +7,7 @@
 // The songs come as text, one per line (or one by one from the library). The
 // service matches each line (POST /songs/match); a line it cannot place gets
 // a "Wählen" key. The preview is the service's own result (dry run), so what
-// is shown is exactly what "Programm ersetzen" writes.
+// is shown is exactly what applying writes.
 
 const TEMPLATES = { list: [], selected: null, matches: [], picked: new Map(), seq: 0, timer: null, persons: [] };
 const SLOT_TITLE_RE = /lied|lobpreis|song|worship|anbetung/i;
@@ -107,7 +107,11 @@ function renderTemplateMatches() {
   TEMPLATES.matches.forEach((match, i) => {
     const song = songs[i].song_id ? songById(songs[i].song_id) : null;
     const li = document.createElement("li");
-    li.className = "tp-match" + (song ? "" : " missing");
+    // The number was in several songbooks: the preferred one is taken (calm amber, badge);
+    // a line that still needs a choice is the strong orange one.
+    const defaulted = !!song && !!match.preferred_book && !TEMPLATES.picked.has(match.line);
+    const undecided = !song && match.candidates.length > 0;
+    li.className = "tp-match" + (song ? "" : " missing") + (defaulted ? " ambiguous" : "") + (undecided ? " choose" : "");
     const no = document.createElement("span");
     no.className = "tp-no";
     no.textContent = String(i + 1);
@@ -115,11 +119,17 @@ function renderTemplateMatches() {
     texts.className = "tp-texts";
     const line = document.createElement("span");
     line.className = "tp-line";
-    line.textContent = match.line;
+    line.textContent = defaulted ? `${match.line} · Mehrdeutig – ${match.preferred_book} gewählt` : match.line;
     const found = document.createElement("span");
     found.className = "tp-song";
     found.textContent = song ? `♪ ${song.title}`
       : match.candidates.length ? "Nicht eindeutig – bitte wählen" : "Nicht gefunden – kommt als Text in den Titel";
+    if (defaulted) {
+      const badge = document.createElement("span");
+      badge.className = "tp-badge";
+      badge.textContent = match.preferred_book;
+      found.prepend(badge);
+    }
     texts.append(found, line);
     const choose = document.createElement("button");
     choose.type = "button";
@@ -171,7 +181,7 @@ async function updateTemplatePreview() {
   const daySongs = new Set(songs.map(s => s.song_id).filter(Boolean));
   for (const row of result.data.rows) {
     const li = document.createElement("li");
-    if (row.song && daySongs.has(row.song)) li.className = "song";
+    li.className = [row.song && daySongs.has(row.song) ? "song" : "", row.hidden ? "off" : ""].filter(Boolean).join(" ");
     const time = document.createElement("span");
     time.className = "tp-time";
     time.textContent = row.time;
@@ -190,15 +200,18 @@ async function updateTemplatePreview() {
     li.append(time, title, song);
     list.appendChild(li);
   }
-  const extra = Math.max(0, songs.length - template.slot_count);
-  const empty = Math.max(0, template.slot_count - songs.length);
+  const slotCount = Number.isInteger(result.data.slots) ? result.data.slots : template.slot_count;  // the program's song rows
+  const extra = Math.max(0, songs.length - slotCount);
+  const empty = Math.max(0, slotCount - songs.length);
   const missing = songs.filter(s => !s.song_id).length;
   $("tp-hint").textContent = [
     extra ? `${extra} ${extra === 1 ? "Lied wird" : "Lieder werden"} nach dem letzten Liedplatz angehängt.` : "",
     empty ? `${empty} ${empty === 1 ? "Liedplatz bleibt" : "Liedplätze bleiben"} ohne Lied.` : "",
     missing ? `${missing} ohne Lied aus der Bibliothek (Text steht im Titel).` : "",
     unassigned.length ? `Ohne passenden Programmpunkt: ${unassigned.map(p => `${p.title} (${p.person})`).join(", ")}.` : "",
-    PROGRAM_ITEMS.length ? `Ersetzt das aktuelle Programm (${PROGRAM_ITEMS.length} Punkte).` : "",
+    result.data.mission === "spotlight" ? "Mission Spotlight: die Spotlight-Zeile wird gezeigt, der Missionsbericht ausgeblendet." : "",
+    result.data.mission === "normal" ? "Missionsbericht: mit Namen gezeigt, Mission Spotlight ausgeblendet." : "",
+    PROGRAM_ITEMS.length ? `Das Programm (${PROGRAM_ITEMS.length} Punkte) bleibt, wie es ist: nur Personen und Lieder werden eingetragen, keine Zeile wird gelöscht oder umbenannt.` : "",
   ].filter(Boolean).join(" ");
 }
 
@@ -338,7 +351,7 @@ $("tp-apply-btn").addEventListener("click", async event => {
   if (!template) return;
   // The same question as every other replace or delete: at the key, "Ersetzen" to go on.
   if (PROGRAM_ITEMS.length && !(await confirmDelete(button,
-    `Das aktuelle Programm (${PROGRAM_ITEMS.length} Punkte) durch die Vorlage „${template.name}“ ersetzen?`, "Ersetzen"))) return;
+    `Den Ablauf (Personen und Lieder) ins aktuelle Programm (${PROGRAM_ITEMS.length} Punkte) übernehmen? Zeilen, Reihenfolge und alle Einstellungen bleiben; nichts wird gelöscht.`, "Übernehmen"))) return;
   button.disabled = true;
   try {
     const result = await api("POST", `/program/templates/${encodeURIComponent(template.id)}/apply`, { songs: templateSongs(), persons: TEMPLATES.persons });
