@@ -288,7 +288,9 @@ class PresetApiTests(unittest.TestCase):
         scenes = self.client.get("/lights/scenes").json()["scenes"]
         self.assertEqual([(s["id"], s["name"]) for s in scenes], [(a["id"], "A neu"), (b["id"], "B")])
         self.assertEqual(scenes[0]["stage"]["fixtures"], {"left": {"on": True, "level": 33, "warm": 255, "cold": 50}})
-        self.assertEqual(self.client.post("/lights/scenes", json={"id": a["id"], "name": "b", "lights": {"zones": ["left"]}}).status_code, 409)
+        taken = self.client.post("/lights/scenes", json={"id": a["id"], "name": " b ", "lights": {"zones": ["left"]}})
+        self.assertEqual(taken.status_code, 409)
+        self.assertIn("eindeutig", taken.json()["reason"])  # a clear German reason for the page
         self.assertEqual(self.client.post("/lights/scenes", json={"id": "nope", "name": "Z", "lights": {"zones": ["left"]}}).status_code, 404)
 
     def test_invalid_stage_values_are_400_and_send_nothing(self):

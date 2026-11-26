@@ -51,6 +51,11 @@ class SceneError(ValueError):
     pass
 
 
+def _name_key(name: str) -> str:
+    """A scene name as it is compared: spaces collapsed, any case (program files name scenes)."""
+    return " ".join(name.split()).casefold()
+
+
 def _level(value) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= 255
 
@@ -144,6 +149,10 @@ class LightSceneStore:
                 log.warning("Skipping invalid light scene in %s: %s", path, exc)
                 continue
             legacy = legacy or "fixtures" not in ((entry.get("stage") or {}) if isinstance(entry, dict) else {})
+        duplicates = self._duplicate_names()
+        if duplicates:  # kept working (rows refer by ID), but a program file cannot name them
+            log.warning("Light scene names that are not unique (program files refer to scenes by name): %s",
+                        "; ".join(f"{name} ×{count}" for name, count in duplicates))
         if legacy:
             # Saved before the lights were stored one by one: the page showed
             # the scenes by name, so that becomes their order.
@@ -156,6 +165,19 @@ class LightSceneStore:
 
     def _persist(self) -> None:
         write_json_atomic(self._path, self._scenes, ensure_ascii=False)
+
+    def _duplicate_names(self) -> List[Tuple[str, int]]:
+        """[(name, how many scenes have it)]: names are unique when saved, but an older file may not be."""
+        counts: dict = {}
+        for scene in self._scenes:
+            key = _name_key(scene["name"])
+            first, count = counts.get(key, (scene["name"], 0))
+            counts[key] = (first, count + 1)
+        return [(first, count) for first, count in counts.values() if count > 1]
+
+    async def duplicate_names(self) -> List[Tuple[str, int]]:
+        async with self._lock:
+            return self._duplicate_names()
 
     async def list(self) -> List[dict]:
         async with self._lock:
@@ -176,14 +198,14 @@ class LightSceneStore:
                 target = next((s for s in self._scenes if s["id"] == scene_id), None)
                 if target is None:
                     raise LookupError(scene_id)
-                if any(s is not target and s["name"].casefold() == scene["name"].casefold() for s in self._scenes):
+                if any(s is not target and _name_key(s["name"]) == _name_key(scene["name"]) for s in self._scenes):
                     raise KeyError(scene["name"])
                 scene["id"] = scene_id
                 target.clear()
                 target.update(scene)
                 self._persist()
                 return deepcopy(scene)
-            existing = next((s for s in self._scenes if s["name"].casefold() == scene["name"].casefold()), None)
+            existing = next((s for s in self._scenes if _name_key(s["name"]) == _name_key(scene["name"])), None)
             if existing and not replace:
                 raise KeyError(scene["name"])
             if existing:
@@ -203,7 +225,7 @@ class LightSceneStore:
             if scene is None:
                 raise KeyError(scene_id)
             new = _clean_scene({**scene, "name": name})["name"]
-            if any(s is not scene and s["name"].casefold() == new.casefold() for s in self._scenes):
+            if any(s is not scene and _name_key(s["name"]) == _name_key(new) for s in self._scenes):
                 raise FileExistsError(new)
             scene["name"] = new
             self._persist()

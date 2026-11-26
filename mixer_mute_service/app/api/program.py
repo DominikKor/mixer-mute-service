@@ -76,15 +76,19 @@ async def list_program_items(request: Request):
 async def export_program(request: Request):
     items = await request.app.state.program_items.list()
     names = await Names.load(request)
+    warnings: list = []  # references that cannot be written as a (unique) name
     payload = {
         "format": _PROGRAM_FILE_FORMAT,
         "version": _PROGRAM_FILE_VERSION,
-        # The IDs stay; a readable name is put next to each (app/program_file.py).
+        # Opaque IDs are written as names, readable ones stay (app/program_file.py).
         "items": [
-            await annotate({**{field: item.get(field) for field in _PROGRAM_FILE_FIELDS}, "hidden": item["hidden"]}, names)
+            await annotate({**{field: item.get(field) for field in _PROGRAM_FILE_FIELDS}, "hidden": item["hidden"]},
+                           names, warnings)
             for item in items
         ],
     }
+    if warnings:
+        payload["warnings"] = warnings
     return Response(
         content=json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
         media_type="application/json",
