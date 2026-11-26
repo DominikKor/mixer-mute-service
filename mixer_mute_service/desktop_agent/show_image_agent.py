@@ -17,6 +17,7 @@ import subprocess
 import tempfile
 import threading
 import time
+import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from logging.handlers import RotatingFileHandler
 from pathlib import Path, PureWindowsPath
@@ -53,10 +54,13 @@ RESTORED_ENV: list = []
 STARTED_AT = time.time()
 
 
-def _monitors() -> list[tuple[tuple[int, int, int, int], tuple[int, int, int, int], str]]:
+def _monitors() -> list[tuple[tuple[int, int, int, int], tuple[int, int, int, int], str, int]]:
     """All monitors as (full bounds, work area, device name such as
-    \\\\.\\DISPLAY2), sorted left to right, top to bottom: "monitor N" of a
-    profile is the N-th of them (images, windows and videos alike)."""
+    \\\\.\\DISPLAY2), position in Windows' own order), sorted left to right,
+    top to bottom: "monitor N" of a profile is the N-th of them (images,
+    windows and videos alike). Windows' own order is what mpv numbers its
+    screens by (--screen=N on Windows: the N-th EnumDisplayMonitors entry,
+    from 0; its --screen-name is not implemented there)."""
     if os.name != "nt":
         raise RuntimeError("This display agent is intended for Windows")
 
@@ -70,7 +74,7 @@ def _monitors() -> list[tuple[tuple[int, int, int, int], tuple[int, int, int, in
 
     user32 = ctypes.windll.user32
     user32.GetMonitorInfoW.argtypes = [wintypes.HMONITOR, ctypes.POINTER(MONITORINFOEXW)]
-    monitors: list[tuple[tuple[int, int, int, int], tuple[int, int, int, int], str]] = []
+    monitors: list[tuple[tuple[int, int, int, int], tuple[int, int, int, int], str, int]] = []
 
     @ctypes.WINFUNCTYPE(
         ctypes.c_int,
@@ -83,17 +87,23 @@ def _monitors() -> list[tuple[tuple[int, int, int, int], tuple[int, int, int, in
         bounds = rect.contents
         full = (bounds.left, bounds.top, bounds.right, bounds.bottom)
         info = MONITORINFOEXW(cbSize=ctypes.sizeof(MONITORINFOEXW))
+        raw = len(monitors)  # this call's place in Windows' order
         if user32.GetMonitorInfoW(monitor, ctypes.byref(info)):
             work = info.rcWork
-            monitors.append((full, (work.left, work.top, work.right, work.bottom), info.szDevice))
+            monitors.append((full, (work.left, work.top, work.right, work.bottom), info.szDevice, raw))
         else:
-            monitors.append((full, full, ""))
+            monitors.append((full, full, "", raw))
         return 1
 
     if not user32.EnumDisplayMonitors(None, None, callback, 0):
         raise OSError("Could not enumerate displays")
-    monitors.sort(key=lambda entry: (entry[0][0], entry[0][1]))
-    return monitors
+    return _order_monitors(monitors)
+
+
+def _order_monitors(monitors: list) -> list:
+    """Windows' order (each entry keeps its place in it) to ours: left to
+    right, top to bottom."""
+    return sorted(monitors, key=lambda entry: (entry[0][0], entry[0][1]))
 
 
 def _monitor_areas(display_number: int) -> tuple[tuple[int, int, int, int], tuple[int, int, int, int]]:
@@ -110,6 +120,16 @@ def monitor_device_name(display_number: int) -> str | None:
     if display_number < 1 or display_number > len(monitors):
         raise RuntimeError(f"Display {display_number} not found; detected {len(monitors)}")
     return monitors[display_number - 1][2] or None
+
+
+def mpv_screen(display_number: int) -> tuple[int, str | None]:
+    """mpv's --screen number of "monitor N" (its place in Windows' order,
+    from 0) and its device name (for the log)."""
+    monitors = _monitors()
+    if display_number < 1 or display_number > len(monitors):
+        raise RuntimeError(f"Display {display_number} not found; detected {len(monitors)}")
+    entry = monitors[display_number - 1]
+    return entry[3], entry[2] or None
 
 
 def monitor_bounds(display_number: int) -> tuple[int, int, int, int]:
@@ -428,8 +448,10 @@ def _launch_profile(profile: dict) -> None:
     finally:
         if profile["kind"] == "file":
             with _opened_lock:
-                _launching.pop(profile["id"], None)
-                _cancelled.discard(profile["id"])
+                # Only this launch's state: a newer start keeps its own.
+                if _launching.get(profile["id"], (0.0, None))[1] == profile.get("launch_token"):
+                    _launching.pop(profile["id"], None)
+                    _cancelled.discard(profile["id"])
 
 
 # -- videos in mpv -----------------------------------------------------------------
@@ -466,27 +488,22 @@ def _video_player(profile: dict, path: Path) -> str | None:
     return None
 
 
-def _video_command(mpv: str, path: Path, profile: dict, device: str | None = None) -> list:
-    """mpv for a video on the profile's monitor; it holds the last frame at
-    the end (keep-open) until POST /close or the next start ends it."""
+def _video_command(mpv: str, path: Path, profile: dict, screen: int | None = None) -> list:
+    """mpv for a video on the profile's monitor (screen: mpv's number of it,
+    mpv_screen()); it holds the last frame at the end (keep-open) until
+    POST /close or the next start ends it."""
     command = [
         mpv, "--no-config", "--force-window=yes", "--keep-open=yes", "--no-terminal", "--hwdec=auto-safe",
         f"--title={profile['title']}", f"--log-file={agent_log_directory() / 'mpv-video.log'}",
     ]
-    if device:
-        command += [f"--screen-name={device}"]
+    if screen is not None:
+        command += [f"--screen={screen}"]
         if profile["fullscreen"]:
-            command += ["--fs", f"--fs-screen-name={device}"]
+            command += [f"--fs-screen={screen}", "--fs"]
         else:
             command += ["--autofit=50%", f"--geometry={_MPV_POSITIONS.get(profile['position'], '50%:50%')}"]
     else:
-        # No device name: mpv's window starts on the monitor's rectangle (and
-        # goes full screen where it is).
-        try:
-            left, top, right, bottom = monitor_bounds(profile["monitor"])
-            command += [f"--geometry={right - left}x{bottom - top}+{left}+{top}"]
-        except Exception:  # noqa: BLE001 - mpv opens where it likes then
-            logger.exception("Monitor %s for the video not found", profile["monitor"])
+        # The monitor is not there: mpv's window starts where it likes.
         if profile["fullscreen"]:
             command += ["--fs"]
     return command + ["--", str(path)]
@@ -497,18 +514,26 @@ def _launch_video(mpv: str, path: Path, profile: dict, before: set) -> None:
     first (a start by hand, a double press: never two players)."""
     profile_id = profile["id"]
     _close_remembered(profile_id)
+    with _opened_lock:
+        earlier = _video_processes.pop(profile_id, None)
+    if earlier is not None and earlier.poll() is None:
+        # Still starting (its window not found yet): ended directly.
+        earlier.terminate()
+        logger.info("Video profile=%s: the earlier mpv pid=%s ended", profile_id, earlier.pid)
     try:
-        device = monitor_device_name(profile["monitor"])
-    except Exception:  # noqa: BLE001 - the rectangle then (_video_command)
-        logger.exception("Monitor %s: no device name", profile["monitor"])
-        device = None
-    command = _video_command(mpv, path, profile, device)
-    logger.info("Video %s in mpv on monitor %s (%s): %s", path, profile["monitor"], device or "no device name",
-                subprocess.list2cmdline(command))
+        screen, device = mpv_screen(profile["monitor"])
+    except Exception:  # noqa: BLE001 - mpv picks a screen then
+        logger.exception("Monitor %s for the video not found", profile["monitor"])
+        screen, device = None, None
+    command = _video_command(mpv, path, profile, screen)
+    logger.info("Video %s in mpv on monitor %s (mpv screen %s, %s): %s", path, profile["monitor"], screen,
+                device or "no device name", subprocess.list2cmdline(command))
     process = subprocess.Popen(
         command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
     )
+    with _opened_lock:
+        _video_processes[profile_id] = process
     _remember_video_window(profile_id, process.pid, before)
 
 
@@ -547,7 +572,11 @@ _shown_image_stamp: str | None = None
 _opened_stamps: dict[str, str] = {}  # profile id -> stamp of its latest open (file kind)
 # A file profile being opened (until its launch is done): a second program
 # row in that time keeps it instead of opening it twice.
-_launching: dict[str, float] = {}  # profile id -> until (time.monotonic())
+# profile id -> (until (time.monotonic()), the launch's token): only that
+# launch ends it, an older one finishing late leaves a newer one alone.
+_launching: dict[str, tuple[float, str]] = {}
+# The mpv each video profile runs in (a new start ends the earlier one).
+_video_processes: dict[str, subprocess.Popen] = {}
 # Closed (POST /close) while still being opened: its window is closed as
 # soon as it appears.
 _cancelled: set[str] = set()
@@ -558,13 +587,21 @@ def _valid_stamp(value) -> bool:
     return isinstance(value, str) and 0 < len(value) <= 64 and value.replace("-", "").replace("_", "").isalnum()
 
 
+def _launch_pending(profile_id: str) -> bool:
+    """Being opened (call with _opened_lock held)."""
+    return _launching.get(profile_id, (0.0, ""))[0] > time.monotonic()
+
+
 def _keep_open(profile_id: str, stamp: str | None, window_pid=None) -> bool:
     """keep_if_open: whether the profile's window is still there (or still
-    being opened); then it is kept and takes the new start's stamp. One
-    section under the lock, so a close cannot slip in between."""
+    being opened, unless a close came meanwhile); then it is kept and takes
+    the new start's stamp. One section under the lock, so a close cannot
+    slip in between."""
     window_pid = window_pid or _window_process_id
     with _opened_lock:
-        opening = _launching.get(profile_id, 0.0) > time.monotonic()
+        if profile_id in _cancelled:
+            return False
+        opening = _launch_pending(profile_id)
         if not opening and not any(window_pid(h) == pid for h, pid in _opened_windows.get(profile_id, ())):
             return False
         if stamp is not None:
@@ -623,7 +660,7 @@ def _close_profile_windows(profile_id: str, window_pid=None, post_close=None, st
             logger.info("Close profile=%s ignored: opened again since", profile_id)
             return 0
         _opened_stamps.pop(profile_id, None)
-        if _launching.get(profile_id, 0.0) > time.monotonic():
+        if _launch_pending(profile_id):
             _cancelled.add(profile_id)
             logger.info("Close profile=%s: still opening, closed once its window is there", profile_id)
     return _close_remembered(profile_id, window_pid, post_close)
@@ -2755,10 +2792,12 @@ class DisplayHandler(BaseHTTPRequestHandler):
                     _opened_stamps[body["id"]] = body["stamp"]
                 else:
                     _opened_stamps.pop(body["id"], None)
-                _launching[body["id"]] = time.monotonic() + LAUNCH_PENDING_SECONDS
+                launch_token = uuid.uuid4().hex
+                _launching[body["id"]] = (time.monotonic() + LAUNCH_PENDING_SECONDS, launch_token)
                 _cancelled.discard(body["id"])
         # Profiles open the file the path resolved to ("*" filled in).
-        requests.put({**body, "path": str(target)})
+        requests.put({**body, "path": str(target),
+                      **({"launch_token": launch_token} if body["kind"] == "file" else {})})
         result = json.dumps({"ok": True, "profile": body["id"], "display": body["monitor"]}).encode()
         self.send_response(202)
         self.send_header("Content-Type", "application/json")
