@@ -9,12 +9,15 @@ const LIGHTS = {
   sending: {},          // per slider: {busy, again, released} of its one request in flight
   busy: new Set(),      // keys with a request in flight
   pick: new Set(),      // new scene: chosen lights ("zone:left", "color", "circuit:light-tech")
+  circuitWant: {},      // room light: state the user chose, not yet confirmed (shown at once)
+  circuitSent: {},      // room light: state in flight per circuit
+  circuitSeq: 0,        // counts switches: a poll begun before one keeps the confirmed states
 };
 const LIGHT_SEND_MS = 60;   // while dragging, at most one send per this time
 const LIGHT_POLL_MS = 3000;
 
-// Fades run while the request is open (up to 10 s), the Shellys may take
-// 2.5 s each: a light request waits longer than api()'s default.
+// Fades run while the request is open (up to 10 s), a Shelly may take
+// 2.5 s: a light request waits longer than api()'s default.
 function lightTimeout() {
   return ((LIGHTS.data && LIGHTS.data.stage.fade_ms) || 1000) + 15000;
 }
@@ -246,16 +249,58 @@ function renderLightCircuits(circuits) {
     pencil.title = `${circuit.label} umbenennen`;
     pencil.setAttribute("aria-label", pencil.title);
     key.querySelector(".light-circuit-name").textContent = circuit.label;
-    const state = circuit.on === true ? "on" : circuit.on === false ? "off" : "unknown";
+    // A tapped key shows its new state at once; "pending" until confirmed.
+    const pending = circuit.id in LIGHTS.circuitWant;
+    const on = pending ? LIGHTS.circuitWant[circuit.id] : circuit.on;
+    const state = on === true ? "on" : on === false ? "off" : "unknown";
     key.dataset.state = state;
+    key.classList.toggle("pending", pending);
     key.querySelector(".light-circuit-state").textContent = { on: "An", off: "Aus", unknown: "?" }[state];
-    key.setAttribute("aria-pressed", String(circuit.on === true));
+    key.setAttribute("aria-pressed", String(on === true));
     key.title = state === "unknown" ? `${circuit.label}: antwortet nicht – antippen schaltet ein` : `${circuit.label} ${state === "on" ? "ausschalten" : "einschalten"}`;
   }
 }
 
-async function switchRoomLight(states, button) {
-  await lightRequest(button, "POST", "/lights/circuits", { states });
+// Room light: the keys show the new state at once, the service's answer
+// confirms it (or a failure brings the real state back). One request per
+// circuit at a time; a tap meanwhile is sent after it (the last tap wins).
+function switchRoomLight(states) {
+  Object.assign(LIGHTS.circuitWant, states);
+  LIGHTS.circuitSeq++;
+  if (LIGHTS.data) renderLightCircuits(LIGHTS.data.circuits);
+  sendRoomLight();
+}
+
+async function sendRoomLight() {
+  const states = {};
+  for (const [id, on] of Object.entries(LIGHTS.circuitWant)) {
+    if (!(id in LIGHTS.circuitSent)) states[id] = on;
+  }
+  if (!Object.keys(states).length) return;
+  Object.assign(LIGHTS.circuitSent, states);
+  const result = await api("POST", "/lights/circuits", { states }, { timeout: lightTimeout() });
+  LIGHTS.circuitSeq++;
+  const confirmed = result.data.circuits || {};
+  for (const [id, on] of Object.entries(states)) {
+    delete LIGHTS.circuitSent[id];
+    if (LIGHTS.circuitWant[id] === on) delete LIGHTS.circuitWant[id];
+  }
+  if (LIGHTS.data) {
+    for (const circuit of LIGHTS.data.circuits) {
+      if (circuit.id in confirmed) circuit.on = confirmed[circuit.id];
+    }
+  }
+  if (!result.ok || result.data.ok === false) {
+    const errors = result.data.errors;
+    const names = errors && LIGHTS.data
+      ? LIGHTS.data.circuits.filter(c => c.id in errors).map(c => c.label).join(", ")
+      : "";
+    toast(`Licht: ${result.data.reason || "HTTP " + result.status}${names ? ` (${names})` : ""}`, false);
+    // No answer at all: show the real state again.
+    if (!result.data.circuits) loadLights();
+  }
+  if (LIGHTS.data) renderLightCircuits(LIGHTS.data.circuits);
+  sendRoomLight();  // taps made meanwhile
 }
 
 // ---- scenes ---------------------------------------------------------------------------
@@ -422,13 +467,21 @@ async function lightRequest(button, method, path, body) {
 }
 
 async function loadLights() {
+  const seq = LIGHTS.circuitSeq;
   const result = await api("GET", "/lights", undefined, { timeout: lightTimeout() });
   if (!result.ok || result.data.ok === false) {
     lightStatus(result.status === 503 ? "Lichtsteuerung ist auf diesem Dienst nicht verfügbar." : `Licht nicht erreichbar: ${result.data.reason || "HTTP " + result.status}`);
     return;
   }
-  const unknown = result.data.circuits.filter(c => c.on === null).length;
-  lightStatus(unknown ? `${unknown} von ${result.data.circuits.length} Raumlicht-Kreisen antworten nicht.` : "");
+  const unknown = result.data.circuits.filter(c => c.on === null).map(c => c.label);
+  lightStatus(unknown.length ? `Raumlicht antwortet nicht: ${unknown.join(", ")}.` : "");
+  // A switch began or ended meanwhile: this answer may show the old state.
+  if (seq !== LIGHTS.circuitSeq && LIGHTS.data) {
+    const known = Object.fromEntries(LIGHTS.data.circuits.map(c => [c.id, c.on]));
+    for (const circuit of result.data.circuits) {
+      if (circuit.id in known) circuit.on = known[circuit.id];
+    }
+  }
   LIGHTS.data = result.data;
   renderLights();
 }
@@ -444,15 +497,15 @@ initLightSliders($("light-faders"));
 initLightSliders($("light-settings"));
 $("light-circuits").addEventListener("click", event => {
   const key = event.target.closest("[data-light-circuit]");
-  if (key) switchRoomLight({ [key.dataset.lightCircuit]: key.dataset.state !== "on" }, key);
+  if (key) switchRoomLight({ [key.dataset.lightCircuit]: key.dataset.state !== "on" });
 });
-$("light-room-on").addEventListener("click", event => {
+$("light-room-on").addEventListener("click", () => {
   const ids = (LIGHTS.data ? LIGHTS.data.circuits : []).map(c => c.id);
-  if (ids.length) switchRoomLight(Object.fromEntries(ids.map(id => [id, true])), event.currentTarget);
+  if (ids.length) switchRoomLight(Object.fromEntries(ids.map(id => [id, true])));
 });
-$("light-room-off").addEventListener("click", event => {
+$("light-room-off").addEventListener("click", () => {
   const ids = (LIGHTS.data ? LIGHTS.data.circuits : []).map(c => c.id);
-  if (ids.length) switchRoomLight(Object.fromEntries(ids.map(id => [id, false])), event.currentTarget);
+  if (ids.length) switchRoomLight(Object.fromEntries(ids.map(id => [id, false])));
 });
 $("light-stage-on").addEventListener("click", event => {
   if (!LIGHTS.data) return;

@@ -19,6 +19,11 @@ its state every 3 s. CLAUDE.md forbids that, so this runner:
 
 Device actions are logged as "FAKE ..." lines, so a check can see what
 would have been sent.
+
+    python -m tools.run_local_test --dead-shelly light-front --shelly-delay 0.3
+
+plays a room light circuit that does not answer (every call hangs for the
+real 2.5 s timeout, then fails) and a delay for the others' answers.
 """
 
 from __future__ import annotations
@@ -29,6 +34,7 @@ import logging
 import os
 import sys
 import threading
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -78,10 +84,16 @@ class FakeDevices:
     def __init__(self, native):
         self.native = native
         self.shelly = {host: target == "light-tech" for target, host in native.SHELLY_HOSTS.items()}
+        self.dead_hosts = set()   # Shellys that never answer
+        self.shelly_delay = 0.0   # seconds every other Shelly takes to answer
         self.scene = "Cam 1"
         self.scenes = ["Willkommen (neu)", "Cam 1", "Cam 2", "PC2", "BeamerVonVorne", "Ende (neu)", "Preview Scene"]
 
     def shelly_rpc(self, host, method, params):
+        if host in self.dead_hosts:
+            time.sleep(2.5)
+            raise self.native.NativeControlError(f"Shelly {host} unreachable")
+        time.sleep(self.shelly_delay)
         if method == "Switch.GetStatus":
             return {"id": 0, "output": self.shelly.get(host, False)}
         if method == "Switch.Set":
@@ -178,6 +190,10 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=8770, help="service port (default 8770)")
     parser.add_argument("--mixer-port", type=int, default=16500, help="fake mixer port (default 16500)")
     parser.add_argument("--data", type=Path, default=ROOT / "local-test", help="data folder (default local-test/)")
+    parser.add_argument("--dead-shelly", action="append", default=[], metavar="CIRCUIT",
+                        help="room light circuit that never answers, e.g. light-front (repeatable)")
+    parser.add_argument("--shelly-delay", type=float, default=0.0, metavar="SECONDS",
+                        help="time every other fake Shelly takes to answer")
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -188,7 +204,13 @@ def main() -> None:
     os.environ["MIXER_CONFIG"] = str(config)
     os.environ.setdefault("DESKTOP_AGENT_TOKEN", "local-test")
 
-    install_fakes()
+    fakes = install_fakes()
+    import app.native_controls as native
+    unknown = [c for c in args.dead_shelly if c not in native.SHELLY_HOSTS]
+    if unknown:
+        parser.error(f"unknown circuit {unknown}; known: {', '.join(native.SHELLY_HOSTS)}")
+    fakes.dead_hosts = {native.SHELLY_HOSTS[c] for c in args.dead_shelly}
+    fakes.shelly_delay = max(0.0, args.shelly_delay)
     start_fake_mixer(args.mixer_port)
 
     import uvicorn

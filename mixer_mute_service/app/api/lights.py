@@ -4,7 +4,8 @@ GET    /lights                       stage, circuits (on/off/null), scenes
 POST   /lights/stage {zones, warm, cold, fade}   absolute values, faded
                                      unless fade is false (slider drags)
 PUT    /lights/settings {start, steps, fade_ms}
-POST   /lights/circuits {states: {target: bool}} room light on/off
+POST   /lights/circuits {states: {target: bool}} room light on/off; answers
+                                     with the circuits' states ({target: bool|null})
 GET    /lights/scenes                    only the scenes (no device asked)
 POST   /lights/scenes {name, replace, lights: {zones, color, circuits}}
                                      save the current light of the chosen
@@ -40,9 +41,9 @@ def _unavailable():
     return fail("light control is not available", 503)
 
 
-async def _view(request: Request) -> dict:
+async def _view(request: Request, fresh: bool = False) -> dict:
     native = _native(request)
-    circuits = await request.app.state.light_circuits.get(native)
+    circuits = await request.app.state.light_circuits.get(native, fresh=fresh)
     scenes = request.app.state.light_scenes
     store = request.app.state.names
     zone_names = store.get("light-zone") if store else {}
@@ -126,10 +127,13 @@ async def lights_circuits(request: Request, body: dict = Body(...)):
         errors = await native.set_circuits(states)
     except NativeControlError as exc:
         return fail(str(exc), 400)
-    request.app.state.light_circuits.update({k: v for k, v in states.items() if k not in errors})
+    cache = request.app.state.light_circuits
+    cache.update({k: v for k, v in states.items() if k not in errors})
+    # The confirmed states, so the page shows them without asking again.
+    circuits = cache.snapshot()
     if errors:
-        return fail("room light not switched everywhere", 502, errors=errors)
-    return {"ok": True}
+        return fail("room light not switched everywhere", 502, errors=errors, circuits=circuits)
+    return {"ok": True, "circuits": circuits}
 
 
 def _chosen_lights(lights):
@@ -167,8 +171,7 @@ async def lights_scene_save(request: Request, body: dict = Body(...)):
     if isinstance(chosen, str):
         return fail(chosen, 400)
     zones, color, circuits = chosen
-    request.app.state.light_circuits.forget()  # save what the room light is now
-    view = await _view(request)
+    view = await _view(request, fresh=True)  # save what the room light is now
     stage = view["stage"]
     states = {c["id"]: c["on"] for c in view["circuits"] if c["id"] in circuits}
     entry = {

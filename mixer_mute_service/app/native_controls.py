@@ -470,17 +470,19 @@ class NativeControlService:
             self._persist_state()
         return self.stage_state()
 
-    async def circuit_states(self) -> dict:
-        """On/off of every room light circuit as the Shelly reports it; None
-        where it does not answer."""
-        async def one(host: str):
-            try:
-                data = await asyncio.to_thread(_shelly_rpc, host, "Switch.GetStatus", {"id": 0})
-            except NativeControlError:
-                return None
-            return data.get("output") if isinstance(data.get("output"), bool) else None
+    async def circuit_state(self, target: str) -> Optional[bool]:
+        """On/off of one room light circuit as its Shelly reports it; None
+        when it does not answer."""
+        try:
+            data = await asyncio.to_thread(_shelly_rpc, SHELLY_HOSTS[target], "Switch.GetStatus", {"id": 0})
+        except NativeControlError:
+            return None
+        return data.get("output") if isinstance(data.get("output"), bool) else None
 
-        states = await asyncio.gather(*(one(host) for host in SHELLY_HOSTS.values()))
+    async def circuit_states(self) -> dict:
+        """On/off of every room light circuit (asked in parallel); None where
+        it does not answer."""
+        states = await asyncio.gather(*(self.circuit_state(target) for target in SHELLY_HOSTS))
         return dict(zip(SHELLY_HOSTS, states))
 
     async def set_circuits(self, states: dict) -> dict:
@@ -527,10 +529,12 @@ class NativeControlService:
             targets = list(SHELLY_HOSTS) if action_type == "shelly-set-all" else action.get("targets", [])
             if not targets or any(target not in SHELLY_HOSTS for target in targets):
                 raise NativeControlError("invalid Shelly group")
-            for target in targets:
-                await asyncio.to_thread(
-                    _shelly_rpc, SHELLY_HOSTS[target], "Switch.Set", {"id": 0, "on": bool(action.get("on"))}
-                )
+            # All at once, and every circuit is tried: one dead Shelly must
+            # neither delay nor stop the others.
+            on = bool(action.get("on"))
+            errors = await self.set_circuits({target: on for target in targets})
+            if errors:
+                raise NativeControlError(f"room light not switched: {', '.join(sorted(errors))}")
             return {"ok": True, "count": len(targets)}
 
         if action_type == "artnet-zone-toggle":

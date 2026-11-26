@@ -36,6 +36,9 @@ log = logging.getLogger("mixer.lights")
 MAX_SCENES = 40
 # Several pages poll /lights; the Shellys are asked at most this often.
 CIRCUIT_CACHE_SECONDS = 2.0
+# How long GET /lights waits for the Shellys' answers; a later answer is
+# shown by the next poll.
+CIRCUIT_WAIT_SECONDS = 0.4
 
 
 class SceneError(ValueError):
@@ -136,26 +139,65 @@ class LightSceneStore:
 
 
 class CircuitCache:
-    """The room light states, asked from the Shellys at most every few seconds."""
+    """The room light states, asked from each Shelly at most every few seconds.
+
+    Every circuit is asked on its own: a page waits at most
+    CIRCUIT_WAIT_SECONDS for the answers; a Shelly that is slower (or dead,
+    up to its timeout) updates its state when it is done, so one dead
+    circuit never holds up the page or the others. At most one question
+    per Shelly is open at a time. An answer to a question asked before the
+    circuit was last switched is dropped: it may show the old state.
+    """
 
     def __init__(self) -> None:
-        self._states: Optional[dict] = None
-        self._at = 0.0
-        self._lock = asyncio.Lock()
+        self._states: dict = {}      # target -> True / False / None (no answer)
+        self._asked_at: dict = {}    # target -> monotonic start of the last question
+        self._set_at: dict = {}      # target -> monotonic time of the last switch
+        self._pending: dict = {}     # target -> task asking it now
 
-    async def get(self, native) -> dict:
-        async with self._lock:
-            if self._states is None or time.monotonic() - self._at > CIRCUIT_CACHE_SECONDS:
-                self._states = await native.circuit_states()
-                self._at = time.monotonic()
-            return dict(self._states)
+    def _ask(self, native, target: str) -> asyncio.Task:
+        task = self._pending.get(target)
+        if task is None or task.done():
+            started = time.monotonic()
+            self._asked_at[target] = started
+            task = asyncio.ensure_future(self._query(native, target, started))
+            self._pending[target] = task
+        return task
+
+    async def _query(self, native, target: str, started: float) -> None:
+        try:
+            on = await native.circuit_state(target)
+        except Exception:  # noqa: BLE001 - a background question must not die silently
+            log.exception("Room light %s: state question failed", target)
+            on = None
+        if self._set_at.get(target, float("-inf")) < started:
+            self._states[target] = on
+
+    async def get(self, native, fresh: bool = False) -> dict:
+        """The states; ``fresh``: ask every Shelly now and wait for all
+        answers (saving a scene)."""
+        now = time.monotonic()
+        asked = {target: self._ask(native, target) for target in SHELLY_HOSTS
+                 if fresh or target not in self._states
+                 or now - self._asked_at.get(target, 0.0) > CIRCUIT_CACHE_SECONDS}
+        # The first answer of a circuit (and a fresh one) is waited for in
+        # full; a circuit that did not answer last time is not waited for.
+        full = fresh or any(target not in self._states for target in SHELLY_HOSTS)
+        tasks = [task for target, task in asked.items() if full or self._states.get(target) is not None]
+        if tasks:
+            await asyncio.wait(tasks, timeout=None if full else CIRCUIT_WAIT_SECONDS)
+        return self.snapshot()
+
+    def snapshot(self) -> dict:
+        """The states as known now, without asking any Shelly."""
+        return {target: self._states.get(target) for target in SHELLY_HOSTS}
 
     def update(self, states: dict) -> None:
-        if self._states is not None:
-            self._states.update(states)
-
-    def forget(self) -> None:
-        self._states = None
+        """Circuits just switched (their Shelly confirmed it)."""
+        now = time.monotonic()
+        for target, on in states.items():
+            self._states[target] = on
+            self._set_at[target] = now
 
 
 # -- shared with program rows ---------------------------------------------------
