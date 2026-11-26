@@ -471,7 +471,8 @@ async function openUpdateDialog() {
 async function startUpdate() {
   $("update-start").disabled = true;
   if (!UPDATE.program) return runAgentStep("");
-  const r = await api("POST", "/update/start");
+  // Ending a hung earlier run first can take up to ~40 s (app/updater.py).
+  const r = await api("POST", "/update/start", undefined, { timeout: 60000 });
   if (!(r.ok && r.data.ok)) {
     setUpdateLcd(`Update nicht gestartet: ${escapeHtml(r.data.reason || "HTTP " + r.status)}`, "err");
     $("update-start").disabled = false;

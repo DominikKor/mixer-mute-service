@@ -201,6 +201,8 @@ function Request-Token([string]$Repo) {
 }
 
 function Get-HttpStatus($ErrorRecord) {
+    # From a download job the status comes as text: "HTTP 404: ...".
+    if ([string]$ErrorRecord.Exception.Message -match "^HTTP (\d{3}):") { return [int]$Matches[1] }
     $Response = $ErrorRecord.Exception.PSObject.Properties["Response"]
     if ($null -eq $Response -or $null -eq $Response.Value) { return 0 }
     try { return [int]$Response.Value.StatusCode } catch { return 0 }
@@ -229,7 +231,20 @@ function Save-WebFile([string]$Uri, [hashtable]$RequestHeaders, [string]$OutFile
         $ProgressPreference = "SilentlyContinue"
         $ErrorActionPreference = "Stop"
         [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-        Invoke-WebRequest -UseBasicParsing -Uri $JobUri -Headers $JobHeaders -OutFile $JobOutFile -TimeoutSec $JobTimeout
+        try {
+            Invoke-WebRequest -UseBasicParsing -Uri $JobUri -Headers $JobHeaders -OutFile $JobOutFile -TimeoutSec $JobTimeout
+        }
+        catch {
+            # The error reaches the caller only as text: put the HTTP status
+            # in front ("HTTP 404: ..."), so refusals are not tried again.
+            $JobCode = 0
+            $JobResponse = $_.Exception.PSObject.Properties["Response"]
+            if ($null -ne $JobResponse -and $null -ne $JobResponse.Value) {
+                try { $JobCode = [int]$JobResponse.Value.StatusCode } catch { $JobCode = 0 }
+            }
+            if ($JobCode) { throw ("HTTP {0}: {1}" -f $JobCode, $_.Exception.Message) }
+            throw
+        }
     }
     try {
         if (-not (Wait-Job -Job $Job -Timeout $TimeoutSeconds)) {
