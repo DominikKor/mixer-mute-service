@@ -350,7 +350,9 @@ class LightsApiTests(unittest.TestCase):
         # Scene deleted later: the row refuses to start instead of half running.
         self.client.delete(f"/lights/scenes/{scene['id']}")
         r = self.client.post(f"/program/items/{item['id']}/play")
-        self.assertEqual((r.status_code, r.json()["reason"]), (409, "unknown light scene"))
+        # Only the light is skipped (best effort per area); the row runs.
+        self.assertEqual((r.status_code, r.json()["areas"]["light"]),
+                         (200, {"ok": False, "reason": "unknown light scene", "skipped": True}))
 
     def test_light_and_mixer_keys_still_run_by_id(self):
         data = self.client.get("/companion/buttons").json()

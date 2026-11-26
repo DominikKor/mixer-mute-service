@@ -99,14 +99,16 @@ def main():
         agent.missing = True
         r = client.post(f"/program/items/{item_id}/play")
         actions = r.json().get("linked_actions", [])
-        check("missing file reported", r.status_code == 502 and actions and actions[0]["reason"] == "Datei auf dem Ziel-PC nicht gefunden.")
+        # Best effort per area (app/api/program.py): the row runs, the failed area says why.
+        check("missing file reported", r.status_code == 200 and r.json()["ok"] is False
+              and actions and actions[0]["reason"] == "Datei auf dem Ziel-PC nicht gefunden.")
         agent.missing = False
         reason = "audio player could not be started: mpv ended at once (exit code 2): Could not open audio device"
         agent.player_error = {"ok": False, "reason": reason}
         r = client.post(f"/program/items/{item_id}/play")
         actions = r.json().get("linked_actions", [])
         check("player that did not start: the agent's reason is shown, not 'file not found'",
-              r.status_code == 502 and actions and actions[0]["reason"] == reason)
+              r.status_code == 200 and actions and actions[0]["reason"] == reason)
         agent.player_error = None
         audio_timeouts = [t for u, t in agent.timeouts if u.endswith("/audio")]
         check("music start waits long enough for a cold mpv start (agent waits up to 10 s)",
