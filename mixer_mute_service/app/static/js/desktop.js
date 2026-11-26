@@ -7,7 +7,7 @@
 // edited values in place, everything else in the file stays as written.
 
 let DESKTOP_PROFILES = [];
-// Today's quarter and week from the service: {quarter, week, subfolder, file_prefix}.
+// Today's quarter and week from the service: {year, quarter, week, subfolder, file_prefix}.
 let MISSION_SPOTLIGHT = null;
 const PROFILE_FORM = { mode: "create", id: null, idTouched: false, kind: "image", monitors: [1], position: "top-left" };
 const MAX_MONITORS = 5;
@@ -111,14 +111,14 @@ function syncProfileForm() {
   $("pf-spotlight-text").textContent = spotlight ? "Ein" : "Aus";
   const now = MISSION_SPOTLIGHT;
   $("pf-spotlight-hint").textContent = now
-    ? `Heute: ${now.quarter}. Quartal · Woche ${now.week} des Quartals`
+    ? `Heute: ${now.year} · ${now.quarter}. Quartal · Woche ${now.week} des Quartals`
     : "Quartal und Woche werden geladen…";
   $("pf-path-label").textContent = spotlight ? "Ordner auf dem Ziel-PC" : "Pfad auf dem Ziel-PC";
   $("pf-path").placeholder = spotlight ? "I:\\Mission Spotlight" : KIND_INFO[kind].placeholder;
   const youtube = kind === "audio" && isYoutubeUrl($("pf-path").value.trim());
   const folder = $("pf-path").value.trim().replace(/[\\/]+$/, "") || "Ordner";
   $("pf-path-hint").textContent = spotlight
-    ? `Ordner mit den Unterordnern „1. Quartal“ … „4. Quartal“. Gewählt wird die Datei, deren Name mit der zweistelligen Woche beginnt`
+    ? `Ordner mit den Unterordnern „${now ? now.year : "JJJJ"}_1. Quartal“ … „${now ? now.year : "JJJJ"}_4. Quartal“. Gewählt wird die Datei, deren Name mit der zweistelligen Woche beginnt`
       + (now ? `, jetzt: ${folder}\\${now.subfolder}\\${now.file_prefix}… (z. B. ${now.file_prefix}_Video.mp4)` : "")
       + ". Passen mehrere, gilt die neueste."
     : youtube ? YOUTUBE_HINT : KIND_INFO[kind].hint + WILDCARD_HINT;
