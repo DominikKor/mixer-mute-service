@@ -143,9 +143,17 @@ function setFixture(card, fixture, label, fallback) {
   const tone = card.querySelector('[data-light-kind="tone"]');
   level.setAttribute("aria-label", `${label} Helligkeit${fixture.on ? "" : " (aus: wird gemerkt)"}`);
   tone.setAttribute("aria-label", `${label} Farbe warm bis kalt`);
-  if (!LIGHTS.dragging.has(level.dataset.lightSlider)) level.value = String(fixture.level);
-  if (!LIGHTS.dragging.has(tone.dataset.lightSlider)) tone.value = String(toneOf(fixture));
+  if (!lightSliderHeld(level)) level.value = String(fixture.level);
+  if (!lightSliderHeld(tone)) tone.value = String(toneOf(fixture));
   showFixtureSliders(card, fixture.on);
+}
+
+// A slider the user holds keeps its place; with "Alle gleich" so do the
+// same sliders of the other three lights (they move with it).
+function lightSliderHeld(range) {
+  if (LIGHTS.dragging.has(range.dataset.lightSlider)) return true;
+  const kind = range.dataset.lightKind;
+  return LIGHTS.link && [...LIGHTS.dragging].some(id => id.endsWith(`:${kind}`));
 }
 
 // The values next to the sliders and the lamp, from the sliders themselves
@@ -590,10 +598,15 @@ function renderLightPick() {
     lightPickKey(stage, `zone:${zone}`, label, f.on ? lightPercent(f.level) : "Aus");
   }
   const room = $("light-pick-room");
+  // Overwriting a preset: a circuit of it that does not answer keeps the
+  // state the preset had (the service keeps it); otherwise it cannot be saved.
+  const old = LIGHTS.updating && data.scenes.find(s => s.id === LIGHTS.updating);
   for (const circuit of data.circuits) {
     const unknown = circuit.on !== true && circuit.on !== false;
-    if (unknown) LIGHTS.pick.delete(`circuit:${circuit.id}`);
-    lightPickKey(room, `circuit:${circuit.id}`, circuit.label, unknown ? "?" : circuit.on ? "An" : "Aus", unknown);
+    const keeps = unknown && old && circuit.id in old.circuits;
+    if (unknown && !keeps) LIGHTS.pick.delete(`circuit:${circuit.id}`);
+    const now = keeps ? `? bleibt ${old.circuits[circuit.id] ? "an" : "aus"}` : unknown ? "?" : circuit.on ? "An" : "Aus";
+    lightPickKey(room, `circuit:${circuit.id}`, circuit.label, now, unknown && !keeps);
   }
   for (const all of document.querySelectorAll("[data-light-pick-all]")) {
     const keys = [...$(`light-pick-${all.dataset.lightPickAll}`).querySelectorAll("[data-light-pick]:not(:disabled)")];
@@ -654,7 +667,13 @@ async function saveLightScene(replace = false) {
     }
     if (!result.ok || result.data.ok === false) { toast(`Preset: ${result.data.reason || "HTTP " + result.status}`, false); return; }
     const unknown = result.data.unknown_circuits || [];
-    toast(`Preset „${result.data.scene.name}“ gespeichert` + (unknown.length ? ` (${unknown.length === 1 ? "1 Raumlicht-Kreis" : unknown.length + " Raumlicht-Kreise"} ohne Antwort nicht enthalten)` : ""), !unknown.length);
+    const kept = result.data.kept_circuits || [];
+    const count = n => (n === 1 ? "1 Raumlicht-Kreis" : `${n} Raumlicht-Kreise`);
+    const notes = [
+      unknown.length ? `${count(unknown.length)} ohne Antwort nicht enthalten` : "",
+      kept.length ? `${count(kept.length)} ohne Antwort, bisheriger Zustand behalten` : "",
+    ].filter(Boolean);
+    toast(`Preset „${result.data.scene.name}“ gespeichert` + (notes.length ? ` (${notes.join("; ")})` : ""), !notes.length);
     closeLightSceneCreate();
     await loadLights();
     loadProgramLightScenes();

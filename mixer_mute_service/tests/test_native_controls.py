@@ -59,9 +59,10 @@ class NativeControlTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.controls._dmx[0], 20)   # left zone white: one step
 
     async def test_zones_set_switches_the_pattern_and_keeps_lit_zones(self):
-        self.controls._dmx[12] = 90   # right zone already lit
-        self.controls._dmx[4] = 200   # center-left lit, to be switched off
-        self.controls._dmx[8] = 70    # center-right not named: stays
+        # The lights' state (the frame is made from it).
+        self.controls._fixtures["right"].update(on=True, level=90)          # already lit
+        self.controls._fixtures["center-left"].update(on=True, level=200)   # lit, to be switched off
+        self.controls._fixtures["center-right"].update(on=True, level=70)   # not named: stays
         with patch.object(self.controls, "_fade_to", new_callable=AsyncMock):
             for _ in range(2):  # pressing an Overall twice must not toggle
                 await self.controls.press({"type": "artnet-zones-set",
@@ -70,6 +71,7 @@ class NativeControlTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.controls._dmx[0], 255)   # left: off -> start brightness
         self.assertEqual(self.controls._dmx[12], 90)   # right: keeps its level
         self.assertEqual(self.controls._dmx[4], 0)     # center-left: off
+        self.assertEqual(self.controls._fixtures["center-left"]["level"], 200)  # keeps its level
         self.assertEqual(self.controls._dmx[8], 70)    # center-right: untouched
 
     async def test_zones_set_rejects_bad_patterns(self):

@@ -32,7 +32,8 @@ from fastapi import APIRouter, Body, Request
 
 from ..lights import SceneError, apply_scene, scene_is_active
 from ..native_controls import (
-    ARTNET_HOST, ARTNET_ZONE_LABELS, ARTNET_ZONES, SHELLY_HOSTS, SHELLY_LABELS, NativeControlError, artnet_status,
+    ARTNET_HOST, ARTNET_ZONE_LABELS, ARTNET_ZONES, SHELLY_HOSTS, SHELLY_LABELS, InvalidLightValue, NativeControlError,
+    artnet_status,
 )
 from ..responses import fail, reply
 
@@ -90,8 +91,10 @@ async def lights_stage(request: Request, body: dict = Body(...)):
         return fail("zones must be {zone: level}", 400)
     try:
         stage = await native.set_stage(zones, body.get("warm"), body.get("cold"), fade=body.get("fade") is not False)
+    except InvalidLightValue as exc:  # refused, nothing sent
+        return fail(str(exc), 400)
     except NativeControlError as exc:
-        return fail(str(exc), 400 if "must be" in str(exc) or "unknown" in str(exc) else 502)
+        return fail(str(exc), 502)
     except OSError as exc:
         return fail(f"Art-Net send failed: {exc}", 502)
     return {"ok": True, "stage": stage}
@@ -193,10 +196,14 @@ async def lights_scene_save(request: Request, body: dict = Body(...)):
     view = await _view(request, fresh=True)  # save what the room light is now
     fixtures = view["stage"]["fixtures"]
     states = {c["id"]: c["on"] for c in view["circuits"] if c["id"] in circuits}
+    # Overwriting a scene: a chosen circuit that does not answer now keeps
+    # the state the scene had for it (instead of silently dropping out).
+    old = await scenes.get(scene_id) if scene_id is not None else None
+    kept = {k: old["circuits"][k] for k, on in states.items() if on is None and old and k in old["circuits"]}
     entry = {
         "name": body.get("name"),
         "stage": {"fixtures": {z: fixtures[z] for z in zones}},
-        "circuits": {k: on for k, on in states.items() if isinstance(on, bool)},
+        "circuits": {**kept, **{k: on for k, on in states.items() if isinstance(on, bool)}},
     }
     try:
         scene = await scenes.save(entry, replace=body.get("replace") is True, scene_id=scene_id)
@@ -206,9 +213,10 @@ async def lights_scene_save(request: Request, body: dict = Body(...)):
         return fail("unknown light scene", 404)
     except SceneError as exc:
         return fail(str(exc), 400, unknown_circuits=[k for k, on in states.items() if on is None])
-    unknown = [k for k, on in states.items() if on is None]
-    log.info("Light scene %r saved (%s room circuits unknown)", scene["name"], len(unknown))
-    return {"ok": True, "scene": scene, "unknown_circuits": unknown}
+    unknown = [k for k, on in states.items() if on is None and k not in kept]
+    log.info("Light scene %r saved (%s room circuits unknown, %s kept)", scene["name"], len(unknown), len(kept))
+    # unknown_circuits: left out; kept_circuits: no answer, the scene's old state kept.
+    return {"ok": True, "scene": scene, "unknown_circuits": unknown, "kept_circuits": list(kept)}
 
 
 @router.post("/lights/scenes/order")

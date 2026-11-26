@@ -77,12 +77,12 @@ def check_fixture_change(change) -> dict:
     """A change of one stage light: any of on (bool), level, warm, cold
     (0..255). Returns it cleaned; NativeControlError when invalid."""
     if not isinstance(change, dict) or not change or any(key not in FIXTURE_KEYS for key in change):
-        raise NativeControlError("a stage light change is {on, level, warm, cold}")
+        raise InvalidLightValue("a stage light change is {on, level, warm, cold}")
     if "on" in change and not isinstance(change["on"], bool):
-        raise NativeControlError("on must be true or false")
+        raise InvalidLightValue("on must be true or false")
     for key in ("level", "warm", "cold"):
         if key in change and not _dmx_value(change[key]):
-            raise NativeControlError("light values must be 0 to 255")
+            raise InvalidLightValue("light values must be 0 to 255")
     return dict(change)
 
 
@@ -93,6 +93,11 @@ class NativeControlError(RuntimeError):
     def __init__(self, message: str, maybe_sent: bool = False) -> None:
         super().__init__(message)
         self.maybe_sent = maybe_sent
+
+
+class InvalidLightValue(NativeControlError):
+    """Invalid input for the stage lights (an unknown zone, a value out of
+    range, a malformed change): refused before anything was sent (HTTP 400)."""
 
 
 # OBS answers in milliseconds; a request that takes longer is stuck.
@@ -431,13 +436,18 @@ class NativeControlService:
         for key, (low, high) in _LEVEL_BOUNDS.items():
             if isinstance(levels.get(key), int):
                 self._levels[key] = max(low, min(high, levels[key]))
-        self._fixtures = self._load_fixtures(data.get("fixtures"), levels)
+        self._fixtures = self._load_fixtures(data.get("fixtures"), levels, valid_dmx)
 
-    def _load_fixtures(self, saved, levels: dict) -> dict:
-        """The stage lights from the state file. A state from before they
-        were stored one by one (one warm/cold for all, the on/off level in
-        the DMX frame) becomes: each light on with its frame level or off,
-        and the shared colour."""
+    def _load_fixtures(self, saved, levels: dict, valid_dmx: bool) -> dict:
+        """The stage lights from the state file. A light without a valid
+        entry (or a state from before they were stored one by one: one
+        warm/cold for all, the on/off level in the DMX frame) comes from the
+        saved frame: on with its frame level or off, its colour channels
+        (else the shared colour, else Companion's).
+
+        Without a valid saved frame nothing was being sent: every light is
+        loaded off (keeping its level), so the page never shows a light on
+        that is dark on stage."""
         fixtures = {}
         warm = levels.get("warm") if _dmx_value(levels.get("warm")) else DEFAULT_WARM
         cold = levels.get("cold") if _dmx_value(levels.get("cold")) else DEFAULT_COLD
@@ -447,7 +457,12 @@ class NativeControlService:
                     and all(_dmx_value(entry.get(key)) for key in ("level", "warm", "cold"))):
                 fixtures[name] = {key: entry[key] for key in FIXTURE_KEYS}
             else:
-                fixtures[name] = _new_fixture(self._dmx[zone["white"] - 1], warm, cold)
+                frame_warm, frame_cold = self._dmx[zone["warm"] - 1], self._dmx[zone["cold"] - 1]
+                # A frame never written has 0/0 there: no colour at all.
+                colour = (frame_warm, frame_cold) if valid_dmx and (frame_warm or frame_cold) else (warm, cold)
+                fixtures[name] = _new_fixture(self._dmx[zone["white"] - 1], *colour)
+            if not valid_dmx:
+                fixtures[name]["on"] = False
         return fixtures
 
     def _persist_state(self) -> None:
@@ -529,7 +544,12 @@ class NativeControlService:
             # the stage still shows the old frame: so does the memory.
             saved = deepcopy(self._fixtures), dict(self._levels)
             try:
-                target = compute(self._dmx.copy())
+                # Every light into the frame first: a command for one light
+                # must never leave another as an old frame shows it.
+                frame = self._dmx.copy()
+                for name in ARTNET_ZONES:
+                    self._render(frame, name)
+                target = compute(frame)
                 await self._fade_to(target, fade)
             except BaseException:
                 self._fixtures, self._levels = saved
@@ -688,7 +708,7 @@ class NativeControlService:
         sends many small steps)."""
         zones = zones or {}
         if not isinstance(zones, dict) or any(name not in ARTNET_ZONES for name in zones):
-            raise NativeControlError("unknown Art-Net zone")
+            raise InvalidLightValue("unknown Art-Net zone")
         changes = {}
         for name, change in zones.items():
             if isinstance(change, dict):
@@ -696,10 +716,10 @@ class NativeControlService:
             elif _dmx_value(change):
                 changes[name] = {"on": True, "level": change} if change > 0 else {"on": False}
             else:
-                raise NativeControlError("light values must be 0 to 255")
+                raise InvalidLightValue("light values must be 0 to 255")
         for value in (warm, cold):
             if value is not None and not _dmx_value(value):
-                raise NativeControlError("light values must be 0 to 255")
+                raise InvalidLightValue("light values must be 0 to 255")
         colour = {key: value for key, value in (("warm", warm), ("cold", cold)) if value is not None}
 
         def compute(frame: list[int]) -> list[int]:
@@ -859,7 +879,10 @@ class NativeControlService:
                 return frame
 
             await self._update_dmx(recolor)
-            return {"ok": True, "level": self.stage_state()[color]}
+            # "level": the colour all lights share, or their average once they
+            # differ (always a number); "levels": each light's.
+            levels = {name: f[color] for name, f in self._fixtures.items()}
+            return {"ok": True, "level": round(sum(levels.values()) / len(levels)), "levels": levels}
 
         if action_type == "artnet-start-adjust":
             level = await self._adjust_setting("start", int(action.get("delta", 0)))

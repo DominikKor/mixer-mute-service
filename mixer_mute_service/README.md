@@ -908,7 +908,8 @@ weiter über `/companion/buttons/{id}/press` drücken.
   das Preset mit dem eingestellten Übergang ein. Eine Kachel leuchtet („aktiv“),
   solange das Licht genau so ist, wie das Preset es setzt (ein ausgeschalteter
   Scheinwerfer zählt dabei unabhängig vom gemerkten Wert; ein Raumlicht-Kreis
-  ohne Antwort zählt nicht dagegen). Das zuletzt abgerufene Preset, das danach
+  des Presets ohne Antwort heißt „nicht sicher gleich“, die Kachel leuchtet dann
+  nicht). Das zuletzt abgerufene Preset, das danach
   von Hand verändert wurde, zeigt „geändert“. Die Punkte auf der Kachel zeigen
   jeden Scheinwerfer (Farbe und Helligkeit, Ring = aus, Strich = bleibt, wie er
   ist), dazu die Raumlicht-Kreise („Raum 2 an · 1 aus“). *+ Preset* speichert
@@ -916,7 +917,9 @@ weiter über `/companion/buttons/{id}/press` drücken.
   an/aus, Helligkeit und Farbe, jeder gewählte Kreis mit seinem Zustand.
   *Bearbeiten* zeigt unter jeder Kachel: Reihenfolge (Pfeile), Name (Stift),
   mit dem aktuellen Licht überschreiben (Kreis; die Auswahl der Lichter lässt
-  sich dabei ändern, Platz und Programmzeilen bleiben) und Löschen (mit
+  sich dabei ändern, Platz und Programmzeilen bleiben; ein Kreis des Presets,
+  der gerade nicht antwortet, behält seinen bisherigen Zustand, die Meldung
+  sagt es) und Löschen (mit
   Rückfrage). Im Bearbeiten-Modus blendet ein Tipp auf die Kachel nichts ein.
   Presets heißen in der API weiter `scenes`. Alte Szenen (ein Warm/Kalt für alle,
   0 = aus) werden beim Start umgewandelt: jede Zone mit ihrer Helligkeit bzw. aus
@@ -940,8 +943,15 @@ weiter über `/companion/buttons/{id}/press` drücken.
   mehr auf der Seite, bleibt aber gespeichert (`PUT /lights/settings {"steps"}`).
   Die Tasten der Steuerung und Overall-Makros arbeiten wie bisher: An/Aus-Taste
   einer Zone bringt den gemerkten Wert zurück, Overall-Tasten schalten eine
-  ausgeschaltete Zone auf *Einschalten auf*, Wärmer/Kälter ändert jeden
-  Scheinwerfer um denselben Schritt.
+  ausgeschaltete Zone auf *Einschalten auf* (eine, die das Makro ausschaltet,
+  behält ihren Wert), Wärmer/Kälter ändert jeden Scheinwerfer um denselben
+  Schritt (Antwort `level`: der gemeinsame Wert bzw. der Mittelwert, sobald die
+  Scheinwerfer sich unterscheiden; `levels`: je Scheinwerfer). Eine ungültige
+  Eingabe an `POST /lights/stage` (unbekannte Zone, Wert außerhalb 0–255, leere
+  oder unbekannte Änderung) gibt 400, es wird nichts gesendet; 502 heißt: Senden
+  gescheitert. Ist der gespeicherte Frame beim Start ungültig, werden alle
+  Scheinwerfer als aus geladen (ihre Werte bleiben), ein Scheinwerfer ohne
+  gültigen Eintrag nimmt Helligkeit und Farbe aus dem gespeicherten Frame.
   Art-Net wie in Companion (Verbindung `generic-artnet`): Knoten
   192.168.188.48, Universe 0, je Scheinwerfer Kanal 1 Helligkeit, 2 Warm,
   3 Kalt (Links 1–3, Mitte links 5–7, Mitte rechts 9–11, Rechts 13–15).

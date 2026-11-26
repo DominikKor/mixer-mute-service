@@ -106,11 +106,24 @@ class FixtureTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(channels(self.frames[-1], "left"), [255, 255, 50])
         self.assertEqual(channels(self.frames[-1], "center-left")[0], 0)
         await self.controls.set_stage({"left": {"warm": 100}})
-        await self.controls.press({"type": "artnet-global-adjust", "color": "warm", "delta": 50})
+        result = await self.controls.press({"type": "artnet-global-adjust", "color": "warm", "delta": 50})
         fixtures = self.controls.stage_state()["fixtures"]
         self.assertEqual((fixtures["left"]["warm"], fixtures["right"]["warm"]), (150, 255))
+        # The colours differ now: "level" stays a number (the average).
+        self.assertEqual(result["level"], round((150 + 255 * 3) / 4))
+        self.assertEqual(result["levels"]["left"], 150)
         await self.controls.press({"type": "artnet-zone-adjust", "zone": "right", "delta": -1})
         self.assertEqual(self.controls.stage_state()["zones"]["right"], 205)
+
+    async def test_overall_switching_off_keeps_the_level(self):
+        await self.controls.set_stage({"left": 170, "right": 90})
+        await self.controls.press({"type": "artnet-zones-set", "on": ["right"], "off": ["left"]})
+        state = self.controls.stage_state()
+        self.assertEqual(state["fixtures"]["left"], {"on": False, "level": 170, "warm": 255, "cold": 50})
+        self.assertEqual(channels(self.frames[-1], "left")[0], 0)
+        self.assertEqual(state["zones"]["right"], 90)                 # was on: keeps its level
+        await self.controls.set_stage({"left": {"on": True}})
+        self.assertEqual(channels(self.frames[-1], "left")[0], 170)
 
     async def test_saved_and_reloaded(self):
         await self.controls.set_stage({"left": {"on": True, "level": 40, "warm": 10, "cold": 20}})
@@ -140,11 +153,54 @@ class StateMigrationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "state.json"
             dmx = [0] * 512
-            dmx[4] = 99
-            path.write_text(json.dumps({"dmx": dmx, "fixtures": {"left": {"on": "yes"}, "center-left": "x"}}), encoding="utf-8")
+            dmx[4:7] = [99, 180, 70]        # center-left: level and its own colour in the frame
+            path.write_text(json.dumps({"dmx": dmx, "fixtures": {
+                "left": {"on": "yes"}, "center-left": "x",
+                "right": {"on": True, "level": 50, "warm": 1, "cold": 2}}}), encoding="utf-8")
             fixtures = NativeControlService(path).stage_state()["fixtures"]
-        self.assertEqual(fixtures["center-left"], {"on": True, "level": 99, "warm": 255, "cold": 50})
-        self.assertEqual(fixtures["left"]["on"], False)
+        self.assertEqual(fixtures["center-left"], {"on": True, "level": 99, "warm": 180, "cold": 70})
+        # Never written colour channels (0/0): Companion's colour, not black.
+        self.assertEqual(fixtures["left"], {"on": False, "level": 0, "warm": 255, "cold": 50})
+        self.assertEqual(fixtures["right"], {"on": True, "level": 50, "warm": 1, "cold": 2})
+
+
+class CorruptFrameTests(unittest.IsolatedAsyncioTestCase):
+    """A saved frame that is invalid while the lights are valid: nothing was
+    being sent, so every light loads off (keeping its level); the next
+    command for one light sends all of them as the page shows them."""
+
+    async def test_lights_load_off_and_the_next_command_renders_all(self):
+        frames = []
+        with tempfile.TemporaryDirectory() as folder, \
+                patch.object(native_mod, "_send_artnet_frame", lambda h, u, v: frames.append(list(v))):
+            path = Path(folder) / "state.json"
+            lit = {"on": True, "level": 200, "warm": 255, "cold": 50}
+            path.write_text(json.dumps({"dmx": [7] * 10, "stage_active": True,
+                                        "fixtures": {z: dict(lit) for z in ZONES},
+                                        "levels": {"fade_ms": 0}}), encoding="utf-8")
+            with self.assertLogs("mixer.native_controls", "WARNING"):
+                controls = NativeControlService(path)
+            state = controls.stage_state()
+            self.assertEqual(state["zones"], {z: 0 for z in ZONES})          # the page shows them off
+            self.assertEqual({f["level"] for f in state["fixtures"].values()}, {200})
+            self.assertFalse(controls.keepalive_status()["active"])
+            await controls.set_stage({"left": {"on": True}})
+        frame = frames[-1]
+        self.assertEqual(channels(frame, "left"), [200, 255, 50])
+        for zone in ("center-left", "center-right", "right"):
+            self.assertEqual(channels(frame, zone), [0, 255, 50])           # rendered, sent as shown
+        self.assertEqual(controls.stage_state()["zones"]["right"], 0)
+
+    async def test_one_light_key_sends_every_light(self):
+        frames = []
+        with tempfile.TemporaryDirectory() as folder, \
+                patch.object(native_mod, "_send_artnet_frame", lambda h, u, v: frames.append(list(v))):
+            path = Path(folder) / "state.json"
+            path.write_text(json.dumps({"fixtures": {"right": {"on": False, "level": 0, "warm": 9, "cold": 8}},
+                                        "levels": {"fade_ms": 0}}), encoding="utf-8")
+            controls = NativeControlService(path)
+            await controls.press({"type": "artnet-zone-toggle", "zone": "left"})
+        self.assertEqual(channels(frames[-1], "right"), [0, 9, 8])
 
 
 class SceneFormatTests(unittest.TestCase):
@@ -174,7 +230,9 @@ class SceneFormatTests(unittest.TestCase):
             "left": {"on": True, "level": 100, "warm": 255, "cold": 50},
             "right": {"on": False, "level": 200, "warm": 9, "cold": 9}}}
         self.assertTrue(scene_is_active(scene, stage, {"light-tech": True}))
-        self.assertTrue(scene_is_active(scene, stage, {"light-tech": None}))     # unknown: not against it
+        # Unknown (no answer): not known to match, so not active (no flapping mark).
+        self.assertFalse(scene_is_active(scene, stage, {"light-tech": None}))
+        self.assertFalse(scene_is_active(scene, stage, {}))
         self.assertFalse(scene_is_active(scene, stage, {"light-tech": False}))
         stage["fixtures"]["left"]["cold"] = 51
         self.assertFalse(scene_is_active(scene, stage, {}))
@@ -232,6 +290,33 @@ class PresetApiTests(unittest.TestCase):
         self.assertEqual(scenes[0]["stage"]["fixtures"], {"left": {"on": True, "level": 33, "warm": 255, "cold": 50}})
         self.assertEqual(self.client.post("/lights/scenes", json={"id": a["id"], "name": "b", "lights": {"zones": ["left"]}}).status_code, 409)
         self.assertEqual(self.client.post("/lights/scenes", json={"id": "nope", "name": "Z", "lights": {"zones": ["left"]}}).status_code, 404)
+
+    def test_invalid_stage_values_are_400_and_send_nothing(self):
+        frames = len(self.devices.frames)
+        for zones in ({"left": {}}, {"left": {"on": "x"}}, {"left": {"level": 300}}, {"left": {"hue": 1}},
+                      {"nope": 1}, {"left": -1}):
+            r = self.client.post("/lights/stage", json={"zones": zones})
+            self.assertEqual(r.status_code, 400, (zones, r.text))
+        self.assertEqual(self.client.post("/lights/stage", json={"warm": 999}).status_code, 400)
+        self.assertEqual(len(self.devices.frames), frames)
+        # A send that fails is 502, not 400.
+        with mock.patch.object(native_mod, "_send_artnet_frame", side_effect=native_mod.NativeControlError("node gone")):
+            self.assertEqual(self.client.post("/lights/stage", json={"zones": {"left": 9}}).status_code, 502)
+
+    def test_overwrite_keeps_a_circuit_that_does_not_answer(self):
+        self.devices.shelly["light-front"] = True
+        scene = self.save("Raum", zones=["left"], circuits=["light-front", "light-tech"])
+        self.assertEqual(scene["circuits"], {"light-front": True, "light-tech": True})
+        self.devices.offline.add("light-front")
+        self.devices.shelly["light-tech"] = False
+        r = self.client.post("/lights/scenes", json={"id": scene["id"], "name": "Raum",
+                                                     "lights": {"zones": ["left"], "circuits": ["light-front", "light-tech"]}})
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(r.json()["scene"]["circuits"], {"light-front": True, "light-tech": False})
+        self.assertEqual((r.json()["kept_circuits"], r.json()["unknown_circuits"]), (["light-front"], []))
+        # A new preset cannot keep anything: the silent circuit is left out.
+        r = self.client.post("/lights/scenes", json={"name": "Neu", "lights": {"zones": ["left"], "circuits": ["light-front"]}})
+        self.assertEqual((r.json()["unknown_circuits"], r.json()["kept_circuits"]), (["light-front"], []))
 
     def test_order(self):
         ids = [self.save(name)["id"] for name in ("Zeta", "Alpha", "Mitte")]

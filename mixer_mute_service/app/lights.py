@@ -117,8 +117,9 @@ def _clean_scene(entry: dict) -> dict:
 
 def scene_is_active(scene: dict, stage: dict, circuits: dict) -> bool:
     """Whether the light is now as the scene sets it. A light that is (and
-    should be) off counts whatever level or colour it keeps; a circuit whose
-    state is unknown does not count against the scene."""
+    should be) off counts whatever level or colour it keeps. A circuit whose
+    state is unknown (no answer) means: not known to match, so not active
+    (else a flaky Shelly would make the mark come and go)."""
     for zone, want in scene["stage"]["fixtures"].items():
         now = stage["fixtures"][zone]
         lit = now["on"] if want["on"] is None else want["on"]
@@ -126,7 +127,7 @@ def scene_is_active(scene: dict, stage: dict, circuits: dict) -> bool:
             return False
         if lit and any(want[key] is not None and want[key] != now[key] for key in ("level", "warm", "cold")):
             return False
-    return all(circuits.get(target) in (None, on) for target, on in scene["circuits"].items())
+    return all(circuits.get(target) is on for target, on in scene["circuits"].items())
 
 
 class LightSceneStore:
