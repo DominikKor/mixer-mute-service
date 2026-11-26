@@ -519,25 +519,27 @@ def restore_user_environment() -> list:
 # every 30 s with a 2 s timeout. So it runs at start and in the background
 # when older than TOOL_CACHE_SECONDS; /info answers with the last result.
 TOOL_CACHE_SECONDS = 300.0
-_tool_cache = {"at": 0.0, "mpv": None, "ytdlp": None}
+_tool_cache = {"at": 0.0, "mpv": None, "ytdlp": None, "mpv_search": []}
 _tool_cache_lock = threading.Lock()
 _tool_refreshing = threading.Event()
 
 
 def refresh_tool_cache() -> None:
+    trace: list = []
     try:
-        mpv = _find_mpv()
+        mpv = _find_mpv(trace)
         ytdlp = _find_ytdlp(mpv)
     except Exception:  # noqa: BLE001 - a diagnosis must never break the agent
         logger.exception("Searching mpv / yt-dlp failed")
         mpv = ytdlp = None
     with _tool_cache_lock:
-        _tool_cache.update(at=time.monotonic(), mpv=mpv, ytdlp=ytdlp)
+        _tool_cache.update(at=time.monotonic(), mpv=mpv, ytdlp=ytdlp, mpv_search=trace)
     _tool_refreshing.clear()
 
 
 def cached_tools() -> dict:
-    """{"mpv", "ytdlp"} from the last search; a search older than
+    """{"mpv", "ytdlp", "mpv_search"} from the last search (mpv_search: every
+    place looked at for mpv, see find_tool); a search older than
     TOOL_CACHE_SECONDS is started again in the background. Empty until the
     first search is done: right after a restart the service asks /info
     before it, and "not found" there would be a false warning."""
@@ -549,11 +551,14 @@ def cached_tools() -> dict:
         threading.Thread(target=refresh_tool_cache, daemon=True).start()
     if not snapshot["at"]:
         return {}
-    return {"mpv": snapshot["mpv"], "ytdlp": snapshot["ytdlp"]}
+    return {"mpv": snapshot["mpv"], "ytdlp": snapshot["ytdlp"], "mpv_search": snapshot["mpv_search"]}
 
 
 # Where installers put a program. {exe}: the file name; {app}: the program's
-# folder name (scoop, Program Files); {pkg}: part of a WinGet/Chocolatey package name.
+# folder name (scoop, Program Files); {pkg}: part of a WinGet/Chocolatey
+# package name; {app_any}: a folder whose name contains {app} in any case
+# ("MPV Player": winget's shinchiro.mpv is an Inno installer for the machine
+# that installs to %ProgramFiles%\MPV Player and does not touch PATH).
 _TOOL_PLACES = (
     ("WinGet links (user)", "{LOCALAPPDATA}/Microsoft/WinGet/Links/{exe}"),
     ("WinGet links (machine)", "{PROGRAMFILES}/WinGet/Links/{exe}"),
@@ -566,39 +571,127 @@ _TOOL_PLACES = (
     ("Chocolatey", "{CHOCOLATEYINSTALL}/lib/*{pkg}*/tools/**/{exe}"),
     ("Program Files", "{PROGRAMFILES}/{app}/{exe}"),
     ("Program Files", "{PROGRAMW6432}/{app}/{exe}"),
+    ("Program Files", "{PROGRAMFILES}/{app_any}/{exe}"),
+    ("Program Files", "{PROGRAMW6432}/{app_any}/{exe}"),
     ("Program Files (x86)", "{PROGRAMFILES(X86)}/{app}/{exe}"),
+    ("Program Files (x86)", "{PROGRAMFILES(X86)}/{app_any}/{exe}"),
     ("LocalAppData Programs", "{LOCALAPPDATA}/Programs/{app}/{exe}"),
+    ("LocalAppData Programs", "{LOCALAPPDATA}/Programs/{app_any}/{exe}"),
 )
+
+# Programs that may be named in MPV_PATH (or found for mpv) but are not mpv:
+# MPV.NET (mpvnet.exe) is a player with its own window, settings and single
+# instance; started with mpv's options it is slow and its control channel did
+# not answer. It is used only when no real mpv.exe is found anywhere.
+_FALLBACK_NAMES = {"mpv": {"mpvnet.exe", "mpvnet"}}
+
+
+def _any_case(text: str) -> str:
+    """A glob piece matching ``text`` in any case (Windows globs are
+    case-insensitive anyway; this makes the tests on other systems agree)."""
+    return "".join(f"[{c.lower()}{c.upper()}]" if c.isalpha() else glob.escape(c) for c in text)
+
+
+def agent_account() -> dict:
+    """The Windows account the agent runs as and its LOCALAPPDATA: a program
+    another account installed for itself is not found here."""
+    try:
+        user = getpass.getuser()
+    except Exception:  # noqa: BLE001 - only a diagnosis
+        user = None
+    return {"agent_user": user, "agent_localappdata": os.environ.get("LOCALAPPDATA")}
+
+
+def _installed_locations(app: str) -> list:
+    """InstallLocation of every installed program whose name contains
+    ``app`` (HKLM and HKCU uninstall entries, 64 and 32 bit), MPV.NET left
+    out. Empty outside Windows."""
+    if os.name != "nt":
+        return []
+    import winreg
+
+    keys = ((winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"),
+            (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall"),
+            (winreg.HKEY_CURRENT_USER, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"))
+    locations = []
+    for root, key in keys:
+        try:
+            handle = winreg.OpenKey(root, key)
+        except OSError:
+            continue
+        with handle:
+            for index in range(1000):
+                try:
+                    sub = winreg.EnumKey(handle, index)
+                except OSError:
+                    break
+                try:
+                    with winreg.OpenKey(handle, sub) as entry:
+                        name = str(winreg.QueryValueEx(entry, "DisplayName")[0])
+                        location = str(winreg.QueryValueEx(entry, "InstallLocation")[0]).strip().strip('"')
+                except OSError:
+                    continue
+                lowered = name.lower()
+                if app.lower() in lowered and "mpv.net" not in lowered and location and location not in locations:
+                    locations.append(location)
+    return locations
 
 
 def find_tool(command: str, path_variable: str, app: str, pkg: str, *, near=(), env=None,
-              exe=None) -> tuple:
+              exe=None, trace=None) -> tuple:
     """(path or None, [places searched]) for a program like mpv: the variable
     naming it (MPV_PATH), PATH (with the user's PATH from the registry), the
     agent's folder, ``near`` (folders to look in first, e.g. mpv's for yt-dlp)
-    and the usual install places."""
+    and the usual install places. ``trace`` (a list) gets every place looked
+    at: {"place", "looked", "found"} (for /info)."""
     env = _windows_environment() if env is None else env
     # The agent runs on Windows: the files looked for are always "<name>.exe"
     # (PATH is searched with shutil.which, which knows PATHEXT there).
     exe = exe or f"{command}.exe"
     searched = []
+    fallback_names = _FALLBACK_NAMES.get(command, set())
+    fallback = None
+    trace = [] if trace is None else trace
+
+    def take(place: str, looked: str, found) -> str | None:
+        """The program found at a place, or None to keep searching."""
+        nonlocal fallback
+        if found:
+            found = str(found)
+            # mpv.com is mpv's console wrapper: it starts mpv.exe as a child,
+            # which then outlives a stop that ends the wrapper.
+            if found.lower().endswith(".com") and Path(found).with_suffix(".exe").is_file():
+                found = str(Path(found).with_suffix(".exe"))
+        entry = {"place": place, "looked": looked[:200], "found": found or None}
+        trace.append(entry)
+        if found and Path(found).name.lower() in fallback_names:
+            entry["note"] = "not mpv itself: used only if nothing else is found"
+            fallback = fallback or found
+            return None
+        return found or None
+
     configured = env.get(path_variable, "").strip().strip('"')
     if configured:
         searched.append(path_variable)
-        if Path(configured).is_file():
-            return configured, searched
-        resolved = shutil.which(configured, path=env.get("PATH"))
-        if resolved:
-            return resolved, searched
+        found = configured if Path(configured).is_file() else shutil.which(configured, path=env.get("PATH"))
+        if take(path_variable, configured, found):
+            return trace[-1]["found"], searched
     searched.append("PATH (incl. the user's PATH from the registry)")
-    found = shutil.which(command, path=env.get("PATH"))
-    if found:
-        return found, searched
+    if take("PATH", command, shutil.which(command, path=env.get("PATH"))):
+        return trace[-1]["found"], searched
     searched.append("the agent folder")
     for folder in (*near, AGENT_DIR):
         candidate = Path(folder) / exe
-        if candidate.is_file():
-            return str(candidate), searched
+        if take("next to mpv" if folder in near else "the agent folder", str(candidate),
+                candidate if candidate.is_file() else None):
+            return trace[-1]["found"], searched
+    # Installers record their folder (Inno: InstallLocation): right even
+    # when a new version installs somewhere else.
+    searched.append("installed programs (registry)")
+    for location in _installed_locations(app):
+        candidate = Path(location) / exe
+        if take("installed programs (registry)", str(candidate), candidate if candidate.is_file() else None):
+            return trace[-1]["found"], searched
     defaults = {
         "LOCALAPPDATA": env.get("LOCALAPPDATA", ""),
         "PROGRAMFILES": env.get("PROGRAMFILES", r"C:\Program Files"),
@@ -616,19 +709,21 @@ def find_tool(command: str, path_variable: str, app: str, pkg: str, *, near=(), 
         base = defaults.get(variable, "")
         if not base:
             continue
-        pattern = template.replace("{" + variable + "}", base.replace("\\", "/")).format(exe=exe, app=app, pkg=pkg)
+        pattern = template.replace("{" + variable + "}", base.replace("\\", "/")).format(
+            exe=exe, app=app, pkg=pkg, app_any=f"*{_any_case(app)}*")
         if "*" in pattern:
             matches = sorted(glob.glob(pattern, recursive=True))
             match = next((m for m in matches if Path(m).is_file()), None)
-            if match:
-                return str(Path(match)), searched
-        elif Path(pattern).is_file():
-            return str(Path(pattern)), searched
-    return None, searched
+            found = take(label, pattern, Path(match) if match else None)
+        else:
+            found = take(label, pattern, Path(pattern) if Path(pattern).is_file() else None)
+        if found:
+            return found, searched
+    return fallback, searched
 
 
-def _find_mpv() -> str | None:
-    return find_tool("mpv", "MPV_PATH", "mpv", "mpv")[0]
+def _find_mpv(trace=None) -> str | None:
+    return find_tool("mpv", "MPV_PATH", "mpv", "mpv", trace=trace)[0]
 
 
 def missing_tool_message(command: str, path_variable: str, searched: list, install: str) -> str:
@@ -2066,7 +2161,8 @@ class DisplayHandler(BaseHTTPRequestHandler):
             try:
                 # Remote diagnosis: which players this agent finds (None: not
                 # found), and what of the user's environment it filled in at start.
-                info.update(cached_tools(), restored_env=RESTORED_ENV, audio_start=mpv_start_report())
+                info.update(cached_tools(), restored_env=RESTORED_ENV, audio_start=mpv_start_report(),
+                            **agent_account())
             except Exception:  # noqa: BLE001 - the version must always come back
                 logger.exception("/info diagnosis failed")
             self._send_json(200, info)

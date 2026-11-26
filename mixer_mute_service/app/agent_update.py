@@ -109,7 +109,10 @@ async def _agent_info(request: Request, target: str) -> dict:
     # found) and what of the user's environment they had to fill in at start.
     # Since the local audio copies also where mpv's last start spent its
     # time (audio_start; see mpv_start_report in the agent).
-    for key in ("mpv", "ytdlp", "restored_env", "started_at", "audio_start"):
+    # mpv_search: every place the agent looked for mpv and what it found
+    # there; agent_user / agent_localappdata: the account it runs as.
+    for key in ("mpv", "ytdlp", "restored_env", "started_at", "audio_start", "mpv_search", "agent_user",
+                "agent_localappdata"):
         if key in answer:
             info[key] = answer[key]
     # Agents with POST /restart say so; older ones can only be updated.

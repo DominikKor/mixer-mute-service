@@ -139,12 +139,18 @@ class AllAgentsTests(unittest.TestCase):
                     here.post("/update/agents")
                     self.assertFalse(any(path == "/update" for _, path, _ in fake.calls[n:]))
                     # Remote diagnosis: which mpv / yt-dlp each agent finds.
-                    fake.players["192.168.188.11"] = {"mpv": None, "ytdlp": None, "restored_env": ["PATH"]}
+                    search = [{"place": "Program Files", "looked": "C:/Program Files/MPV Player/mpv.exe", "found": None}]
+                    fake.players["192.168.188.11"] = {"mpv": None, "ytdlp": None, "restored_env": ["PATH"],
+                                                      "mpv_search": search, "agent_user": "Beamer",
+                                                      "agent_localappdata": r"C:\Users\Beamer\AppData\Local"}
                     fake.players["192.168.188.20"] = {"mpv": r"C:\Program Files\mpv\mpv.exe", "ytdlp": None,
                                                       "restored_env": []}
                     now = {a["pc"]: a for a in here.get("/update/agents").json()["agents"]}
                     self.assertEqual((now["192.168.188.11"]["mpv"], now["192.168.188.11"]["restored_env"]),
                                      (None, ["PATH"]))
+                    # Where it looked, and as which Windows account.
+                    self.assertEqual((now["192.168.188.11"]["mpv_search"], now["192.168.188.11"]["agent_user"]),
+                                     (search, "Beamer"))
                     self.assertEqual(now["192.168.188.20"]["mpv"], r"C:\Program Files\mpv\mpv.exe")
 
 
