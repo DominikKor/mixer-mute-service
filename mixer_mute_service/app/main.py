@@ -161,6 +161,11 @@ async def lifespan(app: FastAPI):
     if app.state.native_controls is not None:
         # The stage light needs its frame resent every second (Art-Net).
         app.state.native_controls.start_keepalive()
+        # The beamer starts un-hidden, and a hide remembered from the last run
+        # is worthless after it restarted: like choosing "Unhide" in the
+        # Beamerzustand selector, nothing is sent to the beamer.
+        await app.state.native_controls.set_beamer_state(False)
+        log.info("Beamer: remembered state set to visible (service start)")
         camera_program = _optional(
             app, "program camera presets", lambda: device_camera_program(app.state.native_controls))
     app.state.camera_program = camera_program

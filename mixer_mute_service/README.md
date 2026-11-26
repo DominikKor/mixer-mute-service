@@ -157,9 +157,13 @@ Because the projector command is a toggle, first set the actual current mode in
 the **Beamerzustand** selector. This only records the current state; it does not
 send a projector command. A Hide/Unhide action sends one `avmute=AV Mute`
 HTTP form POST only when its target differs from the recorded state. The state is persisted in
-`native_control_state.json`; it starts as **unknown**, so both actions stay
-blocked until the operator declares the current mode. If the projector is
-toggled by another device, update the selector before using the web controls.
+`native_control_state.json`. The projector starts un-hidden, so on every service
+start and after **Beamer on** or **Beamer off** (also through **Alles
+ausschalten**) the recorded state is set to **Unhide**, without sending anything
+to the projector. It becomes **unknown** only when an AV Mute toggle got no
+answer; Hide and Unhide then stay blocked until the operator declares the
+current mode. If the projector is toggled by another device or its remote,
+update the selector before using the web controls.
 Freeze, Beamer on and Beamer off also use direct HTTP form POSTs to
 `http://192.168.6.40/form/control_cgi`; no local Beamer scripts are needed.
 
@@ -183,8 +187,10 @@ Jede Agent-PC-Zeile hat zusaetzlich eine eigene, bestaetigungspflichtige
 ### Beamer hide/unhide
 
 The **Beamerzustand** selector declares the projector's current physical mode;
-it does not send a command. The state starts unknown, so **Beamer hide** and
-**Beamer unhide** stay blocked until the operator sets it. Each action sends an
+it does not send a command. Service start, **Beamer on** and **Beamer off** set
+it to Unhide (nothing is sent). While it is unknown (a toggle without an
+answer), **Beamer hide** and **Beamer unhide** stay blocked until the operator
+sets it. Each action sends an
 AV Mute HTTP form POST only when the requested target differs from the stored
 state. On success, the new state is persisted in
 `native_control_state.json`. If the projector is toggled by another device,
@@ -794,7 +800,7 @@ einem Feld oder bei offenem Dialog):
 | →, Leertaste | nur nächste Liedfolie, nie ein Programmpunkt (eine versehentlich gedrückte Taste schaltet so keine Mutegruppe) |
 | Bild auf, ← | vorige Folie (im Programm geht es nie zurück) |
 | B oder . | Bildschirm schwarz / wieder an (ohne Lied: Anzeige-PC schwarz / aus) |
-| H | Beamer hide / unhide (wie die Tasten „Beamer hide/unhide“; der Ist-Zustand muss einmal gesetzt sein) |
+| H | Beamer hide / unhide (wie die Tasten „Beamer hide/unhide“; nach dem Start gilt der Beamer als sichtbar) |
 
 **Neues Lied…** (im Liedauswahl-Fenster) legt ein Lied an: Titel, Copyright
 und Liedtext einfügen; jede Leerzeile beginnt eine neue Folie, die Folien werden

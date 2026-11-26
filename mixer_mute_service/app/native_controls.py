@@ -506,6 +506,18 @@ class NativeControlService:
                 else:
                     await self._set_beamer_mode_locked(not self._beamer_hidden)
             return {"ok": True, "command": command}
+        if command in ("power-on", "power-off"):
+            # The beamer starts un-hidden, so after either command the next
+            # start shows the picture: the remembered state becomes visible
+            # (no toggle is sent). Under the lock, so a hide/unhide pressed
+            # meanwhile runs before or after, never in between. A failed
+            # command leaves the state as it was.
+            async with self._beamer_lock:
+                await asyncio.to_thread(_post_beamer_form, *form)
+                if self._beamer_hidden is not False:
+                    self._beamer_hidden = False
+                    self._persist_state()
+            return {"ok": True, "command": command, "hidden": False}
         await asyncio.to_thread(_post_beamer_form, *form)
         return {"ok": True, "command": command}
 
