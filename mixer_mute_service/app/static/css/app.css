@@ -420,6 +420,10 @@ button.display-audio-stop:hover:not(:disabled) { color: rgba(255,255,255,.3); }
   background: var(--panel-bg); box-shadow: var(--panel-shadow), 0 10px 28px rgba(0,0,0,.6);
 }
 .tile-menu[hidden] { display: none; }
+/* Under an open menu: takes every tap outside it (js/menus.js). Below the
+   header (z-index 10), so Panic always works; above the page's content. */
+.menu-backdrop { position: fixed; inset: 0; z-index: 9; background: transparent; }
+dialog .menu-backdrop { z-index: 39; }
 .tile-menu button {
   display: flex; align-items: center; gap: 12px; width: 100%; min-height: 44px; padding: 0 14px 0 12px; border-radius: 6px;
   font-size: 13px; text-align: left; color: #c9ced6; background: none; border: none; box-shadow: none;
