@@ -16,6 +16,8 @@ from ..actions import control_audio, network_program, show_profile
 from ..config import DesktopProfileConfig, default_config_path
 from ..desktop_profiles import ProfileEditError, add_profile, delete_profile, duplicate_profile, update_profile
 from ..models import StagePreferenceRequest
+from ..profile_kind import profile_kind
+from ..youtube import normalize_youtube_url
 from ..responses import fail, reply
 from ..songs import SongSettings, clean_targets, relayout_live
 from ..target_pcs import TargetPcError
@@ -87,6 +89,15 @@ async def _save_profile(request: Request, profile_id: str, body: dict, create: b
     if not isinstance(body, dict):
         return fail("profile must be a JSON object", 400)
     fields = {k: v for k, v in body.items() if k != "id"}
+    # The kind comes from the path (app/profile_kind.py); a kind sent by an
+    # older page only counts where the path says nothing.
+    fields["path"] = normalize_youtube_url(fields.get("path"))
+    path = fields.get("path") if isinstance(fields.get("path"), str) else ""
+    stored = None
+    if not create:
+        old = request.app.state.cfg.desktop_display.profiles.get(profile_id)
+        stored = old.model_dump() if old is not None else None
+    fields["kind"] = profile_kind(path, bool(fields.get("mission_spotlight")), sent=fields.get("kind"), stored=stored)
     try:
         profile = DesktopProfileConfig(**fields)
     except ValidationError as exc:

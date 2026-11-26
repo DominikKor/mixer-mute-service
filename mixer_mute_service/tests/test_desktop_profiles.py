@@ -322,8 +322,23 @@ with TestClient(app) as client:
           and listed["obs"]["position"] == "center")
     r = client.post("/desktop/profiles", json={**body, "id": "ip", "target_ip": "300.1.1.1"})
     check("invalid IP -> 400 with reason", r.status_code == 400 and "target_ip" in r.json()["reason"])
+    # The kind comes from the path (app/profile_kind.py): a page no longer
+    # sends one; an unknown or contradicting one from an old page is ignored.
+    listed_kind = lambda pid: {p["id"]: p for p in client.get("/desktop/profiles").json()["profiles"]}[pid]["kind"]
     r = client.post("/desktop/profiles", json={**body, "id": "k", "kind": "script"})
-    check("invalid kind -> 400", r.status_code == 400)
+    check("unknown kind sent: path decides (.exe -> program)", r.status_code == 200 and listed_kind("k") == "program")
+    no_kind = {k: v for k, v in body.items() if k not in ("kind", "args")}
+    r = client.post("/desktop/profiles", json={**no_kind, "id": "pic", "path": r"I:\Bilder\QR.png"})
+    check("no kind sent: .png -> image", r.status_code == 200 and listed_kind("pic") == "image")
+    r = client.post("/desktop/profiles", json={**no_kind, "id": "vid", "kind": "image", "path": r"I:\Videos\Intro.mp4"})
+    check("contradicting kind (image for .mp4) -> file", r.status_code == 200 and listed_kind("vid") == "file")
+    # Editing: the stored kind stays while the path stays; a new path re-derives it.
+    r = client.put("/desktop/profiles/vid", json={**no_kind, "title": "Intro", "path": r"I:\Videos\Intro.mp4", "kind": "audio"})
+    check("same path keeps the stored kind", r.status_code == 200 and listed_kind("vid") == "file")
+    r = client.put("/desktop/profiles/vid", json={**no_kind, "title": "Intro", "path": r"I:\Musik\Intro.mp3"})
+    check("new path re-derives the kind (.mp3 -> audio)", r.status_code == 200 and listed_kind("vid") == "audio")
+    r = client.post("/desktop/profiles", json={**no_kind, "id": "star", "kind": "program", "path": r"C:\Apps\obs64*"})
+    check("path without extension keeps a sent kind", r.status_code == 200 and listed_kind("star") == "program")
     check("missing id -> 400", client.post("/desktop/profiles", json=OBS.model_dump()).status_code == 400)
     check("update unknown -> 404", client.put("/desktop/profiles/nope", json=upd).status_code == 404)
     audio_body = {"id": "audio", **AUDIO.model_dump()}
