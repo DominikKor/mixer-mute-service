@@ -28,13 +28,14 @@ import logging
 import os
 import re
 import string
+from datetime import date
 from pathlib import Path, PureWindowsPath
 from typing import Optional, Tuple
 
 from fastapi import APIRouter, Body, Request
 from fastapi.responses import JSONResponse
 
-from . import display_agent
+from . import agent_update, display_agent, mission_spotlight
 from .display_agent import AgentError
 
 router = APIRouter()
@@ -119,21 +120,69 @@ async def run_file_action(request: Request, value: str) -> Tuple[dict, int]:
             # The agent says why the player did not start (no audio device, ...);
             # anything else at 503 means the file is missing there.
             agent_reason = (exc.body or {}).get("reason")
-            if isinstance(agent_reason, str) and agent_reason.startswith("audio player could not be started"):
+            if isinstance(agent_reason, str) and agent_reason.startswith(PLAYER_FAILURE_PREFIX):
                 return {"ok": False, "reason": agent_reason, "file": name}, 502
-            return {"ok": False, "reason": not_found_reason(path), "file": name}, 502
+            return {"ok": False, "reason": await no_file_reason(request, target, path), "file": name}, 502
         return {**exc.answer(), "file": name}, exc.status
     log.info("FILE %s %s on %s", "play" if kind == "audio" else "open", path, target)
     return {"ok": result.get("ok", True) is not False, "file": name, "kind": kind, "target": target}, 200
 
 
-def not_found_reason(path: str) -> str:
-    """Why the agent found nothing, with the folder it looked in."""
+# The first Display Service that fills in "*" in a path.
+WILDCARD_MIN_VERSION = (1, 2, 1, 135)
+PLAYER_FAILURE_PREFIX = "audio player could not be started"
+
+
+def agent_version_tuple(version) -> Optional[Tuple[int, ...]]:
+    """(1, 2, 1, 237) from "1.2.1-237" (or "v1.2.1-237"); None when it is no version."""
+    match = re.fullmatch(r"v?(\d+)\.(\d+)\.(\d+)-(\d+)", str(version or "").strip())
+    return tuple(int(part) for part in match.groups()) if match else None
+
+
+def spotlight_search(today: Optional[date] = None) -> dict:
+    """The week and quarter a Mission Spotlight profile looks for today."""
+    now = mission_spotlight.current(today)
+    return {"week": now["week"], "quarter": now["quarter"], "year": now["year"]}
+
+
+def not_found_reason(path: str, pc: str = "Ziel-PC", spotlight: Optional[dict] = None,
+                     old_agent: bool = False) -> str:
+    """Why the agent found nothing (German, for the display): the pattern and
+    folder it looked in, on which PC, and for Mission Spotlight the week and
+    quarter. old_agent adds that the PC's Display Service is too old for "*"."""
+    if "*" not in path:
+        return f"Datei auf dem {pc} nicht gefunden."
+    parent = PureWindowsPath(path)
+    reason = f"Keine Datei „{parent.name.replace('*', '…')}“ in {parent.parent} auf dem {pc} gefunden"
+    if spotlight:
+        reason += f" (Woche {spotlight['week']:02d}, {spotlight['quarter']}. Quartal {spotlight['year']})"
+    reason += "."
+    if old_agent:
+        minimum = "v" + ".".join(map(str, WILDCARD_MIN_VERSION[:3])) + f"-{WILDCARD_MIN_VERSION[3]}"
+        reason += f" Der Display Service auf diesem PC ist älter als {minimum} und kennt „*“ in Pfaden noch nicht; bitte aktualisieren."
+    return reason
+
+
+async def no_file_reason(request: Request, target: str, path: str, spotlight: Optional[dict] = None) -> str:
+    """not_found_reason for a PC: its configured name, and the old-agent hint
+    only when that PC's Display Service really is older than "*" support (one
+    /info call, only made for a path with "*")."""
+    pc = "Ziel-PC"
+    try:
+        pc = next((item["name"] for item in await agent_update.agent_pcs(request) if item["pc"] == target), pc)
+    except Exception:  # the name is nice to have, the reason must still come out
+        log.debug("Name of %s not available", target, exc_info=True)
+    old_agent = False
     if "*" in path:
-        parent = PureWindowsPath(path)
-        return (f"no file matches {parent.name} in {parent.parent} on the target PC "
-                "(\"*\" needs the Display Service from v1.2.1-135 or newer there)")
-    return "file not found on the target PC"
+        try:
+            info = await agent_update._agent_info(request, target)
+            if info.get("present"):
+                version = agent_version_tuple(info.get("version"))
+                # No /info at all or a version below the first with "*": old.
+                old_agent = info.get("version") is None or (version is not None and version < WILDCARD_MIN_VERSION)
+        except Exception:
+            log.debug("Version of the agent on %s not available", target, exc_info=True)
+    return not_found_reason(path, pc, spotlight, old_agent)
 
 
 def _from_this_pc(request: Request) -> bool:

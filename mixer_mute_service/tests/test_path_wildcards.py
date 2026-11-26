@@ -118,12 +118,23 @@ class ServiceWildcardTests(unittest.TestCase):
         self.assertFalse(network_program("image", r"\\server\share\bilder\qr*"))
         self.assertIsNotNone(file_action_error("file:192.168.188.11|\\\\server\\share\\run*"))
 
-    def test_no_match_names_the_pattern_and_folder(self):
-        from app.file_actions import not_found_reason
-        reason = not_found_reason("I:\\Missionsbericht Videos\\2024_4.Quartal\\01*")
-        self.assertIn("01*", reason)
-        self.assertIn("I:\\Missionsbericht Videos\\2024_4.Quartal", reason)
-        self.assertEqual(not_found_reason("C:\\Uhr.url"), "file not found on the target PC")
+    def test_no_match_names_the_pattern_folder_and_pc(self):
+        from app.file_actions import agent_version_tuple, not_found_reason
+        path = "I:\\Missionsbericht Videos\\2026_4. Quartal\\09*"
+        self.assertEqual(not_found_reason(path, "Anzeige PC"),
+                         "Keine Datei „09…“ in I:\\Missionsbericht Videos\\2026_4. Quartal auf dem Anzeige PC gefunden.")
+        week = {"week": 9, "quarter": 4, "year": 2026}
+        self.assertEqual(not_found_reason(path, "Anzeige PC", week),
+                         "Keine Datei „09…“ in I:\\Missionsbericht Videos\\2026_4. Quartal auf dem Anzeige PC gefunden"
+                         " (Woche 09, 4. Quartal 2026).")
+        self.assertNotIn("Version", not_found_reason(path, "Anzeige PC", week))
+        old = not_found_reason(path, "Anzeige PC", week, old_agent=True)
+        self.assertIn("älter als v1.2.1-135", old)
+        self.assertEqual(not_found_reason("C:\\Uhr.url", "Anzeige PC"), "Datei auf dem Anzeige PC nicht gefunden.")
+        self.assertEqual(agent_version_tuple("1.2.1-237"), (1, 2, 1, 237))
+        self.assertEqual(agent_version_tuple("v1.2.1-135"), (1, 2, 1, 135))
+        self.assertIsNone(agent_version_tuple("unknown"))
+        self.assertIsNone(agent_version_tuple(None))
 
     def test_runnable_files_on_a_share_are_refused_for_every_kind(self):
         # Opening an .exe or .bat "with its default app" runs it, too.

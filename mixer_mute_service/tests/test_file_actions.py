@@ -99,7 +99,7 @@ def main():
         agent.missing = True
         r = client.post(f"/program/items/{item_id}/play")
         actions = r.json().get("linked_actions", [])
-        check("missing file reported", r.status_code == 502 and actions and actions[0]["reason"] == "file not found on the target PC")
+        check("missing file reported", r.status_code == 502 and actions and actions[0]["reason"] == "Datei auf dem Ziel-PC nicht gefunden.")
         agent.missing = False
         reason = "audio player could not be started: mpv ended at once (exit code 2): Could not open audio device"
         agent.player_error = {"ok": False, "reason": reason}
