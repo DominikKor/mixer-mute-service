@@ -9,6 +9,7 @@ or:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import sys
@@ -24,6 +25,7 @@ from fastapi.staticfiles import StaticFiles
 from .buses import BusRegistry
 from .channel_settings import ChannelSettingsCache, ChannelSettingsStore
 from .camera_program import device_camera_program
+from .obs_status import ObsStatus
 from .camera_ptz import PanTiltControl
 from .camera_streams import CameraStreamStore, MediaMTXRelay
 from .channel_preferences import ChannelPreferences
@@ -35,7 +37,7 @@ from .groups import GroupStore
 from .mixer_client import MixerClient
 from .lights import CircuitCache, LightSceneStore
 from .names import NameStore
-from .native_controls import NativeControlService
+from .native_controls import NativeControlService, close_obs_clients
 from .power_control import PowerControlStore
 from .target_pcs import TargetPcStore
 from .proxy import ProxyServer
@@ -162,6 +164,7 @@ async def lifespan(app: FastAPI):
         camera_program = _optional(
             app, "program camera presets", lambda: device_camera_program(app.state.native_controls))
     app.state.camera_program = camera_program
+    app.state.obs_status = ObsStatus()
     app.state.light_scenes = _optional(app, "light scenes", lambda: LightSceneStore(data_dir / "light_scenes.json"))
     app.state.names = _optional(app, "names", lambda: NameStore(data_dir / "display_names.json"))
     app.state.light_circuits = CircuitCache()
@@ -209,6 +212,7 @@ async def lifespan(app: FastAPI):
             camera_program.cancel()
         if app.state.native_controls is not None:
             await app.state.native_controls.stop_keepalive()
+        await asyncio.to_thread(close_obs_clients)
         try:
             await client.stop()
         finally:

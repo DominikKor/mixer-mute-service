@@ -146,6 +146,43 @@ def _end_task() -> Tuple[bool, str]:
     return proc.returncode == 0, _decode(proc.stdout + proc.stderr).strip()
 
 
+# After schtasks /End Windows may count the old run as running for a moment;
+# a /Run then is dropped silently. So the start waits until it has stopped.
+END_WAIT_SECONDS = 20.0
+END_POLL_SECONDS = 1.0
+
+
+def _task_running() -> Optional[bool]:
+    """Whether the update task runs now; None when Windows cannot tell.
+    Get-ScheduledTask's state is not translated (schtasks' output is)."""
+    proc = subprocess.run(
+        ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command",
+         f"(Get-ScheduledTask -TaskName '{UPDATE_TASK}' -ErrorAction Stop).State"],
+        capture_output=True, timeout=20,
+    )
+    if proc.returncode != 0:
+        return None
+    return _decode(proc.stdout).strip().lower() == "running"
+
+
+async def _wait_until_task_stopped() -> Optional[bool]:
+    """True once the task no longer runs, False if it still runs after
+    END_WAIT_SECONDS, None if Windows cannot tell."""
+    deadline = time.monotonic() + END_WAIT_SECONDS
+    while True:
+        try:
+            running = await asyncio.to_thread(_task_running)
+        except Exception:  # noqa: BLE001 - unknown, not an error
+            return None
+        if running is None:
+            return None
+        if not running:
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        await asyncio.sleep(END_POLL_SECONDS)
+
+
 def _is_stale(status: Optional[dict]) -> bool:
     """A run that says it is going but has shown no sign of life for long."""
     return bool(status) and status.get("state") in ACTIVE_STATES and not _is_active(status)
@@ -198,6 +235,13 @@ async def _start():
         log.warning("stale update run %s (%s, no sign of life for %.0f min): end task -> %s %s",
                     status.get("run_id"), status.get("message"), (_status_age() or 0) / 60,
                     "ok" if ended else "failed", output)
+        stopped = await _wait_until_task_stopped()
+        if stopped is False:
+            # A start now would be dropped: say so and keep the next click free.
+            reason = "the hung update task could not be ended; end it in the Task Scheduler (MixerMuteServiceUpdate)"
+            _write_status("failed", uuid.uuid4().hex, reason)
+            log.error(reason)
+            return JSONResponse({"ok": False, "reason": reason}, 502)
 
     run_id = uuid.uuid4().hex
     _write_status("requested", run_id, "Update requested")

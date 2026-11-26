@@ -102,7 +102,7 @@ class FixtureTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["level"], 77)
 
     async def test_overall_zones_on_and_colour_keys_still_work(self):
-        await self.controls.press({"type": "artnet-zones-on", "zones": ["left", "right"]})
+        await self.controls.press({"type": "artnet-zones-set", "on": ["left", "right"]})
         self.assertEqual(channels(self.frames[-1], "left"), [255, 255, 50])
         self.assertEqual(channels(self.frames[-1], "center-left")[0], 0)
         await self.controls.set_stage({"left": {"warm": 100}})

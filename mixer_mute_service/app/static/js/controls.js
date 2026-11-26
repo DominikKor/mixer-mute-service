@@ -3,7 +3,9 @@
 // of index.html; main.js runs last and starts everything.
 
 // ---- Steuerung (control keys) ----------------------------------------------
-let COMPANION_BUTTON_BUSY = false;
+// Keys whose press is still running. Only the same key waits; any other key
+// works at once (one global flag swallowed every press while an Overall ran).
+const COMPANION_BUTTON_BUSY = new Set();
 const COMPANION_CATEGORY_BUSY = new Set();
 let COMPANION_DATA = { categories: [], buttons: [], companion_targets: [] };
 let COMPANION_GROUPS = {};
@@ -156,6 +158,52 @@ async function savePowerOffConfig() {
   toast("Abschaltauswahl gespeichert", true);
 }
 
+// ---- OBS live colours (GET /obs/status) -------------------------------------
+// As on the Companion buttons: a key whose scene is on air in OBS is red, one
+// in the preview (studio mode) green. The transition keys show OBS's
+// transition time. One status call per poll for all keys; while OBS does not
+// answer no key is coloured.
+let OBS_STATUS = null;
+
+// The OBS scene a key puts on air, or whether it sets the transition time.
+function obsKeyRole(info) {
+  let action = info.native_action;
+  if (info.kind === "companion") {
+    const target = (COMPANION_DATA.companion_targets || []).find(item => item.id === info.target_button_id);
+    action = target && target.native_action;
+  }
+  if (!action) return {};
+  if (action.type === "obs-transition-adjust") return { transition: true };
+  const placeholder = action.scene === "Current Scene" || action.scene === "Preview Scene";
+  return (action.type === "obs-live" || action.type === "obs-scene") && action.scene && !placeholder ? { scene: action.scene } : {};
+}
+
+function applyObsStatus() {
+  const status = OBS_STATUS && OBS_STATUS.ok ? OBS_STATUS : null;
+  for (const key of document.querySelectorAll("button.companion-key[data-obs-scene]")) {
+    const scene = key.dataset.obsScene;
+    const program = !!status && status.program === scene;
+    const preview = !!status && !program && status.preview === scene;
+    key.classList.toggle("obs-program", program);
+    key.classList.toggle("obs-preview", preview);
+    if (program) key.setAttribute("aria-description", "live in OBS");
+    else if (preview) key.setAttribute("aria-description", "in der OBS-Vorschau");
+    else key.removeAttribute("aria-description");
+  }
+  const ms = status && status.transition ? status.transition.duration_ms : null;
+  for (const key of document.querySelectorAll("button.companion-key[data-obs-transition]")) {
+    if (typeof ms === "number") key.dataset.value = `${ms} ms`;
+    else delete key.dataset.value;
+  }
+}
+
+async function refreshObsStatus() {
+  if (!document.querySelector("button.companion-key[data-obs-scene], button.companion-key[data-obs-transition]")) return;
+  const result = await api("GET", "/obs/status");
+  OBS_STATUS = result.ok ? result.data : null;
+  applyObsStatus();
+}
+
 function renderCompanionButtons() {
   const wrap = $("companion-categories");
   wrap.replaceChildren();
@@ -186,6 +234,9 @@ function renderCompanionButtons() {
       press.className = `companion-key ${info.kind === "companion" ? "remote" : info.kind}`;
       press.dataset.companionPress = info.id;
       press.textContent = info.label;
+      const obs = obsKeyRole(info);
+      if (obs.scene) press.dataset.obsScene = obs.scene;
+      if (obs.transition) press.dataset.obsTransition = "";
       press.title = info.kind === "native" ? "Direkt über den lokalen Dienst ausführen" : "Über den sicheren Dienst ausführen";
       const tools = document.createElement("div");
       tools.className = "companion-button-tools";
@@ -215,6 +266,7 @@ function renderCompanionButtons() {
     wrap.appendChild(section);
   }
   syncBeamerCommandButtons();
+  applyObsStatus();
   renderCameraControls();
 }
 
@@ -393,11 +445,13 @@ $("companion-categories").addEventListener("click", async (event) => {
     return;
   }
   const button = event.target.closest("[data-companion-press]");
-  if (!button || COMPANION_BUTTON_BUSY) return;
-  COMPANION_BUTTON_BUSY = true;
+  if (!button) return;
+  const pressId = button.dataset.companionPress;
+  if (COMPANION_BUTTON_BUSY.has(pressId)) return;
+  COMPANION_BUTTON_BUSY.add(pressId);
   button.disabled = true;
   try {
-    const result = await api("POST", `/companion/buttons/${encodeURIComponent(button.dataset.companionPress)}/press`);
+    const result = await api("POST", `/companion/buttons/${encodeURIComponent(pressId)}/press`);
     if (!result.ok || result.data.ok === false) toast(`${button.textContent}: ${result.data.reason || "HTTP " + result.status}`, false);
     else {
       const isBeamerMode = button.dataset.companionPress === "beamer-hide" || button.dataset.companionPress === "beamer-unhide";
@@ -406,12 +460,18 @@ $("companion-categories").addEventListener("click", async (event) => {
         renderBeamerState(state.ok ? state.data : null);
         toast(result.data.changed === false ? `${button.textContent}: bereits gesetzt, kein Toggle` : `${button.textContent}: ausgeführt`, true);
       } else {
-        toast(`${button.textContent}: ausgeführt`, true);
+        // Overall: the camera cut follows after the wait; say so.
+        const camera = result.data.camera && result.data.camera.message;
+        toast(`${button.textContent}: ausgeführt${camera ? ` – ${camera}` : ""}`, true);
+        // Done, but something needs a look (e.g. an OBS source was renamed).
+        if (result.data.warning) toast(`${button.textContent}: ${result.data.warning}`, false);
       }
       if (button.classList.contains("channel") || button.classList.contains("group")) await refresh();
+      // Show the cut (or the new transition time) without waiting for the poll.
+      if (button.dataset.obsScene !== undefined || button.dataset.obsTransition !== undefined) refreshObsStatus();
     }
   } finally {
-    COMPANION_BUTTON_BUSY = false;
+    COMPANION_BUTTON_BUSY.delete(pressId);
     button.disabled = (button.dataset.companionPress === "beamer-hide" || button.dataset.companionPress === "beamer-unhide")
       && typeof BEAMER_HIDDEN !== "boolean";
   }

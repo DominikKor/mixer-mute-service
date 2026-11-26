@@ -171,16 +171,32 @@ function initSections() {
 
 // ---- Arrangement of the sections (per device) -------------------------------
 // "Anordnen" shows ◀ ▲ ▼ ▶ in every section head. Sections sit in rows; up to
-// three share a row side by side (normal view, wider than 900 px):
+// three share a row side by side (normal view, wider than 900 px). A row sets
+// width and column: the i-th of k sections in a row is 1/k wide and stays in
+// the i-th place from the left. On the page every section moves up as far as
+// its own columns allow (masonry), so short sections leave no empty space
+// under them; a row stays level when its sections would start less than
+// SECTION_LEVEL_PX apart. A section that straddles a step (a third under two
+// halves) starts under the step, the others in its row still move up. A
+// section never changes column for a few pixels.
+// The arrows follow what is on screen:
 //   ◀ ▶  swap with the neighbour in the row; a section alone in its row joins
 //        the row above, on its left (◀) or right (▶) end
-//   ▲ ▼  a section sharing a row gets a row of its own above / below; one
-//        alone swaps places with the row above / below
-// The rows are kept in the UI prefs; read in order they also give the order
-// of the stage miniatures. Only the moved section changes place in the page
-// (moving a section reloads the camera videos in it).
+//   ▲ ▼  swap places (and widths) with the section right above / below it;
+//        a whole-width section swaps with the row above / below; a section
+//        sharing a row with nothing above / below it gets the whole width at
+//        the top / bottom
+// In the one-column views (narrow window, stage) "above" is the section
+// before in the order, and an arrow that would change nothing there is off. The rows are kept in the UI prefs; read in order they
+// also give the order of the stage miniatures. Only the moved section changes
+// place in the page (moving a section reloads the camera videos in it);
+// packing only sets grid places.
 
 const SECTION_ROW_MAX = 3;
+const SECTION_GRID_COLUMNS = 6;
+const SECTION_GRID_ROW_PX = 2;  // .page grid-auto-rows (app.css): packing unit
+const SECTION_LEVEL_PX = 120;   // rows closer than this stay level
+const SECTION_HEIGHTS = {};     // section -> height in grid rows, measured by packSections
 let SECTION_DEFAULT_ORDER = [];
 let SECTION_ROWS = [];  // [[section, ...], ...]: rows top to bottom, sections left to right
 
@@ -213,6 +229,12 @@ function initSectionOrder() {
     panel.querySelector(".panel-head").appendChild(box);
   }
   applySectionRows();
+  // Heights change all the time (sections open and close, program rows are
+  // added, the window is resized). The observer runs after layout and before
+  // paint, so a section that grew never overlaps the next one for a frame.
+  // Packing only moves sections, it does not resize them: no loop.
+  const packer = new ResizeObserver(() => packSections());
+  panels.forEach(panel => packer.observe(panel));
   const toggle = $("arrange-toggle");
   toggle.addEventListener("change", () => {
     document.body.classList.toggle("arranging", toggle.checked);
@@ -240,35 +262,92 @@ function normalizeSectionRows(rows) {
   return result;
 }
 
-// Put the sections in page order and in their grid places; with `moved`
-// only that section changes place in the page.
-function applySectionRows(moved = null) {
+// Put the sections in page order and in their grid places. With `before`
+// (the order until now) only the sections that are out of order move in the
+// page: all but the longest run of sections that kept their order (moving a
+// section reloads the camera videos in it).
+function applySectionRows(before = null) {
   const order = SECTION_ROWS.flat();
   const bySection = Object.fromEntries(sectionPanelsInOrder().map(panel => [panel.dataset.section, panel]));
   if (STAGE.order.length) STAGE.order = order.map(section => bySection[section]);
   const page = document.querySelector(".page");
-  const place = section => {
-    const next = order[order.indexOf(section) + 1];
+  const keep = before ? keptInOrder(before, order) : new Set();
+  for (let i = order.length - 1; i >= 0; i--) {
+    const section = order[i], next = order[i + 1];
+    if (keep.has(section)) continue;
     if (STAGE.on) stagePlace($("stage-rail-list"), STAGE.thumbs[section], next ? STAGE.thumbs[next] : null);
     else stagePlace(page, bySection[section], next ? bySection[next] : null);
-  };
-  if (moved) place(moved);
-  else [...order].reverse().forEach(place);
-  // Grid of 6 columns: one section spans 6, two 3 each, three 2 each.
-  SECTION_ROWS.forEach((sections, r) => {
-    const span = 6 / sections.length;
-    sections.forEach((section, i) => {
-      bySection[section].style.gridRow = String(r + 1);
-      bySection[section].style.gridColumn = `${1 + i * span} / span ${span}`;
-    });
-  });
-  syncSectionMoveButtons();
+  }
+  packSections();
   if (STAGE.on) scheduleStageLayout();
 }
 
-// The rows after moving `section` in `dir`, or null when it cannot move that way.
-function movedSectionRows(section, dir) {
-  const rows = SECTION_ROWS.map(row => [...row]);
+// The longest common subsequence of two orders, as a set.
+function keptInOrder(a, b) {
+  const len = a.map(() => new Array(b.length + 1).fill(0));
+  len.push(new Array(b.length + 1).fill(0));
+  for (let i = a.length - 1; i >= 0; i--) {
+    for (let j = b.length - 1; j >= 0; j--) {
+      len[i][j] = a[i] === b[j] ? len[i + 1][j + 1] + 1 : Math.max(len[i + 1][j], len[i][j + 1]);
+    }
+  }
+  const keep = new Set();
+  for (let i = 0, j = 0; i < a.length && j < b.length;) {
+    if (a[i] === b[j]) { keep.add(a[i]); i++; j++; } else if (len[i + 1][j] >= len[i][j + 1]) i++; else j++;
+  }
+  return keep;
+}
+
+// Where every section goes: {section: {start, span, top, bottom}}, columns
+// 0..5 of the page grid, tops and bottoms in grid rows. heightOf(section) is
+// its height in grid rows; `single`: one column in order (narrow view,
+// stage); `level`: SECTION_LEVEL_PX in grid rows. Pure (tests/test_section_layout.py).
+function layoutSectionRows(rows, heightOf, { single = false, level = 1 } = {}) {
+  const cols = SECTION_GRID_COLUMNS, skyline = new Array(cols).fill(0), layout = {};
+  const put = (section, start, span, top) => {
+    const bottom = top + heightOf(section);
+    layout[section] = { start, span, top, bottom };
+    for (let c = start; c < start + span; c++) skyline[c] = bottom;
+  };
+  for (const row of rows) {
+    if (single || row.length === 1) {
+      for (const section of row) put(section, 0, cols, Math.max(...skyline));
+      continue;
+    }
+    const span = cols / row.length;
+    // A section starts under the lowest bottom in its own columns; one that
+    // straddles a step starts under the step, the others still move up.
+    const natural = row.map((_, i) => Math.max(...skyline.slice(i * span, (i + 1) * span)));
+    const highest = Math.max(...natural);
+    row.forEach((section, i) => {
+      put(section, i * span, span, highest - natural[i] < level ? highest : natural[i]);
+    });
+  }
+  return layout;
+}
+
+// The section right above (the latest bottom among the earlier ones sharing
+// a column) or right below (the earliest top among the later ones) `section`.
+function sectionNeighbour(rows, section, dir, layout) {
+  const order = rows.flat(), at = order.indexOf(section), me = layout[section];
+  const overlaps = other => layout[other].start < me.start + me.span && me.start < layout[other].start + layout[other].span;
+  let best = null;
+  if (dir === "up") {
+    for (let i = 0; i < at; i++) {
+      if (overlaps(order[i]) && (!best || layout[order[i]].bottom >= layout[best].bottom)) best = order[i];
+    }
+  } else {
+    for (let i = order.length - 1; i > at; i--) {
+      if (overlaps(order[i]) && (!best || layout[order[i]].top <= layout[best].top)) best = order[i];
+    }
+  }
+  return best;
+}
+
+// The rows after moving `section` in `dir` (layout: layoutSectionRows of
+// `rows`), or null when it cannot move that way. Pure.
+function sectionRowsAfterMove(rows, section, dir, layout) {
+  rows = rows.map(row => [...row]);
   const r = rows.findIndex(row => row.includes(section));
   if (r < 0) return null;
   const row = rows[r], c = row.indexOf(section);
@@ -281,25 +360,76 @@ function movedSectionRows(section, dir) {
       if (dir === "left") rows[r - 1].unshift(section); else rows[r - 1].push(section);
       rows.splice(r, 1);
     } else return null;
+  } else if (alone) {
+    const other = dir === "up" ? r - 1 : r + 1;
+    if (other < 0 || other >= rows.length) return null;
+    [rows[r], rows[other]] = [rows[other], rows[r]];
   } else {
-    const up = dir === "up";
-    if (!alone) {
-      row.splice(c, 1);
-      rows.splice(up ? r : r + 1, 0, [section]);
+    const other = sectionNeighbour(rows, section, dir, layout);
+    if (other) {
+      const o = rows.findIndex(x => x.includes(other));
+      rows[o][rows[o].indexOf(other)] = section;
+      row[c] = other;
+    } else if (layout[section].span === SECTION_GRID_COLUMNS) {
+      return null;  // one-column view: already whole width, nothing would change on screen
     } else {
-      const other = up ? r - 1 : r + 1;
-      if (other < 0 || other >= rows.length) return null;
-      [rows[r], rows[other]] = [rows[other], rows[r]];
+      row.splice(c, 1);
+      if (dir === "up") rows.unshift([section]); else rows.push([section]);
     }
   }
   return rows;
 }
 
+// The layout as it is on screen now (one column when the page is no grid).
+function currentSectionLayout() {
+  const page = document.querySelector(".page");
+  const single = STAGE.on || !page || getComputedStyle(page).display !== "grid";
+  return layoutSectionRows(SECTION_ROWS, section => SECTION_HEIGHTS[section] || 1,
+                           { single, level: SECTION_LEVEL_PX / SECTION_GRID_ROW_PX });
+}
+
+// Measure the sections and put them in their grid places (6 columns, 2 px
+// rows). Columns first: a section's height depends on its width. Not on the
+// stage; in the narrow one-column view only measured. Then the arrows.
+function packSections() {
+  const page = document.querySelector(".page");
+  if (!page) return;
+  if (!STAGE.on) placeSections(page);
+  // What an arrow does depends on the layout: refresh after every packing.
+  syncSectionMoveButtons();
+}
+
+function placeSections(page) {
+  const panels = sectionPanelsInOrder();
+  const grid = getComputedStyle(page).display === "grid";
+  const columns = grid ? currentSectionLayout() : {};
+  for (const panel of panels) {
+    const place = columns[panel.dataset.section];
+    panel.style.gridColumn = place ? `${place.start + 1} / span ${place.span}` : "";
+    if (!place) panel.style.gridRow = "";
+  }
+  for (const panel of panels) {
+    const margin = parseFloat(getComputedStyle(panel).marginTop) || 0;
+    SECTION_HEIGHTS[panel.dataset.section] = Math.max(1, Math.ceil((panel.offsetHeight + margin) / SECTION_GRID_ROW_PX));
+  }
+  if (!grid) return;
+  const layout = currentSectionLayout();
+  for (const panel of panels) {
+    const place = layout[panel.dataset.section];
+    if (place) panel.style.gridRow = `${place.top + 1} / span ${place.bottom - place.top}`;
+  }
+}
+
+function movedSectionRows(section, dir, layout = currentSectionLayout()) {
+  return sectionRowsAfterMove(SECTION_ROWS, section, dir, layout);
+}
+
 function moveSection(section, dir, button) {
   const rows = movedSectionRows(section, dir);
   if (!rows) return;
+  const before = SECTION_ROWS.flat();
   SECTION_ROWS = rows;
-  applySectionRows(section);
+  applySectionRows(before);
   const panel = sectionPanelsInOrder().find(p => p.dataset.section === section);
   if (!STAGE.on && panel) panel.scrollIntoView({ block: "nearest" });
   const p = loadUiPrefs();
@@ -310,9 +440,10 @@ function moveSection(section, dir, button) {
 }
 
 function syncSectionMoveButtons() {
+  const layout = currentSectionLayout();
   for (const panel of sectionPanelsInOrder()) {
     for (const button of panel.querySelectorAll("[data-section-move]")) {
-      button.disabled = !movedSectionRows(panel.dataset.section, button.dataset.sectionMove);
+      button.disabled = !movedSectionRows(panel.dataset.section, button.dataset.sectionMove, layout);
     }
   }
 }
@@ -471,7 +602,8 @@ async function openUpdateDialog() {
 async function startUpdate() {
   $("update-start").disabled = true;
   if (!UPDATE.program) return runAgentStep("");
-  const r = await api("POST", "/update/start");
+  // Ending a hung earlier run first can take up to ~40 s (app/updater.py).
+  const r = await api("POST", "/update/start", undefined, { timeout: 60000 });
   if (!(r.ok && r.data.ok)) {
     setUpdateLcd(`Update nicht gestartet: ${escapeHtml(r.data.reason || "HTTP " + r.status)}`, "err");
     $("update-start").disabled = false;

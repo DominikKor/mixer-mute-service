@@ -5,6 +5,7 @@
 let PROGRAM_ITEMS = [];
 let PROGRAM_GROUPS = {};
 let PROGRAM_BUTTONS = [];
+let PROGRAM_BUTTON_ALIASES = {};
 let PROGRAM_BUTTON_CATEGORIES = {};
 let PROGRAM_DESKTOP_PROFILES = [];
 let PROGRAM_SHORTCUTS = [];        // [{id, title, ...actions}] from /shortcuts
@@ -277,7 +278,9 @@ function programLegacyLabel(value) {
     const profile = PROGRAM_DESKTOP_PROFILES.find(p => `desktop:${p.id}` === value);
     return `Desktop · ${profile ? profile.title : value.slice(8)}`;
   }
-  const button = PROGRAM_BUTTONS.find(b => b.id === value);
+  // An old duplicate key ID (catalog v10) shows as the key it now runs.
+  const id = PROGRAM_BUTTON_ALIASES[value] || value;
+  const button = PROGRAM_BUTTONS.find(b => b.id === id);
   if (!button) return value;
   const category = PROGRAM_BUTTON_CATEGORIES[button.category_id];
   return category ? `${category} · ${button.label}` : button.label;
@@ -856,6 +859,7 @@ async function loadProgramItems() {
   // Camera presets and the light and mixer keys left Steuerung but program
   // rows can still run them.
   PROGRAM_BUTTONS = [...(buttons.data.buttons || []), ...(buttons.data.camera_buttons || []), ...(buttons.data.catalog_buttons || [])];
+  PROGRAM_BUTTON_ALIASES = buttons.data.button_aliases || {};
   PROGRAM_BUTTON_CATEGORIES = { cameras: "Kameras", light: "Licht", mixer: "Mixer", ...Object.fromEntries((buttons.data.categories || []).map(category => [category.id, category.name])) };
   PROGRAM_DESKTOP_PROFILES = desktop.data.profiles || [];
   PROGRAM_CAMERA_PRESETS = programCameraPresets(buttons.data.camera_buttons || []);

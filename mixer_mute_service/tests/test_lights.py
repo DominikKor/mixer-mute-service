@@ -230,11 +230,15 @@ class LightsApiTests(unittest.TestCase):
         self.assertEqual(self.devices.zone_white("left"), 0)
 
     def test_all_on_key_switches_every_answering_circuit(self):
-        self.devices.offline.add("light-front")  # before light-tech and light-stage
+        self.devices.offline.add("light-front")  # before light-stage
+        self.devices.shelly["light-tech"] = False
         r = self.client.post("/companion/buttons/native-shelly-all-on/press")
         self.assertNotEqual(r.status_code, 200)
         self.assertIn("light-front", r.json()["reason"])
-        self.assertTrue(all(on for target, on in self.devices.shelly.items() if target != "light-front"))
+        # As in Companion, "Licht AN" leaves the Technik circuit alone.
+        self.assertFalse(self.devices.shelly["light-tech"])
+        self.assertTrue(all(on for target, on in self.devices.shelly.items()
+                            if target not in ("light-front", "light-tech")))
 
     def test_scene_saved_from_current_light_and_applied(self):
         self.client.post("/lights/stage", json={"zones": {"left": 120, "center-left": 0, "center-right": 0, "right": 120}})
@@ -378,7 +382,7 @@ class CatalogV8Tests(unittest.TestCase):
             self.assertEqual(list(Path(folder).glob("*.corrupt*")), [])
             snapshot = asyncio.run(store.snapshot())
         ids = {b["id"] for b in migrated["buttons"]}
-        self.assertEqual(migrated["native_catalog_version"], 8)
+        self.assertEqual(migrated["native_catalog_version"], 10)
         self.assertFalse(CATALOG_ONLY_IDS & ids)
         self.assertIn("user-1", ids)
         categories = {c["id"] for c in migrated["categories"]}

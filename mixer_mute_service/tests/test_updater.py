@@ -60,6 +60,10 @@ def main():
 
         ends = []
         updater._end_task = lambda: (ends.append(len(runs)) or (True, "SUCCESS"))
+        # After /End the task counts as running for a moment: polled until it stops.
+        states = []
+        updater._task_running = lambda: states.pop(0) if states else False
+        updater.END_POLL_SECONDS = 0.01
         old = time.time() - updater.STALE_SECONDS - 5
         os.utime(status_file, (old, old))
         check("stale run no longer active", client.get("/update/status").json()["active"] is False)
@@ -68,13 +72,44 @@ def main():
         # Its task may still hang (a download without end); Windows ignores a
         # second start of a running task, so it is ended before the new run.
         check("hung task ended before the new run", ends == [1])
+
+        print("== the ended task stops late or not at all ==")
+        def make_stale():
+            st = json.loads(status_file.read_text())
+            st.update(state="running")
+            status_file.write_text(json.dumps(st))
+            old = time.time() - updater.STALE_SECONDS - 5
+            os.utime(status_file, (old, old))
+        make_stale()
+        states[:] = [True, True, False]
+        n = len(runs)
         r = client.post("/update/start")
-        check("a live run is never ended", r.status_code == 409 and ends == [1])
+        check("run only once the old task has stopped", r.status_code == 200 and len(runs) == n + 1 and states == [])
+        make_stale()
+        updater.END_WAIT_SECONDS = 0.05
+        updater._task_running = lambda: True
+        n = len(runs)
+        r = client.post("/update/start")
+        check("task that does not stop: 502 with a reason, nothing started",
+              r.status_code == 502 and "could not be ended" in r.json()["reason"] and len(runs) == n)
+        check("next click not blocked (status failed, not requested)",
+              json.loads(status_file.read_text())["state"] == "failed"
+              and client.get("/update/status").json()["active"] is False)
+        make_stale()
+        updater._task_running = lambda: None
+        n = len(runs)
+        r = client.post("/update/start")
+        check("Windows cannot tell: started anyway", r.status_code == 200 and len(runs) == n + 1)
+        updater._task_running = lambda: False
+        updater.END_WAIT_SECONDS = 20.0
+        n_ends, n_runs = len(ends), len(runs)
+        r = client.post("/update/start")
+        check("a live run is never ended", r.status_code == 409 and len(ends) == n_ends)
         old = time.time() - updater.STALE_SECONDS - 5
         os.utime(status_file, (old, old))
         updater._end_task = lambda: (_ for _ in ()).throw(OSError("schtasks missing"))
         r = client.post("/update/start")
-        check("a failing end does not stop the new run", r.status_code == 200 and runs == [1, 1, 1])
+        check("a failing end does not stop the new run", r.status_code == 200 and len(runs) == n_runs + 1)
         updater._end_task = lambda: (ends.append(len(runs)) or (True, "SUCCESS"))
         st = json.loads(status_file.read_text())
         st.update(state="failed")

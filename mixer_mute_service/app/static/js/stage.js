@@ -148,6 +148,9 @@ function setStage(on, animate) {
   }
   const shown = STAGE.current && stagePanel(STAGE.current);
   placeStagePanels();
+  // Back on the page: pack first, so the flight ends in the right places
+  // (on the stage this only sets the arrows for the one-column order).
+  packSections();
   if (on) layoutStage();
   else if (shown) {
     // Back in the long page, start at the section that was on stage.
@@ -199,7 +202,7 @@ function layoutStage() {
     const lay = (w) => {
       panel.style.width = `${w}px`;
       if (section === "channels") layoutStageChannels(panel, w, H, scrolls);
-      if (section === "companion") layoutStageCompanion(w);
+      if (section === "companion") layoutStageCompanion(panel, w, H);
       if (section === "cameras") layoutStageCameras(panel, w, H);
       return panel.offsetHeight;
     };
@@ -220,7 +223,10 @@ function layoutStage() {
   const gap = parseFloat(getComputedStyle(list).rowGap) || 0;
   const shown = list.querySelector(".stage-thumb:not([hidden])");
   const extra = shown ? shown.offsetHeight - shown.firstElementChild.offsetHeight : 30;
-  let tw = rail.clientWidth - 8;
+  // During a flight the scrollbar's room is kept as padding (stageFlip), which
+  // clientWidth counts; without it the miniatures would grow by the
+  // scrollbar's width and stay cut at the right until the next layout.
+  let tw = rail.clientWidth - (parseFloat(rail.style.paddingRight) || 0) - 8;
   let th = tw * H / W;
   const maxTh = (rail.clientHeight - n * extra - (n - 1) * gap) / n;
   if (th > maxTh) { th = Math.max(STAGE_THUMB_MIN, maxTh); tw = th * W / H; }
@@ -306,10 +312,25 @@ function layoutStageChannels(panel, W, H, fullFaders) {
 // Steuerung: categories as tiles in lanes; a category with many keys spans
 // several lanes so it is not one long column. Row spans are measured
 // (masonry), dense packing fills the gaps.
-function layoutStageCompanion(W) {
+// Keys at least 104 px wide; when the section would have to shrink to fit the
+// stage (keys below 50 px), 88 px (five keys per lane instead of four) is
+// tried too and kept if the section gets lower that way.
+const STAGE_KEY_MIN = [104, 88];
+
+function layoutStageCompanion(panel, W, H) {
   const root = $("companion-categories");
   const cats = [...root.children].filter(c => c.classList.contains("companion-category"));
   if (!cats.length) return;
+  let height = packStageCompanion(root, cats, W, STAGE_KEY_MIN[0], panel);
+  if (H && height > H) {
+    const narrow = packStageCompanion(root, cats, W, STAGE_KEY_MIN[1], panel);
+    if (narrow >= height) packStageCompanion(root, cats, W, STAGE_KEY_MIN[0], panel);
+  }
+}
+
+// Pack the categories as tiles for one key width; returns the section height.
+function packStageCompanion(root, cats, W, keyMin, panel) {
+  root.style.setProperty("--stage-key-min", `${keyMin}px`);
   const gap = 12, laneMin = 230;
   const keys = cats.map(c => c.querySelector(".companion-grid[hidden]") ? 0 : c.querySelectorAll(".companion-key").length);
   const total = keys.reduce((a, b) => a + b, 0);
@@ -331,6 +352,7 @@ function layoutStageCompanion(W) {
     if (h < bestH - 1) { bestH = h; best = lanes; }
   }
   apply(best);
+  return panel.offsetHeight;
 }
 
 // Kameras: as many videos per row as give the biggest picture, sized so

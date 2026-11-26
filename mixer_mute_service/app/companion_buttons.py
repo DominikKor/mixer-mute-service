@@ -15,39 +15,56 @@ log = logging.getLogger("mixer.companion_buttons")
 
 COMPANION_BUTTONS = [
     {"id": "beamer-freeze", "label": "Beamer freeze", "kind": "native", "category_id": "beamer", "native_action": {"type": "beamer-command", "command": "freeze"}},
-    {"id": "cam2-live-top", "label": "Cam 2 Live", "kind": "native", "category_id": "obs", "native_action": {"type": "obs-live", "scene": "Cam 2", "source": "Cam2"}},
-    {"id": "pc2-live-top-left", "label": "PC2 Live", "kind": "native", "category_id": "obs", "native_action": {"type": "obs-live", "scene": "PC2", "source": "Capture_PC2"}},
-    {"id": "cam1-toggle", "label": "Cam1 ein/aus", "kind": "native", "category_id": "obs", "native_action": {"type": "obs-source-toggle", "scene": "Preview Scene", "source": "Cam1_klein", "hide_sources": ["Capture_PC2", "Beamer", "Cam2_klein"]}},
-    {"id": "pc2-live-top-right", "label": "PC2 Live", "kind": "native", "category_id": "obs", "native_action": {"type": "obs-live", "scene": "PC2", "source": "Capture_PC2"}},
-    {"id": "start", "label": "Start", "kind": "native", "category_id": "obs", "native_action": {"type": "obs-scene", "scene": "Willkommen (neu)"}},
-    {"id": "ende", "label": "Ende", "kind": "native", "category_id": "obs", "native_action": {"type": "obs-scene", "scene": "Ende (neu)"}},
     {"id": "beamer-hide", "label": "Beamer hide", "kind": "native", "category_id": "beamer", "native_action": {"type": "beamer-set", "hidden": True}},
     {"id": "beamer-unhide", "label": "Beamer unhide", "kind": "native", "category_id": "beamer", "native_action": {"type": "beamer-set", "hidden": False}},
     {"id": "beamer-power-off", "label": "Beamer off", "kind": "native", "category_id": "beamer", "native_action": {"type": "beamer-command", "command": "power-off"}},
     {"id": "beamer-power-on", "label": "Beamer on", "kind": "native", "category_id": "beamer", "native_action": {"type": "beamer-command", "command": "power-on"}},
-    {"id": "cam1-live", "label": "Cam 1 Live", "kind": "native", "category_id": "obs", "native_action": {"type": "obs-live", "scene": "Cam 1", "source": "Cam1"}},
-    {"id": "cam2-live-bottom", "label": "Cam 2 Live", "kind": "native", "category_id": "obs", "native_action": {"type": "obs-live", "scene": "Cam 2", "source": "Cam2"}},
     {"id": "beamer-live", "label": "Beamer Live", "kind": "native", "category_id": "obs", "native_action": {"type": "obs-live", "scene": "BeamerVonVorne", "source": "Beamer"}},
     {"id": "pultmikro-mute", "label": "Pultmikro Mute", "kind": "channel", "category_id": "mixer", "channel": 1, "operation": "mute"},
     {"id": "gebetsmikro-unmute", "label": "Gebetsmikro Unmute", "kind": "channel", "category_id": "mixer", "channel": 2, "operation": "unmute"},
 ]
+
+# Keys of Companion's first page that were the same as the native-obs-* keys
+# (Cam 2 Live twice, PC2 Live three times, Start/Ende twice). Since v10 only
+# the native key is in Steuerung; program rows, shortcuts and own keys that
+# still name an old ID run the native key.
+BUTTON_ALIASES = {
+    "cam1-live": "native-obs-cam1-live",
+    "cam2-live-top": "native-obs-cam2-live",
+    "cam2-live-bottom": "native-obs-cam2-live",
+    "pc2-live-top-left": "native-obs-pc2-live",
+    "pc2-live-top-right": "native-obs-pc2-live",
+    "cam1-toggle": "native-obs-cam1-toggle",
+    "start": "native-obs-start",
+    "ende": "native-obs-end",
+}
+# How those old keys came in the catalog (all in the OBS category): one the
+# user renamed or moved is kept as an own key (see _merge_duplicate_obs_keys).
+_OLD_DUPLICATE_LABELS = {
+    "cam1-live": "Cam 1 Live", "cam2-live-top": "Cam 2 Live", "cam2-live-bottom": "Cam 2 Live",
+    "pc2-live-top-left": "PC2 Live", "pc2-live-top-right": "PC2 Live", "cam1-toggle": "Cam1 ein/aus",
+    "start": "Start", "ende": "Ende",
+}
 
 _SHELLY_BUTTONS = [
     ("left", "Licht Links"), ("center-left", "Licht Mitte Links"),
     ("center-right", "Licht Mitte Rechts"), ("right", "Licht Rechts"),
     ("front", "Licht Vorne"), ("tech", "Licht Technik"), ("stage", "Licht Bühne"),
 ]
+_ROOM_CIRCUITS = ["light-center-right", "light-left", "light-stage", "light-right", "light-center-left", "light-front"]
 NATIVE_BUTTONS = [
     {"id": f"native-shelly-{key}", "label": label, "kind": "native", "category_id": "light",
      "native_action": {"type": "shelly-toggle", "target": f"light-{key}"}}
     for key, label in _SHELLY_BUTTONS
 ] + [
+    # As in Companion: "Licht AN/AUS" leave the Technik circuit alone (the
+    # desk must not go dark), "Licht Mitte AN" is the middle and the front.
     {"id": "native-shelly-all-on", "label": "Licht AN", "kind": "native", "category_id": "light",
-     "native_action": {"type": "shelly-set-all", "on": True}},
+     "native_action": {"type": "shelly-set-group", "targets": _ROOM_CIRCUITS, "on": True}},
     {"id": "native-shelly-all-off", "label": "Licht AUS", "kind": "native", "category_id": "light",
-     "native_action": {"type": "shelly-set-all", "on": False}},
+     "native_action": {"type": "shelly-set-group", "targets": _ROOM_CIRCUITS, "on": False}},
     {"id": "native-shelly-center-on", "label": "Licht Mitte AN", "kind": "native", "category_id": "light",
-     "native_action": {"type": "shelly-set-group", "targets": ["light-tech", "light-center-right", "light-left", "light-stage", "light-right", "light-center-left", "light-front"], "on": True}},
+     "native_action": {"type": "shelly-set-group", "targets": ["light-center-right", "light-center-left", "light-front"], "on": True}},
 ]
 for _zone, _label in (("left", "Links"), ("center-left", "Mitte Links"), ("center-right", "Mitte Rechts"), ("right", "Rechts")):
     NATIVE_BUTTONS.extend([
@@ -88,55 +105,81 @@ NATIVE_BUTTONS.extend([
     {"id": "native-artnet-zone-center-left-toggle", "label": "Bühne Mitte Links", "kind": "native", "category_id": "light", "native_action": {"type": "artnet-zone-toggle", "zone": "center-left"}},
     {"id": "native-artnet-zone-center-right-toggle", "label": "Bühne Mitte Rechts", "kind": "native", "category_id": "light", "native_action": {"type": "artnet-zone-toggle", "zone": "center-right"}},
     {"id": "native-artnet-zone-right-toggle", "label": "Bühne Rechts", "kind": "native", "category_id": "light", "native_action": {"type": "artnet-zone-toggle", "zone": "right"}},
-    {"id": "native-obs-cam1-live", "label": "Cam 1 Live", "kind": "native", "category_id": "obs", "native_action": {"type": "obs-live", "scene": "Cam 1", "source_scene": "Current Scene", "source": "Cam1"}},
-    {"id": "native-obs-cam2-live", "label": "Cam 2 Live", "kind": "native", "category_id": "obs", "native_action": {"type": "obs-live", "scene": "Cam 2", "source_scene": "Current Scene", "source": "Cam2"}},
+    # As on Companion's main page: the camera's source is made visible in its
+    # own scene, then that scene goes live (v9; it used to be enabled in the
+    # scene on air before the switch).
+    {"id": "native-obs-cam1-live", "label": "Cam 1 Live", "kind": "native", "category_id": "obs", "native_action": {"type": "obs-live", "scene": "Cam 1", "source": "Cam1"}},
+    {"id": "native-obs-cam2-live", "label": "Cam 2 Live", "kind": "native", "category_id": "obs", "native_action": {"type": "obs-live", "scene": "Cam 2", "source": "Cam2"}},
     {"id": "native-obs-pc2-live", "label": "PC2 Live", "kind": "native", "category_id": "obs", "native_action": {"type": "obs-live", "scene": "PC2", "source_scene": "Current Scene", "source": "Capture_PC2"}},
     {"id": "native-obs-cam1-toggle", "label": "Cam 1 ein/aus", "kind": "native", "category_id": "obs", "native_action": {"type": "obs-source-toggle", "scene": "Preview Scene", "source": "Cam1_klein", "hide_sources": ["Capture_PC2", "Beamer", "Cam2_klein"]}},
     {"id": "native-obs-cam2-toggle", "label": "Cam 2 ein/aus", "kind": "native", "category_id": "obs", "native_action": {"type": "obs-source-toggle", "scene": "Preview Scene", "source": "Cam2_klein", "hide_sources": ["Capture_PC2", "Beamer", "Cam1_klein"]}},
     {"id": "native-obs-pc2-toggle", "label": "PC2 ein/aus", "kind": "native", "category_id": "obs", "native_action": {"type": "obs-source-toggle", "scene": "Preview Scene", "source": "Capture_PC2", "hide_sources": ["Cam1_klein", "Beamer", "Cam2_klein"]}},
     {"id": "native-obs-start", "label": "Start", "kind": "native", "category_id": "obs", "native_action": {"type": "obs-scene", "scene": "Willkommen (neu)"}},
     {"id": "native-obs-end", "label": "Ende", "kind": "native", "category_id": "obs", "native_action": {"type": "obs-scene", "scene": "Ende (neu)"}},
+    # v9: the other OBS keys of the Companion page.
+    {"id": "native-obs-cam1-cam2-small", "label": "Cam 1 & 2 klein Live", "kind": "native", "category_id": "obs", "native_action": {"type": "obs-scene", "scene": "Cam 1 & Cam 2 klein"}},
+    {"id": "native-obs-cam2-cam1-small", "label": "Cam 2 & 1 klein Live", "kind": "native", "category_id": "obs", "native_action": {"type": "obs-scene", "scene": "Cam 2 & Cam 1 klein"}},
+    {"id": "native-obs-droidcam-live", "label": "Droid Cam Live", "kind": "native", "category_id": "obs", "native_action": {"type": "obs-live", "scene": "DroidCam", "source": "Videoaufnahmegerät"}},
+    {"id": "native-obs-cam1-presentation", "label": "Cam 1 & Präsi", "kind": "native", "category_id": "obs", "native_action": {"type": "obs-scene", "scene": "Cam 1 & Droidcam"}},
+    {"id": "native-obs-cam2-presentation", "label": "Cam 2 & Präsi", "kind": "native", "category_id": "obs", "native_action": {"type": "obs-scene", "scene": "Cam 2 & Droidcam"}},
+    {"id": "native-obs-picture", "label": "Bild", "kind": "native", "category_id": "obs", "native_action": {"type": "obs-scene", "scene": "Bild / Gebet"}},
+    {"id": "native-obs-bible-cam1", "label": "Bibel Cam1 Beamer", "kind": "native", "category_id": "obs", "native_action": {"type": "obs-overlay-toggle", "scene": "Cam 1", "source": "BibleShow", "hide_beamer_while_shown": True}},
+    {"id": "native-obs-bible-cam2", "label": "Bibel Cam2 Beamer", "kind": "native", "category_id": "obs", "native_action": {"type": "obs-overlay-toggle", "scene": "Cam 2", "source": "BibleShow", "hide_beamer_while_shown": True}},
+    # v10: Companion's "Übergang Langsam/Schneller": OBS's transition time.
+    {"id": "native-obs-transition-slower", "label": "Übergang Langsamer", "kind": "native", "category_id": "obs", "native_action": {"type": "obs-transition-adjust", "delta": 50}},
+    {"id": "native-obs-transition-faster", "label": "Übergang Schneller", "kind": "native", "category_id": "obs", "native_action": {"type": "obs-transition-adjust", "delta": -50}},
 ])
 
-_OVERALL_GROUPS = [
-    ("gemeinsam-singen", "Gemeinsam Singen", "GemeinsamSingen"),
-    ("predigt", "Predigt", "Predigt"),
-    ("musik-klavier", "Musik Klavier", "Klavier"),
-    ("pult-klavier", "Musik Pult Klavier", "PultKlavier"),
-    ("pult-playback", "Musik Pult Playback", "PultPlayback"),
-    ("handmik-klavier", "Musik Handmik Klavier", "HandmikKlavier"),
-    ("handmik-playback", "Musik Handmik Playback", "HandmikPlayback"),
-    ("hintergrundmusik", "Hintergrundmusik", "Hintergrundmusik"),
-    ("gebet", "Gebet", "Gebet"),
-    ("qr", "QR", "Hintergrundmusik"),
-    ("mission-video", "Mission Video", "Missionsvideo"),
-    ("instrumental", "Instrumental", "Instrumental"),
+# The Overall keys as Companion runs them (pages 2 and 7 of its config):
+#   1. the four stage zones to a fixed pattern: these on (a zone that is on
+#      keeps its level, one that is off comes up to the start brightness),
+#      the others off;
+#   2. the camera that is NOT on air drives to its preset and, after
+#      OVERALL_CAMERA_WAIT_SECONDS, goes live (app/camera_program.py); the
+#      camera that was live follows to its preset once it is off air. With
+#      no camera on air both move and Cam 1 goes live;
+#   3. the keys named in "buttons" (OBS: PC2, Ende);
+#   4. the mute group (run first here: a blocked group stops the key before
+#      anything changes).
+# Zones: _L = left, _ML = center-left (Klavier), _MR = center-right (Logo), _R = right.
+_L, _ML, _MR, _R = "left", "center-left", "center-right", "right"
+_STAGE_ZONES = [_L, _ML, _MR, _R]
+OVERALL_CAMERA_WAIT_SECONDS = 4.0  # Companion's delayBeforeCamChange
+_PRESET_PRAYER = 8
+_OVERALL = [
+    # id, label, mute group, zones on, cam1 preset, cam2 preset, keys
+    ("gemeinsam-singen", "Gemeinsam Singen", "GemeinsamSingen", [_ML], 5, 5, []),
+    ("predigt", "Predigt", "Predigt", [_L, _R], 1, 1, []),
+    ("musik-klavier", "Musik Klavier", "Klavier", [_ML], 3, 3, []),
+    ("pult-klavier", "Musik Pult Klavier", "PultKlavier", [_L, _ML, _R], 2, 2, []),
+    ("pult-playback", "Musik Pult Playback", "PultPlayback", [_L, _R], 2, 2, []),
+    ("handmik-klavier", "Musik Handmik Klavier", "HandmikKlavier", [_L, _ML, _R], 5, 2, []),
+    ("handmik-playback", "Musik Handmik Playback", "HandmikPlayback", [_L, _R], 5, 2, []),
+    ("hintergrundmusik", "Hintergrundmusik", "Hintergrundmusik", [], 5, 5, []),
+    ("gebet", "Gebet", "Gebet", [_L, _R], _PRESET_PRAYER, _PRESET_PRAYER, []),
+    ("qr", "QR", "Hintergrundmusik", [_R], 5, 5, []),
+    ("mission-video", "Mission Video", "Missionsvideo", [], None, None, ["native-obs-pc2-live"]),
+    ("instrumental", "Instrumental", "Instrumental", [_ML], 3, 5, []),
+    ("ende", "Ende", "Klavier", [_MR], None, None, ["native-obs-end"]),
 ]
-# Every macro switches the four stage zones on (to the start brightness; a zone
-# that is already on keeps its level), then runs these catalog actions in order.
-# They used to toggle the zones, so a second macro switched the light off.
-_STAGE_ZONES = ["left", "center-left", "center-right", "right"]
-_OVERALL_LINKS = {
-    "gemeinsam-singen": ["native-cam1-preset-5", "native-obs-cam1-live", "native-cam2-preset-5", "native-obs-cam2-live"],
-    "musik-klavier": ["native-cam1-preset-3", "native-obs-cam1-live", "native-cam2-preset-3", "native-obs-cam2-live"],
-    "pult-klavier": ["native-cam1-preset-2", "native-obs-cam1-live", "native-cam2-preset-2", "native-obs-cam2-live"],
-    "pult-playback": ["native-cam1-preset-2", "native-obs-cam1-live", "native-cam2-preset-2", "native-obs-cam2-live"],
-    "handmik-klavier": ["native-cam1-preset-5", "native-obs-cam1-live", "native-cam2-preset-2", "native-obs-cam2-live"],
-    "handmik-playback": ["native-cam1-preset-5", "native-obs-cam1-live", "native-cam2-preset-2", "native-obs-cam2-live"],
-    "predigt": ["native-cam1-preset-1", "native-obs-cam1-live", "native-cam2-preset-1", "native-obs-cam2-live"],
-    "hintergrundmusik": ["native-cam1-preset-5", "native-obs-cam1-live", "native-cam2-preset-5", "native-obs-cam2-live"],
-    "gebet": ["native-cam1-preset-prayer", "native-obs-cam1-live", "native-cam2-preset-prayer", "native-obs-cam2-live"],
-    "qr": ["native-cam1-preset-5", "native-obs-cam1-live", "native-cam2-preset-5", "native-obs-cam2-live"],
-    "mission-video": ["native-obs-pc2-live"],
-    "instrumental": ["native-cam1-preset-3", "native-obs-cam1-live", "native-cam2-preset-5", "native-obs-cam2-live"],
-}
+
+
+def _overall_action(group, zones_on, cam1, cam2, keys) -> dict:
+    action = {
+        "type": "group-macro", "group": group,
+        "stage": {"on": list(zones_on), "off": [zone for zone in _STAGE_ZONES if zone not in zones_on]},
+        "buttons": list(keys),
+    }
+    if cam1 or cam2:
+        action["cameras"] = {"cam1": cam1, "cam2": cam2}
+        action["camera_wait_seconds"] = OVERALL_CAMERA_WAIT_SECONDS
+    return action
+
+
 NATIVE_BUTTONS.extend({
     "id": f"native-overall-{button_id}", "label": label, "kind": "native", "category_id": "overall",
-    "native_action": {
-        "type": "group-macro", "group": group,
-        "light_zones_on": _STAGE_ZONES, "buttons": _OVERALL_LINKS.get(button_id, []),
-    },
-} for button_id, label, group in _OVERALL_GROUPS)
+    "native_action": _overall_action(group, zones_on, cam1, cam2, keys),
+} for button_id, label, group, zones_on, cam1, cam2, keys in _OVERALL)
 
 COMPANION_BUTTONS = COMPANION_BUTTONS + NATIVE_BUTTONS
 COMPANION_BUTTONS_BY_ID = {button["id"]: button for button in COMPANION_BUTTONS}
@@ -155,8 +198,11 @@ NOT_IN_STEUERUNG_IDS = CAMERA_BUTTON_IDS | CATALOG_ONLY_IDS
 # v3 added the keys below, v4 made the Overall macros switch the light on,
 # v5 added state-aware Beamer hide/unhide actions, v6 adds direct projector
 # power and freeze commands, v7 removes the camera keys from Steuerung and v8
-# the light and mixer keys.
-_NATIVE_CATALOG_VERSION = 8
+# the light and mixer keys. v9 runs the Overall keys as Companion does (zone
+# pattern, only the off-air camera moves, then the cut) and adds the missing
+# Companion keys (Overall Ende, OBS scenes, Bibel). v10 drops the duplicate
+# OBS keys (BUTTON_ALIASES) and adds the transition time keys.
+_NATIVE_CATALOG_VERSION = 10
 _NATIVE_CATALOG_V3_IDS = {
     "native-artnet-start-up", "native-artnet-start-down",
     "native-artnet-steps-up", "native-artnet-steps-down",
@@ -165,6 +211,13 @@ _NATIVE_CATALOG_V3_IDS = {
 }
 _NATIVE_CATALOG_V5_IDS = {"beamer-unhide"}
 _NATIVE_CATALOG_V6_IDS = {"beamer-power-off", "beamer-power-on"}
+_NATIVE_CATALOG_V9_IDS = {
+    "native-overall-ende",
+    "native-obs-cam1-cam2-small", "native-obs-cam2-cam1-small", "native-obs-droidcam-live",
+    "native-obs-cam1-presentation", "native-obs-cam2-presentation", "native-obs-picture",
+    "native-obs-bible-cam1", "native-obs-bible-cam2",
+}
+_NATIVE_CATALOG_V10_IDS = {"native-obs-transition-slower", "native-obs-transition-faster"}
 
 DEFAULT_CATEGORIES = [
     {"id": "beamer", "name": "Beamer", "visible": True},
@@ -208,6 +261,40 @@ def _remove_light_mixer_keys(buttons: List[dict], categories: List[dict]):
     used = {button.get("category_id") for button in buttons}
     categories = [c for c in categories if c.get("id") not in ("light", "mixer") or c.get("id") in used]
     return buttons, categories
+
+
+def resolve_alias(button_id: str) -> str:
+    """The catalog key an old duplicate ID stands for (see BUTTON_ALIASES)."""
+    return BUTTON_ALIASES.get(button_id, button_id)
+
+
+def _merge_duplicate_obs_keys(buttons: List[dict]) -> List[dict]:
+    """v10: each old duplicate OBS key leaves Steuerung, unless the user made
+    it their own:
+    - its native key is gone (the user deleted it): the first old key becomes
+      the native key in its place, keeping its label and category;
+    - the user renamed it or moved it to another category: it stays where it
+      is, with its label, as an own key that runs the native key;
+    - otherwise it is dropped (the native key is there).
+    Own keys that point at an old key point at the native one."""
+    present = {button.get("id") for button in buttons}
+    merged = []
+    for button in buttons:
+        target = BUTTON_ALIASES.get(button.get("id"))
+        if target is None:
+            if button.get("kind") == "companion" and button.get("target_button_id") in BUTTON_ALIASES:
+                button["target_button_id"] = BUTTON_ALIASES[button["target_button_id"]]
+            merged.append(button)
+        elif target not in present:
+            present.add(target)
+            merged.append({**button, "id": target, "kind": "native",
+                           "native_action": deepcopy(COMPANION_BUTTONS_BY_ID[target]["native_action"])})
+        elif (button.get("label") != _OLD_DUPLICATE_LABELS[button["id"]]
+              or button.get("category_id") != "obs"):
+            merged.append({"id": f"user-{uuid.uuid4().hex[:12]}", "label": button.get("label"),
+                           "category_id": button.get("category_id"),
+                           "kind": "companion", "target_button_id": target})
+    return merged
 
 
 class CompanionButtonStore:
@@ -261,12 +348,16 @@ class CompanionButtonStore:
                 add_v3 = self._catalog_version < 3
                 add_v5 = self._catalog_version < 5
                 add_v6 = self._catalog_version < 6
+                add_v9 = self._catalog_version < 9
+                add_v10 = self._catalog_version < 10
                 for seed_button in self._buttons:
                     current = button_map.get(seed_button["id"])
                     add_button = (
                         (add_v3 and seed_button["id"] in _NATIVE_CATALOG_V3_IDS)
                         or (add_v5 and seed_button["id"] in _NATIVE_CATALOG_V5_IDS)
                         or (add_v6 and seed_button["id"] in _NATIVE_CATALOG_V6_IDS)
+                        or (add_v9 and seed_button["id"] in _NATIVE_CATALOG_V9_IDS)
+                        or (add_v10 and seed_button["id"] in _NATIVE_CATALOG_V10_IDS)
                     )
                     if current is None and add_button:
                         current = deepcopy(seed_button)
@@ -279,6 +370,8 @@ class CompanionButtonStore:
                     buttons, categories = _remove_camera_keys(buttons, categories, camera_labels)
                 if self._catalog_version < 8:
                     buttons, categories = _remove_light_mixer_keys(buttons, categories)
+                if self._catalog_version < 10:
+                    buttons = _merge_duplicate_obs_keys(buttons)
                 self._catalog_version = _NATIVE_CATALOG_VERSION
                 migrated = True
             category_ids = {item["id"] for item in categories}

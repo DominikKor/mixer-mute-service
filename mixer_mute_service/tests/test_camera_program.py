@@ -69,12 +69,14 @@ class LiveDetectionTests(unittest.TestCase):
 class Rig:
     """A CameraProgram on scripted OBS answers; records what was done."""
 
-    def __init__(self, live_answers, gate=None):
+    def __init__(self, live_answers, gate=None, read_yields=0):
         self.live_answers = list(live_answers)
         self.events = []
         self.gate = gate  # an Event the wait blocks on, if given
 
         async def read_live():
+            for _ in range(read_yields):  # OBS takes a moment: other presses get in between
+                await asyncio.sleep(0)
             answer = self.live_answers.pop(0)
             if isinstance(answer, Exception):
                 raise answer
@@ -112,6 +114,52 @@ class Rig:
         return [event for event in self.events if event[0] in ("recall", "switch", "scene")]
 
 
+async def spin(rounds=60):
+    for _ in range(rounds):
+        await asyncio.sleep(0)
+
+
+class QuickPressTests(unittest.IsolatedAsyncioTestCase):
+    """Two Overall keys pressed at once, or an OBS key while a sequence is
+    still reading OBS: only the newest sequence may act, and every cancel
+    must reach it (no orphaned background task)."""
+
+    async def test_second_key_wins_while_a_camera_is_live(self):
+        gate = asyncio.Event()
+        rig = Rig([{"cam1"}] * 3 + [{"cam2"}] * 4, gate=gate, read_yields=3)
+        # Cam 1 live: Predigt (presets 1) and at once Gebet (presets 8).
+        await asyncio.gather(rig.program.run({"cam1": 1, "cam2": 1}, 4), rig.program.run({"cam1": 8, "cam2": 8}, 4))
+        gate.set()
+        await spin()
+        moves = rig.moves()
+        self.assertEqual(moves.count(("switch", "cam2")), 1, moves)
+        self.assertIn(("recall", "cam1", 8), moves)
+        self.assertNotIn(("recall", "cam1", 1), moves, "Cam 1 must end on Gebet's preset")
+
+    async def test_obs_key_after_two_quick_keys_stops_the_cut(self):
+        gate = asyncio.Event()
+        rig = Rig([set()] * 6, gate=gate, read_yields=3)
+        await asyncio.gather(rig.program.run({"cam1": 5, "cam2": 5}, 4, switch_if_none_live="cam1"),
+                             rig.program.run({"cam1": 1, "cam2": 1}, 4, switch_if_none_live="cam1"))
+        rig.program.cancel()  # "Bild" pressed
+        gate.set()
+        await spin()
+        self.assertNotIn(("switch", "cam1"), rig.moves())
+
+    async def test_cancel_while_a_sequence_reads_obs(self):
+        gate = asyncio.Event()
+        rig = Rig([{"cam1"}] * 3, gate=gate, read_yields=3)
+        running = asyncio.create_task(rig.program.run({"cam1": 3, "cam2": 5}, 4))
+        await asyncio.sleep(0)
+        rig.program.cancel()
+        result = await running
+        gate.set()
+        await spin()
+        self.assertEqual(rig.moves(), [("recall", "cam2", 5)], "moved off air, but no cut afterwards")
+        self.assertEqual(rig.program.status["state"], "aborted")
+        self.assertIsNone(result.get("switch_to"))
+
+
 class SequenceTests(unittest.IsolatedAsyncioTestCase):
     async def test_off_air_camera_first_then_switch_then_the_other(self):
         rig = Rig([{"cam1"}, {"cam1"}, {"cam2"}])
@@ -146,6 +194,24 @@ class SequenceTests(unittest.IsolatedAsyncioTestCase):
         await rig.settle()
         self.assertEqual(result["switch_to"], None)
         self.assertEqual(rig.moves(), [("recall", "cam1", 1), ("recall", "cam2", 4)])
+
+    async def test_no_camera_live_with_fallback_moves_both_then_cuts_to_it(self):
+        # The Overall keys: like Companion they always end on a camera.
+        rig = Rig([set(), set()])
+        result = await rig.program.run({"cam1": 1, "cam2": 4}, 4, switch_if_none_live="cam1")
+        self.assertEqual(result["switch_to"], "cam1")
+        self.assertEqual(rig.moves(), [("recall", "cam1", 1), ("recall", "cam2", 4)], "the cut waits")
+        await rig.settle()
+        self.assertEqual(rig.moves(), [("recall", "cam1", 1), ("recall", "cam2", 4), ("switch", "cam1")])
+        self.assertIn(("sleep", 4.0), rig.events)
+        self.assertEqual(rig.program.status["state"], "done")
+
+    async def test_fallback_cut_skipped_when_obs_changed_meanwhile(self):
+        rig = Rig([set(), {"cam2"}])
+        await rig.program.run({"cam1": 1, "cam2": 4}, 4, switch_if_none_live="cam1")
+        await rig.settle()
+        self.assertNotIn(("switch", "cam1"), rig.moves())
+        self.assertEqual(rig.program.status["state"], "aborted")
 
     async def test_both_live_moves_nothing(self):
         rig = Rig([{"cam1", "cam2"}])
@@ -332,7 +398,7 @@ class FakeCameraProgram:
         self.scenes = []
         self.status = {"seq": 3, "state": "waiting", "message": "Cam 2 fährt Preset 5 an", "at": 1.0}
 
-    async def run(self, presets, wait, title="", scenes=None):
+    async def run(self, presets, wait, title="", scenes=None, switch_if_none_live=None):
         self.calls.append((presets, wait, title))
         self.scenes.append(scenes)
         return {"ok": True, "applied": ["cam2"], "switch_to": "cam2"}

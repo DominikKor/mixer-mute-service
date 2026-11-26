@@ -8,7 +8,9 @@ from copy import deepcopy
 from fastapi import APIRouter, Request
 
 from ..actions import press_button
-from ..companion_buttons import CATALOG_ONLY_BUTTONS, COMPANION_BUTTONS, COMPANION_BUTTONS_BY_ID
+from ..companion_buttons import (
+    BUTTON_ALIASES, CATALOG_ONLY_BUTTONS, COMPANION_BUTTONS, COMPANION_BUTTONS_BY_ID, resolve_alias,
+)
 from ..models import (
     BeamerStateRequest,
     CompanionButtonCreate,
@@ -33,6 +35,8 @@ async def companion_buttons(request: Request):
     data["camera_buttons"] = await store.camera_buttons()
     # Light and mixer keys left Steuerung (v8); program rows may still use them.
     data["catalog_buttons"] = deepcopy(CATALOG_ONLY_BUTTONS)
+    # Old duplicate key IDs that program rows may still name (catalog v10).
+    data["button_aliases"] = dict(BUTTON_ALIASES)
     return data
 
 
@@ -58,7 +62,7 @@ async def companion_category_visibility(category_id: str, body: CompanionCategor
 async def companion_button_create(body: CompanionButtonCreate, request: Request):
     cfg = request.app.state.cfg
     if body.kind == "companion":
-        target = COMPANION_BUTTONS_BY_ID.get(body.target_button_id or "")
+        target = COMPANION_BUTTONS_BY_ID.get(resolve_alias(body.target_button_id or ""))
         if target is None or target["kind"] != "native":
             return fail("invalid control button target", 400)
         action = {"kind": "companion", "target_button_id": target["id"]}
@@ -103,6 +107,14 @@ async def companion_button_delete(button_id: str, request: Request):
     except KeyError:
         return fail("unknown button", 404)
     return {"ok": True, "button_id": button_id, "deleted": True}
+
+
+@router.get("/obs/status")
+async def obs_status(request: Request):
+    """What OBS has on air and in the preview, and its transition time, for
+    the live colours of the keys. Cached for a second; ok=false (with
+    program/preview null) while OBS does not answer."""
+    return await request.app.state.obs_status.get()
 
 
 @router.post("/companion/buttons/{button_id}/press")

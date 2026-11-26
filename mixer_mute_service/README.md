@@ -54,10 +54,19 @@ iPad in Safari (both orientations) and desktop browsers alike. Every section
 head (Desktop, Channels, Mute Gruppen, Programm, Liedanzeige, Steuerung) folds its section
 in and out; the choice is remembered per device. **Anordnen** (switch in the
 header) shows ◀ ▲ ▼ ▶ in every section head. Sections sit in rows, up to three
-side by side (single column below 900 px width): ◀ ▶ swap a section with its
-neighbour in the row, and a section alone in its row joins the row above on
-the left (◀) or right (▶); ▲ ▼ give a section sharing a row a row of its own
-above or below, and move one alone past the row above or below. The
+side by side (single column below 900 px width). A row sets width and column:
+of two sections the first is the left half, the second the right half. On the
+page every section moves up as far as its own columns allow (masonry), so a
+short section (e.g. Mute Gruppen next to a long Programm) gets the following
+rows' sections under it; a row stays level when its sections would start less
+than 120 px apart. A section that straddles a step (a third under two halves)
+starts under the step; the others in its row still move up. A section never
+changes column. The arrows follow the screen:
+◀ ▶ swap a section with its neighbour in the row, and a section alone in its
+row joins the row above on the left (◀) or right (▶); ▲ ▼ swap a section with
+the one right above or below it (a whole-width section with the row above or
+below), and a section sharing a row with nothing above or below it gets the
+whole width at the top or bottom. The
 arrangement is remembered per device, also sets the order of the Stage
 miniatures, and **Standard** restores the original one.
 
@@ -199,12 +208,57 @@ mixer keys of the export are mapped to the safe channel endpoints instead of
 replaying its raw HEX. Categories and key changes are stored in
 `companion_buttons.json` next to `config.yaml`. New keys can call one of the
 built-in actions, a mixer channel or a mute group; arbitrary shell commands and
-raw HEX are not accepted. "Overall" macros activate a mute group, then run their
-linked light/camera/OBS keys in order.
+raw HEX are not accepted.
+
+"Overall" keys run as they did in Companion (catalog version 9, table in
+`app/companion_buttons.py`):
+
+1. the mute group (unmuted exclusively); a blocked group stops the key before
+   anything else changes;
+2. the four stage zones go to the key's pattern (e.g. Predigt: Links and
+   Rechts on, Klavier and Logo off); a zone that is already on keeps its
+   level, one that comes on gets the start brightness; the light fades while
+   the next steps run;
+3. only the camera that is off air drives to its preset; 4 s later it goes
+   live, then the other camera follows to its preset (the same sequence as
+   program rows, `app/camera_program.py`). With no camera on air both move and
+   Cam 1 goes live after the wait; if OBS was switched meanwhile (in OBS or
+   with an OBS key here), nothing is cut. The key pressed last wins: a second
+   Overall or an OBS key pressed right after an Overall stops its cameras,
+   even while its mute group is still being set;
+4. their OBS key, if any (Mission Video: PC2, Ende: the end scene).
+
+Every part is tried even if another fails; the answer (and the toast) names
+what failed. "Licht AN/AUS" leave the Technik circuit alone, as in Companion,
+and switch all other circuits at once. "Cam N Live" makes the camera's source
+visible in its own scene and puts that scene on air; a scene without the
+source no longer stops the switch; the page then shows a warning (renamed
+source?).
+
+Catalog version 10 keeps each OBS key once: the duplicates of Companion's
+first page (Cam 2 Live twice, PC2 Live three times, Start/Ende twice) left
+Steuerung; program rows, shortcuts and own keys that name an old ID
+(`BUTTON_ALIASES`) run the native key. "Übergang Langsamer/Schneller" set
+OBS's transition time in 50 ms steps (50 ms to 20 s); the keys show the
+current value. As on the Companion buttons, a key whose scene is on air in
+OBS is red, one in the preview (studio mode) green. The page asks
+`GET /obs/status` every 1.5 s; one OBS query serves every page for a
+second, and while OBS does not answer no key is coloured and OBS is asked
+only every 5 s.
+
+The service keeps ONE WebSocket connection to OBS open (`app/obs_client.py`)
+for every key, program row, camera sequence and status query; OBS no longer
+reports a new client and a disconnect on every click. Requests from several
+places at once share it (answers matched by requestId), each waits at most
+3 s, and a request without an answer drops the connection so the next one
+connects anew. When OBS is gone, connecting is retried after 1, 2, 4 ... up
+to 15 s; meanwhile requests fail at once with "OBS WebSocket unavailable".
+The connection closes when the service stops.
 
 | Method | Path | Purpose |
 | ------ | ---- | ------- |
 | GET  | `/companion/buttons` | list imported controls |
+| GET  | `/obs/status` | OBS program and preview scene, studio mode, transition (cached 1 s) |
 | POST | `/companion/buttons/{button_id}/press` | press one allowlisted control |
 | POST | `/companion/categories` | create a category `{name}` |
 | POST | `/companion/categories/{category_id}/visibility` | set `{visible}` |
@@ -444,7 +498,8 @@ Kamera selbst.
 Die Kamera-Tasten (Presets, Zoom) stehen seit Katalog-Version 7 nicht mehr in
 der Steuerung; eine bestehende `companion_buttons.json` wird beim Start
 umgestellt (umbenannte Presets behalten ihre Beschriftung im Kamera-Bereich).
-Die Overall-Makros und Programmpunkte rufen die Presets weiter per ID auf.
+Programmpunkte rufen die Presets weiter per ID auf; die Overall-Tasten nennen
+ihre Presets selbst (seit Katalog-Version 9).
 
 ## Dateien und Programme auf Netzwerk-PCs oeffnen
 

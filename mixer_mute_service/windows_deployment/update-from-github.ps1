@@ -43,9 +43,16 @@ $ProgressPreference = "SilentlyContinue"
 # Every web request has a time limit and a retry, so a stalled connection
 # fails with a message instead of waiting for ever (the update task itself
 # is stopped by Windows after 15 minutes).
+# Budget: Windows stops the update task after 15 minutes. All web steps
+# together (release information, ZIP, checksum, with their second tries) must
+# be done within WebBudgetSeconds after the first request (set in
+# Invoke-Update, after a token prompt), so at least 8 minutes stay for
+# unpacking and installing (update-static.ps1). A try never runs past it.
 $ApiTimeoutSeconds = 30
-$DownloadTimeoutSeconds = 240
+$DownloadTimeoutSeconds = 180
 $WebAttempts = 2
+$WebBudgetSeconds = 390
+$script:WebDeadline = (Get-Date).AddSeconds($WebBudgetSeconds)
 
 # Re-launch elevated: installing the Windows service needs Administrator rights.
 $Principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
@@ -194,6 +201,8 @@ function Request-Token([string]$Repo) {
 }
 
 function Get-HttpStatus($ErrorRecord) {
+    # From a download job the status comes as text: "HTTP 404: ...".
+    if ([string]$ErrorRecord.Exception.Message -match "^HTTP (\d{3}):") { return [int]$Matches[1] }
     $Response = $ErrorRecord.Exception.PSObject.Properties["Response"]
     if ($null -eq $Response -or $null -eq $Response.Value) { return 0 }
     try { return [int]$Response.Value.StatusCode } catch { return 0 }
@@ -203,6 +212,53 @@ function Get-HttpStatus($ErrorRecord) {
 # again once. HTTP refusals (401/403/404) are not retried. Each try is
 # written to the log (and the status file, so the service sees the run is
 # alive), with size and time of a finished download.
+# Seconds a web step may take now: its own limit, but never past the budget.
+function Get-WebTimeout([int]$Limit) {
+    $Left = [int][Math]::Floor(($script:WebDeadline - (Get-Date)).TotalSeconds)
+    if ($Left -lt 10) {
+        throw "No time left for downloads (budget $WebBudgetSeconds s used up); nothing was installed. Try the update again."
+    }
+    return [Math]::Min($Limit, $Left)
+}
+
+# Download a file with a limit on the WHOLE transfer. Invoke-WebRequest's
+# -TimeoutSec in Windows PowerShell 5.1 does not cover reading the body, so a
+# trickling download could run on for ever; here it runs in a background job
+# that is stopped when the limit is reached.
+function Save-WebFile([string]$Uri, [hashtable]$RequestHeaders, [string]$OutFile, [int]$TimeoutSeconds) {
+    $Job = Start-Job -ArgumentList $Uri, $RequestHeaders, $OutFile, $TimeoutSeconds -ScriptBlock {
+        param($JobUri, $JobHeaders, $JobOutFile, $JobTimeout)
+        $ProgressPreference = "SilentlyContinue"
+        $ErrorActionPreference = "Stop"
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        try {
+            Invoke-WebRequest -UseBasicParsing -Uri $JobUri -Headers $JobHeaders -OutFile $JobOutFile -TimeoutSec $JobTimeout
+        }
+        catch {
+            # The error reaches the caller only as text: put the HTTP status
+            # in front ("HTTP 404: ..."), so refusals are not tried again.
+            $JobCode = 0
+            $JobResponse = $_.Exception.PSObject.Properties["Response"]
+            if ($null -ne $JobResponse -and $null -ne $JobResponse.Value) {
+                try { $JobCode = [int]$JobResponse.Value.StatusCode } catch { $JobCode = 0 }
+            }
+            if ($JobCode) { throw ("HTTP {0}: {1}" -f $JobCode, $_.Exception.Message) }
+            throw
+        }
+    }
+    try {
+        if (-not (Wait-Job -Job $Job -Timeout $TimeoutSeconds)) {
+            Stop-Job -Job $Job
+            throw ("the transfer took longer than {0} s" -f $TimeoutSeconds)
+        }
+        Receive-Job -Job $Job -ErrorAction Stop | Out-Null
+        if ($Job.State -ne "Completed") { throw ("the download job ended as {0}" -f $Job.State) }
+    }
+    finally {
+        Remove-Job -Job $Job -Force -ErrorAction SilentlyContinue
+    }
+}
+
 function Invoke-WebWithRetry([scriptblock]$Request, [string]$What, [string]$OutFile = "") {
     for ($Attempt = 1; $Attempt -le $WebAttempts; $Attempt++) {
         $Started = Get-Date
@@ -218,7 +274,8 @@ function Invoke-WebWithRetry([scriptblock]$Request, [string]$What, [string]$OutF
         catch {
             $Code = Get-HttpStatus $_
             $Seconds = ((Get-Date) - $Started).TotalSeconds
-            if ($Code -in 401, 403, 404 -or $Attempt -eq $WebAttempts) { throw }
+            $NoTime = $_.Exception.Message -like "No time left*"
+            if ($NoTime -or $Code -in 401, 403, 404 -or $Attempt -eq $WebAttempts) { throw }
             Write-Host ("  {0}: try {1} of {2} failed after {3:N0} s ({4}); trying again..." -f $What, $Attempt, $WebAttempts, $Seconds, $_.Exception.Message)
             Write-Status "running" ("{0}: try {1} of {2}..." -f $What, ($Attempt + 1), $WebAttempts) $script:FromTag $script:ToTag
             Start-Sleep -Seconds 5
@@ -258,8 +315,9 @@ function Invoke-Update {
     Write-Host "Checking the latest release of $Repo..." -ForegroundColor Cyan
     try {
         $ReleaseUri = "https://api.github.com/repos/$Repo/releases/latest"
+        $script:WebDeadline = (Get-Date).AddSeconds($WebBudgetSeconds)
         $Release = Invoke-WebWithRetry {
-            Invoke-RestMethod -Uri $ReleaseUri -Headers $Headers -TimeoutSec $ApiTimeoutSeconds
+            Invoke-RestMethod -Uri $ReleaseUri -Headers $Headers -TimeoutSec (Get-WebTimeout $ApiTimeoutSeconds)
         } "Release information"
     }
     catch {
@@ -306,10 +364,10 @@ function Invoke-Update {
         $ZipUri = $Zip.url
         $SumUri = $Sum.url
         Invoke-WebWithRetry {
-            Invoke-WebRequest -UseBasicParsing -Uri $ZipUri -Headers $DownloadHeaders -OutFile $ZipPath -TimeoutSec $DownloadTimeoutSeconds
+            Save-WebFile $ZipUri $DownloadHeaders $ZipPath (Get-WebTimeout $DownloadTimeoutSeconds)
         } "Download $AssetName" $ZipPath | Out-Null
         Invoke-WebWithRetry {
-            Invoke-WebRequest -UseBasicParsing -Uri $SumUri -Headers $DownloadHeaders -OutFile $SumPath -TimeoutSec $ApiTimeoutSeconds
+            Save-WebFile $SumUri $DownloadHeaders $SumPath (Get-WebTimeout $ApiTimeoutSeconds)
         } "Download checksum" $SumPath | Out-Null
 
         $Expected = (Get-Content -Path $SumPath -Raw).Trim().ToLowerInvariant()
