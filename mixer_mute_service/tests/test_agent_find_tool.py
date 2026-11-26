@@ -187,6 +187,24 @@ class InfoTests(unittest.TestCase):
         self.assertEqual((answer["mpv"], answer["ytdlp"], answer["restored_env"]),
                          (r"C:\Program Files\mpv\mpv.exe", None, ["PATH", "MPV_PATH"]))
 
+    def test_nothing_said_before_the_first_search_is_done(self):
+        """Right after a restart the service asks /info before the background
+        search ends: "mpv: null" there showed a false "mpv nicht gefunden"."""
+        agent._tool_cache.update(at=0.0, mpv=None, ytdlp=None)
+        release = threading.Event()
+        with patch.object(agent, "_find_mpv", side_effect=lambda: release.wait(5) and r"C:\mpv\mpv.exe"), \
+                patch.object(agent, "_find_ytdlp", return_value=None):
+            status, answer = info()
+            self.assertEqual(status, 200)
+            self.assertFalse({"mpv", "ytdlp"} & set(answer), "unknown yet: not reported")
+            release.set()
+            for _ in range(100):
+                if agent._tool_cache["at"]:
+                    break
+                agent.time.sleep(0.02)
+        status, answer = info()
+        self.assertEqual((answer["mpv"], answer["ytdlp"]), (r"C:\mpv\mpv.exe", None))
+
     def test_version_comes_back_even_when_the_diagnosis_fails(self):
         with patch.object(agent, "cached_tools", side_effect=RuntimeError("registry gone")):
             status, answer = info()
@@ -203,7 +221,7 @@ class InfoTests(unittest.TestCase):
 
         with patch.object(agent, "_find_mpv", side_effect=slow_find), \
                 patch.object(agent, "_find_ytdlp", return_value=None):
-            self.assertEqual(agent.cached_tools(), {"mpv": None, "ytdlp": None}, "answers at once")
+            self.assertEqual(agent.cached_tools(), {}, "answers at once, nothing known yet")
             self.assertTrue(found.wait(5))
             for _ in range(100):
                 if agent._tool_cache["mpv"]:

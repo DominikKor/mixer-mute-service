@@ -43,21 +43,25 @@ Start-Sleep -Milliseconds 500
 # Agents still alive now (an old one that did not end) do not count as
 # restarted: only a process id that was not there before.
 $Before = Get-AgentIds
-if ($null -eq $Before) { $Before = @() }
 
 $Started = $false
-$Unknown = $false
+# Without the ids from before, an old agent that never ended could not be
+# told from a new one: then the result is unknown, never a success.
+$Unknown = $null -eq $Before
 try {
     Start-ScheduledTask -TaskName $TaskName -ErrorAction Stop
     # The task may refuse silently (e.g. Windows still counts the old run).
     for ($i = 0; $i -lt 40; $i++) {
         Start-Sleep -Milliseconds 250
+        if ($null -eq $Before) { break }
         $Now = Get-AgentIds
         if ($null -eq $Now) { $Unknown = $true; continue }
         $Unknown = $false
         if (@($Now | Where-Object { $Before -notcontains $_ }).Count) { $Started = $true; break }
     }
 } catch {
+    # The task certainly did not start the agent: start it directly (a second
+    # agent, should the old one still live, cannot get the port and ends).
     $Started = $false
     $Unknown = $false
 }
@@ -79,7 +83,10 @@ if (-not $Started -and -not $Unknown) {
         }
         [Environment]::SetEnvironmentVariable($Name, [Environment]::ExpandEnvironmentVariables($Value), "Process")
     }
-    $PathParts = @($env:Path, $Machine["Path"], $UserVariables["Path"]) | Where-Object { $_ }
+    # The hashtables are case-sensitive: the variable may be "Path" or "PATH".
+    $MachinePath = @($Machine.Keys | Where-Object { $_ -eq "Path" } | ForEach-Object { $Machine[$_] })
+    $UserPath = @($UserVariables.Keys | Where-Object { $_ -eq "Path" } | ForEach-Object { $UserVariables[$_] })
+    $PathParts = @($env:Path) + $MachinePath + $UserPath | Where-Object { $_ }
     $env:Path = [Environment]::ExpandEnvironmentVariables(($PathParts -join ";"))
     foreach ($Folder in @(@("LOCALAPPDATA", "LocalApplicationData"), @("APPDATA", "ApplicationData"), @("USERPROFILE", "UserProfile"))) {
         $Value = [Environment]::GetEnvironmentVariable($Folder[0], "Process")
