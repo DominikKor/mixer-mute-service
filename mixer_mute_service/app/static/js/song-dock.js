@@ -43,7 +43,7 @@ function buildSongDock() {
     + `<div class="song-dock-bar">`
     + `<button type="button" class="sd-prev" data-song-dock="prev" title="Vorherige Folie (Bild auf, ←)" aria-label="Vorherige Folie">${ICON_DOCK_PREV}</button>`
     + `<div class="sd-mid"><div class="sd-chips" role="group" aria-label="Folien"></div><span class="sd-line"></span></div>`
-    + `<span class="sd-pos" aria-live="polite"></span>`
+    + `<span class="sd-status"><button type="button" class="sd-warn" data-song-dock="warn" hidden>⚠</button><span class="sd-pos" aria-live="polite"></span></span>`
     + `<button type="button" class="sd-blank" data-song-dock="blank" title="Bildschirm schwarz / wieder an (Taste B oder .)" aria-pressed="false">Schwarz</button>`
     + `<button type="button" class="sd-next program-play" data-song-dock="next" title="Nächste Folie (Bild ab, →, Leertaste); nach der letzten: schwarz"><span class="sd-next-text">Weiter</span>${ICON_DOCK_NEXT}</button>`
     + `</div>`
@@ -181,6 +181,12 @@ function renderSongDock() {
   cell.querySelector(".sd-line").textContent = ended ? "Ende – Bildschirm schwarz"
     : blank ? "Schwarz" : songDockFirstLine(slides[index]);
   cell.querySelector(".sd-pos").textContent = `${index + 1}/${slides.length}`;
+  // A screen that did not take the last step (song-screens.js): tap for which and why.
+  const failed = songScreensFailedText(SONG_LIVE.screens);
+  const warn = cell.querySelector(".sd-warn");
+  warn.hidden = !failed;
+  warn.title = failed ? `Nicht überall gezeigt: ${failed}` : "";
+  warn.setAttribute("aria-label", warn.title || "Alle Bildschirme zeigen das Lied");
   const blankKey = cell.querySelector(".sd-blank");
   blankKey.classList.toggle("on", blank);
   blankKey.setAttribute("aria-pressed", String(blank));
@@ -199,6 +205,7 @@ $("program-items").addEventListener("click", event => {
   const target = songDockTarget();
   if (!target) return;
   const action = button.dataset.songDock;
+  if (action === "warn") { toast(button.title, false); return; }
   if (action === "show") songAction("/songs/show", { song_id: target.item.song, slide: 0 });
   else if (SONG_LIVE.song_id !== target.item.song) return;   // another song took the screen meanwhile
   else if (action === "prev") songPrev();

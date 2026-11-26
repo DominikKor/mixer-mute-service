@@ -72,7 +72,13 @@
 .sd-line {
   min-width: 0; font-size: 14px; font-weight: 600; color: #b9c1cc; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
+.sd-status { display: flex; align-items: center; gap: 8px; }
 .sd-pos { font: 700 13px/1 var(--mono); color: #8d96a3; white-space: nowrap; }
+/* A screen missed the last step: amber key, a tap names it and why */
+.song-dock button.sd-warn {
+  min-width: 52px; padding: 0 10px; font-size: 18px; color: #ffbf4d; border-color: #4a3410;
+  box-shadow: 0 0 10px rgba(255,191,77,.25), inset 0 1px 0 rgba(255,255,255,.1);
+}
 
 .song-dock-off { display: flex; align-items: center; gap: 10px; min-height: 44px; }
 .sd-note { display: grid; place-items: center; color: #7ff0a8; flex-shrink: 0; }
@@ -84,4 +90,47 @@
   .song-dock-bar { grid-template-columns: 64px minmax(0, 1fr) 120px; }
   .sd-mid { grid-column: 1 / -1; grid-row: 1; }
   .sd-pos { display: none; }
+}
+
+/* Song screens (js/song-screens.js) -------------------------------------------
+   Liedanzeige: where the lyrics go; a screen that failed in amber with why. */
+.song-screens { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; }
+.song-screens-label { font-size: 10px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; color: #7d8594; }
+.song-screen {
+  display: inline-flex; align-items: center; gap: 6px; max-width: 100%; padding: 3px 9px; border-radius: 10px;
+  font-size: 12px; font-weight: 600; color: var(--lcd-text); background: #0b1418; border: 1px solid #000;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.song-screen::before { content: ""; flex-shrink: 0; width: 7px; height: 7px; border-radius: 50%; background: #59616d; }
+.song-screen.ok::before { background: #3ee07f; box-shadow: 0 0 6px rgba(62,224,127,.6); }
+.song-screen.failed { color: #ffbf4d; border-color: #4a3410; white-space: normal; }
+.song-screen.failed::before { background: #ffbf4d; box-shadow: 0 0 6px rgba(255,191,77,.6); }
+
+/* Settings: one row per PC -- a toggle (checkbox look, the whole name is the
+   key) and that PC's monitor keys, usable once the PC is switched on. */
+.song-targets { display: grid; gap: 6px; }
+.song-target {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 10px;
+  padding: 4px; border-radius: 8px; border: 1px solid #08090b; background: rgba(0,0,0,.18);
+}
+.song-target.on { border-color: #0a2550; background: rgba(79,156,255,.08); }
+button.song-target-toggle {
+  display: grid; grid-template-columns: 22px minmax(0, auto) minmax(0, 1fr); align-items: center; gap: 10px;
+  min-height: 44px; padding: 0 12px; text-align: left; font-size: 13px; font-weight: 700;
+}
+.song-target-box {
+  width: 20px; height: 20px; border-radius: 4px; border: 2px solid #59616d; background: #0b0e11;
+  display: grid; place-items: center;
+}
+button.song-target-toggle[aria-pressed="true"] .song-target-box { border-color: #3584e6; background: #3584e6; }
+button.song-target-toggle[aria-pressed="true"] .song-target-box::after {
+  content: ""; width: 9px; height: 5px; margin-top: -2px; border: solid #fff; border-width: 0 0 2.5px 2.5px; transform: rotate(-45deg);
+}
+.song-target-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.song-target-ip { font: 600 11px/1 var(--mono); color: #7d8594; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.song-target-monitors { flex-wrap: nowrap; }
+.song-target:not(.on) .song-target-monitors .monitor-key { color: #6f7783; }
+@media (max-width: 560px) {
+  .song-target { grid-template-columns: 1fr; }
+  .song-target-monitors .monitor-key { flex: 1; width: auto; }
 }

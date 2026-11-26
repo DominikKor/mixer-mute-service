@@ -768,8 +768,8 @@ Der Agent schickt dafür nur die XML-Teile der Folien (höchstens 200 Folien,
 4 MB entpackt); dafür muss er aktualisiert sein.
 
 In der Weboberfläche unter **Liedanzeige → Einstellungen…** (gilt für alle Lieder,
-gespeichert in `song_display.json`): Ordner auf dem Anzeige-PC, Anzeige-PC (IP),
-Monitor, Vollbild, Schrift, größte Schriftgröße (px bei 1080p, lange Folien werden
+gespeichert in `song_display.json`): Ordner der Bibliothek und der PC, auf dem
+sie liegt, **Liedtext zeigen auf** (siehe unten), Vollbild, Schrift, größte Schriftgröße (px bei 1080p, lange Folien werden
 kleiner), Text- und Hintergrundfarbe, Titel und Copyright auf der ersten Folie,
 Ausrichtung (links, mittig, rechts) und **Vorschau nächste Folie**: wo unter dem
 Text Platz bleibt, stehen dort in Grau (Textfarbe in den Hintergrund gemischt)
@@ -799,6 +799,18 @@ startet mit ihr. Der Schalter *Titel* (Titel oben auf der ersten Liedfolie) gilt
 nur ohne Titelfolie. Die Titelfolie wird als normale, zentrierte Folie geschickt,
 jeder Display-Agent zeigt sie also ohne Update.
 **Speichern und Bibliothek laden** liest die Bibliothek (neu) ein.
+**Mehrere Bildschirme**: Unter *Liedtext zeigen auf* wird je PC ein Schalter
+(und dann dessen Monitor) gewählt, z. B. der Beamer am Anzeige-PC und ein Monitor
+am Streaming-PC (`targets`: bis zu 4, je PC einer – ein Display-Agent hat ein
+Liedfenster). Jede Folie, Schwarz und Aus geht gleichzeitig an alle; jeder Agent
+passt den Text an seinen eigenen Bildschirm an. Ist ein PC nicht erreichbar,
+zeigen die anderen trotzdem weiter: die Liedanzeige nennt ihn in Gelb mit Grund,
+die Leiste am Programmpunkt zeigt ⚠ (antippen nennt ihn), und beim ersten Mal
+kommt eine Meldung. Erst wenn kein Bildschirm erreichbar ist, bleibt die Folie
+stehen (502). Ältere Einstellungen (`target_ip` + `monitor`) gelten als ein
+Bildschirm; `target_ip` ist seither der PC mit der Bibliothek, `monitor` der
+des ersten Bildschirms. Im Test-Dienst spielt `--dead-agent IP` einen PC, dessen
+Agent aus ist.
 
 Ein Programmpunkt bekommt sein Lied in der Spalte *Liedtext* („♪ Lied wählen“,
 Suche nach Titel oder Liederbuch-Nummer; eine eingetippte Nummer zeigt die Lieder
@@ -847,7 +859,7 @@ Der Agent braucht dafür die neue Version (Weboberfläche auf dem Anzeige-PC:
 | GET/PUT | `/songs/settings` | Liedanzeige-Einstellungen |
 | POST | `/songs/library/reload` | Bibliothek vom Anzeige-PC lesen |
 | GET | `/songs`, `/songs/{datei}` | Liste, ein Lied mit allen Folien |
-| GET | `/songs/live` | was gerade angezeigt wird |
+| GET | `/songs/live` | was gerade angezeigt wird; `screens`: je Bildschirm ok oder Grund |
 | POST | `/songs/create` `{"title", "copyright", "slides", "refrain", "order"}` | neues Lied in der Bibliothek speichern |
 | POST | `/songs/show` `{"song_id", "slide"}` | Folie anzeigen |
 | POST | `/songs/next`, `/songs/prev`, `/songs/blank`, `/songs/hide` | weiter, zurück, schwarz, aus |

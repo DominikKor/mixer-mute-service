@@ -199,9 +199,12 @@ async def _move_targets(request: Request, moves: dict) -> dict:
             state.cfg.desktop_display.profiles = cfg.desktop_display.profiles
             result["profiles"] += 1
     songs = state.songs
-    if songs is not None and songs.settings.target_ip in moves:
+    if songs is not None and ({songs.settings.target_ip} | {t.ip for t in songs.settings.targets}) & set(moves):
         async with songs.lock:
-            songs.save_settings(songs.settings.model_copy(update={"target_ip": moves[songs.settings.target_ip]}))
+            current = songs.settings
+            targets = [t.model_copy(update={"ip": moves.get(t.ip, t.ip)}) for t in current.targets]
+            songs.save_settings(current.model_copy(update={
+                "target_ip": moves.get(current.target_ip, current.target_ip), "targets": targets}))
         result["songs"] = True
     if state.power_control is not None:
         result["power"] = await state.power_control.retarget(moves)
