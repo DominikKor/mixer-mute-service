@@ -217,6 +217,8 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        if getattr(app.state, "songs", None) is not None:
+            app.state.songs.close()   # the song screens' senders
         if camera_program is not None:
             camera_program.cancel()
         if app.state.native_controls is not None:
