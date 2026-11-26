@@ -405,8 +405,10 @@ function agentsTooOld(agents) {
 function agentState(a) {
   if (a.error) return `nicht aktualisiert: ${escapeHtml(a.error)}`;
   if (!a.self_update) return "zu alt für das automatische Update";
-  if (a.updated) return `${escapeHtml(a.version)} (neu gestartet)`;
-  return a.current ? `${escapeHtml(a.version)} (aktuell)` : `${escapeHtml(a.version)} → ${escapeHtml(a.latest)}`;
+  // Newer agents say whether they find mpv (music); without it nothing plays there.
+  const player = "mpv" in a && !a.mpv ? " · mpv nicht gefunden, Musik spielt dort nicht" : "";
+  if (a.updated) return `${escapeHtml(a.version)} (neu gestartet)${player}`;
+  return (a.current ? `${escapeHtml(a.version)} (aktuell)` : `${escapeHtml(a.version)} → ${escapeHtml(a.latest)}`) + player;
 }
 
 function agentLine(agents) {

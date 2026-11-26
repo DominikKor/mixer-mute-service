@@ -89,7 +89,9 @@ class AgentUpdateTests(unittest.TestCase):
             server = ThreadingHTTPServer(("127.0.0.1", 0), agent.DisplayHandler)
             threading.Thread(target=server.serve_forever, daemon=True).start()
             try:
-                self.assertEqual(self._post(server, "/info", {}), (200, {"ok": True, "version": "unknown"}))
+                status, info = self._post(server, "/info", {})
+                self.assertEqual((status, info["ok"], info["version"]), (200, True, "unknown"))
+                self.assertTrue({"mpv", "ytdlp", "restored_env"} <= set(info), "players reported for diagnosis")
                 self.assertEqual(self._post(server, "/info", {}, token="wrong")[0], 401)
                 self.assertEqual(self._post(server, "/update", {"version": "v2"})[0], 400)
                 status, answer = self._post(server, "/update", GOOD)

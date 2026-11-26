@@ -9,7 +9,8 @@ the agent) and starts again.
 
 GET  /update/agent   {present, version, latest, current, self_update}
 POST /update/agent   update the agent of this PC and wait until it is back
-GET  /update/agents  the same for every PC the service sends to
+GET  /update/agents  the same for every PC the service sends to, with the mpv
+                     and yt-dlp each agent finds (null: not found)
 POST /update/agents  update every agent that is behind (all at once)
 
 "Every PC" is the Ziel-PCs list, the PCs of the desktop profiles, the song
@@ -71,7 +72,13 @@ async def _agent_info(request: Request, target: str) -> dict:
             return {**base, "present": True, "version": None, "current": False, "self_update": False}
         return {**base, "present": False, "reason": "no display agent on this device"}
     version = str(answer.get("version") or "unknown")
-    return {**base, "present": True, "version": version, "current": version == latest, "self_update": True}
+    info = {**base, "present": True, "version": version, "current": version == latest, "self_update": True}
+    # Agents since 1.2.1-16x say which mpv / yt-dlp they find (None: not
+    # found) and what of the user's environment they had to fill in at start.
+    for key in ("mpv", "ytdlp", "restored_env"):
+        if key in answer:
+            info[key] = answer[key]
+    return info
 
 
 def _bundle(request: Request) -> dict:

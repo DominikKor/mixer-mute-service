@@ -516,10 +516,17 @@ die Update-Taste aktualisiert die Display-Agents aller PCs mit. Findet der
 Agent keine passende Datei, nennt die Meldung Muster und Ordner.
 
 Ein `audio`-Profil enthaelt den Pfad zu einer Musikdatei auf dem Ziel-PC. Dort
-muss mpv installiert sein und entweder ueber `PATH` oder die Windows-Variable
-`MPV_PATH` auf `mpv.exe` auffindbar sein. Nach einer Aenderung der
-Umgebungsvariable den Ziel-PC ab- und wieder anmelden und den Desktop-Agenten
-neu starten. Die Audio-Kachel spielt den Titel ohne Player-Fenster ab; ein
+muss mpv installiert sein. Der Agent sucht es in dieser Reihenfolge: die
+Variable `MPV_PATH`, `PATH` (auch der Benutzer- und System-PATH aus der
+Registry), der Agent-Ordner, WinGet (Links und Pakete, Benutzer und System),
+scoop, Chocolatey, `Program Files`, `Program Files (x86)` und
+`%LOCALAPPDATA%\Programs`. yt-dlp (fuer YouTube-Links) genauso, zuerst neben
+mpv. Startet der Agent ohne die Umgebung des Benutzers (nach dem Selbst-Update
+startet ihn Windows ueber WMI neu), uebernimmt er fehlende Benutzer- und
+System-Variablen und PATH-Eintraege beim Start aus der Registry. Findet er mpv
+nicht, nennt die Meldung die durchsuchten Orte; der Update-Dialog zeigt pro PC
+„mpv nicht gefunden“, und `GET /update/agents` liefert pro Agent `mpv`, `ytdlp`
+(Pfad oder `null`) und `restored_env` (beim Start ergaenzte Variablen). Die Audio-Kachel spielt den Titel ohne Player-Fenster ab; ein
 erneuter Play-Klick ersetzt die laufende, vom Agenten gestartete Wiedergabe.
 Stop beendet nur diesen Agenten-Player, keine anderen mpv-Instanzen. Der Agent
 laeuft im angemeldeten Benutzerkonto, sodass die normale Windows-Audioausgabe

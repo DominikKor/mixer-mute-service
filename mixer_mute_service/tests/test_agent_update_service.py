@@ -16,6 +16,7 @@ class FakeAgent:
 
     def __init__(self):
         self.agents = {}   # ip -> version, or None for an agent without /info
+        self.players = {}  # ip -> extra /info fields (mpv, ytdlp, restored_env) of newer agents
         self.calls = []
 
     def __call__(self, url, token, payload, timeout):
@@ -26,7 +27,7 @@ class FakeAgent:
         if self.agents[ip] is None:
             raise urllib.error.HTTPError(url, 404, "Not Found", None, None)
         if path == "/info":
-            return {"ok": True, "version": self.agents[ip]}
+            return {"ok": True, "version": self.agents[ip], **self.players.get(ip, {})}
         if path == "/update":
             self.agents[ip] = payload["version"]  # comes back with it after the restart
             return {"ok": True, "version": payload["version"], "restarting": True}
@@ -123,6 +124,7 @@ class AllAgentsTests(unittest.TestCase):
                     self.assertEqual(before["192.168.188.11"]["name"], "Anzeige PC")
                     self.assertEqual((before["192.168.188.11"]["version"], before["192.168.188.11"]["current"]),
                                      ("v8", False))
+                    self.assertNotIn("mpv", before["192.168.188.11"], "older agents do not say")
                     r = here.post("/update/agents").json()
                     after = {a["pc"]: a for a in r["agents"]}
                     self.assertTrue(r["ok"])
@@ -135,6 +137,14 @@ class AllAgentsTests(unittest.TestCase):
                     n = len(fake.calls)
                     here.post("/update/agents")
                     self.assertFalse(any(path == "/update" for _, path, _ in fake.calls[n:]))
+                    # Remote diagnosis: which mpv / yt-dlp each agent finds.
+                    fake.players["192.168.188.11"] = {"mpv": None, "ytdlp": None, "restored_env": ["PATH"]}
+                    fake.players["192.168.188.20"] = {"mpv": r"C:\Program Files\mpv\mpv.exe", "ytdlp": None,
+                                                      "restored_env": []}
+                    now = {a["pc"]: a for a in here.get("/update/agents").json()["agents"]}
+                    self.assertEqual((now["192.168.188.11"]["mpv"], now["192.168.188.11"]["restored_env"]),
+                                     (None, ["PATH"]))
+                    self.assertEqual(now["192.168.188.20"]["mpv"], r"C:\Program Files\mpv\mpv.exe")
 
 
 if __name__ == "__main__":

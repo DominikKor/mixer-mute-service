@@ -47,6 +47,8 @@ _COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 _SONG_NAME_RE = re.compile(r"^[A-Za-z0-9 ._()!'+-]{1,120}\.foil$")
 MAX_MONITORS = 5
 logger = logging.getLogger("display-agent")
+# Names of variables filled in from the user's environment at start (/info).
+RESTORED_ENV: list = []
 
 
 def _monitor_areas(display_number: int) -> tuple[tuple[int, int, int, int], tuple[int, int, int, int]]:
@@ -374,23 +376,204 @@ def _launch_profile(profile: dict) -> None:
         logger.exception("Profile %s failed", profile["id"])
 
 
-def _find_mpv() -> str | None:
-    configured = os.environ.get("MPV_PATH", "").strip()
+# -- finding mpv and yt-dlp ----------------------------------------------------
+# The agent may run without the user's environment: after a self-update it is
+# started again through WMI, whose processes get neither the user's PATH (where
+# winget links mpv) nor the user's own variables. So the search also reads the
+# user's and the machine's variables from the registry and looks where the
+# usual installers put the programs.
+
+def _registry_environment() -> dict:
+    """{"machine": {...}, "user": {...}}: the variables as set in Windows
+    (upper-case names, values not yet expanded)."""
+    result = {"machine": {}, "user": {}}
+    if os.name != "nt":
+        return result
+    import winreg
+
+    keys = (
+        ("machine", winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment"),
+        ("user", winreg.HKEY_CURRENT_USER, "Environment"),
+    )
+    for scope, root, key in keys:
+        try:
+            with winreg.OpenKey(root, key) as handle:
+                index = 0
+                while True:
+                    try:
+                        name, value, _kind = winreg.EnumValue(handle, index)
+                    except OSError:
+                        break
+                    index += 1
+                    if isinstance(value, str):
+                        result[scope][name.upper()] = value
+        except OSError:
+            continue
+    return result
+
+
+def _known_folders() -> dict:
+    """LOCALAPPDATA / USERPROFILE / APPDATA of the user this process runs as,
+    from Windows itself (right even when the environment is not)."""
+    if os.name != "nt":
+        return {}
+    import ctypes
+    from ctypes import wintypes
+
+    class GUID(ctypes.Structure):
+        _fields_ = [("Data1", wintypes.DWORD), ("Data2", wintypes.WORD), ("Data3", wintypes.WORD),
+                    ("Data4", ctypes.c_ubyte * 8)]
+
+    def guid(text: str) -> GUID:
+        import uuid
+        raw = uuid.UUID(text).bytes_le
+        return GUID.from_buffer_copy(raw)
+
+    folders = {}
+    for name, text in (("LOCALAPPDATA", "F1B32785-6FBA-4FCF-9D55-7B8E7F157091"),
+                       ("USERPROFILE", "5E6C858F-0E22-4760-9AFE-EA3317B67173"),
+                       ("APPDATA", "3EB685DB-65F9-4CF6-A03A-E3EF65729F3D")):
+        path = ctypes.c_wchar_p()
+        try:
+            if ctypes.windll.shell32.SHGetKnownFolderPath(ctypes.byref(guid(text)), 0, None, ctypes.byref(path)) == 0:
+                folders[name] = path.value
+        except (OSError, AttributeError):
+            pass
+        finally:
+            if path:
+                ctypes.windll.ole32.CoTaskMemFree(path)
+    return folders
+
+
+def _expand(value: str, env: dict) -> str:
+    """%NAME% as Windows expands it (names case-insensitive; unknown stay)."""
+    return re.sub(r"%([^%]+)%", lambda m: env.get(m.group(1).upper(), m.group(0)), value)
+
+
+def _windows_environment(process_env=None, registry=None, folders=None) -> dict:
+    """The environment the user's programs normally see: this process's
+    variables, plus the machine's and the user's from the registry where they
+    are missing; PATH holds every entry of all three; the user folders come
+    from Windows. Upper-case names."""
+    env = {k.upper(): v for k, v in (os.environ if process_env is None else process_env).items()}
+    registry = _registry_environment() if registry is None else registry
+    folders = _known_folders() if folders is None else folders
+    for name, value in folders.items():
+        current = env.get(name, "")
+        # WMI-started processes may point at the system profile instead.
+        if value and (not current or "systemprofile" in current.lower()):
+            env[name] = value
+    merged = {**registry.get("machine", {}), **registry.get("user", {})}
+    for name, value in merged.items():
+        if name != "PATH" and name not in env:
+            env[name] = _expand(value, env)
+    paths, seen = [], set()
+    for source in (env.get("PATH", ""), registry.get("machine", {}).get("PATH", ""),
+                   registry.get("user", {}).get("PATH", "")):
+        for entry in _expand(source, env).split(os.pathsep):
+            entry = entry.strip().strip('"')
+            if entry and entry.lower() not in seen:
+                seen.add(entry.lower())
+                paths.append(entry)
+    env["PATH"] = os.pathsep.join(paths)
+    return env
+
+
+def restore_user_environment() -> list:
+    """Fill in what this process is missing of the user's environment (see
+    above): variables like MPV_PATH or DESKTOP_AGENT_TOKEN set for the user,
+    the user's PATH entries, the user folders. Returns the names changed."""
+    if os.name != "nt":
+        return []
+    full = _windows_environment()
+    changed = []
+    for name, value in full.items():
+        if os.environ.get(name) != value:
+            os.environ[name] = value
+            changed.append(name)
+    return sorted(changed)
+
+
+# Where installers put a program. {exe}: the file name; {app}: the program's
+# folder name (scoop, Program Files); {pkg}: part of a WinGet/Chocolatey package name.
+_TOOL_PLACES = (
+    ("WinGet links (user)", "{LOCALAPPDATA}/Microsoft/WinGet/Links/{exe}"),
+    ("WinGet links (machine)", "{PROGRAMFILES}/WinGet/Links/{exe}"),
+    ("WinGet packages (user)", "{LOCALAPPDATA}/Microsoft/WinGet/Packages/*{pkg}*/**/{exe}"),
+    ("WinGet packages (machine)", "{PROGRAMFILES}/WinGet/Packages/*{pkg}*/**/{exe}"),
+    ("scoop", "{SCOOP}/shims/{exe}"),
+    ("scoop", "{SCOOP}/apps/{app}/current/{exe}"),
+    ("scoop (global)", "{PROGRAMDATA}/scoop/shims/{exe}"),
+    ("Chocolatey", "{CHOCOLATEYINSTALL}/bin/{exe}"),
+    ("Chocolatey", "{CHOCOLATEYINSTALL}/lib/*{pkg}*/tools/**/{exe}"),
+    ("Program Files", "{PROGRAMFILES}/{app}/{exe}"),
+    ("Program Files", "{PROGRAMW6432}/{app}/{exe}"),
+    ("Program Files (x86)", "{PROGRAMFILES(X86)}/{app}/{exe}"),
+    ("LocalAppData Programs", "{LOCALAPPDATA}/Programs/{app}/{exe}"),
+)
+
+
+def find_tool(command: str, path_variable: str, app: str, pkg: str, *, near=(), env=None,
+              exe=None) -> tuple:
+    """(path or None, [places searched]) for a program like mpv: the variable
+    naming it (MPV_PATH), PATH (with the user's PATH from the registry), the
+    agent's folder, ``near`` (folders to look in first, e.g. mpv's for yt-dlp)
+    and the usual install places."""
+    env = _windows_environment() if env is None else env
+    exe = exe or (f"{command}.exe" if os.name == "nt" else command)
+    searched = []
+    configured = env.get(path_variable, "").strip().strip('"')
     if configured:
+        searched.append(path_variable)
         if Path(configured).is_file():
-            return configured
-        resolved = shutil.which(configured)
+            return configured, searched
+        resolved = shutil.which(configured, path=env.get("PATH"))
         if resolved:
-            return resolved
-    found = shutil.which("mpv")
+            return resolved, searched
+    searched.append("PATH (incl. the user's PATH from the registry)")
+    found = shutil.which(command, path=env.get("PATH"))
     if found:
-        return found
-    candidates = [
-        Path(__file__).with_name("mpv.exe"),
-        Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "mpv" / "mpv.exe",
-        Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "mpv" / "mpv.exe",
-    ]
-    return next((str(path) for path in candidates if path.is_file()), None)
+        return found, searched
+    searched.append("the agent folder")
+    for folder in (*near, AGENT_DIR):
+        candidate = Path(folder) / exe
+        if candidate.is_file():
+            return str(candidate), searched
+    defaults = {
+        "LOCALAPPDATA": env.get("LOCALAPPDATA", ""),
+        "PROGRAMFILES": env.get("PROGRAMFILES", r"C:\Program Files"),
+        "PROGRAMW6432": env.get("PROGRAMW6432", ""),
+        "PROGRAMFILES(X86)": env.get("PROGRAMFILES(X86)", r"C:\Program Files (x86)"),
+        "PROGRAMDATA": env.get("PROGRAMDATA", r"C:\ProgramData"),
+        "SCOOP": env.get("SCOOP") or (str(Path(env["USERPROFILE"]) / "scoop") if env.get("USERPROFILE") else ""),
+        "CHOCOLATEYINSTALL": env.get("CHOCOLATEYINSTALL") or (
+            str(Path(env.get("PROGRAMDATA", r"C:\ProgramData")) / "chocolatey")),
+    }
+    for label, template in _TOOL_PLACES:
+        if label not in searched:
+            searched.append(label)
+        variable = template[1:template.index("}")]
+        base = defaults.get(variable, "")
+        if not base:
+            continue
+        pattern = template.replace("{" + variable + "}", base.replace("\\", "/")).format(exe=exe, app=app, pkg=pkg)
+        if "*" in pattern:
+            matches = sorted(glob.glob(pattern, recursive=True))
+            match = next((m for m in matches if Path(m).is_file()), None)
+            if match:
+                return str(Path(match)), searched
+        elif Path(pattern).is_file():
+            return str(Path(pattern)), searched
+    return None, searched
+
+
+def _find_mpv() -> str | None:
+    return find_tool("mpv", "MPV_PATH", "mpv", "mpv")[0]
+
+
+def missing_tool_message(command: str, path_variable: str, searched: list, install: str) -> str:
+    return (f"{command} was not found on this PC (searched: {', '.join(searched)}); "
+            f"install it ({install}) or set {path_variable}")
 
 
 # -- YouTube links (audio profiles) -----------------------------------------
@@ -409,24 +592,8 @@ def is_youtube_url(value) -> bool:
 
 
 def _find_ytdlp(mpv: str | None = None) -> str | None:
-    configured = os.environ.get("YTDLP_PATH", "").strip()
-    if configured:
-        if Path(configured).is_file():
-            return configured
-        resolved = shutil.which(configured)
-        if resolved:
-            return resolved
-    found = shutil.which("yt-dlp")
-    if found:
-        return found
-    candidates = [
-        Path(__file__).with_name("yt-dlp.exe"),
-        Path(os.environ.get("LOCALAPPDATA", "")) / "Microsoft" / "WinGet" / "Links" / "yt-dlp.exe",
-        Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "yt-dlp" / "yt-dlp.exe",
-    ]
-    if mpv:
-        candidates.insert(0, Path(mpv).with_name("yt-dlp.exe"))
-    return next((str(path) for path in candidates if path.is_file()), None)
+    near = (Path(mpv).parent,) if mpv else ()
+    return find_tool("yt-dlp", "YTDLP_PATH", "yt-dlp", "yt-dlp", near=near)[0]
 
 
 # -- audio (mpv) -------------------------------------------------------------
@@ -693,11 +860,13 @@ def _play_audio(profile_id: str, path: str, fade: dict | None = None) -> None:
             raise ValueError("Configured audio file is not available")
     mpv = _find_mpv()
     if not mpv:
-        raise FileNotFoundError("mpv was not found; install mpv or set MPV_PATH")
+        _, searched = find_tool("mpv", "MPV_PATH", "mpv", "mpv")
+        raise FileNotFoundError(missing_tool_message("mpv", "MPV_PATH", searched, "winget install mpv"))
     ytdlp = _find_ytdlp(mpv) if stream else None
     if stream and not ytdlp:
-        raise FileNotFoundError("yt-dlp was not found on this PC; install it (winget install yt-dlp.yt-dlp) "
-                                "or put yt-dlp.exe next to mpv.exe")
+        _, searched = find_tool("yt-dlp", "YTDLP_PATH", "yt-dlp", "yt-dlp", near=(Path(mpv).parent,))
+        raise FileNotFoundError(missing_tool_message(
+            "yt-dlp", "YTDLP_PATH", searched, "winget install yt-dlp.yt-dlp, or put yt-dlp.exe next to mpv.exe"))
 
     startup_info = None
     if os.name == "nt":
@@ -1411,7 +1580,13 @@ class DisplayHandler(BaseHTTPRequestHandler):
             self.send_error(400)
             return
         if self.path == "/info":
-            self._send_json(200, {"ok": True, "version": agent_version()})
+            mpv = _find_mpv()
+            self._send_json(200, {
+                "ok": True, "version": agent_version(),
+                # Remote diagnosis: which players this agent finds (None: not
+                # found), and what of the user's environment it filled in at start.
+                "mpv": mpv, "ytdlp": _find_ytdlp(mpv), "restored_env": RESTORED_ENV,
+            })
             return
         if self.path == "/update":
             self._handle_update(body)
@@ -1734,6 +1909,15 @@ def main() -> None:
             )
         ],
     )
+    # Started through WMI after a self-update the process lacks the user's
+    # environment (PATH with mpv, user variables): take it from the registry.
+    global RESTORED_ENV
+    try:
+        RESTORED_ENV = restore_user_environment()
+    except OSError:
+        logger.exception("Could not read the user's environment")
+    if RESTORED_ENV:
+        logger.info("Filled in from the user's environment: %s", ", ".join(RESTORED_ENV))
     if not os.environ.get("DESKTOP_AGENT_TOKEN"):
         logger.error("Set DESKTOP_AGENT_TOKEN before starting the agent")
         return

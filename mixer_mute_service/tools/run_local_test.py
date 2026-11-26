@@ -134,7 +134,11 @@ class FakeDevices:
             from app.agent_download import agent_dir
             version_file = agent_dir() / "version.txt"
             version = version_file.read_text(encoding="utf-8").strip() if version_file.exists() else "dev"
-            return {"ok": True, "version": os.environ.get("MIXER_BUILD_ID", version)}
+            # The Anzeige PC's agent finds no mpv (to see the warning in the update dialog).
+            no_mpv = "192.168.188.11" in url
+            return {"ok": True, "version": os.environ.get("MIXER_BUILD_ID", version),
+                    "mpv": None if no_mpv else r"C:\Program Files\mpv\mpv.exe",
+                    "ytdlp": None if no_mpv else r"C:\Program Files\mpv\yt-dlp.exe", "restored_env": []}
         if path == "/songs/library":
             return {"ok": True, "files": []}
         log.info("FAKE display agent %s %s", url, {k: v for k, v in payload.items() if k != "files"})
