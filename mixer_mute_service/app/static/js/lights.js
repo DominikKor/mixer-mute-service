@@ -1,5 +1,6 @@
-// Mixer Mute Service UI (lights.js): Licht: scenes, stage zones (Art-Net),
-// room light (Shelly) and the light settings.
+// Mixer Mute Service UI (lights.js): Licht: presets, the four stage lights
+// (Art-Net; each with on/off, brightness and its own warm/cold colour), the
+// room light (Shelly) and two settings.
 // Classic script: all files share one global scope and load in the order
 // of index.html; main.js runs last and starts everything.
 
@@ -8,13 +9,19 @@ const LIGHTS = {
   dragging: new Set(),  // sliders the user holds: the poll leaves them alone
   sending: {},          // per slider: {busy, again, released} of its one request in flight
   busy: new Set(),      // keys with a request in flight
-  pick: new Set(),      // new scene: chosen lights ("zone:left", "color", "circuit:light-tech")
+  pick: new Set(),      // preset being saved: chosen lights ("zone:left", "circuit:light-tech")
+  updating: null,       // id of the preset being overwritten, null for a new one
+  editing: false,       // presets: order, names, overwrite, delete
+  setting: null,        // the open setting below the chips ("fade_ms", "start")
+  link: false,          // "Alle gleich": a slider moves all four lights
   circuitWant: {},      // room light: state the user chose, not yet confirmed (shown at once)
   circuitSent: {},      // room light: state in flight per circuit
   circuitSeq: 0,        // counts switches: a poll begun before one keeps the confirmed states
 };
 const LIGHT_SEND_MS = 60;   // while dragging, at most one send per this time
 const LIGHT_POLL_MS = 3000;
+const LIGHT_LINK_KEY = "mixer.lights.link";
+try { LIGHTS.link = localStorage.getItem(LIGHT_LINK_KEY) === "1"; } catch (_) { /* private mode */ }
 
 // Fades run while the request is open (up to 10 s), a Shelly may take
 // 2.5 s: a light request waits longer than api()'s default.
@@ -22,125 +29,215 @@ function lightTimeout() {
   return ((LIGHTS.data && LIGHTS.data.stage.fade_ms) || 1000) + 15000;
 }
 
-function lightPercent(value) { return `${Math.round((value || 0) * 100 / 255)} %`; }
+function lightPct(value) { return Math.round((value || 0) * 100 / 255); }
+function lightPercent(value) { return `${lightPct(value)} %`; }
 
 function lightStatus(message) {
   $("light-status").hidden = !message;
   $("light-status").textContent = message || "";
 }
 
-// ---- stage and settings sliders ------------------------------------------------
+// ---- colour: one slider warm <-> cold over the two white channels -----------------
+// 0..510: from the left only warm (255) with cold mixed in up to 255 at the
+// middle, then warm fades out to the right. The stronger channel is always
+// full, so every colour has the most light; the brightness channel dims.
+// Companion's colour (warm 255, cold 50) is exactly 50.
+const TONE_MAX = 510;
 
-// One slider row: name, optional on/off key, range, value. kind decides what
-// a change sends ("zone", "warm"/"cold" or a setting).
-function lightSliderRow(container, id, label, kind, max, format, onKey = false) {
-  let row = container.querySelector(`[data-light-row="${id}"]`);
-  if (row) return row;
-  row = document.createElement("div");
-  row.className = `light-row light-row-${kind}`;
-  row.dataset.lightRow = id;
-  // The name; a zone's name can be changed (pencil, stored on the service).
-  const nameCell = document.createElement("div");
-  nameCell.className = "light-name-cell";
+function toneOf(fixture) {
+  const { warm, cold } = fixture;
+  if (warm >= cold) return warm ? Math.round((255 * cold) / warm) : 255;
+  return TONE_MAX - Math.round((255 * warm) / cold);
+}
+
+function toneChannels(tone) {
+  return { warm: Math.min(255, TONE_MAX - tone), cold: Math.min(255, tone) };
+}
+
+// The colour a light shows at this tone (for lamps and preset dots).
+function toneRgb(tone) {
+  const stops = [[255, 160, 64], [255, 238, 214], [178, 212, 255]];
+  const t = tone / 255;
+  const [a, b, u] = t <= 1 ? [stops[0], stops[1], t] : [stops[1], stops[2], t - 1];
+  return a.map((v, i) => Math.round(v + (b[i] - v) * u)).join(", ");
+}
+
+function toneText(fixture) { return `W${lightPct(fixture.warm)} K${lightPct(fixture.cold)}`; }
+
+// A lamp (card head, preset dot): colour, glow by brightness, dark when off.
+function paintLamp(lamp, fixture) {
+  const lit = fixture.on !== false && fixture.level !== 0;
+  lamp.style.setProperty("--lamp", toneRgb(toneOf({ warm: fixture.warm ?? 255, cold: fixture.cold ?? 50 })));
+  lamp.style.setProperty("--glow", lit ? String(0.3 + (0.7 * (fixture.level ?? 255)) / 255) : "0");
+  lamp.dataset.state = fixture.on === false ? "off" : fixture.on === true ? "on" : "keep";
+}
+
+// ---- stage lights: one card each ------------------------------------------------------
+
+function fixtureRange(card, zone, kind, label, max) {
+  const row = document.createElement("div");
+  row.className = `fixture-row fixture-row-${kind}`;
   const name = document.createElement("span");
-  name.className = "light-name";
+  name.className = "fixture-label";
   name.textContent = label;
-  nameCell.appendChild(name);
-  if (kind === "zone") {
-    const pencil = renamePencil(label);
-    pencil.dataset.lightRename = `light-zone/${id}`;
-    nameCell.appendChild(pencil);
-  }
-  row.appendChild(nameCell);
-  if (onKey) {
-    const key = document.createElement("button");
-    key.type = "button";
-    key.className = "light-zone-key";
-    key.dataset.lightZoneKey = id;
-    key.setAttribute("aria-label", `${label} an/aus`);
-    row.appendChild(key);
-  }
   const range = document.createElement("input");
   range.type = "range";
   range.className = `light-range light-range-${kind}`;
   range.min = "0";
   range.max = String(max);
   range.step = "1";
-  range.dataset.lightSlider = id;
+  range.dataset.lightSlider = `${zone}:${kind}`;
   range.dataset.lightKind = kind;
-  range.setAttribute("aria-label", label);
+  range.dataset.zone = zone;
   const value = document.createElement("span");
   value.className = "light-value";
-  row.append(range, value);
-  row.dataset.format = format;
-  container.appendChild(row);
-  return row;
+  row.append(name, range, value);
+  card.appendChild(row);
 }
 
-function lightFormat(row, raw) {
-  const format = row.dataset.format;
-  if (format === "seconds") return `${(raw / 1000).toFixed(raw % 1000 ? 2 : 1).replace(".", ",")} s`;
-  if (format === "plain") return String(raw);
+function fixtureCard(zone) {
+  const box = $("light-fixtures");
+  let card = box.querySelector(`[data-fixture="${zone}"]`);
+  if (card) return card;
+  card = document.createElement("div");
+  card.className = "fixture";
+  card.dataset.fixture = zone;
+  const head = document.createElement("div");
+  head.className = "fixture-head";
+  const lamp = document.createElement("span");
+  lamp.className = "fixture-lamp";
+  lamp.setAttribute("aria-hidden", "true");
+  const nameCell = document.createElement("div");
+  nameCell.className = "light-name-cell";
+  const name = document.createElement("span");
+  name.className = "light-name";
+  const pencil = renamePencil(zone);
+  pencil.dataset.lightRename = `light-zone/${zone}`;
+  nameCell.append(name, pencil);
+  const key = document.createElement("button");
+  key.type = "button";
+  key.className = "light-zone-key";
+  key.dataset.fixtureKey = zone;
+  head.append(lamp, nameCell, key);
+  card.appendChild(head);
+  fixtureRange(card, zone, "level", "Hell", 255);
+  fixtureRange(card, zone, "tone", "Farbe", TONE_MAX);
+  box.appendChild(card);
+  return card;
+}
+
+// Show one light; a slider the user holds keeps its place.
+function setFixture(card, fixture, label, fallback) {
+  card.classList.toggle("off", !fixture.on);
+  card.dataset.defaultName = fallback;
+  card.querySelector(".light-name").textContent = label;
+  const pencil = card.querySelector("[data-light-rename]");
+  pencil.title = `${label} umbenennen`;
+  pencil.setAttribute("aria-label", pencil.title);
+  const key = card.querySelector(".light-zone-key");
+  key.classList.toggle("on", fixture.on);
+  key.setAttribute("aria-pressed", String(fixture.on));
+  key.textContent = fixture.on ? "An" : "Aus";
+  key.setAttribute("aria-label", `${label} ${fixture.on ? "ausschalten" : "einschalten"}`);
+  const level = card.querySelector('[data-light-kind="level"]');
+  const tone = card.querySelector('[data-light-kind="tone"]');
+  level.setAttribute("aria-label", `${label} Helligkeit${fixture.on ? "" : " (aus: wird gemerkt)"}`);
+  tone.setAttribute("aria-label", `${label} Farbe warm bis kalt`);
+  if (!LIGHTS.dragging.has(level.dataset.lightSlider)) level.value = String(fixture.level);
+  if (!LIGHTS.dragging.has(tone.dataset.lightSlider)) tone.value = String(toneOf(fixture));
+  showFixtureSliders(card, fixture.on);
+}
+
+// The values next to the sliders and the lamp, from the sliders themselves
+// (also while dragging, before the service answered).
+function showFixtureSliders(card, on) {
+  const level = card.querySelector('[data-light-kind="level"]');
+  const tone = card.querySelector('[data-light-kind="tone"]');
+  const shown = { on, level: Number(level.value), ...toneChannels(Number(tone.value)) };
+  level.style.setProperty("--fill", `${(shown.level * 100) / 255}%`);
+  level.closest(".fixture-row").querySelector(".light-value").textContent = lightPercent(shown.level);
+  tone.closest(".fixture-row").querySelector(".light-value").textContent = toneText(shown);
+  paintLamp(card.querySelector(".fixture-lamp"), shown);
+}
+
+function renderFixtures() {
+  const data = LIGHTS.data;
+  for (const [zone, fixture] of Object.entries(data.stage.fixtures)) {
+    const label = data.zone_labels[zone] || zone;
+    setFixture(fixtureCard(zone), fixture, label, (data.zone_defaults || {})[zone] || label);
+  }
+  const link = $("light-link");
+  link.setAttribute("aria-pressed", String(LIGHTS.link));
+  $("light-fixtures").classList.toggle("linked", LIGHTS.link);
+}
+
+// ---- settings: two chips, one slider below them -------------------------------------
+
+const LIGHT_SETTINGS = {
+  fade_ms: { label: "Übergang", max: 10000, step: 250, hint: "So lange blenden Presets und An/Aus über." },
+  start: { label: "Einschalten auf", max: 255, step: 1, hint: "Helligkeit für einen Scheinwerfer ohne gemerkten Wert und für die Overall-Tasten." },
+};
+
+function settingText(kind, raw) {
+  if (kind === "fade_ms") return `${(raw / 1000).toFixed(raw % 100 ? 2 : 1).replace(".", ",")} s`;
   return lightPercent(raw);
 }
 
-function setLightRow(row, raw) {
-  const range = row.querySelector("input");
-  if (!LIGHTS.dragging.has(range.dataset.lightSlider)) range.value = String(raw);
-  const shown = Number(range.value);
-  row.querySelector(".light-value").textContent = lightFormat(row, shown);
-  range.style.setProperty("--fill", `${(shown * 100) / Number(range.max)}%`);
-  const key = row.querySelector(".light-zone-key");
-  if (key) {
-    const on = shown > 0;
-    key.classList.toggle("on", on);
-    key.setAttribute("aria-pressed", String(on));
-    key.textContent = on ? "An" : "Aus";
+function renderLightSettings() {
+  const stage = LIGHTS.data.stage;
+  for (const chip of document.querySelectorAll("[data-light-setting]")) {
+    const kind = chip.dataset.lightSetting;
+    const open = LIGHTS.setting === kind;
+    chip.querySelector(".light-chip-value").textContent = settingText(kind, stage[kind]);
+    chip.setAttribute("aria-expanded", String(open));
   }
+  const pop = $("light-setting-pop");
+  pop.hidden = !LIGHTS.setting;
+  if (!LIGHTS.setting) return;
+  const kind = LIGHTS.setting;
+  const spec = LIGHT_SETTINGS[kind];
+  let range = pop.querySelector("input");
+  if (!range || range.dataset.lightKind !== kind) {
+    pop.innerHTML = '<div class="fixture-row"><span class="fixture-label"></span><input type="range" class="light-range light-range-setting" min="0" /><span class="light-value"></span></div><div class="light-setting-hint"></div>';
+    range = pop.querySelector("input");
+    range.max = String(spec.max);
+    range.step = String(spec.step);
+    range.dataset.lightSlider = kind;
+    range.dataset.lightKind = kind;
+    range.setAttribute("aria-label", spec.label);
+    pop.querySelector(".fixture-label").textContent = spec.label;
+    pop.querySelector(".light-setting-hint").textContent = spec.hint;
+  }
+  if (!LIGHTS.dragging.has(kind)) range.value = String(stage[kind]);
+  showSettingSlider(range);
 }
 
-// A zone row after a rename: its name, the key's and slider's labels.
-function lightRowName(row, label, fallback) {
-  row.querySelector(".light-name").textContent = label;
-  row.dataset.defaultName = fallback;
-  const pencil = row.querySelector("[data-light-rename]");
-  if (pencil) { pencil.title = `${label} umbenennen`; pencil.setAttribute("aria-label", pencil.title); }
-  row.querySelector("input[data-light-slider]").setAttribute("aria-label", label);
-  const key = row.querySelector(".light-zone-key");
-  if (key) key.setAttribute("aria-label", `${label} an/aus`);
+function showSettingSlider(range) {
+  const raw = Number(range.value);
+  range.style.setProperty("--fill", `${(raw * 100) / Number(range.max)}%`);
+  range.closest(".fixture-row").querySelector(".light-value").textContent = settingText(range.dataset.lightKind, raw);
 }
 
 function renderLights() {
-  const data = LIGHTS.data;
-  if (!data) return;
-  const stage = data.stage;
-  const faders = $("light-faders");
-  for (const [zone, label] of Object.entries(data.zone_labels)) {
-    const row = lightSliderRow(faders, zone, label, "zone", 255, "percent", true);
-    lightRowName(row, label, (data.zone_defaults || {})[zone] || label);
-    setLightRow(row, stage.zones[zone] || 0);
-  }
-  setLightRow(lightSliderRow(faders, "warm", "Warm", "warm", 255, "percent"), stage.warm);
-  setLightRow(lightSliderRow(faders, "cold", "Kalt", "cold", 255, "percent"), stage.cold);
-  const settings = $("light-settings");
-  setLightRow(lightSliderRow(settings, "start", "Einschalten auf", "start", 255, "percent"), stage.start);
-  setLightRow(lightSliderRow(settings, "fade_ms", "Übergang", "fade_ms", 10000, "seconds"), stage.fade_ms);
-  settings.querySelector('[data-light-slider="fade_ms"]').step = "250";
-  setLightRow(lightSliderRow(settings, "steps", "Dimmschritt", "steps", 255, "percent"), stage.steps);
-  settings.querySelector('[data-light-slider="steps"]').min = "5";
-  renderLightCircuits(data.circuits);
-  renderLightScenes(data.scenes);
+  if (!LIGHTS.data) return;
+  renderFixtures();
+  renderLightSettings();
+  renderLightCircuits(LIGHTS.data.circuits);
+  renderLightScenes(LIGHTS.data.scenes);
   renderLightPick();
 }
+
+// ---- sliders: one request per slider at a time ---------------------------------------
 
 async function sendLightSlider(range, fade) {
   const kind = range.dataset.lightKind;
   const value = Number(range.value);
   let result;
-  if (kind === "zone") {
-    result = await api("POST", "/lights/stage", { zones: { [range.dataset.lightSlider]: value }, fade }, { timeout: lightTimeout() });
-  } else if (kind === "warm" || kind === "cold") {
-    result = await api("POST", "/lights/stage", { [kind]: value, fade }, { timeout: lightTimeout() });
+  if (kind === "level" || kind === "tone") {
+    // "Alle gleich": the same value for all four lights.
+    const zones = LIGHTS.link ? Object.keys(LIGHTS.data.stage.fixtures) : [range.dataset.zone];
+    const change = kind === "level" ? { level: value } : toneChannels(value);
+    result = await api("POST", "/lights/stage", { zones: Object.fromEntries(zones.map(z => [z, change])), fade }, { timeout: lightTimeout() });
   } else {
     result = await api("PUT", "/lights/settings", { [kind]: value });
   }
@@ -148,7 +245,11 @@ async function sendLightSlider(range, fade) {
     toast(`Licht: ${result.data.reason || "HTTP " + result.status}`, false);
     return;
   }
-  if (LIGHTS.data && result.data.stage) LIGHTS.data.stage = result.data.stage;
+  if (LIGHTS.data && result.data.stage) {
+    LIGHTS.data.stage = result.data.stage;
+    renderFixtures();
+    renderLightSettings();
+  }
 }
 
 // One request per slider at a time, always with the slider's newest value.
@@ -170,8 +271,13 @@ async function scheduleLightSend(range) {
     } while (state.again);
   } finally {
     state.busy = false;
-    // Let go meanwhile: the poll may update this slider again.
-    if (state.released) { state.released = false; LIGHTS.dragging.delete(id); }
+    // Let go meanwhile: the poll may update this slider again; the presets
+    // show at once whether the light still matches one.
+    if (state.released) {
+      state.released = false;
+      LIGHTS.dragging.delete(id);
+      if (!LIGHTS.dragging.size) loadLights();
+    }
   }
 }
 
@@ -186,6 +292,19 @@ function releaseLightSlider(id) {
   else LIGHTS.dragging.delete(id);
 }
 
+// While dragging: the slider's own card (and with "Alle gleich" the other
+// cards) show the new value at once.
+function previewLightSlider(range) {
+  const kind = range.dataset.lightKind;
+  if (kind !== "level" && kind !== "tone") { showSettingSlider(range); return; }
+  const cards = LIGHTS.link ? [...$("light-fixtures").querySelectorAll("[data-fixture]")] : [range.closest("[data-fixture]")];
+  for (const card of cards) {
+    const other = card.querySelector(`[data-light-kind="${kind}"]`);
+    if (other !== range) other.value = range.value;
+    showFixtureSliders(card, !card.classList.contains("off"));
+  }
+}
+
 function initLightSliders(container) {
   container.addEventListener("pointerdown", event => {
     const range = event.target.closest("input[data-light-slider]");
@@ -195,9 +314,9 @@ function initLightSliders(container) {
     const range = event.target.closest("input[data-light-slider]");
     if (!range) return;
     LIGHTS.dragging.add(range.dataset.lightSlider);
-    setLightRow(range.closest(".light-row"), Number(range.value));
+    previewLightSlider(range);
     // Settings are only saved once on release; the light follows the drag.
-    if (!["start", "fade_ms", "steps"].includes(range.dataset.lightKind)) scheduleLightSend(range);
+    if (!(range.dataset.lightKind in LIGHT_SETTINGS)) scheduleLightSend(range);
   });
   container.addEventListener("change", async event => {
     const range = event.target.closest("input[data-light-slider]");
@@ -206,19 +325,11 @@ function initLightSliders(container) {
     lightSendState(range.dataset.lightSlider).released = true;
     await scheduleLightSend(range);
   });
-  // A drag that ends outside the slider (finger slid off) still lets go.
-  for (const type of ["pointerup", "pointercancel"]) {
-    document.addEventListener(type, () => {
-      for (const id of [...LIGHTS.dragging]) releaseLightSlider(id);
-    });
-  }
-  container.addEventListener("click", async event => {
-    const key = event.target.closest("[data-light-zone-key]");
-    if (!key || LIGHTS.busy.has(key)) return;
-    const zone = key.dataset.lightZoneKey;
-    const current = LIGHTS.data ? LIGHTS.data.stage.zones[zone] || 0 : 0;
-    const target = current > 0 ? 0 : (LIGHTS.data ? LIGHTS.data.stage.start : 255) || 255;
-    await lightRequest(key, "POST", "/lights/stage", { zones: { [zone]: target } });
+}
+// A drag that ends outside the slider (finger slid off) still lets go.
+for (const type of ["pointerup", "pointercancel"]) {
+  document.addEventListener(type, () => {
+    for (const id of [...LIGHTS.dragging]) releaseLightSlider(id);
   });
 }
 
@@ -312,57 +423,143 @@ async function sendRoomCircuits(ids) {
   return ids.map(id => ({ id, reason: result.data.reason || `HTTP ${result.status}` }));
 }
 
-// ---- scenes ---------------------------------------------------------------------------
+// ---- presets ----------------------------------------------------------------------------
+
+const ICON_LEFT = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg>`;
+const ICON_RIGHT = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>`;
+const ICON_REFRESH = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></svg>`;
+
+function lightToolButton(icon, label, data) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "preset-tool";
+  button.innerHTML = icon;
+  button.setAttribute("aria-label", label);
+  button.title = label;
+  Object.assign(button.dataset, data);
+  return button;
+}
 
 function renderLightScenes(scenes) {
   const box = $("light-scenes");
-  const sig = JSON.stringify([scenes.map(s => [s.id, s.name, s.stage, s.circuits]), LIGHTS.data && LIGHTS.data.zone_labels]);
+  const data = LIGHTS.data;
+  const sig = JSON.stringify([scenes, data.last_scene, LIGHTS.editing, data.zone_labels, data.circuits.map(c => c.label)]);
+  $("light-presets").classList.toggle("editing", LIGHTS.editing);
+  $("light-presets-edit").setAttribute("aria-pressed", String(LIGHTS.editing));
+  $("light-presets-edit").textContent = LIGHTS.editing ? "Fertig" : "Bearbeiten";
+  $("light-presets-hint").textContent = LIGHTS.editing
+    ? "Pfeile: Reihenfolge · Stift: Name · Kreis: mit aktuellem Licht überschreiben"
+    : "Antippen blendet ein";
   if (box.dataset.sig === sig) return;
   box.dataset.sig = sig;
   box.replaceChildren();
   if (!scenes.length) {
     const empty = document.createElement("div");
     empty.className = "light-empty";
-    empty.textContent = "Noch keine Szene. Licht einstellen und mit „+ Szene“ speichern.";
+    empty.textContent = "Noch kein Preset. Licht einstellen und mit „+ Preset“ speichern.";
     box.appendChild(empty);
     return;
   }
-  for (const scene of scenes) {
-    const item = document.createElement("div");
-    item.className = "light-scene";
-    const apply = document.createElement("button");
-    apply.type = "button";
-    apply.className = "light-scene-key";
-    apply.dataset.lightScene = scene.id;
-    apply.textContent = scene.name;
-    apply.title = `Szene „${scene.name}“ einblenden · ${lightSceneParts(scene)}`;
-    const del = document.createElement("button");
-    del.type = "button";
-    del.className = "light-scene-delete";
-    del.dataset.lightSceneDelete = scene.id;
-    del.innerHTML = ICON_TRASH;
-    del.setAttribute("aria-label", `Szene „${scene.name}“ löschen`);
-    del.title = del.getAttribute("aria-label");
-    const pencil = renamePencil(`Szene „${scene.name}“`);
-    pencil.dataset.lightSceneRename = scene.id;
-    item.append(apply, pencil, del);
-    box.appendChild(item);
-  }
+  scenes.forEach((scene, index) => {
+    const changed = !scene.active && scene.id === data.last_scene;
+    const tile = document.createElement("div");
+    tile.className = "preset";
+    tile.classList.toggle("active", scene.active);
+    tile.classList.toggle("changed", changed);
+    tile.dataset.sceneId = scene.id;
+    const key = document.createElement("button");
+    key.type = "button";
+    key.className = "preset-key";
+    key.dataset.lightScene = scene.id;
+    key.setAttribute("aria-pressed", String(scene.active));
+    const parts = lightSceneParts(scene);
+    key.title = LIGHTS.editing ? `${scene.name} · ${parts}` : `Preset „${scene.name}“ einblenden · ${parts}`;
+    const name = document.createElement("span");
+    name.className = "preset-name";
+    name.textContent = scene.name;
+    const state = document.createElement("span");
+    state.className = "preset-state";
+    state.textContent = scene.active ? "aktiv" : changed ? "geändert" : "";
+    const top = document.createElement("span");
+    top.className = "preset-top";
+    top.append(name, state);
+    key.append(top, presetSummary(scene));
+    tile.appendChild(key);
+    if (LIGHTS.editing) {
+      const tools = document.createElement("div");
+      tools.className = "preset-tools";
+      const left = lightToolButton(ICON_LEFT, `${scene.name} nach vorne`, { presetMove: "-1" });
+      const right = lightToolButton(ICON_RIGHT, `${scene.name} nach hinten`, { presetMove: "1" });
+      left.disabled = index === 0;
+      right.disabled = index === scenes.length - 1;
+      const pencil = renamePencil(`Preset „${scene.name}“`);
+      pencil.classList.add("preset-tool");
+      pencil.dataset.lightSceneRename = scene.id;
+      const update = lightToolButton(ICON_REFRESH, `${scene.name} mit dem aktuellen Licht überschreiben`, { presetUpdate: scene.id });
+      const del = lightToolButton(ICON_TRASH, `Preset „${scene.name}“ löschen`, { lightSceneDelete: scene.id });
+      del.classList.add("danger");
+      tools.append(left, right, pencil, update, del);
+      tile.appendChild(tools);
+    }
+    box.appendChild(tile);
+  });
 }
 
-// What a scene sets, for its key's title: only these lights change.
+// The tile's small picture: a dot per stage light (its colour and brightness,
+// a ring when the preset switches it off, a dash when the preset leaves it
+// alone) and how many room light circuits it switches on and off.
+function presetSummary(scene) {
+  const summary = document.createElement("span");
+  summary.className = "preset-summary";
+  const dots = document.createElement("span");
+  dots.className = "preset-dots";
+  for (const zone of Object.keys(LIGHTS.data.zone_labels)) {
+    const dot = document.createElement("span");
+    dot.className = "preset-dot";
+    const fixture = scene.stage.fixtures[zone];
+    if (fixture) paintLamp(dot, fixture); else dot.dataset.state = "none";
+    dots.appendChild(dot);
+  }
+  summary.appendChild(dots);
+  const room = Object.values(scene.circuits);
+  if (room.length) {
+    const on = room.filter(Boolean).length;
+    const text = document.createElement("span");
+    text.className = "preset-room";
+    text.textContent = [on ? `${on} an` : "", room.length - on ? `${room.length - on} aus` : ""].filter(Boolean).join(" · ");
+    text.title = "Raumlicht-Kreise";
+    summary.appendChild(text);
+  }
+  return summary;
+}
+
+// What a preset sets, for its key's title: only these lights change.
 function lightSceneParts(scene) {
   const data = LIGHTS.data;
-  const zoneLabels = (data && data.zone_labels) || {};
-  const circuitLabels = Object.fromEntries(((data && data.circuits) || []).map(c => [c.id, c.label]));
-  const stage = Object.keys(scene.stage.zones).map(z => zoneLabels[z] || z);
-  if (scene.stage.warm !== null && scene.stage.warm !== undefined) stage.push("Farbe");
-  const room = Object.keys(scene.circuits).map(c => circuitLabels[c] || c);
+  const circuitLabels = Object.fromEntries(data.circuits.map(c => [c.id, c.label]));
+  const stage = Object.entries(scene.stage.fixtures).map(([zone, f]) => {
+    const label = data.zone_labels[zone] || zone;
+    if (f.on === false) return `${label} aus`;
+    return f.level === null || f.level === undefined ? label : `${label} ${lightPercent(f.level)}`;
+  });
+  const room = Object.entries(scene.circuits).map(([c, on]) => `${circuitLabels[c] || c} ${on ? "an" : "aus"}`);
   return [stage.length ? `Bühne: ${stage.join(", ")}` : "", room.length ? `Raumlicht: ${room.join(", ")}` : ""]
     .filter(Boolean).join(" · ");
 }
 
-// ---- new scene: which lights belong to it ------------------------------------------
+async function movePreset(sceneId, step) {
+  const ids = LIGHTS.data.scenes.map(s => s.id);
+  const from = ids.indexOf(sceneId);
+  const to = from + step;
+  if (from < 0 || to < 0 || to >= ids.length) return;
+  [ids[from], ids[to]] = [ids[to], ids[from]];
+  const result = await api("POST", "/lights/scenes/order", { ids });
+  if (!result.ok || result.data.ok === false) toast(`Preset: ${result.data.reason || "HTTP " + result.status}`, false);
+  await loadLights();
+  loadProgramLightScenes();
+}
+
+// ---- saving a preset: which lights belong to it ------------------------------------
 
 function lightPickKey(box, id, label, now, disabled = false) {
   let key = box.querySelector(`[data-light-pick="${id}"]`);
@@ -380,7 +577,7 @@ function lightPickKey(box, id, label, now, disabled = false) {
   key.disabled = disabled;
   key.setAttribute("aria-pressed", String(chosen));
   key.title = disabled ? `${label}: antwortet nicht, kann nicht gespeichert werden`
-    : `${label} ${chosen ? "nicht mehr in die Szene nehmen" : "in die Szene nehmen"}`;
+    : `${label} ${chosen ? "nicht mehr ins Preset nehmen" : "ins Preset nehmen"}`;
   return key;
 }
 
@@ -389,10 +586,9 @@ function renderLightPick() {
   if (!data || !$("light-scene-create").classList.contains("visible")) return;
   const stage = $("light-pick-stage");
   for (const [zone, label] of Object.entries(data.zone_labels)) {
-    lightPickKey(stage, `zone:${zone}`, label, lightPercent(data.stage.zones[zone]));
+    const f = data.stage.fixtures[zone];
+    lightPickKey(stage, `zone:${zone}`, label, f.on ? lightPercent(f.level) : "Aus");
   }
-  // Warm and cold together: "100/20 %".
-  lightPickKey(stage, "color", "Farbe", `${lightPercent(data.stage.warm).replace(" %", "")}/${lightPercent(data.stage.cold)}`);
   const room = $("light-pick-room");
   for (const circuit of data.circuits) {
     const unknown = circuit.on !== true && circuit.on !== false;
@@ -409,8 +605,20 @@ function renderLightPick() {
   $("light-scene-save").disabled = !LIGHTS.pick.size;
 }
 
-function openLightSceneCreate() {
+// New preset (scene null): every stage light chosen. Overwriting one: its
+// name and lights are chosen, the current light is saved into it.
+function openLightSceneCreate(scene = null) {
   LIGHTS.pick.clear();
+  LIGHTS.updating = scene ? scene.id : null;
+  if (scene) {
+    for (const zone of Object.keys(scene.stage.fixtures)) LIGHTS.pick.add(`zone:${zone}`);
+    for (const circuit of Object.keys(scene.circuits)) LIGHTS.pick.add(`circuit:${circuit}`);
+  } else if (LIGHTS.data) {
+    for (const zone of Object.keys(LIGHTS.data.zone_labels)) LIGHTS.pick.add(`zone:${zone}`);
+  }
+  $("light-scene-name").value = scene ? scene.name : "";
+  $("light-scene-create-title").textContent = scene ? `Preset „${scene.name}“ überschreiben` : "Neues Preset";
+  $("light-scene-save").textContent = scene ? "Mit aktuellem Licht überschreiben" : "Aktuelles Licht speichern";
   $("light-scene-create").classList.add("visible");
   renderLightPick();
   $("light-scene-name").focus();
@@ -419,6 +627,7 @@ function openLightSceneCreate() {
 function closeLightSceneCreate() {
   $("light-scene-create").classList.remove("visible");
   LIGHTS.pick.clear();
+  LIGHTS.updating = null;
 }
 
 async function saveLightScene(replace = false) {
@@ -428,24 +637,24 @@ async function saveLightScene(replace = false) {
   const picked = [...LIGHTS.pick];
   const lights = {
     zones: picked.filter(id => id.startsWith("zone:")).map(id => id.slice(5)),
-    color: LIGHTS.pick.has("color"),
     circuits: picked.filter(id => id.startsWith("circuit:")).map(id => id.slice(8)),
   };
+  const body = { name, replace, lights };
+  if (LIGHTS.updating) body.id = LIGHTS.updating;
   const button = $("light-scene-save");
   button.disabled = true;
   try {
-    const result = await api("POST", "/lights/scenes", { name, replace, lights }, { timeout: lightTimeout() });
-    if (result.status === 409 && !replace) {
-      if (await confirmDelete(button, `Es gibt schon eine Szene „${name}“. Mit dem aktuellen Licht ersetzen?`, "Ersetzen")) {
+    const result = await api("POST", "/lights/scenes", body, { timeout: lightTimeout() });
+    if (result.status === 409 && !replace && !LIGHTS.updating) {
+      if (await confirmDelete(button, `Es gibt schon ein Preset „${name}“. Mit dem aktuellen Licht überschreiben?`, "Überschreiben")) {
         button.disabled = false;
         return saveLightScene(true);
       }
       return;
     }
-    if (!result.ok || result.data.ok === false) { toast(`Szene: ${result.data.reason || "HTTP " + result.status}`, false); return; }
+    if (!result.ok || result.data.ok === false) { toast(`Preset: ${result.data.reason || "HTTP " + result.status}`, false); return; }
     const unknown = result.data.unknown_circuits || [];
-    toast(`Szene „${result.data.scene.name}“ gespeichert` + (unknown.length ? ` (${unknown.length === 1 ? "1 Raumlicht-Kreis" : unknown.length + " Raumlicht-Kreise"} ohne Antwort nicht enthalten)` : ""), !unknown.length);
-    $("light-scene-name").value = "";
+    toast(`Preset „${result.data.scene.name}“ gespeichert` + (unknown.length ? ` (${unknown.length === 1 ? "1 Raumlicht-Kreis" : unknown.length + " Raumlicht-Kreise"} ohne Antwort nicht enthalten)` : ""), !unknown.length);
     closeLightSceneCreate();
     await loadLights();
     loadProgramLightScenes();
@@ -502,8 +711,42 @@ async function refreshLights() {
   await loadLights();
 }
 
-initLightSliders($("light-faders"));
-initLightSliders($("light-settings"));
+// ---- events ---------------------------------------------------------------------------
+
+initLightSliders($("light-fixtures"));
+initLightSliders($("light-setting-pop"));
+
+$("light-fixtures").addEventListener("click", event => {
+  const key = event.target.closest("[data-fixture-key]");
+  if (key && LIGHTS.data) {
+    const zone = key.dataset.fixtureKey;
+    // On again at the brightness it had; the slider never jumps to 0.
+    const on = !LIGHTS.data.stage.fixtures[zone].on;
+    lightRequest(key, "POST", "/lights/stage", { zones: { [zone]: { on } } });
+  }
+});
+$("light-stage-on").addEventListener("click", event => {
+  if (!LIGHTS.data) return;
+  const zones = Object.fromEntries(Object.keys(LIGHTS.data.stage.fixtures).map(z => [z, { on: true }]));
+  lightRequest(event.currentTarget, "POST", "/lights/stage", { zones });
+});
+$("light-stage-off").addEventListener("click", event => {
+  if (!LIGHTS.data) return;
+  const zones = Object.fromEntries(Object.keys(LIGHTS.data.stage.fixtures).map(z => [z, { on: false }]));
+  lightRequest(event.currentTarget, "POST", "/lights/stage", { zones });
+});
+$("light-link").addEventListener("click", () => {
+  LIGHTS.link = !LIGHTS.link;
+  try { localStorage.setItem(LIGHT_LINK_KEY, LIGHTS.link ? "1" : "0"); } catch (_) { /* private mode */ }
+  if (LIGHTS.data) renderFixtures();
+});
+for (const chip of document.querySelectorAll("[data-light-setting]")) {
+  chip.addEventListener("click", () => {
+    LIGHTS.setting = LIGHTS.setting === chip.dataset.lightSetting ? null : chip.dataset.lightSetting;
+    if (LIGHTS.data) renderLightSettings();
+  });
+}
+
 $("light-circuits").addEventListener("click", event => {
   const key = event.target.closest("[data-light-circuit]");
   if (key) switchRoomLight({ [key.dataset.lightCircuit]: key.dataset.state !== "on" });
@@ -516,45 +759,47 @@ $("light-room-off").addEventListener("click", () => {
   const ids = (LIGHTS.data ? LIGHTS.data.circuits : []).map(c => c.id);
   if (ids.length) switchRoomLight(Object.fromEntries(ids.map(id => [id, false])));
 });
-$("light-stage-on").addEventListener("click", event => {
-  if (!LIGHTS.data) return;
-  const start = LIGHTS.data.stage.start || 255;
-  // A zone that is already on keeps its level.
-  const zones = Object.fromEntries(Object.entries(LIGHTS.data.stage.zones).map(([z, v]) => [z, v || start]));
-  lightRequest(event.currentTarget, "POST", "/lights/stage", { zones });
-});
-$("light-stage-off").addEventListener("click", event => {
-  if (!LIGHTS.data) return;
-  const zones = Object.fromEntries(Object.keys(LIGHTS.data.stage.zones).map(z => [z, 0]));
-  lightRequest(event.currentTarget, "POST", "/lights/stage", { zones });
+
+$("light-presets-edit").addEventListener("click", () => {
+  LIGHTS.editing = !LIGHTS.editing;
+  if (LIGHTS.data) renderLightScenes(LIGHTS.data.scenes);
 });
 $("light-scenes").addEventListener("click", async event => {
+  const tile = event.target.closest(".preset");
+  const scene = tile && LIGHTS.data && LIGHTS.data.scenes.find(s => s.id === tile.dataset.sceneId);
+  if (!scene) return;
   const rename = event.target.closest("[data-light-scene-rename]");
   if (rename) {
-    const item = rename.closest(".light-scene");
-    const current = item.querySelector(".light-scene-key").textContent;
-    startInlineRename(item, current, { save: async name => {
-      if (await saveName("PUT", `/lights/scenes/${encodeURIComponent(rename.dataset.lightSceneRename)}`, name, "Szene")) {
+    startInlineRename(tile, scene.name, { save: async name => {
+      if (await saveName("PUT", `/lights/scenes/${encodeURIComponent(scene.id)}`, name, "Preset")) {
         await loadLights();
         loadProgramLightScenes();
       }
     } });
     return;
   }
-  const apply = event.target.closest("[data-light-scene]");
-  if (apply) {
-    const result = await lightRequest(apply, "POST", `/lights/scenes/${encodeURIComponent(apply.dataset.lightScene)}/apply`);
-    if (result && result.ok && result.data.ok !== false) toast(`Szene „${result.data.scene}“ eingeblendet`, true);
+  const move = event.target.closest("[data-preset-move]");
+  if (move) { await movePreset(scene.id, Number(move.dataset.presetMove)); return; }
+  if (event.target.closest("[data-preset-update]")) { openLightSceneCreate(scene); return; }
+  const del = event.target.closest("[data-light-scene-delete]");
+  if (del) {
+    if (!(await confirmDelete(del, `Preset „${scene.name}“ löschen? Programmpunkte mit diesem Preset starten dann nicht mehr.`))) return;
+    await lightRequest(del, "DELETE", `/lights/scenes/${encodeURIComponent(scene.id)}`);
+    loadProgramLightScenes();
     return;
   }
-  const del = event.target.closest("[data-light-scene-delete]");
-  if (!del) return;
-  const name = del.closest(".light-scene").querySelector(".light-scene-key").textContent;
-  if (!(await confirmDelete(del, `Szene „${name}“ löschen? Programmpunkte mit dieser Szene starten dann nicht mehr.`))) return;
-  await lightRequest(del, "DELETE", `/lights/scenes/${encodeURIComponent(del.dataset.lightSceneDelete)}`);
-  loadProgramLightScenes();
+  const apply = event.target.closest("[data-light-scene]");
+  // While editing, a tap on a tile does not change the light.
+  if (apply && !LIGHTS.editing) {
+    tile.classList.add("applying");
+    try {
+      await lightRequest(apply, "POST", `/lights/scenes/${encodeURIComponent(scene.id)}/apply`);
+    } finally {
+      tile.classList.remove("applying");
+    }
+  }
 });
-$("light-scene-add").addEventListener("click", openLightSceneCreate);
+$("light-scene-add").addEventListener("click", () => openLightSceneCreate());
 $("light-scene-cancel").addEventListener("click", closeLightSceneCreate);
 $("light-scene-save").addEventListener("click", () => saveLightScene());
 $("light-scene-name").addEventListener("keydown", event => {
@@ -577,9 +822,9 @@ $("light-scene-create").addEventListener("click", event => {
   renderLightPick();
 });
 
-// Pencils of the zones and room light circuits: the name is stored on the
-// service; an empty name goes back to the built-in one.
-for (const box of [$("light-faders"), $("light-circuits")]) {
+// Pencils of the stage lights and room light circuits: the name is stored
+// on the service; an empty name goes back to the built-in one.
+for (const box of [$("light-fixtures"), $("light-circuits")]) {
   box.addEventListener("click", event => {
     const pencil = event.target.closest("[data-light-rename]");
     if (!pencil) return;

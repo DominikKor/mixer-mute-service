@@ -848,10 +848,44 @@ darin bleiben). Programmzeilen, Overall-Makros und eigene Tasten, die diese
 Tasten per ID nutzen, funktionieren weiter; Companion/Stream Deck kann sie auch
 weiter über `/companion/buttons/{id}/press` drücken.
 
-- **Bühne** (Art-Net, 4 Zonen): je Zone An/Aus und ein Regler 0–100 %, dazu
-  Warm und Kalt für alle Zonen; *Alle an* (auf die Einschalthelligkeit, eine
-  schon leuchtende Zone bleibt) und *Alle aus*. Beim Ziehen folgt das Licht
-  direkt, Tasten und Szenen blenden mit dem eingestellten Übergang.
+- **Presets** (oben, die Hauptsache im Alltag): große Kacheln, Antippen blendet
+  das Preset mit dem eingestellten Übergang ein. Eine Kachel leuchtet („aktiv“),
+  solange das Licht genau so ist, wie das Preset es setzt (ein ausgeschalteter
+  Scheinwerfer zählt dabei unabhängig vom gemerkten Wert; ein Raumlicht-Kreis
+  ohne Antwort zählt nicht dagegen). Das zuletzt abgerufene Preset, das danach
+  von Hand verändert wurde, zeigt „geändert“. Die Punkte auf der Kachel zeigen
+  jeden Scheinwerfer (Farbe und Helligkeit, Ring = aus, Strich = bleibt, wie er
+  ist), dazu die Raumlicht-Kreise („Raum 2 an · 1 aus“). *+ Preset* speichert
+  das aktuelle Licht der gewählten Lichter: jeder gewählte Scheinwerfer mit
+  an/aus, Helligkeit und Farbe, jeder gewählte Kreis mit seinem Zustand.
+  *Bearbeiten* zeigt unter jeder Kachel: Reihenfolge (Pfeile), Name (Stift),
+  mit dem aktuellen Licht überschreiben (Kreis; die Auswahl der Lichter lässt
+  sich dabei ändern, Platz und Programmzeilen bleiben) und Löschen (mit
+  Rückfrage). Im Bearbeiten-Modus blendet ein Tipp auf die Kachel nichts ein.
+  Presets heißen in der API weiter `scenes`. Alte Szenen (ein Warm/Kalt für alle,
+  0 = aus) werden beim Start umgewandelt: jede Zone mit ihrer Helligkeit bzw. aus
+  (den gemerkten Wert behält der Scheinwerfer), die gespeicherte Farbe für jeden
+  dieser Scheinwerfer; die Reihenfolge wird einmal nach Namen gesetzt.
+- **Bühne** (Art-Net, 4 Scheinwerfer): je Scheinwerfer eine Karte mit An/Aus,
+  Helligkeit und Farbe. **Aus behält die Helligkeit**: Der Regler bleibt stehen
+  und wird grau, gesendet wird 0; Einschalten bringt den Wert zurück (ohne
+  gemerkten Wert: *Einschalten auf*). Ein Regler eines ausgeschalteten
+  Scheinwerfers merkt sich den Wert nur, das Licht bleibt aus (ein versehentlich
+  berührter Regler schaltet im Gottesdienst kein Licht ein). Die Farbe ist ein
+  Regler warm ↔ kalt über die beiden Weiß-Kanäle (0–510): von links nur Warm
+  (255), Kalt wird bis zur Mitte (beide 255) dazugemischt, dann nimmt Warm nach
+  rechts ab. Der stärkere Kanal steht immer auf 255, die Helligkeit regelt Kanal 1.
+  Companions Farbe (Warm 255, Kalt 50) liegt genau darauf. *Alle gleich*: ein
+  Regler bewegt Helligkeit bzw. Farbe aller vier (pro Gerät gemerkt). *Alle an*
+  schaltet jeden auf seinen Wert, *Alle aus* aus. Beim Ziehen folgt das Licht
+  direkt, Tasten und Presets blenden mit dem Übergang. Darunter zwei kleine
+  Chips: *Übergang* und *Einschalten auf* (Antippen öffnet den Regler). Der
+  Dimmschritt der Heller/Dunkler-Tasten (über Companion/Stream Deck) steht nicht
+  mehr auf der Seite, bleibt aber gespeichert (`PUT /lights/settings {"steps"}`).
+  Die Tasten der Steuerung und Overall-Makros arbeiten wie bisher: An/Aus-Taste
+  einer Zone bringt den gemerkten Wert zurück, Overall-Tasten schalten eine
+  ausgeschaltete Zone auf *Einschalten auf*, Wärmer/Kälter ändert jeden
+  Scheinwerfer um denselben Schritt.
   Art-Net wie in Companion (Verbindung `generic-artnet`): Knoten
   192.168.188.48, Universe 0, je Scheinwerfer Kanal 1 Helligkeit, 2 Warm,
   3 Kalt (Links 1–3, Mitte links 5–7, Mitte rechts 9–11, Rechts 13–15).
@@ -888,25 +922,22 @@ weiter über `/companion/buttons/{id}/press` drücken.
   `GET /lights` wartet höchstens 0,4 s und nie auf einen Kreis, der schon zuletzt
   nicht geantwortet hat, ein toter Kreis bremst also weder die Seite noch die
   anderen. „Alle an/aus“ (auch die Steuerung-Tasten) schaltet alle gleichzeitig
-  und jeden Kreis, der antwortet; eine Szene schaltet Raumlicht und Bühne
+  und jeden Kreis, der antwortet; ein Preset schaltet Raumlicht und Bühne
   gleichzeitig.
-- **Einstellungen**: Einschalthelligkeit, Übergang (0–10 s) und Dimmschritt
-  (für die Heller/Dunkler-Tasten über Companion).
-- **Szenen**: *+ Szene* speichert das Licht, wie es gerade ist (Bühne, Warm/Kalt,
-  alle Raumlicht-Kreise mit bekanntem Zustand). Antippen blendet die Szene ein.
 
-Im **Programm** hat jede Zeile die Spalte *Licht*: eine Szene, die beim Start
-der Zeile eingeblendet wird (vor Tasten und Lied). Wird die Szene gelöscht,
-startet die Zeile nicht mehr („unknown light scene“), bis eine andere gewählt ist.
+Im **Programm** hat jede Zeile die Spalte *Licht*: ein Preset, das beim Start
+der Zeile eingeblendet wird (vor Tasten und Lied). Wird das Preset gelöscht,
+startet die Zeile nicht mehr („unknown light scene“), bis ein anderes gewählt ist.
 
 | Methode | Pfad | |
 |---|---|---|
-| GET | `/lights` | Bühne, Einstellungen, Raumlicht-Kreise, Szenen |
-| POST | `/lights/stage` `{"zones": {"left": 0..255}, "warm", "cold", "fade"}` | Bühne setzen (`fade: false` springt) |
+| GET | `/lights` | Bühne (`stage.fixtures`: je Scheinwerfer `on`, `level`, `warm`, `cold`; `stage.zones`: was er zeigt, 0 = aus), Einstellungen, Raumlicht-Kreise, Presets (`active`), `last_scene` |
+| POST | `/lights/stage` `{"zones": {"left": {"on", "level", "warm", "cold"}}, "warm", "cold", "fade"}` | Scheinwerfer setzen (je Wert optional; eine Zahl statt Objekt: > 0 an auf diesen Wert, 0 aus mit gemerktem Wert; `warm`/`cold` oben: für alle; `fade: false` springt) |
 | PUT | `/lights/settings` `{"start", "steps", "fade_ms"}` | Einstellungen |
 | POST | `/lights/circuits` `{"states": {"light-front": true}}` | Raumlicht schalten; Antwort `circuits`: Zustand aller Kreise |
 | GET | `/lights/scenes` | nur die Szenen |
-| POST | `/lights/scenes` `{"name", "replace"}` | aktuelles Licht als Szene speichern |
+| POST | `/lights/scenes` `{"name", "replace", "id", "lights": {"zones", "circuits"}}` | aktuelles Licht als Preset speichern; mit `id`: dieses Preset überschreiben |
+| POST | `/lights/scenes/order` `{"ids"}` | Reihenfolge der Presets (jede ID genau einmal) |
 | POST | `/lights/scenes/{id}/apply` | Szene einblenden |
 | GET  | `/lights/artnet` | Bühnen-Knoten per ArtPoll fragen: Name, `merging` (zweiter Sender), `sending` (Dauersenden aktiv, Fehler) |
 | DELETE | `/lights/scenes/{id}` | Szene löschen |
@@ -917,7 +948,8 @@ Ein Stift (✎) neben dem Namen macht ihn zum Textfeld: Enter oder Wegtippen
 speichert, Escape bricht ab. Die Namen speichert der Dienst, alle Geräte sehen
 sie.
 
-- **Licht**: Bühnenzonen, Raumlicht-Kreise und Szenen (Stift immer sichtbar).
+- **Licht**: Scheinwerfer und Raumlicht-Kreise (Stift immer sichtbar), Presets
+  (Stift mit *Bearbeiten*).
   Bei Zonen und Kreisen stellt ein leerer Name den eingebauten Namen wieder her.
 - **Steuerung** (mit *Bearbeiten*): Kategorien und die Geräte unter *Alles
   ausschalten* (Beamer, Agent-PCs; leer = Name aus den Desktop-Profilen).

@@ -1430,7 +1430,7 @@ body.stage-on button.companion-key {
   overflow-wrap: break-word; -webkit-hyphens: auto; hyphens: auto;
 }
 
-/* ---- Licht: scenes, stage zones (Art-Net), room light (Shelly) ---------------- */
+/* ---- Licht: presets, stage lights (Art-Net), room light (Shelly) -------------- */
 .light-status {
   margin: 0 0 12px; padding: 10px 12px; border-radius: 5px; border: 1px solid #000;
   background: var(--lcd-bg); box-shadow: var(--lcd-shadow); color: #ffb36b; font: 600 12px/1.4 var(--mono);
@@ -1439,35 +1439,89 @@ body.stage-on button.companion-key {
   padding: 12px 14px 14px; border-radius: 8px; border: 1px solid #08090b;
   background: var(--panel-bg); box-shadow: var(--panel-shadow);
 }
-.light-block + .light-grid, .light-scene-create + .light-block { margin-top: 0; }
-.light-grid { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 12px; margin-top: 12px; align-items: start; }
-.light-block-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; min-height: 44px; margin-bottom: 8px; }
+.light-grid { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); gap: 12px; margin-top: 12px; align-items: start; }
+.light-block-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; min-height: 44px; margin-bottom: 8px; }
 .light-block-title { font-size: 11px; font-weight: 800; letter-spacing: .16em; text-transform: uppercase; color: #9aa1ad; }
-.light-block-hint { font-size: 12px; color: var(--muted); }
-.light-block-tools { display: flex; gap: 6px; }
+.light-block-hint { font-size: 12px; color: var(--muted); min-width: 0; }
+.light-block-tools { display: flex; gap: 6px; flex-wrap: wrap; margin-left: auto; }
 button.light-all { min-height: 44px; min-width: 88px; padding: 0 14px; font-size: 12px; }
-.light-settings-head { margin-top: 14px; }
+button.light-all[aria-pressed="true"] { color: #fff; border-color: #0a2550; background: linear-gradient(to bottom, #3a6fae, #2a5590 55%, #224a80); }
 .light-empty { grid-column: 1 / -1; color: var(--muted); font-size: 13px; padding: 6px 2px; }
-.light-scenes { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 8px; }
-.light-scene { display: flex; gap: 4px; min-width: 0; }
-button.light-scene-key {
-  flex: 1; min-width: 0; min-height: 52px; padding: 6px 14px; text-align: left; font-size: 14px; font-weight: 700;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+.light-block button.busy { opacity: .6; pointer-events: none; }
+
+/* Presets: big tiles, the one that matches the light now glows. */
+.light-scenes { display: grid; grid-template-columns: repeat(auto-fill, minmax(236px, 1fr)); gap: 10px; }
+.preset { position: relative; display: flex; flex-direction: column; min-width: 0; border-radius: 10px; }
+button.preset-key {
+  display: flex; flex-direction: column; justify-content: space-between; gap: 10px; width: 100%; min-width: 0;
+  min-height: 88px; padding: 12px 14px; text-align: left; border-radius: 10px;
 }
-button.light-scene-delete { width: 44px; min-height: 52px; padding: 0; flex-shrink: 0; color: #9aa1ad; }
-button.light-scene-delete svg { width: 18px; height: 18px; }
-.light-faders { display: flex; flex-direction: column; gap: 4px; }
-.light-row {
-  display: grid; grid-template-columns: minmax(124px, 168px) auto minmax(0, 1fr) 62px; align-items: center; gap: 10px;
-  min-height: 52px;
+.preset-top { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.preset-name { flex: 1; min-width: 0; font-size: 16px; font-weight: 800; letter-spacing: .01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.preset-state { flex-shrink: 0; font: 800 10px/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: #ffd45c; }
+.preset.changed .preset-state { color: #c9a45a; }
+.preset-summary { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.preset-dots { display: flex; gap: 6px; }
+.preset-room { min-width: 0; font: 700 11px/1 var(--mono); color: #8d96a3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.preset-room::before { content: "Raum "; color: #6d7686; }
+/* A lamp: its colour (--lamp) and brightness (--glow); a ring when off. */
+.preset-dot, .fixture-lamp {
+  --lamp: 255, 238, 214; --glow: 0;
+  border-radius: 50%; flex-shrink: 0;
+  background: radial-gradient(circle at 50% 45%, rgba(var(--lamp), calc(.35 + var(--glow) * .65)), rgba(var(--lamp), calc(var(--glow) * .55)) 70%);
+  box-shadow: 0 0 calc(var(--glow) * 12px) rgba(var(--lamp), calc(var(--glow) * .9)), inset 0 1px 2px rgba(0,0,0,.5);
 }
+.preset-dot { width: 14px; height: 14px; }
+.preset-dot[data-state="off"], .fixture-lamp[data-state="off"] { background: #1d2026; box-shadow: inset 0 0 0 2px #4a505b; }
+.preset-dot[data-state="keep"] { box-shadow: inset 0 0 0 2px rgba(var(--lamp), .8); background: none; }
+.preset-dot[data-state="none"] { background: none; box-shadow: none; border: 1px dashed #3a3f48; }
+.preset.active button.preset-key {
+  color: #2a1d00; border-color: #5a3d00;
+  background: linear-gradient(to bottom, #ffd45c, #f1b52a 55%, #d99a12);
+  box-shadow: 0 0 18px rgba(255,200,70,.45), inset 0 1px 0 rgba(255,255,255,.45), 0 2px 3px rgba(0,0,0,.55);
+}
+.preset.active .preset-state { color: #5a3d00; }
+.preset.active .preset-room, .preset.active .preset-room::before { color: #5a4310; }
+.preset.active .preset-dot[data-state="off"] { background: rgba(0,0,0,.25); box-shadow: inset 0 0 0 2px rgba(90,61,0,.7); }
+.preset.active .preset-dot[data-state="none"] { border-color: rgba(90,61,0,.5); }
+.preset.changed button.preset-key { border-color: #6b5420; box-shadow: inset 0 0 0 1px rgba(255,200,70,.35), 0 2px 3px rgba(0,0,0,.55); }
+.preset.applying button.preset-key { animation: light-pending .7s ease-in-out infinite alternate; }
+.preset .inline-rename { width: 100%; min-height: 88px; font-size: 16px; }
+/* Editing: tools under each tile, taps on the tile do not apply it. */
+.preset-tools { display: none; gap: 4px; margin-top: 6px; }
+.light-presets.editing .preset-tools { display: flex; flex-wrap: wrap; }
+.light-presets.editing button.preset-key { min-height: 64px; cursor: default; }
+button.preset-tool, .preset-tools .rename-btn {
+  display: grid; place-items: center; flex: 1 0 44px; min-width: 44px; min-height: 44px; padding: 0; margin: 0; color: #c9ced6;
+}
+button.preset-tool svg { width: 18px; height: 18px; }
+button.preset-tool.danger { color: #e88b8b; }
+
+/* Stage lights: a card each (on/off, brightness, colour). An off light keeps
+   its sliders, greyed: they show what comes back when it is switched on. */
+/* Four in a row, else two by two (never three and one), else one below the other. */
+.light-stage { container-type: inline-size; }
+.light-fixtures { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+@container (max-width: 960px) { .light-fixtures { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@container (max-width: 500px) { .light-fixtures { grid-template-columns: minmax(0, 1fr); } }
+.fixture {
+  display: flex; flex-direction: column; gap: 2px; min-width: 0; padding: 8px 10px 6px; border-radius: 8px;
+  border: 1px solid #08090b; background: rgba(0,0,0,.18); box-shadow: inset 0 1px 0 rgba(255,255,255,.03);
+}
+.light-fixtures.linked .fixture { border-color: #24406a; box-shadow: inset 0 0 0 1px rgba(58,111,174,.35); }
+.fixture-head { display: grid; grid-template-columns: 20px minmax(0, 1fr) auto; align-items: center; gap: 6px; min-height: 48px; }
+.fixture-lamp { width: 20px; height: 20px; }
+.fixture-row { display: grid; grid-template-columns: 40px minmax(0, 1fr) 64px; align-items: center; gap: 8px; min-height: 44px; }
+.fixture-label { font-size: 11px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: #8d96a3; }
+.fixture.off .fixture-row { opacity: .42; filter: grayscale(.85); }
+.fixture.off .light-name { color: #8d96a3; }
 /* Name and pencil; while renaming the field takes the cell. */
 .light-name-cell { display: flex; align-items: center; min-width: 0; }
 .light-name-cell .rename-btn { margin: 0 0 0 -6px; }
-.light-name-cell .inline-rename, .light-circuit-tile .inline-rename, .light-scene .inline-rename { width: 100%; min-width: 0; min-height: 44px; }
-.light-row:not(:has(.light-zone-key)) { grid-template-columns: minmax(84px, 120px) minmax(0, 1fr) 62px; }
-.light-name { font-size: 13px; font-weight: 700; color: #c9ced6; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.light-value { font: 700 13px/1 var(--mono); color: var(--lcd-text); text-align: right; }
+.light-name-cell .inline-rename, .light-circuit-tile .inline-rename { width: 100%; min-width: 0; min-height: 44px; }
+.light-name { font-size: 14px; font-weight: 700; color: #c9ced6; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.light-value { font: 700 13px/1 var(--mono); color: var(--lcd-text); text-align: right; white-space: nowrap; }
+.fixture-row-tone .light-value { font-size: 11px; }
 button.light-zone-key {
   width: 56px; min-height: 44px; padding: 0; font-size: 12px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: #8d96a3;
 }
@@ -1476,15 +1530,24 @@ button.light-zone-key.on {
   background: linear-gradient(to bottom, #ffd45c, #f1b52a 55%, #d99a12);
   box-shadow: 0 0 12px rgba(255,200,70,.4), inset 0 1px 0 rgba(255,255,255,.45), 0 2px 3px rgba(0,0,0,.55);
 }
+/* Settings: two small chips, the chosen one opens its slider below. */
+.light-settings-bar { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+button.light-chip {
+  display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 12px; font-size: 12px; font-weight: 700; color: #9aa1ad;
+}
+button.light-chip .light-chip-value { font: 700 12px/1 var(--mono); color: var(--lcd-text); }
+button.light-chip[aria-expanded="true"] { color: #fff; border-color: #0a2550; background: linear-gradient(to bottom, #3a6fae, #2a5590 55%, #224a80); }
+.light-setting-pop { margin-top: 6px; padding: 4px 10px 8px; border-radius: 8px; background: rgba(0,0,0,.18); border: 1px solid #08090b; }
+.light-setting-pop .fixture-row { grid-template-columns: minmax(84px, auto) minmax(0, 1fr) 64px; }
+.light-setting-pop .fixture-label { text-transform: none; letter-spacing: 0; font-size: 12px; }
+.light-setting-hint { font-size: 12px; color: var(--muted); }
 /* Range: a recessed track (filled up to the value) and a fader-cap thumb; the
    whole 44 px high row takes the touch. */
 input.light-range {
   -webkit-appearance: none; appearance: none; width: 100%; height: 44px; margin: 0; background: transparent; cursor: pointer;
   touch-action: pan-y; --fill: 0%; --tint: #f1b52a;
 }
-input.light-range-warm { --tint: #ff9f43; }
-input.light-range-cold { --tint: #8fc2ff; }
-input.light-range-start, input.light-range-fade_ms, input.light-range-steps { --tint: #6d7686; }
+input.light-range-setting { --tint: #6d7686; }
 input.light-range::-webkit-slider-runnable-track {
   height: 10px; border-radius: 5px; border: 1px solid #000;
   background: linear-gradient(to right, var(--tint) 0 var(--fill), #0b1418 var(--fill) 100%);
@@ -1505,6 +1568,12 @@ input.light-range::-moz-range-thumb {
   box-shadow: 0 2px 4px rgba(0,0,0,.7), inset 0 1px 0 rgba(255,255,255,.35);
 }
 input.light-range:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
+/* Colour: warm (left) to cold (right) on the track itself. */
+input.light-range-tone::-webkit-slider-runnable-track {
+  background: linear-gradient(to right, rgb(255,160,64), rgb(255,238,214) 50%, rgb(178,212,255));
+}
+input.light-range-tone::-moz-range-track { background: linear-gradient(to right, rgb(255,160,64), rgb(255,238,214) 50%, rgb(178,212,255)); }
+input.light-range-tone::-moz-range-progress { background: transparent; }
 .light-circuits { display: grid; grid-template-columns: repeat(auto-fill, minmax(196px, 1fr)); gap: 8px; }
 .light-circuit-tile { display: flex; align-items: center; min-width: 0; }
 .light-circuit-tile button.light-circuit { flex: 1; min-width: 0; }
@@ -1525,7 +1594,7 @@ button.light-circuit.pending .light-lamp { animation: light-pending .7s ease-in-
 @keyframes light-pending { to { opacity: .35; } }
 @media (prefers-reduced-motion: reduce) { button.light-circuit.pending .light-lamp { animation: none; opacity: .5; } }
 .light-block button.busy { opacity: .6; pointer-events: none; }
-/* New scene: name, then which lights belong to it (toggle keys, blue = chosen) */
+/* Saving a preset: name, then which lights belong to it (toggle keys, blue = chosen) */
 .light-scene-create { display: none; margin-bottom: 12px; }
 .light-scene-create.visible { display: block; }
 .light-scene-create-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }

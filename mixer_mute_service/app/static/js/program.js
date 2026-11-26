@@ -119,7 +119,7 @@ const NO_PROGRAM_LIGHT = "Licht bleibt";
 
 function programLightOptions(value) {
   const options = PROGRAM_LIGHT_SCENES.map(scene => ({ value: scene.id, label: scene.name }));
-  if (value && !options.some(option => option.value === value)) options.push({ value, label: "Gelöschte Szene" });
+  if (value && !options.some(option => option.value === value)) options.push({ value, label: "Gelöschtes Preset" });
   return options;
 }
 
@@ -450,7 +450,7 @@ function buildProgramRow(item, draft = false, kind = draft ? "draft" : "program"
   edit(shortcut ? "Name" : "Titel", programInput("title", "Titel", item.title, "text", 120), "title");
   if (!shortcut) edit("Person", programInput("person", "Person", item.person, "text", 80), "person");
   edit("Mutegruppe", programSelect("group", "Mutegruppe", item.group, programGroupOptions(), NO_PROGRAM_GROUP), "group");
-  edit("Licht", programSelect("light", "Lichtszene", item.light, programLightOptions(item.light), NO_PROGRAM_LIGHT), "light");
+  edit("Licht", programSelect("light", "Licht-Preset", item.light, programLightOptions(item.light), NO_PROGRAM_LIGHT), "light");
 
   for (const [field, label] of [["playback", "Playback"], ["translation", "Übersetzung"], ["lyrics", "Liedtext"]]) {
     edit(label, buildProgramAction(field, label, item), field);
@@ -539,7 +539,7 @@ function programChips(item) {
   const chips = [];
   const add = (kind, label, text) => chips.push({ kind, label, text });
   if (item.group) add("group", "Gruppe", item.group);
-  if (item.light) add("light", "Licht", (PROGRAM_LIGHT_SCENES.find(scene => scene.id === item.light) || {}).name || "Gelöschte Szene");
+  if (item.light) add("light", "Licht", (PROGRAM_LIGHT_SCENES.find(scene => scene.id === item.light) || {}).name || "Gelöschtes Preset");
   for (const [field, label] of [["playback", "Playback"], ["translation", "Übersetzung"], ["lyrics", "Liedtext"]]) {
     const value = item[field];
     if (value) add("file", label, isFileAction(value) ? fileBaseName(parseFileAction(value).path) : programLegacyLabel(value));

@@ -165,6 +165,7 @@ async def lifespan(app: FastAPI):
     app.state.light_scenes = _optional(app, "light scenes", lambda: LightSceneStore(data_dir / "light_scenes.json"))
     app.state.names = _optional(app, "names", lambda: NameStore(data_dir / "display_names.json"))
     app.state.light_circuits = CircuitCache()
+    app.state.light_last_scene = None  # id of the light scene applied last
     app.state.power_control = _optional(
         app, "power control", lambda: PowerControlStore(data_dir / "power_off_config.json"))
     app.state.target_pcs = _optional(
