@@ -402,9 +402,6 @@ YOUTUBE_URL_RE = re.compile(
     r"(?:youtube\.com/(?:watch\?(?:[^\s#]*&)?v=[\w-]{6,}|shorts/[\w-]{6,}|live/[\w-]{6,}|embed/[\w-]{6,})"
     r"|youtu\.be/[\w-]{6,})[^\s]*$"
 )
-# A stream needs a moment before its first sound (yt-dlp, buffering).
-STREAM_START_SECONDS = 30.0
-
 
 def is_youtube_url(value) -> bool:
     return (isinstance(value, str) and len(value) <= 500
@@ -433,15 +430,20 @@ def _find_ytdlp(mpv: str | None = None) -> str | None:
 
 
 # -- audio (mpv) -------------------------------------------------------------
-# With a fade, mpv starts silent and its volume is driven over mpv's JSON IPC
-# (a named pipe on Windows): up to the profile's dB level on play, down to
-# silence on stop, then mpv is ended. mpv's volume is cubic: gain = (v/100)^3,
-# so dB = 60 * log10(v / 100).
+# With a fade, mpv fades in by itself: its audio filter (lavfi afade) ramps the
+# sound from silence once the first audio plays, so a stream (YouTube) that
+# loads for a while is faded in too. Nothing has to reach mpv for that, and
+# playback starts as fast as without a fade.
+# The fade-out on stop drives mpv's volume over its JSON IPC (a named pipe on
+# Windows) down to silence, then mpv is ended. The IPC is connected in the
+# background; if it does not answer, stop ends the music at once instead of
+# fading. (Before, a play with fade waited for the IPC and failed when it did
+# not come: on the streaming PC every faded play failed that way.)
+# mpv's volume is cubic: gain = (v/100)^3, so dB = 60 * log10(v / 100).
 FADE_FLOOR_DB = -60.0
 FADE_STEP_SECONDS = 0.05
-# How long mpv may take to open its control channel. On Windows a cold start
-# (virus scanner, first start after a while, music on a network drive) often
-# takes several seconds; 2 s made playback fail now and then.
+# How long mpv may take to open its control channel (only the fade-out
+# needs it). On Windows a cold start can take several seconds.
 IPC_CONNECT_SECONDS = 10.0
 # A player that ends within this time after starting did not start at all.
 START_CHECK_SECONDS = 0.4
@@ -511,6 +513,7 @@ class MpvIpc:
 
     def connect(self, process: subprocess.Popen, timeout: float) -> None:
         deadline = time.monotonic() + timeout
+        last_error: OSError | None = None
         while True:
             try:
                 if os.name == "nt":
@@ -525,9 +528,12 @@ class MpvIpc:
                         raise
                     self._stream = self._socket.makefile("rwb", buffering=0)
                 break
-            except OSError:
+            except OSError as exc:
+                last_error = exc
                 if process.poll() is not None or time.monotonic() > deadline:
-                    raise OSError("mpv IPC not reachable")
+                    # The Windows error (2 not found, 5 access denied, 231
+                    # busy, ...) says why; it goes into the agent's log.
+                    raise OSError(f"mpv IPC {self._address} not reachable: {last_error!r}")
                 time.sleep(0.05)
         self.command("disable_event", "all")
 
@@ -587,9 +593,9 @@ class _Playback:
         self.process = process
         self.ipc = ipc
         self.fade = fade
-        self.volume_db = FADE_FLOOR_DB if fade else 0.0
+        # mpv starts at the profile's level; afade does the fade-in.
+        self.volume_db = fade["db"] if fade else 0.0
         self.stop_fade = threading.Event()   # ends a running fade early
-        self.fade_thread: threading.Thread | None = None
 
     def set_db(self, db: float) -> None:
         self.ipc.command("set_property", "volume", db_to_mpv_volume(db))
@@ -642,35 +648,25 @@ def _stop_audio_locked() -> bool:
     return playing.terminate() if playing is not None else False
 
 
-def _wait_until_playing(playback: _Playback) -> bool:
-    """A stream: wait for its first sound, so the fade is heard. False if it
-    was stopped, mpv ended or nothing played within STREAM_START_SECONDS."""
-    deadline = time.monotonic() + STREAM_START_SECONDS
-    while time.monotonic() < deadline:
-        if playback.stop_fade.wait(0.2):
-            return False
-        try:
-            if isinstance(playback.ipc.command("get_property", "playback-time"), (int, float)):
-                return True
-        except (OSError, ValueError):
-            if playback.process.poll() is not None:
-                return False
-    logger.warning("Audio stream profile=%s did not start within %.0fs", playback.profile_id, STREAM_START_SECONDS)
-    return False
-
-
-def _fade_in(playback: _Playback) -> None:
-    if playback.stream and not _wait_until_playing(playback):
+def _connect_ipc(playback: _Playback, address: str) -> None:
+    """Background: connect mpv's IPC for the fade-out on stop. Without it the
+    music still plays; stop then ends it at once."""
+    ipc = MpvIpc(address)
+    try:
+        ipc.connect(playback.process, IPC_CONNECT_SECONDS)
+    except OSError as exc:
+        if playback.process.poll() is None and not playback.stop_fade.is_set():
+            logger.warning("Audio profile=%s plays without fade-out on stop: %s", playback.profile_id, exc)
         return
-    if playback.ramp(playback.fade["db"], playback.fade["seconds"]):
-        logger.info("Audio faded in profile=%s to %.1f dB", playback.profile_id, playback.fade["db"])
+    with _audio_lock:
+        if playback.stop_fade.is_set() or playback.process.poll() is not None:
+            ipc.close()
+            return
+        playback.ipc = ipc
+    logger.info("Audio profile=%s: control channel ready for the fade-out", playback.profile_id)
 
 
 def _fade_out(playback: _Playback, seconds: float) -> None:
-    if playback.fade_thread is not None:
-        playback.stop_fade.set()
-        playback.fade_thread.join()
-        playback.stop_fade.clear()
     # The full fade time from the profile's level; less if it is quieter.
     span = max(playback.fade["db"] - FADE_FLOOR_DB, 1.0)
     part = min(1.0, max(0.0, (playback.volume_db - FADE_FLOOR_DB) / span))
@@ -728,7 +724,12 @@ def _play_audio(profile_id: str, path: str, fade: dict | None = None) -> None:
                     f"--script-opts=ytdl_hook-ytdl_path={ytdlp}"]
     address = _ipc_address() if fade else None
     if fade:
-        command += ["--volume=0", f"--input-ipc-server={address}"]
+        command += [
+            f"--volume={db_to_mpv_volume(fade['db']):.3f}",
+            # Fade-in by mpv itself, from the first sound on (see above).
+            f"--af=lavfi=[afade=t=in:d={fade['seconds']:g}]",
+            f"--input-ipc-server={address}",
+        ]
     with _audio_lock:
         _stop_audio_locked()
         process = subprocess.Popen(
@@ -739,25 +740,15 @@ def _play_audio(profile_id: str, path: str, fade: dict | None = None) -> None:
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             startupinfo=startup_info,
         )
-        playback = _Playback(profile_id, process, MpvIpc(address) if fade else None, fade, stream)
-        if fade:
-            try:
-                playback.ipc.connect(process, IPC_CONNECT_SECONDS)
-            except OSError:
-                # Silent and not controllable: better not to play at all.
-                failure = _start_failure(
-                    process, f"mpv did not open its control channel within {IPC_CONNECT_SECONDS:g} s")
-                playback.terminate()
-                raise failure from None
-            playback.fade_thread = threading.Thread(target=_fade_in, args=(playback,), daemon=True)
-            playback.fade_thread.start()
-        else:
-            # Without a fade nothing waits for mpv: catch a player that ends
-            # straight away (no audio device, unreadable file) here.
-            time.sleep(START_CHECK_SECONDS)
-            if process.poll() is not None:
-                raise _start_failure(process, "mpv ended at once")
+        playback = _Playback(profile_id, process, None, fade, stream)
+        # Nothing waits for mpv: catch a player that ends straight away (no
+        # audio device, unreadable file) here.
+        time.sleep(START_CHECK_SECONDS)
+        if process.poll() is not None:
+            raise _start_failure(process, "mpv ended at once")
         _playback = playback
+        if fade:
+            threading.Thread(target=_connect_ipc, args=(playback, address), daemon=True).start()
     logger.info("Audio started profile=%s path=%s pid=%s fade=%s", profile_id, target, process.pid, fade)
 
 

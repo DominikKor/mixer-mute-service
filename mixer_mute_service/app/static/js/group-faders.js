@@ -133,6 +133,10 @@ $("desktop-profiles").addEventListener("click", (event) => {
     `/desktop/${encodeURIComponent(button.dataset.audioProfile)}/audio/${action}`,
     undefined,
     `${label} ${action === "play" ? "Play" : "Stop"}`,
+    // The service waits up to 15 s for the display agent when music starts
+    // (app/display_agent.AUDIO_TIMEOUT_SECONDS): wait a little longer, so its
+    // reason arrives instead of "did not answer in time".
+    { timeout: 20000 },
   );
 });
 $("camera-add-btn").addEventListener("click", () => openCameraDialog());

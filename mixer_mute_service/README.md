@@ -550,12 +550,14 @@ Der Agent auf dem Ziel-PC braucht die neue Version („Display Service
 herunterladen“ bzw. Update-Knopf).
 
 **Ein-/Ausfaden:** Im Profil-Editor eines Audio-Profils schaltet
-**Ein-/Ausfaden** sanftes Ein- und Ausblenden ein. Play startet dann stumm und
-blendet ueber die eingestellte Dauer (Standard 5 s) **von 0 auf 100 %** ein;
-Stop blendet von der aktuellen Lautstaerke auf 0 aus und beendet erst dann den
-Player. Eine Lautstaerke-Einstellung gibt es nicht: Geregelt wird nur die
-mpv-Lautstaerke auf dem Ziel-PC (ueber mpvs IPC-Pipe), immer bis 100 %, das
-Mischpult wird nicht angefasst. Die Lautstaerke im Saal stellst du am
+**Ein-/Ausfaden** sanftes Ein- und Ausblenden ein. Play blendet ueber die
+eingestellte Dauer (Standard 5 s) **von 0 auf 100 %** ein; das macht mpv
+selbst (Audiofilter `afade`) ab dem ersten Ton, die Musik startet also so
+schnell wie ohne Fade. Stop blendet ueber mpvs Steuerkanal (IPC-Pipe) auf 0
+aus und beendet erst dann den Player; antwortet der Steuerkanal nicht, endet
+die Musik bei Stop sofort (im Agent-Log steht dann der Windows-Fehler).
+Eine Lautstaerke-Einstellung gibt es nicht, das Mischpult wird nicht
+angefasst. Die Lautstaerke im Saal stellst du am
 Mischpult-Kanal des Ziel-PCs ein. In `config.yaml`:
 
 ```yaml
@@ -577,11 +579,10 @@ bisher. Dateien, die ein Programmpunkt direkt abspielt, werden nicht gefadet.
 
 **Wenn die Musik nicht startet:** Die Meldung nennt den Grund, z. B. „mpv ended
 at once (exit code 2): Could not open audio device“ (kein Audiogerät, etwa
-ein ausgeschalteter HDMI-Monitor) oder „mpv did not open its control channel
-within 10 s“. Beim Start mit Einblenden wartet der Agent bis zu 10 s auf mpv
-(vorher 2 s; ein kalter Start unter Windows mit Virenscanner oder Netzlaufwerk
-brauchte oft länger und scheiterte dann mit „audio player could not be
-started“). mpvs eigenes Protokoll des letzten Starts liegt auf dem Ziel-PC
+ein ausgeschalteter HDMI-Monitor). Früher scheiterte jedes Play mit Einblenden
+auf dem Streaming-PC nach 10 s mit „mpv did not open its control channel“:
+mpv spielte, aber seine Steuer-Pipe antwortete nicht. Seit das Einblenden
+ohne Steuerkanal läuft, startet die Musik trotzdem. mpvs eigenes Protokoll des letzten Starts liegt auf dem Ziel-PC
 unter `%LOCALAPPDATA%\MixerMuteDisplayAgent\mpv-last.log`.
 
 Profile lassen sich auch in der Weboberflaeche anlegen (graue **+**-Kachel

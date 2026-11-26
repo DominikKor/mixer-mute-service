@@ -183,8 +183,8 @@ async function apiRequest(method, path, body, timeout) {
 
 // Report the outcome of a control/CRUD action, then refresh. Returns whether
 // the service accepted it.
-async function act(method, path, body, label) {
-  const r = await api(method, path, body);
+async function act(method, path, body, label, options) {
+  const r = await api(method, path, body, options);
   const ok = r.ok && r.data.ok !== false;
   if (ok) {
     toast(`${label}: ok`, true);

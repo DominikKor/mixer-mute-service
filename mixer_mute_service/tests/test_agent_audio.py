@@ -223,33 +223,44 @@ class AudioFadeTests(unittest.TestCase):
         self.assertAlmostEqual(agent.db_to_mpv_volume(-30), 31.6227766, places=5)
         self.assertAlmostEqual(agent.db_to_mpv_volume(-60), 10.0)
 
-    def test_fade_in_then_fade_out_on_stop(self):
+    def ipc_ready(self):
+        self.wait_for(lambda: agent._playback is not None and agent._playback.ipc is not None)
+
+    def test_mpv_fades_in_by_itself_then_fades_out_on_stop(self):
         fade = {"db": -30, "seconds": 0.2}
         agent._play_audio("music", str(self.audio_path), fade)
         mpv = self.processes[0]
-        self.assertEqual(mpv.initial_volume, "0")
-        self.wait_for(lambda: mpv.volumes and abs(mpv.volumes[-1] - agent.db_to_mpv_volume(-30)) < 1e-9)
-        self.assertEqual(mpv.volumes, sorted(mpv.volumes))          # only rising
-        self.assertGreaterEqual(len(mpv.volumes), 10)                # in small steps
-        self.assertLess(max(mpv.volumes), agent.db_to_mpv_volume(-30) + 1e-9)
+        self.assertIn("--af=lavfi=[afade=t=in:d=0.2]", mpv.command)
+        self.assertEqual(mpv.initial_volume, f"{agent.db_to_mpv_volume(-30):.3f}")
+        self.ipc_ready()
+        self.assertEqual(mpv.volumes, [])                            # no volume steps on the way up
 
-        before = len(mpv.volumes)
         self.assertTrue(agent._stop_audio(fade))                     # returns at once
         self.assertFalse(mpv.terminated)
         self.wait_for(lambda: mpv.terminated)
-        down = mpv.volumes[before:]
-        self.assertEqual(down, sorted(down, reverse=True))           # only falling
-        self.assertAlmostEqual(down[-1], agent.db_to_mpv_volume(agent.FADE_FLOOR_DB))
+        self.assertEqual(mpv.volumes, sorted(mpv.volumes, reverse=True))  # only falling
+        self.assertGreaterEqual(len(mpv.volumes), 3)
+        self.assertAlmostEqual(mpv.volumes[-1], agent.db_to_mpv_volume(agent.FADE_FLOOR_DB))
         self.assertIsNone(agent._playback)
 
-    def test_stop_during_fade_in_fades_out_from_current_level(self):
-        fade = {"db": -10, "seconds": 2.0}
-        agent._play_audio("music", str(self.audio_path), fade)
-        mpv = self.processes[0]
-        self.wait_for(lambda: len(mpv.volumes) >= 5)
-        agent._stop_audio(fade)
-        self.wait_for(lambda: mpv.terminated, timeout=5)
-        self.assertLess(max(mpv.volumes), agent.db_to_mpv_volume(-10))
+    def test_music_plays_although_the_control_channel_never_comes(self):
+        """The streaming PC: mpv played, its named pipe never answered, and
+        every faded play failed after 10 s. Now it plays; stop ends at once."""
+        player = FakeProcess()
+        with patch.object(agent, "IPC_CONNECT_SECONDS", 0.2), \
+                patch.object(agent, "_ipc_address", return_value=f"{self.socket_dir}/missing.sock"), \
+                patch.object(agent.subprocess, "Popen", return_value=player), \
+                self.assertLogs(agent.logger, "WARNING") as logs:
+            started = time.monotonic()
+            agent._play_audio("music", str(self.audio_path), {"db": 0, "seconds": 5})
+            self.assertLess(time.monotonic() - started, 1.0)
+            self.assertIs(agent._playback.process, player)
+            self.wait_for(lambda: logs.output)
+        self.assertIn("without fade-out", logs.output[0])
+        self.assertIn("missing.sock", logs.output[0])               # the reason is logged
+        self.assertIsNone(agent._playback.ipc)
+        self.assertTrue(agent._stop_audio({"db": 0, "seconds": 5}))
+        self.assertTrue(player.terminated)                           # at once, not faded
 
     def test_stop_without_fade_ends_at_once(self):
         agent._play_audio("music", str(self.audio_path), {"db": -30, "seconds": 0.2})
@@ -261,21 +272,13 @@ class AudioFadeTests(unittest.TestCase):
         fade = {"db": -30, "seconds": 5.0}
         agent._play_audio("first", str(self.audio_path), fade)
         first = self.processes[0]
-        self.wait_for(lambda: len(first.volumes) >= 3)
+        self.ipc_ready()
         agent._stop_audio(fade)
+        self.wait_for(lambda: len(first.volumes) >= 2)
         agent._play_audio("second", str(self.audio_path), fade)
         self.assertTrue(first.terminated)
         self.assertEqual(agent._playback.profile_id, "second")
         self.assertEqual(agent._fading_out, set())
-
-    def test_unreachable_ipc_does_not_leave_a_silent_player(self):
-        with patch.object(agent, "IPC_CONNECT_SECONDS", 0.1), \
-                patch.object(agent, "_ipc_address", return_value=f"{self.socket_dir}/missing.sock"), \
-                patch.object(agent.subprocess, "Popen", return_value=FakeProcess()) as popen:
-            with self.assertRaises(OSError):
-                agent._play_audio("music", str(self.audio_path), {"db": -30, "seconds": 1})
-        self.assertTrue(popen.return_value.terminated)
-        self.assertIsNone(agent._playback)
 
     def test_start_failure_names_the_reason(self):
         """"audio player could not be started" alone did not say why."""
@@ -286,43 +289,28 @@ class AudioFadeTests(unittest.TestCase):
             "[   0.421][i][cplayer] Exiting... (Errors when loading file)\n", encoding="utf-8")
         ended = FakeProcess()
         ended.returncode = 2
-        with patch.object(agent, "IPC_CONNECT_SECONDS", 0.1), patch.object(agent, "mpv_log_path", return_value=log), \
+        with patch.object(agent, "mpv_log_path", return_value=log), \
                 patch.object(agent, "_ipc_address", return_value=f"{self.socket_dir}/missing.sock"), \
                 patch.object(agent.subprocess, "Popen", return_value=ended):
             with self.assertRaises(agent.AudioStartError) as caught:
                 agent._play_audio("music", str(self.audio_path), {"db": 0, "seconds": 1})
         self.assertEqual(str(caught.exception), "audio player could not be started: mpv ended at once "
                                                 "(exit code 2): Could not open audio device")
-        log.unlink()
-        with patch.object(agent, "IPC_CONNECT_SECONDS", 0.1), patch.object(agent, "mpv_log_path", return_value=log), \
-                patch.object(agent, "_ipc_address", return_value=f"{self.socket_dir}/missing.sock"), \
-                patch.object(agent.subprocess, "Popen", return_value=FakeProcess()):
-            with self.assertRaises(agent.AudioStartError) as caught:
-                agent._play_audio("music", str(self.audio_path), {"db": 0, "seconds": 1})
-        self.assertIn("did not open its control channel within 0.1 s", str(caught.exception))
 
     def test_cold_start_gets_time(self):
         # mpv on Windows often needs several seconds on a cold start.
         self.assertGreaterEqual(agent.IPC_CONNECT_SECONDS, 10)
 
-    def test_youtube_fade_waits_for_the_first_sound(self):
+    def test_youtube_link_is_faded_in_by_mpv(self):
+        # afade starts with the first sound, so a stream that loads for a
+        # while is faded in too; nothing waits for it here.
         url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
-        with patch.object(FakeMpv, "loading_polls", 3), patch.object(agent, "_find_ytdlp", return_value="/opt/yt-dlp"):
+        with patch.object(agent, "_find_ytdlp", return_value="/opt/yt-dlp"):
             agent._play_audio("yt", url, {"db": 0, "seconds": 0.2})
             mpv = self.processes[0]
             self.assertEqual(mpv.command[-2:], ["--", url])
             self.assertIn("--script-opts=ytdl_hook-ytdl_path=/opt/yt-dlp", mpv.command)
-            self.wait_for(lambda: mpv.volumes and abs(mpv.volumes[-1] - 100.0) < 1e-9)
-        # No volume step before the stream played (3 "unavailable" answers first).
-        self.assertGreaterEqual(mpv.polls, 4)
-        self.assertEqual(mpv.volumes, sorted(mpv.volumes))
-
-    def test_youtube_stopped_while_loading_never_fades_in(self):
-        url = "https://youtu.be/dQw4w9WgXcQ"
-        with patch.object(FakeMpv, "loading_polls", 10_000), patch.object(agent, "_find_ytdlp", return_value="/opt/yt-dlp"):
-            agent._play_audio("yt", url, {"db": 0, "seconds": 0.2})
-            mpv = self.processes[0]
-            self.wait_for(lambda: mpv.polls >= 2)
+            self.assertIn("--af=lavfi=[afade=t=in:d=0.2]", mpv.command)
             self.assertTrue(agent._stop_audio())
         self.assertTrue(mpv.terminated)
         self.assertEqual(mpv.volumes, [])
