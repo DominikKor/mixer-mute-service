@@ -109,7 +109,9 @@ class AgentUpdateTests(unittest.TestCase):
             try:
                 status, info = self._post(server, "/info", {})
                 self.assertEqual((status, info["ok"], info["version"]), (200, True, "unknown"))
-                self.assertTrue({"mpv", "ytdlp", "restored_env"} <= set(info), "players reported for diagnosis")
+                self.assertIn("restored_env", info)
+                # mpv / yt-dlp only once the first background search is done
+                self.assertIn(len({"mpv", "ytdlp"} & set(info)), (0, 2))
                 self.assertEqual((info["restart"], info["started_at"]), (True, agent.STARTED_AT))
                 self.assertEqual(self._post(server, "/info", {}, token="wrong")[0], 401)
                 self.assertEqual(self._post(server, "/update", {"version": "v2"})[0], 400)

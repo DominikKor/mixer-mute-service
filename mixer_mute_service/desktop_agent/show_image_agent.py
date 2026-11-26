@@ -538,13 +538,17 @@ def refresh_tool_cache() -> None:
 
 def cached_tools() -> dict:
     """{"mpv", "ytdlp"} from the last search; a search older than
-    TOOL_CACHE_SECONDS is started again in the background."""
+    TOOL_CACHE_SECONDS is started again in the background. Empty until the
+    first search is done: right after a restart the service asks /info
+    before it, and "not found" there would be a false warning."""
     with _tool_cache_lock:
         snapshot = dict(_tool_cache)
     stale = not snapshot["at"] or time.monotonic() - snapshot["at"] > TOOL_CACHE_SECONDS
     if stale and not _tool_refreshing.is_set():
         _tool_refreshing.set()
         threading.Thread(target=refresh_tool_cache, daemon=True).start()
+    if not snapshot["at"]:
+        return {}
     return {"mpv": snapshot["mpv"], "ytdlp": snapshot["ytdlp"]}
 
 
