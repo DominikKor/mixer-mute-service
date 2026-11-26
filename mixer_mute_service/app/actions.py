@@ -27,7 +27,7 @@ from .display_agent import AgentError
 from .file_actions import is_file_action, not_found_reason, run_file_action, runs_from_network_share
 from .mission_spotlight import profile_path
 from .native_controls import NativeControlError
-from .profile_stops import by_program
+from .profile_stops import program_row
 from .responses import Result, controller_result
 
 log = logging.getLogger("mixer.actions")
@@ -238,11 +238,10 @@ async def show_profile(request: Request, profile_id: str) -> Result:
         if profile.kind != "image":
             return {"ok": False, "reason": "several monitors are only possible for images"}, 400
         payload["monitors"] = profile.monitors
-    _note_start(request, profile_id, profile)
     try:
-        answer = await display_agent.call(cfg, profile.target_ip, "/display", payload)
+        answer = await _tracked_start(request, profile_id, profile, lambda: display_agent.call(
+            cfg, profile.target_ip, "/display", payload))
     except AgentError as exc:
-        _note_failed(request, profile_id, exc)
         if exc.agent_status == 503:
             return {"ok": False, "reason": not_found_reason(payload["path"])}, 502
         return exc.answer(), exc.status
@@ -254,24 +253,34 @@ def _shown_profiles(request: Request):
     return getattr(request.app.state, "shown_profiles", None)
 
 
-def _note_start(request: Request, profile_id: str, profile) -> None:
-    """A program row's start is noted (it stops when the program moves on);
-    one by hand takes the profile over (it keeps running)."""
+async def _tracked_start(request: Request, profile_id: str, profile, send) -> dict:
+    """Send a profile's start (send(): the agent call) through the notes of
+    app/profile_stops.py. A program row's start is noted (it stops when the
+    program moves on); one by hand takes the profile over (it keeps running).
+    A profile an earlier program row has running is left as it is: no new
+    fade-in, no reopened window. Waits for a stop of the same profile still
+    on its way, so the start lands after it. Raises AgentError as send()."""
     shown = _shown_profiles(request)
     if shown is None:
-        return
-    if by_program():
-        shown.started(profile_id, profile.target_ip, profile.kind)
+        return await send()
+    row_id = program_row()
+    if row_id is not None and shown.running_from_earlier_row(profile_id, row_id):
+        return {"ok": True, "profile": profile_id, "kept_running": True}
+    generation = shown.starting(profile_id, profile.target_ip, profile.kind)
+    async with shown.lock(profile_id):
+        try:
+            answer = await send()
+        except AgentError as exc:
+            # One that did not answer in time may still have started it:
+            # kept, so the next row stops it. A refusal started nothing.
+            if not (exc.agent_status is None and exc.status == 502):
+                shown.refused(profile_id, generation)
+            raise
+    if answer.get("ok") is False:
+        shown.refused(profile_id, generation)
     else:
-        shown.started_by_hand(profile_id, profile.target_ip, profile.kind)
-
-
-def _note_failed(request: Request, profile_id: str, exc: AgentError) -> None:
-    """The agent refused: nothing started. One that did not answer in time may
-    still have started it: kept, so the next row stops it."""
-    shown = _shown_profiles(request)
-    if shown is not None and by_program() and not (exc.agent_status is None and exc.status == 502):
-        shown.forget(profile_id)
+        shown.accepted(profile_id, profile.target_ip, profile.kind)
+    return answer
 
 
 async def control_audio(request: Request, profile_id: str, action: str) -> Result:
@@ -289,14 +298,13 @@ async def control_audio(request: Request, profile_id: str, action: str) -> Resul
         # always full volume now, so every agent version accepts it.
         payload["fade"] = {"db": AUDIO_FADE_FULL_DB, "seconds": profile.fade_seconds}
     cfg = request.app.state.cfg.desktop_display
-    if action == "play":
-        _note_start(request, profile_id, profile)
+
+    def send():
+        return display_agent.call(cfg, profile.target_ip, "/audio", payload, timeout=display_agent.AUDIO_TIMEOUT_SECONDS)
+
     try:
-        answer = await display_agent.call(cfg, profile.target_ip, "/audio", payload,
-                                          timeout=display_agent.AUDIO_TIMEOUT_SECONDS)
+        answer = await (_tracked_start(request, profile_id, profile, send) if action == "play" else send())
     except AgentError as exc:
-        if action == "play":
-            _note_failed(request, profile_id, exc)
         if exc.agent_status is None:
             return exc.answer(), exc.status
         if exc.body is not None:
@@ -307,11 +315,8 @@ async def control_audio(request: Request, profile_id: str, action: str) -> Resul
             reason += "; update the desktop agent on this PC for fading"
         return {"ok": False, "reason": reason}, exc.agent_status
     shown = _shown_profiles(request)
-    if shown is not None:
-        if action == "play" and answer.get("ok") is False and by_program():
-            shown.forget(profile_id)  # refused: nothing plays
-        elif action == "stop" and answer.get("ok") is not False:
-            shown.audio_stopped(profile.target_ip)
+    if shown is not None and action == "stop" and answer.get("ok") is not False:
+        shown.audio_stopped(profile.target_ip)
     return answer, 200
 
 

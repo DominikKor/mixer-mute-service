@@ -143,9 +143,16 @@ miniatures, and **Standard** restores the original one.
   profiles the rows before started stop, unless the new row starts them
   itself (app/profile_stops.py): music fades out with its profile's fade,
   a file's window (e.g. the Mission Spotlight video) closes and an image is
-  hidden (agent `POST /close`). What the operator started by hand (a
-  Desktop key, a shortcut key) keeps running, also a profile the program
-  started whose Desktop key was used by hand since. Programs (e.g. OBS),
+  hidden (agent `POST /close`; only windows of the process the agent
+  started itself: a file handed to an app that was already running, e.g.
+  a single-instance player, cannot be closed and is logged). A profile the
+  new row starts again that an earlier row has running is left as it is
+  (no new fade-in, no reopened video); playing the same row again starts
+  it anew. Music is never stopped on a PC where the new row starts audio
+  itself (a profile or a file), and the stop names its profile, so a newer
+  track keeps playing. What the operator started by hand (a Desktop key,
+  a shortcut key) keeps running, also a profile the program started whose
+  Desktop key was used by hand since. Programs (e.g. OBS),
   song windows, files of the row's file fields, the beamer and the light
   are left alone. The stops run in the background with short timeouts; an
   agent that does not answer is skipped for 30 s and tried again on the

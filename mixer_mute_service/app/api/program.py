@@ -350,7 +350,7 @@ async def _play(item_id: str, request: Request):
         return {"delay_seconds": played["last_delay_seconds"]}
 
     # What the row starts counts as the program's (stopped on the next row).
-    with program_starts():
+    with program_starts(item_id):
         return await _run_steps(request, item, summary, started)
 
 

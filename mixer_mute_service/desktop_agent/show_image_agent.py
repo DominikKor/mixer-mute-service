@@ -252,15 +252,36 @@ def _place_process_window(
     the app settles: many apps centre or restore their window right after
     showing it, or replace a splash screen by the main window."""
     bounds = monitor_bounds(monitor)
+    placed: dict[int, tuple[int, int, int, int]] = {}
+    remembered: list[int] = []
+    try:
+        _place_loop(process_id, before, bounds, fullscreen, position, monitor, placed, remember_as, remembered)
+    finally:
+        if remember_as and not remembered:
+            _remember_unknown(remember_as)
+
+
+def _remember_if_own(profile_id: str, hwnd: int, process_id: int, window_pid=None) -> bool:
+    """Only a window of the started process itself is closed later; one
+    found otherwise (a new window of an app that was already running, a
+    launcher's) could belong to anything, OBS included."""
+    window_pid = window_pid or _window_process_id
+    if not process_id or window_pid(hwnd) != process_id:
+        return False
+    _remember_window(profile_id, hwnd, process_id, window_pid)
+    return True
+
+
+def _place_loop(process_id, before, bounds, fullscreen, position, monitor, placed, remember_as, remembered) -> None:
     deadline = time.monotonic() + 20
     settle_until = None
-    placed: dict[int, tuple[int, int, int, int]] = {}
     corrections = 0
     while True:
         hwnd = _find_window(process_id, before)
         if hwnd and hwnd not in placed:
-            if remember_as:
-                _remember_window(remember_as, hwnd, _window_process_id(hwnd))
+            # At once, so a /close coming while it settles finds it.
+            if remember_as and _remember_if_own(remember_as, hwnd, process_id):
+                remembered.append(hwnd)
             target = _apply_placement(hwnd, bounds, fullscreen, position)
             if target:
                 placed[hwnd] = target
@@ -390,13 +411,31 @@ def _launch_profile(profile: dict) -> None:
 # one in the window. Programs are never closed; songs are not profiles.
 
 _opened_windows: dict[str, set[tuple[int, int]]] = {}  # profile id -> {(hwnd, process id)}
+# Profiles whose window could not be told apart (the file went to an app
+# that was already running, e.g. a single-instance player): /close says so.
+_unknown_windows: set[str] = set()
 _opened_lock = threading.Lock()
 _shown_image: str | None = None  # the profile whose image the window shows (tk thread only)
 
 
-def _remember_window(profile_id: str, hwnd: int, process_id: int) -> None:
+def _remember_window(profile_id: str, hwnd: int, process_id: int, window_pid=None) -> None:
+    """Note the window for POST /close; windows gone since are dropped."""
+    window_pid = window_pid or _window_process_id
     with _opened_lock:
+        for other in list(_opened_windows):
+            alive = {(h, pid) for h, pid in _opened_windows[other] if window_pid(h) == pid}
+            if alive:
+                _opened_windows[other] = alive
+            else:
+                del _opened_windows[other]
         _opened_windows.setdefault(profile_id, set()).add((hwnd, process_id))
+        _unknown_windows.discard(profile_id)
+
+
+def _remember_unknown(profile_id: str) -> None:
+    with _opened_lock:
+        if profile_id not in _opened_windows:
+            _unknown_windows.add(profile_id)
 
 
 def _window_process_id(hwnd: int) -> int:
@@ -426,6 +465,11 @@ def _close_profile_windows(profile_id: str, window_pid=None, post_close=None) ->
     post_close = post_close or _post_close
     with _opened_lock:
         windows = _opened_windows.pop(profile_id, set())
+        unknown = profile_id in _unknown_windows
+        _unknown_windows.discard(profile_id)
+    if unknown and not windows:
+        logger.warning("Close profile=%s: its window is not known (the file went to an app that was "
+                       "already running); nothing closed", profile_id)
     closed = 0
     for hwnd, process_id in windows:
         if window_pid(hwnd) == process_id and post_close(hwnd):
@@ -1038,12 +1082,17 @@ def _play_audio(profile_id: str, path: str, fade: dict | None = None) -> None:
     logger.info("Audio started profile=%s path=%s pid=%s fade=%s", profile_id, target, process.pid, fade)
 
 
-def _stop_audio(fade: dict | None = None) -> bool:
+def _stop_audio(fade: dict | None = None, only_profile: str | None = None) -> bool:
     """Stop playback; with a fade (and a track started with one) it fades
-    out in the background and the call returns at once."""
+    out in the background and the call returns at once. With only_profile
+    only that profile's track: a newer one keeps playing."""
     global _playback
     with _audio_lock:
         playback = _playback
+        if only_profile is not None and (playback is None or playback.profile_id != only_profile):
+            logger.info("Audio stop for profile=%s ignored: %s plays", only_profile,
+                        playback.profile_id if playback else "nothing")
+            return False
         if fade and playback is not None and playback.ipc is not None and playback.process.poll() is None:
             _playback = None
             _fading_out.add(playback)
@@ -1835,8 +1884,10 @@ class DisplayHandler(BaseHTTPRequestHandler):
     def _handle_audio(self, body: dict) -> None:
         if (
             not isinstance(body, dict)
-            or set(body) - {"fade"} != {"id", "action", "path"}
+            or set(body) - {"fade", "only_if"} != {"id", "action", "path"}
             or ("fade" in body and not _valid_fade(body["fade"]))
+            # "only_if": stop only this profile's track (app/profile_stops.py).
+            or ("only_if" in body and (body["only_if"] is not True or body["action"] != "stop"))
             or not isinstance(body["id"], str)
             or not body["id"].replace("-", "").replace("_", "").isalnum()
             or body["action"] not in ("play", "stop")
@@ -1850,7 +1901,10 @@ class DisplayHandler(BaseHTTPRequestHandler):
                 _play_audio(body["id"], body["path"], body.get("fade"))
                 result = {"ok": True, "playing": True, "profile": body["id"]}
             else:
-                stopped = _stop_audio(body.get("fade"))
+                if body.get("only_if"):
+                    stopped = _stop_audio(body.get("fade"), only_profile=body["id"])
+                else:
+                    stopped = _stop_audio(body.get("fade"))
                 result = {"ok": True, "playing": False, "stopped": stopped}
         except (FileNotFoundError, ValueError) as exc:
             logger.warning("Audio %s rejected: %s", body["action"], exc)
@@ -2050,29 +2104,35 @@ def _pick_file(start: str) -> str | None:
 
 
 def drain_requests(root: tk.Tk, image_label: tk.Label, canvas: tk.Canvas) -> None:
-    global _shown_image
     try:
         while True:
             profile = requests.get_nowait()
             try:
-                if profile["kind"] == "song":
-                    _shown_image = None  # the window shows the song now
-                    _show_song(root, canvas, profile)
-                elif profile["kind"] == "image":
-                    _show_image(root, image_label, profile)
-                    _shown_image = profile["id"]
-                elif profile["kind"] == "close":
-                    # Only the image of that profile: a newer image or a song stays.
-                    if _shown_image == profile["id"]:
-                        _hide_all(root)
-                        logger.info("Image hidden profile=%s", profile["id"])
-                else:
-                    threading.Thread(target=_launch_profile, args=(profile,), daemon=True).start()
+                handle_request(root, image_label, canvas, profile)
             except Exception as exc:
                 logger.exception("Profile %s failed: %s", profile["id"], exc)
     except queue.Empty:
         pass
     root.after(100, drain_requests, root, image_label, canvas)
+
+
+def handle_request(root, image_label, canvas, profile: dict) -> None:
+    """One request on the tk thread: a song slide, an image, a close (POST
+    /close) or a program / file started in the background."""
+    global _shown_image
+    if profile["kind"] == "song":
+        _shown_image = None  # the window shows the song now
+        _show_song(root, canvas, profile)
+    elif profile["kind"] == "image":
+        _show_image(root, image_label, profile)
+        _shown_image = profile["id"]
+    elif profile["kind"] == "close":
+        # Only the image of that profile: a newer image or a song stays.
+        if _shown_image == profile["id"]:
+            _hide_all(root)
+            logger.info("Image hidden profile=%s", profile["id"])
+    else:
+        threading.Thread(target=_launch_profile, args=(profile,), daemon=True).start()
 
 
 def create_root() -> tuple[tk.Tk, tk.Label, tk.Canvas]:
