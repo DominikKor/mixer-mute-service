@@ -19,7 +19,7 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from logging.handlers import RotatingFileHandler
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 import glob
 import re
@@ -643,21 +643,32 @@ def restore_user_environment() -> list:
 # every 30 s with a 2 s timeout. So it runs at start and in the background
 # when older than TOOL_CACHE_SECONDS; /info answers with the last result.
 TOOL_CACHE_SECONDS = 300.0
-_tool_cache = {"at": 0.0, "mpv": None, "ytdlp": None, "mpv_search": []}
+_tool_cache = {"at": 0.0, "mpv": None, "ytdlp": None, "mpv_search": [], "variables": None}
+# The variables naming a player: a play takes the cached path only while
+# they are as they were at the search.
+_TOOL_VARIABLES = ("MPV_PATH", "YTDLP_PATH")
 _tool_cache_lock = threading.Lock()
 _tool_refreshing = threading.Event()
 
 
+def _tool_variables() -> dict:
+    """MPV_PATH and YTDLP_PATH as find_tool sees them now."""
+    env = _windows_environment()
+    return {name: env.get(name, "").strip().strip('"') for name in _TOOL_VARIABLES}
+
+
 def refresh_tool_cache() -> None:
     trace: list = []
+    variables = None
     try:
+        variables = _tool_variables()
         mpv = _find_mpv(trace)
         ytdlp = _find_ytdlp(mpv)
     except Exception:  # noqa: BLE001 - a diagnosis must never break the agent
         logger.exception("Searching mpv / yt-dlp failed")
         mpv = ytdlp = None
     with _tool_cache_lock:
-        _tool_cache.update(at=time.monotonic(), mpv=mpv, ytdlp=ytdlp, mpv_search=trace)
+        _tool_cache.update(at=time.monotonic(), mpv=mpv, ytdlp=ytdlp, mpv_search=trace, variables=variables)
     _tool_refreshing.clear()
 
 
@@ -676,6 +687,35 @@ def cached_tools() -> dict:
     if not snapshot["at"]:
         return {}
     return {"mpv": snapshot["mpv"], "ytdlp": snapshot["ytdlp"], "mpv_search": snapshot["mpv_search"]}
+
+
+def _cached_tool(name: str) -> str | None:
+    """The path the last search found for ``name`` ("mpv", "ytdlp") while
+    that search is younger than TOOL_CACHE_SECONDS, the file is still there
+    and MPV_PATH / YTDLP_PATH are unchanged; None means: search again. A play
+    then needs no globs over the install folders before mpv starts.
+    A last resort (MPV.NET, a Store app) is never taken from the cache: a
+    real mpv installed since is used at once."""
+    with _tool_cache_lock:
+        at, path, variables = _tool_cache["at"], _tool_cache.get(name), _tool_cache.get("variables")
+    if not at or not path or variables is None or time.monotonic() - at > TOOL_CACHE_SECONDS:
+        return None
+    if _last_resort_note("yt-dlp" if name == "ytdlp" else name, path):
+        return None
+    try:
+        if not Path(path).is_file() or _tool_variables() != variables:
+            return None
+    except Exception:  # noqa: BLE001 - when in doubt, search in full
+        return None
+    return path
+
+
+def _play_mpv() -> str | None:
+    return _cached_tool("mpv") or _find_mpv()
+
+
+def _play_ytdlp(mpv: str | None) -> str | None:
+    return _cached_tool("ytdlp") or _find_ytdlp(mpv)
 
 
 # Where installers put a program. {exe}: the file name; {app}: the program's
@@ -710,6 +750,18 @@ _TOOL_PLACES = (
 _FALLBACK_NAMES = {"mpv": {"mpvnet.exe", "mpvnet"}}
 
 
+def _last_resort_note(command: str, found: str) -> str | None:
+    """Why ``found`` is used only when nothing else is found, or None.
+    Store apps (anything under a WindowsApps folder, e.g. MPV.NET or an app
+    execution alias) start through the package and its own setup."""
+    path = PureWindowsPath(found)
+    if path.name.lower() in _FALLBACK_NAMES.get(command, set()):
+        return "not mpv itself: used only if nothing else is found"
+    if any(part.lower() == "windowsapps" for part in path.parts[:-1]):
+        return "Store app (WindowsApps): used only if nothing else is found"
+    return None
+
+
 def _any_case(text: str) -> str:
     """A glob piece matching ``text`` in any case (Windows globs are
     case-insensitive anyway; this makes the tests on other systems agree)."""
@@ -726,21 +778,38 @@ def agent_account() -> dict:
     return {"agent_user": user, "agent_localappdata": os.environ.get("LOCALAPPDATA")}
 
 
+_UNINSTALL_KEY = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"
+
+
 def _installed_locations(app: str) -> list:
     """InstallLocation of every installed program whose name contains
     ``app`` (HKLM and HKCU uninstall entries, 64 and 32 bit), MPV.NET left
-    out. Empty outside Windows."""
+    out. Empty outside Windows.
+
+    The views are chosen explicitly (KEY_WOW64_64KEY / KEY_WOW64_32KEY): a
+    32-bit Python would otherwise be redirected to the 32-bit view twice and
+    never see a 64-bit installer's entry. REG_EXPAND_SZ values
+    ("%ProgramFiles%\\MPV Player") are expanded."""
     if os.name != "nt":
         return []
     import winreg
 
-    keys = ((winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"),
-            (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall"),
-            (winreg.HKEY_CURRENT_USER, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"))
+    views = ((winreg.HKEY_LOCAL_MACHINE, winreg.KEY_WOW64_64KEY),
+             (winreg.HKEY_LOCAL_MACHINE, winreg.KEY_WOW64_32KEY),
+             (winreg.HKEY_CURRENT_USER, winreg.KEY_WOW64_64KEY))
+
+    def read(entry, value_name: str) -> str:
+        value, kind = winreg.QueryValueEx(entry, value_name)
+        value = str(value)
+        if kind == winreg.REG_EXPAND_SZ:
+            value = winreg.ExpandEnvironmentStrings(value)
+        return value
+
     locations = []
-    for root, key in keys:
+    for root, view in views:
+        access = winreg.KEY_READ | view
         try:
-            handle = winreg.OpenKey(root, key)
+            handle = winreg.OpenKey(root, _UNINSTALL_KEY, 0, access)
         except OSError:
             continue
         with handle:
@@ -750,9 +819,9 @@ def _installed_locations(app: str) -> list:
                 except OSError:
                     break
                 try:
-                    with winreg.OpenKey(handle, sub) as entry:
-                        name = str(winreg.QueryValueEx(entry, "DisplayName")[0])
-                        location = str(winreg.QueryValueEx(entry, "InstallLocation")[0]).strip().strip('"')
+                    with winreg.OpenKey(handle, sub, 0, access) as entry:
+                        name = read(entry, "DisplayName")
+                        location = read(entry, "InstallLocation").strip().strip('"')
                 except OSError:
                     continue
                 lowered = name.lower()
@@ -773,7 +842,6 @@ def find_tool(command: str, path_variable: str, app: str, pkg: str, *, near=(), 
     # (PATH is searched with shutil.which, which knows PATHEXT there).
     exe = exe or f"{command}.exe"
     searched = []
-    fallback_names = _FALLBACK_NAMES.get(command, set())
     fallback = None
     trace = [] if trace is None else trace
 
@@ -788,8 +856,9 @@ def find_tool(command: str, path_variable: str, app: str, pkg: str, *, near=(), 
                 found = str(Path(found).with_suffix(".exe"))
         entry = {"place": place, "looked": looked[:200], "found": found or None}
         trace.append(entry)
-        if found and Path(found).name.lower() in fallback_names:
-            entry["note"] = "not mpv itself: used only if nothing else is found"
+        note = _last_resort_note(command, found) if found else None
+        if note:
+            entry["note"] = note
             fallback = fallback or found
             return None
         return found or None
@@ -812,7 +881,16 @@ def find_tool(command: str, path_variable: str, app: str, pkg: str, *, near=(), 
     # Installers record their folder (Inno: InstallLocation): right even
     # when a new version installs somewhere else.
     searched.append("installed programs (registry)")
-    for location in _installed_locations(app):
+    try:
+        locations = _installed_locations(app)
+    except Exception:  # noqa: BLE001 - an unreadable registry is no reason to stop searching
+        logger.exception("Reading the uninstall entries failed")
+        locations = None
+    if not locations:
+        take("installed programs (registry)",
+             f"uninstall entries naming {app!r}: " + ("could not be read" if locations is None else "none"),
+             None)
+    for location in locations or ():
         candidate = Path(location) / exe
         if take("installed programs (registry)", str(candidate), candidate if candidate.is_file() else None):
             return trace[-1]["found"], searched
@@ -1337,8 +1415,8 @@ def _download_youtube_to_cache(url: str) -> Path | None:
     existing = cached_audio(url)
     if existing is not None:
         return existing
-    mpv = _find_mpv()
-    ytdlp = _find_ytdlp(mpv)
+    mpv = _play_mpv()
+    ytdlp = _play_ytdlp(mpv)
     if not ytdlp:
         raise OSError("yt-dlp was not found")
     directory = audio_cache_directory()
@@ -1534,11 +1612,11 @@ def _play_audio(profile_id: str, path: str, fade: dict | None = None, stamp: str
         # Plays the source this time; the next start plays the copy.
         prefetch_audio(target)
     stream = local is None and isinstance(target, str)
-    mpv = _find_mpv()
+    mpv = _play_mpv()
     if not mpv:
         _, searched = find_tool("mpv", "MPV_PATH", "mpv", "mpv")
         raise FileNotFoundError(missing_tool_message("mpv", "MPV_PATH", searched, "winget install mpv"))
-    ytdlp = _find_ytdlp(mpv) if stream else None
+    ytdlp = _play_ytdlp(mpv) if stream else None
     if stream and not ytdlp:
         _, searched = find_tool("yt-dlp", "YTDLP_PATH", "yt-dlp", "yt-dlp", near=(Path(mpv).parent,))
         raise FileNotFoundError(missing_tool_message(

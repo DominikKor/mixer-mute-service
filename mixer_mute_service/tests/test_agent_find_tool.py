@@ -9,6 +9,7 @@ The environment, the registry and the folders are faked here."""
 import io
 import json
 import os
+import sys
 import tempfile
 import threading
 import unittest
@@ -166,6 +167,191 @@ class FindToolTests(unittest.TestCase):
                             for entry in trace))
         self.assertTrue(all(entry["found"] is None for entry in trace))
 
+    def test_windows_apps_only_as_last_resort(self):
+        """A Store app (anything under WindowsApps) starts through its
+        package: a real install elsewhere wins, whatever the file is called."""
+        store = touch(self.root / "Program Files" / "WindowsApps" / "Some.mpv_1.0_x64" / "mpv.exe")
+        real = touch(self.root / "PF" / "mpv" / "mpv.exe")
+        trace = []
+        found, _ = self.find(self.env(MPV_PATH=str(store)), trace=trace)
+        self.assertEqual(Path(found), real)
+        self.assertIn("WindowsApps", trace[0]["note"])
+        real.unlink()
+        found, _ = self.find(self.env(MPV_PATH=str(store)))
+        self.assertEqual(Path(found), store, "nothing else there: the Store app is used")
+
+    def test_windows_apps_alias_for_ytdlp_on_path(self):
+        aliases = self.root / "Local" / "Microsoft" / "WindowsApps"
+        alias = touch(aliases / "yt-dlp")
+        alias.chmod(0o755)
+        mpv_dir = self.root / "PF" / "mpv"
+        real = touch(mpv_dir / "yt-dlp.exe")
+        found, _ = agent.find_tool("yt-dlp", "YTDLP_PATH", "yt-dlp", "yt-dlp", near=(mpv_dir,),
+                                   env=self.env(PATH=str(aliases)), exe="yt-dlp.exe")
+        self.assertEqual(Path(found), real)
+
+    def test_registry_always_in_the_trace(self):
+        """/info shows that the uninstall entries were read, also when none
+        named mpv or reading them failed."""
+        for result, expected in (([], "none"), (OSError("access denied"), "could not be read")):
+            with self.subTest(expected):
+                trace = []
+                kwargs = {"side_effect": result} if isinstance(result, Exception) else {"return_value": result}
+                with patch.object(agent, "_installed_locations", **kwargs):
+                    found, _ = self.find(self.env(), trace=trace)
+                self.assertIsNone(found)
+                entries = [e for e in trace if e["place"] == "installed programs (registry)"]
+                self.assertEqual(len(entries), 1)
+                self.assertIn(expected, entries[0]["looked"])
+                self.assertIsNone(entries[0]["found"])
+                self.assertIn("Program Files", [e["place"] for e in trace], "the search goes on")
+
+    def test_registry_views_and_expanded_locations(self):
+        """64- and 32-bit views are asked for explicitly (a 32-bit Python is
+        otherwise redirected), and REG_EXPAND_SZ values are expanded."""
+        registry = FakeWinreg({
+            ("HKLM", FakeWinreg.KEY_WOW64_64KEY): {
+                "mpv": {"DisplayName": ("mpv", 1), "InstallLocation": (r"%ProgramFiles%\MPV Player", 2)},
+                "other": {"DisplayName": ("Notepad++", 1), "InstallLocation": (r"C:\npp", 1)},
+            },
+            ("HKLM", FakeWinreg.KEY_WOW64_32KEY): {
+                "MPV.NET": {"DisplayName": ("mpv.net", 1), "InstallLocation": (r"C:\mpvnet", 1)},
+                "no-location": {"DisplayName": ("mpv old", 1)},
+            },
+            ("HKCU", FakeWinreg.KEY_WOW64_64KEY): {
+                "mpv-user": {"DisplayName": ("MPV (user)", 1), "InstallLocation": ('"C:\\Users\\b\\mpv"', 1)},
+            },
+        })
+        with patch.dict(sys.modules, {"winreg": registry}), patch.object(agent.os, "name", "nt"):
+            locations = agent._installed_locations("mpv")
+        self.assertEqual(locations, [r"C:\Program Files\MPV Player", r"C:\Users\b\mpv"])
+        read = FakeWinreg.KEY_READ
+        self.assertEqual(registry.opened_roots, [
+            ("HKLM", read | FakeWinreg.KEY_WOW64_64KEY),
+            ("HKLM", read | FakeWinreg.KEY_WOW64_32KEY),
+            ("HKCU", read | FakeWinreg.KEY_WOW64_64KEY),
+        ])
+        self.assertTrue(all(access in {read | FakeWinreg.KEY_WOW64_64KEY, read | FakeWinreg.KEY_WOW64_32KEY}
+                            for access in registry.opened_entries))
+
+
+class FakeKey:
+    def __init__(self, view, children=None, values=None):
+        self.view, self.children, self.values = view, children or {}, values or {}
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_):
+        return False
+
+
+class FakeWinreg:
+    """Just enough of winreg for _installed_locations."""
+    HKEY_LOCAL_MACHINE, HKEY_CURRENT_USER = "HKLM", "HKCU"
+    KEY_READ, KEY_WOW64_64KEY, KEY_WOW64_32KEY = 0x20019, 0x0100, 0x0200
+    REG_SZ, REG_EXPAND_SZ = 1, 2
+
+    def __init__(self, views):
+        self.views = views
+        self.opened_roots, self.opened_entries = [], []
+
+    def OpenKey(self, parent, name, reserved=0, access=0x20019):  # noqa: N802 - winreg's name
+        if isinstance(parent, FakeKey):
+            self.opened_entries.append(access)
+            return FakeKey(parent.view, values=parent.children[name])
+        self.opened_roots.append((parent, access))
+        assert name == agent._UNINSTALL_KEY
+        view = access & (self.KEY_WOW64_64KEY | self.KEY_WOW64_32KEY)
+        if (parent, view) not in self.views:
+            raise OSError("no such key")
+        return FakeKey(view, children=self.views[(parent, view)])
+
+    def EnumKey(self, key, index):  # noqa: N802
+        names = list(key.children)
+        if index >= len(names):
+            raise OSError("no more")
+        return names[index]
+
+    def QueryValueEx(self, key, name):  # noqa: N802
+        if name not in key.values:
+            raise OSError("no value")
+        return key.values[name]
+
+    def ExpandEnvironmentStrings(self, value):  # noqa: N802
+        return value.replace("%ProgramFiles%", r"C:\Program Files")
+
+
+@unittest.skipIf(tkinter is None, "this Python has no tkinter; the desktop agent needs it")
+class CachedToolTests(unittest.TestCase):
+    """A play takes the path the background search found (no registry reads
+    or globs before mpv starts) while it is fresh and the file is there."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.mpv = touch(Path(self.tmp.name) / "MPV Player" / "mpv.exe")
+        self.ytdlp = touch(Path(self.tmp.name) / "MPV Player" / "yt-dlp.exe")
+        self.variables = {"MPV_PATH": "", "YTDLP_PATH": ""}
+        cache = patch.dict(agent._tool_cache, at=agent.time.monotonic(), mpv=str(self.mpv), ytdlp=str(self.ytdlp),
+                           variables=dict(self.variables))
+        now = patch.object(agent, "_tool_variables", side_effect=lambda: dict(self.variables))
+        for item in (cache, now):
+            item.start()
+            self.addCleanup(item.stop)
+
+    def test_fresh_cache_is_used(self):
+        with patch.object(agent, "_find_mpv", side_effect=AssertionError("searched again")), \
+                patch.object(agent, "_find_ytdlp", side_effect=AssertionError("searched again")):
+            self.assertEqual(agent._play_mpv(), str(self.mpv))
+            self.assertEqual(agent._play_ytdlp(str(self.mpv)), str(self.ytdlp))
+
+    def test_old_cache_means_a_full_search(self):
+        agent._tool_cache["at"] = agent.time.monotonic() - agent.TOOL_CACHE_SECONDS - 1
+        with patch.object(agent, "_find_mpv", return_value="searched") as find, \
+                patch.object(agent, "_find_ytdlp", return_value="searched too") as find_ytdlp:
+            self.assertEqual(agent._play_mpv(), "searched")
+            self.assertEqual(agent._play_ytdlp("searched"), "searched too")
+        find.assert_called_once_with()
+        find_ytdlp.assert_called_once_with("searched")
+
+    def test_changed_variable_means_a_full_search(self):
+        """MPV_PATH set or changed since the search: it counts at once."""
+        for name in ("MPV_PATH", "YTDLP_PATH"):
+            with self.subTest(name):
+                self.variables[name] = r"C:\Program Files\MPV Player\mpv.exe"
+                with patch.object(agent, "_find_mpv", return_value="searched"), \
+                        patch.object(agent, "_find_ytdlp", return_value="searched"):
+                    self.assertEqual(agent._play_mpv(), "searched")
+                    self.assertEqual(agent._play_ytdlp(None), "searched")
+                self.variables[name] = ""
+
+    def test_last_resort_is_never_taken_from_the_cache(self):
+        """MPV.NET or a Store app found earlier: a real mpv installed since
+        must be used at once, so the search runs again."""
+        for path in (Path(self.tmp.name) / "MpvNet" / "mpvnet.exe",
+                     Path(self.tmp.name) / "WindowsApps" / "Some.mpv_1.0" / "mpv.exe"):
+            with self.subTest(path.name):
+                agent._tool_cache["mpv"] = str(touch(path))
+                with patch.object(agent, "_find_mpv", return_value="searched"):
+                    self.assertEqual(agent._play_mpv(), "searched")
+
+    def test_unknown_variables_mean_a_full_search(self):
+        agent._tool_cache["variables"] = None
+        with patch.object(agent, "_find_mpv", return_value="searched"):
+            self.assertEqual(agent._play_mpv(), "searched")
+
+    def test_gone_file_or_nothing_cached_means_a_full_search(self):
+        self.mpv.unlink()
+        with patch.object(agent, "_find_mpv", return_value="searched"):
+            self.assertEqual(agent._play_mpv(), "searched")
+        agent._tool_cache.update(at=0.0)
+        with patch.object(agent, "_find_ytdlp", return_value="searched"):
+            self.assertEqual(agent._play_ytdlp(None), "searched")
+        agent._tool_cache.update(at=agent.time.monotonic(), ytdlp=None)
+        with patch.object(agent, "_find_ytdlp", return_value="searched"):
+            self.assertEqual(agent._play_ytdlp(None), "searched")
+
 
 @unittest.skipIf(tkinter is None, "this Python has no tkinter; the desktop agent needs it")
 class WindowsEnvironmentTests(unittest.TestCase):
@@ -301,6 +487,12 @@ class InfoTests(unittest.TestCase):
                     break
                 agent.time.sleep(0.02)
         self.assertEqual(agent.cached_tools()["mpv"], r"C:\mpv\mpv.exe")
+
+    def test_search_remembers_the_variables(self):
+        with patch.object(agent, "_tool_variables", return_value={"MPV_PATH": "x", "YTDLP_PATH": ""}), \
+                patch.object(agent, "_find_mpv", return_value=None), patch.object(agent, "_find_ytdlp", return_value=None):
+            agent.refresh_tool_cache()
+        self.assertEqual(agent._tool_cache["variables"], {"MPV_PATH": "x", "YTDLP_PATH": ""})
 
     def test_a_failing_search_leaves_nothing_found(self):
         with patch.object(agent, "_find_mpv", side_effect=OSError("access denied")):
