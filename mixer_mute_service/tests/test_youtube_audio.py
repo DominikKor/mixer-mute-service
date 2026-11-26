@@ -38,7 +38,11 @@ class YoutubeProfileTests(unittest.TestCase):
             r = client.post("/desktop/profiles", json=body)
             self.assertEqual(r.status_code, 200, r.text)
             self.assertIn(URL, (folder / "config.yaml").read_text(encoding="utf-8"))
-            self.assertEqual(client.post("/desktop/profiles", json={**body, "id": "bild", "kind": "image"}).status_code, 400)
+            # The kind comes from the path (app/profile_kind.py): a link is audio,
+            # whatever an old page sends.
+            self.assertEqual(client.post("/desktop/profiles", json={**body, "id": "bild", "kind": "image"}).status_code, 200)
+            kinds = {p["id"]: p["kind"] for p in client.get("/desktop/profiles").json()["profiles"]}
+            self.assertEqual(kinds["bild"], "audio")
             with mock.patch("app.display_agent.call", mock.AsyncMock(return_value={"ok": True, "playing": True})) as call:
                 r = client.post("/desktop/lobpreis/audio/play")
             self.assertEqual(r.status_code, 200, r.text)

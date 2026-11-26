@@ -458,7 +458,6 @@ dialog.profile-dialog { width: min(640px, calc(100vw - 32px)); max-height: calc(
 .pf-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 @media (max-width: 560px) {
   .pf-grid { grid-template-columns: 1fr; }
-  .kind-picker { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 .pf-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 #profile-form [hidden] { display: none; }
@@ -483,16 +482,12 @@ button.pc-edit-btn { flex-shrink: 0; min-height: 44px; padding: 0 14px; }
 .pf-input.invalid { outline: 2px solid var(--red); outline-offset: 1px; }
 textarea.pf-input { resize: vertical; min-height: 64px; }
 .pf-hint { font-size: 12px; color: var(--muted); }
-/* Kind tiles: large keys with an icon, the chosen one backlit */
-.kind-picker { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
-button.kind-tile {
-  display: flex; flex-direction: column; align-items: center; gap: 6px; min-height: 96px; padding: 12px 8px;
-  text-align: center; color: #9aa1ad;
+/* The kind of a profile comes from its path: a read-only label under the path */
+.pf-kind-row { display: flex; flex-direction: column; gap: 6px; margin-top: -4px; }
+.pf-kind-detected {
+  align-self: flex-start; display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px;
+  font-size: 12px; font-weight: 700; color: #cfe2ff; background: rgba(79,156,255,.12); border: 1px solid rgba(79,156,255,.35);
 }
-.kind-tile svg { width: 30px; height: 30px; }
-.kind-tile-name { font-size: 12px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
-.kind-tile-desc { font-size: 11px; font-weight: 500; color: #7f8b98; text-shadow: none; }
-button.kind-tile[aria-checked="true"] .kind-tile-desc { color: #c9dcf5; }
 /* Monitor keys and the screen with its five window positions */
 .pf-display-row { display: flex; gap: 18px 24px; flex-wrap: wrap; align-items: flex-start; }
 /* Audio: fade in on play, out on stop, to a fixed level */
@@ -1723,7 +1718,7 @@ button.display-menu-btn:hover:not(:disabled), button.display-menu-btn[aria-expan
 
 /* Chosen / pressed / open: one blue for every choice key on the page. */
 button.light-all[aria-pressed="true"], button.light-chip[aria-expanded="true"], button.light-pick-key[aria-pressed="true"],
-button.kind-tile[aria-checked="true"], button.monitor-key[aria-checked="true"], button.camera-preset[aria-pressed="true"],
+button.monitor-key[aria-checked="true"], button.camera-preset[aria-pressed="true"],
 button.camera-move-key.active, button.beamer-state-key[aria-pressed="true"], .tp-item button.tp-pick[aria-checked="true"],
 .program-table button.program-single[aria-pressed="true"], .program-table button.program-desktop-key[aria-pressed="true"] {
   color: #fff; border-color: var(--sel-border); background: var(--sel-bg);

@@ -209,11 +209,9 @@ $("pf-fade").addEventListener("change", syncProfileForm);
 $("pf-spotlight").addEventListener("change", syncProfileForm);
 $("pf-path").addEventListener("input", syncProfilePath);
 $("profile-form").addEventListener("click", (event) => {
-  const kind = event.target.closest("[data-kind]");
   const monitor = event.target.closest("[data-monitor]");
   const pos = event.target.closest("[data-pos]");
-  if (kind) PROFILE_FORM.kind = kind.dataset.kind;
-  else if (monitor) pickMonitor(Number(monitor.dataset.monitor));
+  if (monitor) pickMonitor(Number(monitor.dataset.monitor));
   else if (pos && !pos.disabled) PROFILE_FORM.position = pos.dataset.pos;
   else return;
   syncProfileForm();

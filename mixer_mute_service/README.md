@@ -606,7 +606,18 @@ desktop_display:
 ```
 
 Weitere Profile erhalten eigene IDs und Ziel-IPs. `kind` ist `image`,
-`program`, `file` oder `audio`. Bei `program` muss `path` auf eine `.exe` zeigen;
+`program`, `file` oder `audio`. Im Profilfenster wird die Art nicht mehr
+gewählt: der Dienst leitet sie beim Speichern aus dem Pfad ab
+(`app/profile_kind.py`), das Fenster zeigt sie vorher als „Erkannt: …“.
+Bildendungen ergeben `image`, Audioendungen und YouTube-Links `audio`, `.exe`
+`program`, alles andere `file` (Video, PDF, Folien, `.lnk`, `.bat`, `.url` …;
+Windows öffnet die Datei mit der Standard-App). Ein Pfad ohne Endung (z. B.
+`…\obs64*`) und ein Mission-Spotlight-Ordner sagen nichts: ein bestehendes
+Profil behält dann seine Art (Spotlight-Audio bleibt Audio, ein Programm wird
+mit Spotlight zu `file`), ein neues wird `file`. Ein
+bestehendes Profil behält seine gespeicherte Art, solange Pfad und Mission
+Spotlight gleich bleiben; ein `kind` von einer älteren Seite zählt nur bei
+einem Pfad ohne Endung. Bei `program` muss `path` auf eine `.exe` zeigen;
 `args` ist eine Liste separater Argumente, die ohne Shell gestartet werden.
 Bei `file` oeffnet Windows die Datei mit der Standardanwendung. `monitor` ist
 1-basiert; `fullscreen` aktiviert fuer Bilder bzw. Programmfenster den
