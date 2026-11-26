@@ -4,7 +4,8 @@ Verifies: the page loads the script after songs.js and program.js (it uses
 their state and songAction) and its stylesheet; both redraws call it
 (renderProgramItems in program.js, renderSongLive in songs.js), so the dock
 and the Liedanzeige section show the same; every song path it sends to is a
-route of app/songs.py (no new server behaviour); the chip texts and the
+route of app/songs.py (no new server behaviour); the preview uses the
+Liedanzeige's slide drawing (no layout code of its own); the chip texts and the
 first line of a slide (in quickjs; skipped where quickjs is missing, an error
 in CI with REQUIRE_TK=1).
 
@@ -60,6 +61,14 @@ class SongDockWiringTest(unittest.TestCase):
         # Stepping goes through songs.js (the same calls as the Liedanzeige keys).
         for call in ("songPrev()", "songNext()", "songBlankToggle()", "songAction("):
             self.assertIn(call, DOCK_JS)
+
+
+    def test_preview_reuses_the_slide_drawing(self):
+        # The same drawing as the Liedanzeige (songs.js), no layout code of its own.
+        self.assertIn("renderSlide(box,", DOCK_JS)
+        self.assertIn("songSlide(song,", DOCK_JS)
+        for own in ("fitSlideText", "wrapSlideLines", "measureText", "getContext"):
+            self.assertNotIn(own, DOCK_JS)
 
 
 @unittest.skipIf(quickjs is None, "quickjs not installed")

@@ -1,38 +1,59 @@
 /* Song dock (js/song-dock.js): the running program row's song, in a drawer
-   that slides out under the row's summary line and spans the whole card --
-     [ < ]  [T][1][R][2][R]  first line of the slide …  ⚠ 3/7  [Aus] [Schwarz]  [Weiter >]
-   It opens by growing its grid row from 0fr to 1fr (no fixed height) and
-   reaches the card's left, right and bottom edge, so it reads as part of the
-   row. Another song or none on screen: one slim line with "Zeigen". */
+   that slides out of the row's top edge, above its summary line, and spans
+   the whole card --
+     +---------+  [ < ]  [T][1][R][2][R] …   ⚠ 3/7  [Aus] [Schwarz]  [Weiter >]
+     | preview |  ALS NÄCHSTES  first line of the next slide …
+     +---------+
+   The drawer is placed absolutely at the row's top (inside its border); the
+   row's top padding grows by its height (--sd-h, set by the script) and the
+   cell with it, both animated, so the row's own grid stays as it is. The
+   drawer hangs from the cell's bottom edge and is clipped while it opens.
+   Another song or none on screen: the preview and a line with "Zeigen". */
+.program-table tr.song-docked {
+  position: relative; padding-top: calc(var(--sd-pad, 6px) + var(--sd-h, 0px));
+  transition: box-shadow .2s, opacity .2s, padding-top .26s ease-out;
+}
 .program-table td.song-dock {
-  grid-column: 1 / -1; display: grid; grid-template-rows: 0fr; gap: 0;
-  margin: 0 -10px 0 -12px; opacity: 0;
-  transition: grid-template-rows .26s ease-out, margin-bottom .26s ease-out, opacity .2s ease-out;
+  position: absolute; top: 0; left: 0; right: 0; height: var(--sd-h, 0px); padding: 0;
+  display: flex; flex-direction: column; justify-content: flex-end; overflow: hidden;
+  border-radius: 7px 7px 0 0; transition: height .26s ease-out;
 }
 .program-table td.song-dock::before { content: none; }
-.program-table td.song-dock.open { grid-template-rows: 1fr; margin-bottom: -6px; opacity: 1; }
-.program-table tr.program-open td.song-dock.open { margin-bottom: -12px; }
-/* Closed row: the drawer sits right under the summary line (the row has no
-   other lines then); an open row shows it after its fields. */
-.program-table tr.song-docked:not(.program-open) { row-gap: 0; }
+.program-table tr.sd-instant, .program-table tr.sd-instant td.song-dock { transition: none; }
 .program-table tr.program-hidden td.song-dock { opacity: 1; filter: none; }
-@media (prefers-reduced-motion: reduce) { .program-table td.song-dock { transition: none; } }
-.program-table td.song-dock.instant { transition: none; }
+@media (prefers-reduced-motion: reduce) {
+  .program-table tr.song-docked, .program-table td.song-dock { transition: none; }
+}
 
 .song-dock-drawer {
-  min-height: 0; overflow: hidden; border-radius: 0 0 7px 7px;
-  background: linear-gradient(to bottom, #0b0e11, #111519);
-  border-top: 1px solid #000;
-  box-shadow: inset 0 7px 9px -7px rgba(0,0,0,.9), inset 0 -1px 0 rgba(255,255,255,.03);
+  flex: 0 0 auto; container-type: inline-size;
+  display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 12px;
+  padding: 8px 10px 8px 8px;
+  background: linear-gradient(to top, #0b0e11, #111519);
+  border-bottom: 1px solid #000;
+  box-shadow: inset 0 -7px 9px -7px rgba(0,0,0,.9), inset 0 1px 0 rgba(255,255,255,.03);
 }
-/* Both states as high as the keys' line (52 px keys + padding): the drawer
-   keeps its height when the song leaves the screen or comes back. */
-.song-dock-bar, .song-dock-off { padding: 8px 10px 8px 12px; min-height: 68px; }
+/* The preview: what the screens show, 16:9, as high as the dock allows */
+.song-dock .sd-preview { width: 156px; border-radius: 4px; }
+.song-dock .sd-preview.blank::after, .song-dock .sd-preview.off::after {
+  position: absolute; inset: 0; display: grid; place-items: center;
+  font: 800 11px/1 var(--mono); letter-spacing: .2em; text-transform: uppercase; color: #4d5560;
+}
+.song-dock .sd-preview.blank::after { content: "Schwarz"; }
+.song-dock .sd-preview.off { background: #0b0e11 !important; border-style: dashed; border-color: #2a2e35; }
+.song-dock .sd-preview.off::after { content: "Aus"; }
+.sd-main { display: grid; gap: 6px; min-width: 0; }
+/* One height in both states (keys and the line under them): the drawer does
+   not jump when the song leaves the screen or comes back. */
+.sd-main { min-height: 80px; align-content: center; }
 .song-dock-bar {
   display: grid; align-items: center; gap: 8px;
   grid-template-columns: 72px minmax(0, 1fr) auto auto auto 148px;
 }
-.song-dock:not(.live) .song-dock-bar, .song-dock.live .song-dock-off { display: none; }
+.song-dock:not(.live) .song-dock-bar, .song-dock:not(.live) .sd-next-line,
+.song-dock.live .song-dock-off { display: none; }
+.sd-next-line { display: flex; align-items: baseline; gap: 10px; min-width: 0; padding-left: 2px; }
+.sd-next-label { flex-shrink: 0; font-size: 9px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; color: #7d8594; }
 
 .song-dock button { min-height: 52px; padding: 0 12px; }
 .song-dock button.sd-prev { display: grid; place-items: center; padding: 0; }
@@ -48,11 +69,28 @@
 /* Keys wait for the last press without the grey flash of a disabled key */
 .song-dock.busy button:disabled { opacity: .85; cursor: progress; }
 
-/* Slide chips: one line, scrolled inside the strip (never the page); the
-   first line of the slide on screen takes the room that is left. */
-.sd-mid {
-  display: grid; grid-template-columns: minmax(0, max-content) minmax(0, 1fr); align-items: center; gap: 12px; min-width: 0;
+/* Wide (desktop, iPad landscape): the "next" line moves up between the chips
+   and the keys instead of leaving that room empty. */
+@container (min-width: 1200px) {
+  .song-dock.live .sd-main {
+    grid-template-columns: 72px minmax(0, max-content) minmax(0, 1fr) auto auto auto 148px; column-gap: 8px;
+  }
+  .song-dock.live .song-dock-bar { display: contents; }
+  .song-dock .sd-next-line { grid-row: 1; grid-column: 3; flex-direction: column; align-items: flex-start; gap: 4px; padding-left: 10px; }
+  .song-dock .sd-next-line .sd-line { max-width: 100%; }
 }
+
+/* Narrow (iPad portrait on the stage, small windows): a smaller preview and
+   "Weiter"; the chips keep the room that is left. */
+@container (max-width: 860px) {
+  .song-dock .sd-preview { width: 124px; }
+  .song-dock-bar { grid-template-columns: 60px minmax(0, 1fr) auto auto auto 124px; gap: 6px; }
+  .song-dock button.sd-blank { min-width: 84px; padding: 0 8px; }
+  .song-dock button.sd-hide { min-width: 56px; padding: 0 8px; }
+}
+
+/* Slide chips: one line, scrolled inside the strip (never the page) */
+.sd-mid { display: flex; min-width: 0; }
 .sd-chips {
   display: flex; gap: 6px; min-width: 0; padding: 4px 2px; overflow-x: auto; overscroll-behavior-x: contain;
   scrollbar-width: none; scroll-snap-type: x proximity;
@@ -89,8 +127,10 @@
 .sd-off-text { flex: 1; min-width: 0; font-size: 13px; font-weight: 600; color: #9aa3b0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .song-dock-off button.sd-show { min-height: 44px; min-width: 96px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
 
-/* Phones (not a target, but nothing may break): the chips get their own line */
+/* Phones (not a target, but nothing may break): preview above, chips on their own line */
 @media (max-width: 640px) {
+  .song-dock-drawer { grid-template-columns: minmax(0, 1fr); }
+  .song-dock .sd-preview { width: 120px; justify-self: center; }
   .song-dock-bar { grid-template-columns: 64px minmax(0, 1fr) 120px; }
   .sd-mid { grid-column: 1 / -1; grid-row: 1; }
   .sd-pos { display: none; }

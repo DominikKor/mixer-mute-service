@@ -3,23 +3,29 @@
 // of index.html; main.js runs last and starts everything.
 
 // ---- Song dock ----------------------------------------------------------------
-// When the running program row shows a song, a slim drawer slides out under
-// its summary line: back, a chip per slide (tap to jump), the first line of
-// the slide on screen, black screen and the big "Weiter". It drives the same
+// When the running program row shows a song, a drawer slides out of the
+// row's top edge, above its summary line: on the left a small preview of what
+// the screens show (renderSlide from songs.js, also black or "Aus"), on the
+// right back, a chip per slide (tap to jump), Aus, Schwarz and the big
+// "Weiter", under them the first line of the next slide. It drives the same
 // song as the Liedanzeige section, through the same calls (songAction in
 // songs.js), and is redrawn from the same state (SONG_LIVE), so both always
 // show the same. The presenter keys (Page Down/Up, arrows, B) work as before.
 //
 // States: the row's song is on screen (or black within it) -> the keys;
-// another song or none on screen -> a slim line with "Zeigen" (shows the
-// row's song from its first slide); the row is no longer running or has no
-// song -> the drawer slides back in and is removed.
+// another song or none on screen -> the preview and a line with "Zeigen"
+// (shows the row's song from its first slide); the row is no longer running
+// or has no song -> the drawer slides back in and is removed.
+//
+// Placement: the drawer is absolutely placed at the top of the row (inside
+// its border) and the row's top padding grows by the drawer's height
+// (--sd-h on the row, both animated), so the row's own grid stays untouched.
 //
 // Hooks: renderProgramItems() (program.js) and renderSongLive() (songs.js)
 // call renderSongDock(); it only reads PROGRAM_ITEMS, PROGRAM_STATUS,
 // SONG_LIVE, SONG_SETTINGS and SONG_BUSY.
 
-const SONG_DOCK = { cell: null, chipsSig: "" };
+const SONG_DOCK = { cell: null, chipsSig: "", observer: null };
 const SONG_DOCK_MS = 260;   // slide out / in (keep in sync with css/song-dock.css)
 
 const ICON_DOCK_PREV = `<svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>`;
@@ -40,18 +46,21 @@ function buildSongDock() {
   const cell = document.createElement("td");
   cell.className = "song-dock";
   cell.innerHTML = `<div class="song-dock-drawer" role="group" aria-label="Lied am laufenden Programmpunkt">`
+    + `<div class="slide-box sd-preview" role="img" aria-label="Was die Bildschirme zeigen"></div>`
+    + `<div class="sd-main">`
     + `<div class="song-dock-bar">`
     + `<button type="button" class="sd-prev" data-song-dock="prev" title="Vorherige Folie (Bild auf, ←)" aria-label="Vorherige Folie">${ICON_DOCK_PREV}</button>`
-    + `<div class="sd-mid"><div class="sd-chips" role="group" aria-label="Folien"></div><span class="sd-line"></span></div>`
+    + `<div class="sd-mid"><div class="sd-chips" role="group" aria-label="Folien"></div></div>`
     + `<span class="sd-status"><button type="button" class="sd-warn" data-song-dock="warn" hidden>⚠</button><span class="sd-pos" aria-live="polite"></span></span>`
     // "Aus" (closes the lyrics everywhere) away from "Weiter": "Schwarz" sits between them.
     + `<button type="button" class="sd-hide danger" data-song-dock="hide" title="Liedfenster schließen (auf allen Bildschirmen)">Aus</button>`
     + `<button type="button" class="sd-blank" data-song-dock="blank" title="Bildschirm schwarz / wieder an (Taste B oder .)" aria-pressed="false">Schwarz</button>`
     + `<button type="button" class="sd-next program-play" data-song-dock="next" title="Nächste Folie (Bild ab, →, Leertaste); nach der letzten: schwarz"><span class="sd-next-text">Weiter</span>${ICON_DOCK_NEXT}</button>`
     + `</div>`
+    + `<div class="sd-next-line"><span class="sd-next-label">Als Nächstes</span><span class="sd-line"></span></div>`
     + `<div class="song-dock-off"><span class="sd-note">${ICON_DOCK_NOTE}</span><span class="sd-off-text"></span>`
     + `<button type="button" class="sd-show" data-song-dock="show" title="Das Lied dieses Programmpunkts ab der ersten Folie zeigen">Zeigen</button></div>`
-    + `</div>`;
+    + `</div></div>`;
   const strip = cell.querySelector(".sd-chips");
   strip.addEventListener("scroll", () => songDockStripEdges(strip), { passive: true });
   // A mouse wheel scrolls hidden chips into view (fingers and trackpads swipe).
@@ -63,15 +72,16 @@ function buildSongDock() {
     strip.scrollLeft += event.deltaY;
   }, { passive: false });
   new ResizeObserver(() => songDockStripEdges(strip)).observe(strip);
+  new ResizeObserver(() => { if (cell.isConnected) renderSongDockPreview(cell); }).observe(cell.querySelector(".sd-preview"));
   return cell;
 }
 
 // The page scrolls in normal mode: a drawer opening or closing above what is
-// on screen (also partly, e.g. its top under the header) would push the
-// view. Then it changes at once and the page scrolls by exactly the height
-// it gained or lost, in the same frame, with the browser's own scroll
-// anchoring off for that moment (else both would move it). The same in every
-// browser, with or without scroll anchoring (Safari).
+// on screen (also partly, e.g. under the header) would push the view. Then
+// it changes at once and the page scrolls by exactly the height it gained or
+// lost, in the same frame, with the browser's own scroll anchoring off for
+// that moment (else both would move it). The same in every browser, with or
+// without scroll anchoring (Safari).
 function songDockAboveView(y) {
   if (STAGE.on) return false;
   const header = document.querySelector("header");
@@ -88,43 +98,75 @@ function songDockKeepView(row, change) {
   requestAnimationFrame(() => requestAnimationFrame(() => { root.style.overflowAnchor = ""; }));
 }
 
-// Slide out: the drawer is laid out closed first, so "open" animates.
+// The drawer's own height (it is not squeezed by the cell, which clips it);
+// the layout height, not the drawn one (the stage scales sections while they
+// fly in and out).
+function songDockHeight(cell) {
+  return cell.querySelector(".song-dock-drawer").offsetHeight;
+}
+
+function setSongDockHeight(row, px) {
+  row.style.setProperty("--sd-h", `${px}px`);
+}
+
+// Slide out of the row's top edge: laid out closed first, so the height animates.
 function openSongDock(row) {
   const cell = buildSongDock();
   SONG_DOCK.cell = cell;
   SONG_DOCK.chipsSig = "";
-  if (songDockAboveView(row.getBoundingClientRect().bottom)) {
-    cell.classList.add("instant");
-    songDockKeepView(row, () => { row.appendChild(cell); row.classList.add("song-docked"); cell.classList.add("open"); });
-    requestAnimationFrame(() => cell.classList.remove("instant"));
-    return cell;
+  const instant = songDockAboveView(row.getBoundingClientRect().top);
+  const place = () => {
+    // The row's own top padding (read before it is docked; a drawer still
+    // sliding in on this row keeps the value it read).
+    if (!row.classList.contains("song-docked")) row.style.setProperty("--sd-pad", getComputedStyle(row).paddingTop);
+    setSongDockHeight(row, 0);
+    row.appendChild(cell);
+    row.classList.add("song-docked");
+    void cell.getBoundingClientRect();
+    setSongDockHeight(row, songDockHeight(cell));
+  };
+  if (instant) {
+    row.classList.add("sd-instant");
+    songDockKeepView(row, place);
+    requestAnimationFrame(() => row.classList.remove("sd-instant"));
+  } else {
+    place();
   }
-  row.appendChild(cell);
-  row.classList.add("song-docked");
-  void cell.getBoundingClientRect();
-  cell.classList.add("open");
+  // The drawer's height follows its content (other state, narrower screen).
+  if (SONG_DOCK.observer) SONG_DOCK.observer.disconnect();
+  SONG_DOCK.observer = new ResizeObserver(() => {
+    if (SONG_DOCK.cell === cell && cell.parentElement === row) setSongDockHeight(row, songDockHeight(cell));
+  });
+  SONG_DOCK.observer.observe(cell.querySelector(".song-dock-drawer"));
   return cell;
 }
 
-// Slide in, then leave the row.
+// Slide back into the row's top edge, then leave the row.
 function closeSongDock() {
   const cell = SONG_DOCK.cell;
   if (!cell) return;
   SONG_DOCK.cell = null;
+  if (SONG_DOCK.observer) { SONG_DOCK.observer.disconnect(); SONG_DOCK.observer = null; }
   const row = cell.parentElement;
-  // The row keeps its "docked" spacing until the drawer is gone (no jump).
   const remove = () => {
     cell.remove();
-    if (row && !row.querySelector("td.song-dock")) row.classList.remove("song-docked");
+    if (row && !row.querySelector("td.song-dock")) {
+      row.classList.remove("song-docked");
+      row.style.removeProperty("--sd-h");
+      row.style.removeProperty("--sd-pad");
+    }
   };
-  if (row && row.isConnected && songDockAboveView(cell.getBoundingClientRect().top)) {
+  cell.querySelectorAll("button").forEach(button => { button.disabled = true; });
+  if (!row || !row.isConnected) { remove(); return; }
+  if (songDockAboveView(cell.getBoundingClientRect().top)) {
+    row.classList.add("sd-instant");
     songDockKeepView(row, remove);
+    requestAnimationFrame(() => row.classList.remove("sd-instant"));
     return;
   }
-  cell.classList.remove("open");
-  cell.querySelectorAll("button").forEach(button => { button.disabled = true; });
-  if (stageReducedMotion() || !cell.isConnected) remove();
-  else setTimeout(remove, SONG_DOCK_MS + 40);
+  setSongDockHeight(row, 0);
+  if (stageReducedMotion()) remove();
+  else setTimeout(() => { if (cell.isConnected) remove(); }, SONG_DOCK_MS + 40);
 }
 
 // Short chip text: the slide's key (1, 2, Ref, …), "T" for the title slide.
@@ -177,6 +219,23 @@ function songDockScrollChip(strip, chip) {
   }
 }
 
+// The preview: what the screens show (this song, another one, black or
+// nothing), drawn like the Liedanzeige draws it (renderSlide, songs.js).
+function renderSongDockPreview(cell) {
+  const box = cell.querySelector(".sd-preview");
+  const song = SONG_LIVE.song;
+  const state = !song ? "off" : SONG_LIVE.blank ? "blank" : "slide";
+  box.classList.toggle("off", state === "off");
+  box.classList.toggle("blank", state === "blank");
+  box.setAttribute("aria-label", state === "off" ? "Bildschirme: kein Lied" : state === "blank" ? "Bildschirme: schwarz"
+    : `Bildschirme: ${song.title}, Folie ${SONG_LIVE.slide + 1}`);
+  if (!SONG_SETTINGS || !box.clientWidth) return;
+  const sig = JSON.stringify([state, song && song.id, SONG_LIVE.slide, SONG_SETTINGS, box.clientWidth, box.clientHeight]);
+  if (box.dataset.sig === sig) return;
+  box.dataset.sig = sig;
+  renderSlide(box, state === "slide" ? songSlide(song, SONG_LIVE.slide, SONG_SETTINGS) : { blank: true }, SONG_SETTINGS);
+}
+
 function renderSongDock() {
   const target = songDockTarget();
   if (!target) { closeSongDock(); return; }
@@ -195,6 +254,7 @@ function renderSongDock() {
     const show = cell.querySelector(".sd-show");
     show.hidden = !known;
     show.disabled = SONG_BUSY;
+    renderSongDockPreview(cell);
     return;
   }
 
@@ -212,8 +272,11 @@ function renderSongDock() {
     if (on) current = chip;
   });
   songDockScrollChip(strip, current);
-  cell.querySelector(".sd-line").textContent = ended ? "Ende – Bildschirm schwarz"
-    : blank ? "Schwarz" : songDockFirstLine(slides[index]);
+  // Under the keys: what "Weiter" brings next.
+  cell.querySelector(".sd-line").textContent = ended ? "Ende – der Bildschirm bleibt schwarz"
+    : blank ? `wieder Folie ${index + 1}: ${songDockFirstLine(slides[index])}`
+    : index >= last ? "schwarz (Ende des Lieds)" : songDockFirstLine(slides[index + 1]);
+  renderSongDockPreview(cell);
   cell.querySelector(".sd-pos").textContent = `${index + 1}/${slides.length}`;
   // A screen that did not take the last step (song-screens.js): tap for which and why.
   const failed = songScreensFailedText(SONG_LIVE.screens);
