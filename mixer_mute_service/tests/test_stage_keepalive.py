@@ -27,7 +27,17 @@ class Recorder:
         self.frames.append((host, universe, list(values)))
 
 
-class KeepaliveTests(unittest.IsolatedAsyncioTestCase):
+async def until(predicate, timeout=3.0):
+    """Wait for an event instead of a fixed time (robust on a busy CI)."""
+    loop = asyncio.get_running_loop()
+    end = loop.time() + timeout
+    while not predicate():
+        if loop.time() > end:
+            raise AssertionError("condition not reached in time")
+        await asyncio.sleep(0.005)
+
+
+class _KeepaliveCase(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp_dir.cleanup)
@@ -46,6 +56,8 @@ class KeepaliveTests(unittest.IsolatedAsyncioTestCase):
         self.addAsyncCleanup(controls.stop_keepalive)
         return controls
 
+
+class KeepaliveTests(_KeepaliveCase):
     async def test_silent_until_the_first_stage_command(self):
         # A new install next to a still-used Companion must not fight it.
         controls = await self.service()
@@ -57,7 +69,7 @@ class KeepaliveTests(unittest.IsolatedAsyncioTestCase):
         controls = await self.service()
         await controls.set_light_settings({"fade_ms": 0})
         await controls.press({"type": "artnet-zone-toggle", "zone": "left"})
-        await asyncio.sleep(0.3)
+        await until(lambda: len(self.sent.frames) >= 4)
         frames = [values for _, _, values in self.sent.frames]
         self.assertGreaterEqual(len(frames), 4)
         self.assertTrue(all(values == frames[0] for values in frames))
@@ -102,15 +114,22 @@ class KeepaliveTests(unittest.IsolatedAsyncioTestCase):
         controls = await self.service()
         await controls.set_light_settings({"fade_ms": 0})
         await controls.set_stage({"left": 80})
+        attempts = []
         self.sent.fail = OSError("network down")
-        with self.assertLogs("mixer.native_controls", "WARNING") as logs:
-            await asyncio.sleep(0.2)
-        self.assertEqual(len(logs.records), 1)            # once, not every second
+        original = nc._send_artnet_frame
+
+        def counting(*args):
+            attempts.append(args)
+            return original(*args)
+
+        with patch.object(nc, "_send_artnet_frame", counting), \
+                self.assertLogs("mixer.native_controls", "WARNING") as logs:
+            await until(lambda: len(attempts) >= 3)        # retried, not given up
+        self.assertEqual(len(logs.records), 1)            # logged once, not every second
         self.assertIn("network down", controls.keepalive_status()["error"])
         self.sent.fail = None
-        await asyncio.sleep(0.15)
-        self.assertIsNone(controls.keepalive_status()["error"])
-        self.assertEqual(self.sent.frames[-1][2][0], 80)
+        await until(lambda: controls.keepalive_status()["error"] is None)
+        await until(lambda: self.sent.frames and self.sent.frames[-1][2][0] == 80)
 
     async def test_failed_fade_resends_the_last_good_state(self):
         controls = await self.service()
@@ -120,7 +139,7 @@ class KeepaliveTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(OSError):
             await controls.set_stage({"left": 250})
         self.sent.fail = None
-        await asyncio.sleep(0.15)
+        await until(lambda: len(self.sent.frames) >= 2)
         self.assertEqual(self.sent.frames[-1][2][0], 60)  # what the page shows
         self.assertEqual(controls.stage_state()["zones"]["left"], 60)
 
@@ -133,6 +152,74 @@ class KeepaliveTests(unittest.IsolatedAsyncioTestCase):
         await asyncio.sleep(0.15)
         self.assertEqual(len(self.sent.frames), count)
         self.assertFalse(controls.keepalive_status()["running"])
+
+
+class KeepaliveRobustnessTests(_KeepaliveCase):
+    """An unexpected error must neither end the keepalive (stage dark for
+    good) nor break the service shutdown."""
+
+    async def test_unexpected_error_is_logged_and_the_loop_goes_on(self):
+        controls = await self.service()
+        await controls.set_light_settings({"fade_ms": 0})
+        await controls.set_stage({"left": 40})
+        real_tick, calls = controls.keepalive_tick, []
+
+        async def flaky():
+            calls.append(1)
+            if len(calls) <= 3:
+                raise RuntimeError("boom")
+            return await real_tick()
+
+        controls.keepalive_tick = flaky
+        with self.assertLogs("mixer.native_controls", "ERROR") as logs:
+            await until(lambda: len(calls) >= 3)
+        self.assertEqual(len(logs.records), 1)
+        self.assertIn("boom", controls.keepalive_status()["error"])
+        self.sent.frames.clear()
+        await until(lambda: len(self.sent.frames) >= 2)   # sends again
+        self.assertTrue(controls.keepalive_status()["running"])
+        self.assertIsNone(controls.keepalive_status()["error"])
+
+    async def test_stop_survives_a_crashed_task(self):
+        controls = NativeControlService(self.state_path)
+
+        async def crash():
+            raise RuntimeError("crashed")
+
+        controls._keepalive_task = asyncio.get_running_loop().create_task(crash())
+        await asyncio.sleep(0)
+        with self.assertLogs("mixer.native_controls", "ERROR"):
+            await controls.stop_keepalive()               # must not raise
+        self.assertIsNone(controls._keepalive_task)
+
+    async def test_idle_loop_sleeps_a_full_interval(self):
+        controls = NativeControlService(self.state_path)
+        real_tick, calls = controls.keepalive_tick, []
+
+        async def counted():
+            calls.append(1)
+            return await real_tick()
+
+        controls.keepalive_tick = counted
+        controls.start_keepalive()
+        self.addAsyncCleanup(controls.stop_keepalive)
+        await asyncio.sleep(0.2)                          # 4 intervals of 0.05 s
+        self.assertLessEqual(len(calls), 5)               # not every 5 ms
+        self.assertEqual(self.sent.frames, [])
+
+    async def test_invalid_saved_frame_means_no_blackout_after_restart(self):
+        self.state_path.write_text(json.dumps({"stage_active": True, "dmx": [0] * 10}), encoding="utf-8")
+        with self.assertLogs("mixer.native_controls", "WARNING"):
+            controls = NativeControlService(self.state_path)
+        self.assertFalse(controls.keepalive_status()["active"])
+        controls.start_keepalive()
+        self.addAsyncCleanup(controls.stop_keepalive)
+        await asyncio.sleep(0.15)
+        self.assertEqual(self.sent.frames, [])            # no all-zero frame
+        await controls.set_light_settings({"fade_ms": 0})
+        await controls.set_stage({"left": 90})            # the next command takes over
+        await until(lambda: len(self.sent.frames) >= 2)
+        self.assertTrue(all(values[0] == 90 for _, _, values in self.sent.frames))
 
 
 class CompanionParityTests(unittest.TestCase):

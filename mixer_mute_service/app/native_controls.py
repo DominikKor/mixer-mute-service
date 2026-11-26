@@ -327,11 +327,16 @@ class NativeControlService:
         if isinstance(hidden, bool):
             self._beamer_hidden = hidden
         values = data.get("dmx")
-        if isinstance(values, list) and len(values) == 512 and all(
-            isinstance(v, int) and 0 <= v <= 255 for v in values
-        ):
+        valid_dmx = isinstance(values, list) and len(values) == 512 and all(
+            isinstance(v, int) and not isinstance(v, bool) and 0 <= v <= 255 for v in values
+        )
+        if valid_dmx:
             self._dmx = values
-        self._stage_active = data.get("stage_active") is True
+        # Without a valid saved frame the keepalive would send all zeros (a
+        # blackout) after a restart: it stays silent until the next command.
+        self._stage_active = valid_dmx and data.get("stage_active") is True
+        if data.get("stage_active") is True and not valid_dmx:
+            log.warning("Art-Net: saved stage frame is invalid; stage keepalive waits for the next light command")
         levels = data.get("levels")
         if isinstance(levels, dict):
             for key, (low, high) in _LEVEL_BOUNDS.items():
@@ -456,6 +461,8 @@ class NativeControlService:
                 await task
             except asyncio.CancelledError:
                 pass
+            except Exception:  # noqa: BLE001 - shutdown must go on (mixer link, cameras)
+                log.exception("Art-Net: stage keepalive ended with an error")
 
     def keepalive_status(self) -> dict:
         return {
@@ -465,10 +472,23 @@ class NativeControlService:
         }
 
     async def _keepalive(self) -> None:
+        failing = False
         while True:
-            wait = ARTNET_KEEPALIVE_SECONDS - (time.monotonic() - self._sent_at)
-            await asyncio.sleep(max(ARTNET_FRAME_SECONDS, wait))
-            await self.keepalive_tick()
+            if self._stage_active:
+                wait = ARTNET_KEEPALIVE_SECONDS - (time.monotonic() - self._sent_at)
+                await asyncio.sleep(max(ARTNET_FRAME_SECONDS, wait))
+            else:
+                # Nothing to hold yet: a stage command sends its own frames.
+                await asyncio.sleep(ARTNET_KEEPALIVE_SECONDS)
+            try:
+                await self.keepalive_tick()
+                failing = False
+            except Exception as exc:  # noqa: BLE001 - the stage must not go dark for good
+                if not failing:
+                    log.exception("Art-Net: stage keepalive failed; it keeps trying every second")
+                failing = True
+                self._keepalive_error = f"{type(exc).__name__}: {exc}"
+                await asyncio.sleep(ARTNET_KEEPALIVE_SECONDS)
 
     async def keepalive_tick(self) -> bool:
         """Send the stage frame again when nothing went out for a second.

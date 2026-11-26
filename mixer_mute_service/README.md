@@ -863,10 +863,15 @@ weiter über `/companion/buttons/{id}/press` drücken.
   Alle Pakete gehen über einen Socket mit festem Absender-Port 6454. Ein Regler
   schickt höchstens alle 60 ms und nie zwei Werte gleichzeitig (sonst konnten
   sie sich überholen und das Licht flackerte).
-  **Nur ein Programm darf die Bühne steuern.** Schickt Companion weiter
-  (Verbindung „artnet“ aktiv), mischt der Knoten beide Quellen, und die App
-  setzt sich nicht durch bzw. das Licht springt. In Companion die Verbindung
-  „artnet“ deaktivieren. `GET /lights/artnet` fragt den Knoten per ArtPoll und
+  **Nur ein Programm darf die Bühne steuern: In Companion muss die
+  Verbindung „artnet“ dauerhaft deaktiviert sein.** Der Knoten (Electroconcept
+  „Node 1“) mischt zwei Quellen nach HTP, pro Kanal gewinnt der höhere Wert:
+  Solange Companion mitsendet, kann die App nicht unter Companions Werte
+  dimmen oder ausschalten. Jeder Bühnenbefehl schaltet das Dauersenden ein,
+  auch eine Programmzeile mit Lichtszene oder eine Overall-Taste, und es
+  bleibt an. Ein Zurückgeben an Companion gibt es nicht. Ist der gespeicherte
+  Frame nach einem Neustart ungültig, wartet das Dauersenden auf den nächsten
+  Befehl (kein Null-Frame, keine Verdunkelung). `GET /lights/artnet` fragt den Knoten per ArtPoll und
   meldet mit `"merging": true`, dass er zwei Quellen mischt; `"sending"` zeigt,
   ob der Dienst die Bühne hält und ob das Senden scheitert.
 - **Raumlicht** (Shelly, 7 Kreise): An/Aus je Kreis mit dem Zustand, den der
