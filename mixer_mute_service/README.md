@@ -119,10 +119,28 @@ miniatures, and **Standard** restores the original one.
   (optional: a row without one changes no mutes), light scene, a file each
   for playback and translation, for lyrics a song *or* a file (small keys
   "Lied" / "Datei", ✕ removes it), camera presets with an OBS scene per
-  camera, and desktop profiles (switches; the lit ones run in order),
-  and the beamer (hide before the row shows anything, unhide after its
-  files, desktop profiles and song; "Beamer bleibt" leaves it alone), then
-  its shortcuts (switches, run in order after the row's own steps). A
+  camera, desktop profiles (only the chosen ones show, numbered in the
+  order they run, ✕ removes one, ‹ moves one earlier, **+** adds another
+  at the end), and the
+  beamer (hide before the row shows anything, unhide after its files,
+  desktop profiles and song; "Beamer bleibt" leaves it alone). A row may
+  instead use a **shortcut** as its whole configuration: it then runs the
+  shortcut's fields instead of its own (linked: editing the shortcut
+  changes every row using it); time, title, person and the **song** stay
+  the row's (a template's song slots fill it; a shortcut's own song only
+  runs from its Desktop key). Its own fields are hidden but stay saved and
+  come back with "Kein Shortcut" or when the shortcut is deleted; a new
+  row created with a shortcut saves none (the editor's pre-filled group
+  would otherwise run unseen later). A row whose shortcut was deleted says
+  so on every device ("Shortcut „X“ gelöscht – läuft mit eigenen
+  Einstellungen") until it is saved again (or "OK"), and is checked for
+  mute conflicts before it starts. A PUT without `shortcut` (a page from
+  before) keeps the row's shortcut. A row whose shortcut is gone without
+  that (e.g. an imported file) refuses to start ("unknown shortcut"). Rows
+  saved with the older list of shortcuts (run after the row's own steps)
+  take the first one as their shortcut when the service starts, program
+  templates likewise (both saved once); rows that change what they do by
+  this are logged as warnings with the shortcuts' names. A
   choice with only one entry (e.g. one light scene) is a key that
   switches it on and off instead of a dropdown (not the OBS scenes).
   Each row is one compact line (time, delay, title, person, chips of what it
@@ -296,7 +314,7 @@ The connection closes when the service stops.
 | POST | `/program/items/{item_id}/hidden` | `{"hidden": true}` greys a row out, `/program/next` skips it |
 | POST | `/program/items/{item_id}/shortcut` | save what the row does as a new shortcut |
 | GET/POST | `/shortcuts` | list shortcuts / create one (`title` and the row's action fields) |
-| PUT/DELETE | `/shortcuts/{id}` | edit / delete (rows that ran it drop it) |
+| PUT/DELETE | `/shortcuts/{id}` | edit / delete (rows that used it run their own fields again; `program_items`: how many) |
 | POST | `/shortcuts/{id}/duplicate`, `/shortcuts/{id}/play` | copy ("… (Kopie)") / run now |
 | GET  | `/program/obs-scenes` | OBS's scenes for a row's OBS scene (503 if OBS is not reachable) |
 | GET  | `/program/status` | `current_id` (started last today) and `next_id` (hidden rows skipped) |
