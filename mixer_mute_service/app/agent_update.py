@@ -158,6 +158,8 @@ async def agent_pcs(request: Request) -> list:
     songs = getattr(state, "songs", None)
     if songs is not None:
         names.setdefault(songs.settings.target_ip, "Liedanzeige")
+        for target in songs.settings.targets:
+            names.setdefault(target.ip, "Liedanzeige")
     caller = client_pc(request)
     if caller and caller != "127.0.0.1":
         names.setdefault(caller, "dieser PC")
