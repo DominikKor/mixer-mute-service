@@ -36,7 +36,9 @@ class AgentUpdateTests(unittest.TestCase):
         self.dir = Path(tempfile.mkdtemp())
         (self.dir / "show_image_agent.py").write_text("print('old agent')\n")
         patches = [patch.object(agent, "AGENT_DIR", self.dir),
-                   patch.object(agent, "VERSION_FILE", self.dir / "version.txt")]
+                   patch.object(agent, "VERSION_FILE", self.dir / "version.txt"),
+                   # /info reads mpv's log: never the real one.
+                   patch.object(agent, "mpv_log_path", return_value=self.dir / "mpv-last.log")]
         for p in patches:
             p.start()
             self.addCleanup(p.stop)

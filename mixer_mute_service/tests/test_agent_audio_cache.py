@@ -55,6 +55,9 @@ def wait_until(predicate, timeout=5.0):
 
 def wait_idle():
     """Until no background copy is running."""
+    for thread in threading.enumerate():
+        if thread.name == "audio-copy":
+            thread.join(5)
     assert wait_until(lambda: not agent._audio_cache_busy and not agent._prefetching_sources.is_set())
 
 
@@ -71,6 +74,10 @@ class CacheTestCase(unittest.TestCase):
             patch.object(agent, "audio_cache_directory", return_value=self.cache),
             patch.object(agent, "_find_mpv", return_value="/fake/mpv"),
             patch.object(agent, "START_CHECK_SECONDS", 0.0),
+            # /info reads mpv's log: never the real one in the home folder.
+            patch.object(agent, "mpv_log_path", return_value=base / "mpv-last.log"),
+            patch.dict(agent._prefetch_failures, clear=True),
+            patch.dict(agent._sources_checked, clear=True),
         ]
         for item in patches:
             item.start()
@@ -145,13 +152,100 @@ class FileCopyTests(CacheTestCase):
         with self.assertRaises(ValueError):
             self.play(self.music / "fehlt.mp3")
 
-    def test_known_sources_are_refreshed_at_agent_start(self):
-        agent._prefetch_now(self.source)
+    def test_sources_sent_last_are_refreshed_at_agent_start(self):
+        agent.prefetch_sources([str(self.source)]).join(5)
+        self.assertEqual(json.loads((self.cache / agent.SOURCES_FILE).read_text()), [str(self.source)])
         self.source.write_bytes(b"ID3 neu" + os.urandom(1000))
-        (self.cache / "leftover.mp3.part").write_bytes(b"x")
+        leftover = self.cache / "0123456789abcdef0123-1-2.mp3.part"
+        leftover.write_bytes(b"x")
+        agent._sources_checked.clear()  # a new agent process
         agent.refresh_audio_cache()
         self.assertEqual(agent.cached_audio(self.source).read_bytes(), self.source.read_bytes())
-        self.assertFalse((self.cache / "leftover.mp3.part").exists())
+        self.assertFalse(leftover.exists(), "a copy a restart cut off is removed")
+
+    def test_a_source_no_longer_sent_is_not_copied_again_at_start(self):
+        agent.prefetch_sources([str(self.source)]).join(5)
+        agent.prefetch_sources([]).join(5)
+        self.source.write_bytes(b"ID3 neu" + os.urandom(1000))
+        agent._sources_checked.clear()
+        with patch.object(agent, "_prefetch_now") as prefetch:
+            agent.refresh_audio_cache()
+        prefetch.assert_not_called()
+
+    def test_a_failed_copy_leaves_no_part_file(self):
+        def broken(_source, _copy, _chunk):
+            raise OSError("drive gone")
+
+        with patch.object(agent.shutil, "copyfileobj", side_effect=broken):
+            agent._prefetch_now(self.source)
+        self.assertIsNone(agent.cached_audio(self.source))
+        self.assertEqual(list(self.cache.glob("*.part")), [])
+
+    def test_a_change_of_the_modification_time_during_the_copy_is_caught(self):
+        real = agent.shutil.copyfileobj
+
+        def touching(source, copy, chunk):
+            real(source, copy, chunk)
+            os.utime(self.source, ns=(time.time_ns(), time.time_ns() + 5_000_000_000))
+
+        with patch.object(agent.shutil, "copyfileobj", side_effect=touching):
+            agent._prefetch_now(self.source)
+        self.assertEqual([p.name for p in self.cache.glob("*") if p.suffix == ".mp3"], [])
+        self.assertEqual(list(self.cache.glob("*.part")), [])
+
+    def test_no_copy_without_enough_free_disk_space(self):
+        usage = agent.shutil.disk_usage(self._dirs.name)._replace(free=agent.AUDIO_CACHE_KEEP_FREE_BYTES)
+        with patch.object(agent.shutil, "disk_usage", return_value=usage):
+            agent._prefetch_now(self.source)
+        self.assertIsNone(agent.cached_audio(self.source))
+
+    def test_only_audio_files_are_copied(self):
+        other = self.music / "Skript.ps1"
+        other.write_bytes(b"x")
+        agent._prefetch_now(other)
+        self.assertEqual([p for p in self.cache.glob("*")] if self.cache.exists() else [], [])
+
+    def test_a_source_sent_every_30_s_is_looked_at_once_per_5_minutes(self):
+        agent.prefetch_sources([str(self.source)]).join(5)
+        with patch.object(agent, "cached_audio", wraps=agent.cached_audio) as looked:
+            for _ in range(5):
+                thread = agent.prefetch_sources([str(self.source)])
+                thread.join(5)
+            self.assertEqual(looked.call_count, 0)
+            agent._sources_checked[str(self.source)] -= agent.PREFETCH_CHECK_SECONDS
+            agent.prefetch_sources([str(self.source)]).join(5)
+            self.assertEqual(looked.call_count, 1)
+
+    def test_a_failing_copy_is_retried_only_after_a_growing_pause(self):
+        def broken(_source, _copy, _chunk):
+            raise OSError("drive gone")
+
+        with patch.object(agent.shutil, "copyfileobj", side_effect=broken) as copy:
+            agent._prefetch_now(self.source)
+            agent._prefetch_now(self.source)
+            self.assertEqual(copy.call_count, 1, "no retry before the pause is over")
+            key = agent._cache_key(self.source)
+            first = agent._prefetch_failures[key]
+            self.assertEqual(first["failures"], 1)
+            first["retry_at"] = 0
+            agent._prefetch_now(self.source)
+            self.assertEqual(copy.call_count, 2)
+            second = agent._prefetch_failures[key]
+            self.assertEqual(second["failures"], 2)
+            self.assertGreater(second["retry_at"] - time.monotonic(), agent.PREFETCH_RETRY_SECONDS * 1.5)
+            # A changed file is tried again at once.
+            self.source.write_bytes(b"ID3 neu")
+            agent._prefetch_now(self.source)
+            self.assertEqual(copy.call_count, 3)
+        agent._prefetch_failures[key]["retry_at"] = 0
+        agent._prefetch_now(self.source)
+        self.assertIsNotNone(agent.cached_audio(self.source))
+        self.assertNotIn(key, agent._prefetch_failures)
+
+    def test_file_keys_ignore_case_youtube_keys_do_not(self):
+        self.assertEqual(agent._cache_key(Path("I:/Musik/A.mp3")), agent._cache_key(Path("i:/musik/a.MP3")))
+        self.assertNotEqual(agent._cache_key("https://youtu.be/abcDEF123"),
+                            agent._cache_key("https://youtu.be/abcdef123"))
 
     def test_cache_keeps_to_its_size_dropping_the_least_recently_played(self):
         other = self.music / "Andere.mp3"
@@ -193,6 +287,7 @@ class YoutubeCopyTests(CacheTestCase):
             wait_idle()
         self.assertEqual(len(self.ytdlp_calls), 1)
         self.assertIn("--no-playlist", self.ytdlp_calls[0])
+        self.assertIn("--ignore-config", self.ytdlp_calls[0])
         self.assertEqual(self.ytdlp_calls[0][-2:], ["--", URL])
         copy = agent.cached_audio(URL)
         self.assertEqual(copy.read_bytes(), b"opus audio")
@@ -203,13 +298,19 @@ class YoutubeCopyTests(CacheTestCase):
 
     def test_failed_download_leaves_nothing_and_keeps_streaming(self):
         failed = agent.subprocess.CompletedProcess([], 1, b"", b"ERROR: Video unavailable")
-        with patch.object(agent.subprocess, "run", return_value=failed):
+        with patch.object(agent.subprocess, "run", return_value=failed) as run:
             agent._prefetch_now(URL)
             self.assertIsNone(agent.cached_audio(URL))
             self.assertEqual(list(self.cache.glob("*download*")), [])
             played, _ = self.play(URL)
             wait_idle()
+            # The service sends the link with every /info: yt-dlp does not
+            # run again before the pause is over.
+            for _ in range(3):
+                agent._sources_checked.clear()
+                agent.prefetch_sources([URL]).join(5)
         self.assertEqual(played, URL)
+        self.assertEqual(run.call_count, 1)
 
 
 MPV_LOG = """\
@@ -221,7 +322,8 @@ MPV_LOG = """\
 [  58.511][i][cplayer] AO: [wasapi] 48000Hz stereo 2ch float
 [  58.520][v][cplayer] starting audio playback
 not a log line
-[  60.000][v][cplayer] EOF code: 5
+[ 1.2.3][v][cplayer] a broken stamp
+[ 358.000][v][cplayer] EOF code: 5
 """
 
 
@@ -233,12 +335,19 @@ class MpvStartReportTests(unittest.TestCase):
             log.write_text(MPV_LOG, encoding="utf-8")
             report = agent.mpv_start_report(log)
         self.assertEqual((report["opened"], report["audio_out"], report["playing"]), (58.43, 58.511, 58.52))
-        self.assertEqual(len(report["gaps"]), 2)
+        self.assertEqual(len(report["gaps"]), 1, "quiet playback after the first sound is no stall")
         stall = report["gaps"][0]
         self.assertEqual(stall["seconds"], 58.38)
         self.assertIn("Opening I:", stall["before"])
         self.assertIn("Trying demuxers", stall["after"])
         self.assertIn("written_at", report)
+
+    def test_odd_stamps_never_break_the_report(self):
+        with tempfile.TemporaryDirectory() as directory:
+            log = Path(directory) / "mpv-last.log"
+            log.write_text("[1e999][v][x] y\n[   .][v][x] y\n[ 0.5][v][cplayer] Opening done: a\n", encoding="utf-8")
+            report = agent.mpv_start_report(log)
+        self.assertEqual((report["opened"], report["gaps"]), (0.5, []))
 
     def test_no_log_no_report(self):
         with tempfile.TemporaryDirectory() as directory:

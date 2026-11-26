@@ -49,9 +49,11 @@ RESTART_WAIT_SECONDS = 45
 # Every /info call carries the audio sources (files, YouTube links) of the
 # PC's audio profiles. Current agents keep a local copy of each and
 # play that: the music is on a Google Drive drive, whose files are fetched
-# only when opened, and mpv waited about a minute for that before the first
-# sound. Older agents ignore the field. The page asks /update/agents on load
-# and with every Update, so new and changed profiles reach the agents soon.
+# only when opened, so mpv may wait for Drive before the first sound. Older
+# agents ignore the field. Every open page asks /update/agents every 30 s
+# (and with every Update), so new and changed profiles reach the agents
+# soon; the agent looks at each source at most once per 5 minutes and tries
+# a failed one again only after a growing pause (5 min doubling to 1 h).
 MAX_AUDIO_SOURCES = 20
 MAX_AUDIO_SOURCES_BYTES = 6000  # the agent takes at most 8 KiB for /info
 
