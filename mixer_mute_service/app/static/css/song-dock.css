@@ -2,7 +2,7 @@
    that slides out of the row's top edge, above its summary line, and spans
    the whole card --
      +---------+  [ < ]  [T][1][R][2][R] …   ⚠ 3/7  [Aus] [Schwarz]  [Weiter >]
-     | preview |  ALS NÄCHSTES  first line of the next slide …
+     | preview |  NÄCHSTE FOLIE  first line of the next slide …
      +---------+
    The drawer is placed absolutely at the row's top (inside its border); the
    row's top padding grows by its height (--sd-h, set by the script) and the
@@ -66,6 +66,12 @@
   color: #fff; border-color: #000; background: linear-gradient(to bottom, #4b5058, #2b2f36);
   box-shadow: inset 0 2px 4px rgba(0,0,0,.6);
 }
+/* Just appeared (or switched between the keys and "Zeigen"): the keys take
+   no taps for SONG_DOCK_GUARD_MS (song-dock.js) and fade in meanwhile (over
+   0.6 s; the longer guard after a pushed PLAY key just keeps them faded in). */
+.song-dock.arming .sd-main button { animation: sd-arm .6s ease-in backwards; }
+@keyframes sd-arm { from { opacity: .3; } }   /* to the key's own opacity (a disabled key stays dim) */
+@media (prefers-reduced-motion: reduce) { .song-dock.arming .sd-main button { animation: none; } }
 /* Keys wait for the last press without the grey flash of a disabled key */
 .song-dock.busy button:disabled { opacity: .85; cursor: progress; }
 
