@@ -210,32 +210,33 @@ class AdvanceTests(unittest.TestCase):
                 self.assertNotIn("stamp", stop, f"{profile}: whatever start it was")
                 self.assertEqual(stop["id"], profile)
 
-    def test_mission_spotlight_videos_play_in_mpv(self):
+    def test_video_starts_need_no_player_field(self):
+        # The agent itself plays every video in mpv when it has mpv.exe, so
+        # the service sends a video start as any other: an older agent
+        # accepts it unchanged.
         calls = []
 
         def post(url, token, payload, timeout):
             calls.append(payload)
-            if "player" in payload and payload.get("old"):
-                raise urllib.error.HTTPError(url, 400, "Bad Request", None, None)
             return {"ok": True}
 
         with app_client(PROFILES, env=ENV) as (client, _folder), patch("app.display_agent._post", post):
             self.assertTrue(client.post("/desktop/ms/open").json()["ok"])
-            self.assertEqual(calls[-1]["player"], "mpv")
+            self.assertNotIn("player", calls[-1])
             self.assertTrue(calls[-1]["path"].startswith("I:\\Mission Spotlight\\"), calls[-1]["path"])
-            client.post("/desktop/spotlight/open")
-            self.assertNotIn("player", calls[-1], "other files open in the PC's default app")
 
         def old_agent(url, token, payload, timeout):
             calls.append(payload)
-            if "player" in payload or "stamp" in payload:
+            if "stamp" in payload:
                 raise urllib.error.HTTPError(url, 400, "Bad Request", None, None)
             return {"ok": True}
 
         with app_client(PROFILES, env=ENV) as (client, _folder), patch("app.display_agent._post", old_agent):
             calls.clear()
-            self.assertTrue(client.post("/desktop/ms/open").json()["ok"])
-            self.assertEqual(["player" in c for c in calls], [True, False], "an older agent: the default app")
+            with self.assertLogs("mixer.actions", "WARNING") as logs:
+                self.assertTrue(client.post("/desktop/ms/open").json()["ok"])
+            self.assertEqual(["stamp" in c for c in calls], [True, False], "an older agent: sent again without")
+            self.assertIn("rejected stamp; sent again without", "\n".join(logs.output))
 
     def test_jingle_then_the_music_again(self):
         # Row A music, row B a jingle (file field) on the same PC, row C the
@@ -407,6 +408,7 @@ class AgentCloseTests(unittest.TestCase):
         agent._opened_windows.clear()
         agent._unknown_windows.clear()
         agent._opened_stamps.clear()
+        agent._cancelled.clear()
 
     def test_only_the_started_process_windows_are_remembered(self):
         owners = {100: 7, 200: 9}
@@ -507,22 +509,89 @@ class AgentCloseTests(unittest.TestCase):
             agent._launching.clear()
         self.assertFalse(agent._keep_open("ms", "s3", {}.get))
 
-    def test_videos_in_mpv(self):
+    def test_only_a_real_mpv_plays_videos(self):
         from pathlib import Path as WinPath
-        video = {"kind": "file", "player": "mpv", "title": "Spotlight", "monitor": 2, "fullscreen": True}
-        with patch.object(agent, "_find_mpv", return_value="C:\\Program Files\\MPV Player\\mpv.exe"):
-            self.assertEqual(agent._video_player(video, WinPath("I:/MS/01_Video.mp4")), "C:\\Program Files\\MPV Player\\mpv.exe")
+        video = {"kind": "file", "title": "Spotlight", "monitor": 2, "fullscreen": True, "position": "top-left"}
+        real = "C:\\Program Files\\MPV Player\\mpv.exe"
+        with patch.object(agent, "_play_mpv", return_value=real):
+            self.assertEqual(agent._video_player(video, WinPath("I:/MS/01_Video.mp4")), real,
+                             "every video, not only Mission Spotlight")
             self.assertIsNone(agent._video_player(video, WinPath("I:/MS/01_Folien.pdf")), "not a video")
-            self.assertIsNone(agent._video_player({**video, "player": None}, WinPath("I:/MS/01_Video.mp4")))
-        with patch.object(agent, "_find_mpv", return_value=None), self.assertLogs(agent.logger, "WARNING"):
-            self.assertIsNone(agent._video_player(video, WinPath("I:/MS/01_Video.mp4")), "no mpv: the default app")
-        with patch.object(agent, "monitor_bounds", return_value=(1920, 0, 3840, 1080)), \
-                patch.object(agent, "agent_log_directory", return_value=WinPath("/tmp")):
-            command = agent._video_command("mpv", WinPath("I:/MS/01_Video.mp4"), video)
-        self.assertIn("--geometry=1920x1080+1920+0", command)
-        self.assertIn("--no-border", command)
-        self.assertIn("--keep-open=no", command, "it ends with the video")
-        self.assertEqual(command[-2:], ["--", str(WinPath("I:/MS/01_Video.mp4"))])
+            self.assertIsNone(agent._video_player({**video, "kind": "program"}, WinPath("I:/MS/x.mp4")))
+        for other in (None, "C:\\Program Files\\MPV.NET\\mpvnet.exe",
+                      "C:\\Users\\x\\AppData\\Local\\Microsoft\\WindowsApps\\mpv.exe"):
+            with patch.object(agent, "_play_mpv", return_value=other), self.assertLogs(agent.logger, "WARNING"):
+                self.assertIsNone(agent._video_player(video, WinPath("I:/MS/01_Video.mp4")), f"default app: {other}")
+
+    def test_mpv_command_picks_the_screen_by_its_device_name(self):
+        from pathlib import Path as WinPath
+        video = {"title": "Spotlight", "monitor": 2, "fullscreen": True, "position": "top-left"}
+        with patch.object(agent, "agent_log_directory", return_value=WinPath("/tmp")):
+            command = agent._video_command("mpv.exe", WinPath("I:/MS/01_Video.mp4"), video, "\\\\.\\DISPLAY2")
+            self.assertTrue({"--fs", "--fs-screen-name=\\\\.\\DISPLAY2", "--screen-name=\\\\.\\DISPLAY2",
+                             "--keep-open=yes"} <= set(command), command)
+            self.assertFalse(any(c.startswith("--geometry") for c in command), "mpv places itself")
+            self.assertEqual(command[-2:], ["--", str(WinPath("I:/MS/01_Video.mp4"))])
+            framed = agent._video_command("mpv.exe", WinPath("I:/v.mp4"), {**video, "fullscreen": False,
+                                                                           "position": "bottom-right"}, "\\\\.\\DISPLAY2")
+            self.assertIn("--geometry=100%:100%", framed)
+            self.assertNotIn("--fs", framed)
+            # No device name: the monitor's rectangle, then full screen there.
+            with patch.object(agent, "monitor_bounds", return_value=(1920, 0, 3840, 1080)):
+                fallback = agent._video_command("mpv.exe", WinPath("I:/v.mp4"), video, None)
+            self.assertIn("--geometry=1920x1080+1920+0", fallback)
+            self.assertIn("--fs", fallback)
+
+    def test_monitor_device_names_follow_the_image_order(self):
+        monitors = [((0, 0, 1920, 1080), (0, 0, 1920, 1040), "\\\\.\\DISPLAY1"),
+                    ((1920, 0, 3840, 1080), (1920, 0, 3840, 1080), "\\\\.\\DISPLAY2")]
+        with patch.object(agent, "_monitors", return_value=monitors):
+            self.assertEqual(agent.monitor_device_name(2), "\\\\.\\DISPLAY2")
+            self.assertEqual(agent.monitor_bounds(2), (1920, 0, 3840, 1080), "the same monitor as for images")
+            with self.assertRaises(RuntimeError):
+                agent.monitor_device_name(3)
+
+    def test_a_new_video_start_ends_the_one_still_playing(self):
+        from pathlib import Path as WinPath
+        owners = {100: 7, 200: 8}
+        agent._remember_window("ms", 100, 7, owners.get)
+        closed, started = [], []
+
+        class Process:
+            pid = 8
+
+        def popen(command, **_kwargs):
+            started.append(command)
+            self.assertEqual(closed, [100], "the old player is closed before the new one starts")
+            return Process()
+
+        video = {"id": "ms", "title": "Spotlight", "monitor": 2, "fullscreen": True, "position": "top-left"}
+        with patch.object(agent, "_window_process_id", owners.get), patch.object(agent, "_post_close",
+                                                                               lambda h: closed.append(h) or True), \
+                patch.object(agent, "monitor_device_name", return_value="\\\\.\\DISPLAY2"), \
+                patch.object(agent, "agent_log_directory", return_value=WinPath("/tmp")), \
+                patch.object(agent.subprocess, "Popen", popen), \
+                patch.object(agent, "_find_window", return_value=200), \
+                self.assertLogs(agent.logger, "INFO") as logs:
+            agent._launch_video("mpv.exe", WinPath("I:/MS/01_Video.mp4"), video, set())
+        self.assertEqual(agent._opened_windows, {"ms": {(200, 8)}}, "the new window is remembered, not placed")
+        text = "\n".join(logs.output)
+        self.assertIn("DISPLAY2", text)
+        self.assertIn("--fs-screen-name=", text, "the full command line is in the log")
+
+    def test_a_close_while_opening_closes_the_window_once_it_is_there(self):
+        agent._launching["ms"] = agent.time.monotonic() + 5
+        try:
+            self.assertEqual(agent._close_profile_windows("ms", {}.get, lambda h: True), 0)
+            self.assertIn("ms", agent._cancelled)
+            closed = []
+            with patch.object(agent, "_window_process_id", {300: 9}.get), \
+                    patch.object(agent, "_post_close", lambda h: closed.append(h) or True):
+                agent._remember_video_window("ms", 9, set(), find=lambda pid, before: 300)
+            self.assertEqual((closed, "ms" in agent._cancelled), ([300], False))
+        finally:
+            agent._launching.clear()
+            agent._cancelled.clear()
 
     def test_closes_only_the_profiles_own_windows_still_there(self):
         owners = {100: 7, 101: 7, 102: 7, 200: 9}

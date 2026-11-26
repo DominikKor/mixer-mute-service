@@ -627,11 +627,15 @@ Agent nimmt die Datei, deren Name mit der zweistelligen Woche beginnt, z. B.
 `I:\Mission Spotlight\2026_3.Quartal\01_Testvideo.mp4` (bei mehreren die neueste;
 Ordner ohne Jahr, z. B. `3.Quartal`, werden nicht mehr beachtet).
 Das Profilfenster zeigt das aktuelle Jahr, Quartal und die Woche.
-Videos eines Mission-Spotlight-Profils (`.mp4`, `.mov`, `.mkv`, …) spielt der
-Agent in **mpv** statt in der Standard-App: so kennt er das Fenster und kann es
-schließen, wenn das Programm weitergeht (oder stehen lassen, wenn der nächste
-Punkt dasselbe Video zeigt). Ohne mpv auf dem PC (oder mit einem älteren Agent)
-öffnet die Standard-App das Video wie bisher.
+Videos (`.mp4`, `.mov`, `.mkv`, …; ein Datei-Profil wie Mission Spotlight
+oder eine Datei im Programmpunkt) spielt der Agent selbst in **mpv**, wenn er
+dort eine echte `mpv.exe` findet (nicht MPV.NET, keine Store-App): Vollbild per
+mpv (`--fs`) auf dem eingestellten Monitor, gewählt über dessen Gerätenamen
+(z. B. `\\.\DISPLAY2`, dieselbe Reihenfolge wie bei Bildern). Am Ende bleibt
+das letzte Bild stehen, bis der nächste Programmpunkt es schließt. So kennt der
+Agent das Fenster, schließt es, wenn das Programm weitergeht, und startet nie
+zwei Player für dasselbe Profil. Befehlszeile und Monitor stehen im Agent-Log.
+Ohne mpv (oder mit einem älteren Agent) öffnet die Standard-App das Video wie bisher.
 
 **Platzhalter `*` in Pfaden:** In allen Pfaden (Profile, Datei-Aktionen im
 Programm, Liederbibliothek) steht `*` fuer einen unbekannten Teil eines Namens,
