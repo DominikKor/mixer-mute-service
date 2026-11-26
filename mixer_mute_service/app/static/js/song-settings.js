@@ -4,13 +4,13 @@
 
 // ---- shared song settings dialog -------------------------------------------
 
-const SONG_FORM = { monitor: 2, align: "center" };
+const SONG_FORM = { align: "center" };   // the screens: SONG_FORM_TARGETS (song-screens.js)
 
 function songFormSettings() {
   return {
     library_path: $("sg-path").value.trim(),
     target_ip: $("sg-ip").value.trim(),
-    monitor: SONG_FORM.monitor,
+    targets: SONG_FORM_TARGETS.map(t => ({ ip: t.ip, monitor: t.monitor })),
     fullscreen: $("sg-fullscreen").checked,
     font: $("sg-font").value.trim(),
     font_size: Number($("sg-size").value) || 72,
@@ -59,11 +59,6 @@ function songFormError(message) {
   $("sg-error").textContent = message || "";
 }
 
-function setSongMonitor(n) {
-  SONG_FORM.monitor = n;
-  $("sg-monitor").querySelectorAll("[data-monitor]").forEach(b => b.setAttribute("aria-checked", String(Number(b.dataset.monitor) === n)));
-}
-
 async function openSongDialog() {
   await Promise.all([loadSongs(), loadTargetPcs()]);
   const s = SONG_SETTINGS || {};
@@ -79,16 +74,7 @@ async function openSongDialog() {
   $("sg-show-copyright").checked = s.show_copyright !== false;
   $("sg-show-next").checked = s.show_next_preview !== false;
   setSongAlign(s.text_align || "center");
-  $("sg-monitor").replaceChildren(...[1, 2, 3, 4].map(n => {
-    const b = document.createElement("button");
-    b.type = "button";
-    b.className = "monitor-key";
-    b.setAttribute("role", "radio");
-    b.dataset.monitor = String(n);
-    b.textContent = String(n);
-    return b;
-  }));
-  setSongMonitor(s.monitor || 2);
+  setSongTargets(s.targets || [{ ip: s.target_ip || "192.168.188.11", monitor: s.monitor || 2 }]);
   $("sg-library-status").textContent = songLibraryStatus();
   songFormError(null);
   $("song-dialog").showModal();
@@ -96,6 +82,7 @@ async function openSongDialog() {
 }
 
 async function saveSongSettings() {
+  if (!SONG_FORM_TARGETS.length) { songFormError("Bitte mindestens einen Bildschirm für die Liedtexte wählen."); return false; }
   const result = await api("PUT", "/songs/settings", songFormSettings());
   if (!result.ok || result.data.ok === false) { songFormError(result.data.reason || `HTTP ${result.status}`); return false; }
   SONG_SETTINGS = result.data.settings;
@@ -106,10 +93,6 @@ async function saveSongSettings() {
 
 $("song-settings-btn").addEventListener("click", openSongDialog);
 $("sg-cancel").addEventListener("click", () => $("song-dialog").close());
-$("sg-monitor").addEventListener("click", event => {
-  const b = event.target.closest("[data-monitor]");
-  if (b) { setSongMonitor(Number(b.dataset.monitor)); }
-});
 $("sg-align").addEventListener("click", event => {
   const b = event.target.closest("[data-align]");
   if (b) { setSongAlign(b.dataset.align); renderSongSample(); }

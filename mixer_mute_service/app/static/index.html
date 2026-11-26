@@ -6,6 +6,7 @@
 <title>Mixer Mute Service</title>
 <meta name="mixer-build" content="__BUILD_ID__" />
 <link rel="stylesheet" href="css/app.css?v=__BUILD_ID__" />
+<link rel="stylesheet" href="css/song-dock.css?v=__BUILD_ID__" />
 </head>
 <body>
 <header>
@@ -133,6 +134,7 @@
           <span id="song-live-title" class="song-live-title">Kein Lied auf dem Bildschirm</span>
           <span id="song-live-pos" class="song-live-pos"></span>
         </div>
+        <div id="song-screens" class="song-screens" aria-live="polite" hidden></div>
         <div class="song-controls">
           <button id="song-prev-btn" type="button" title="Vorherige Folie (Bild auf, ←)">◀ Zurück</button>
           <button id="song-next-btn" type="button" class="program-play" title="Nächste Folie (Bild ab, →, Leertaste); nach der letzten: schwarz">Weiter ▶</button>
@@ -445,13 +447,14 @@
     <label class="pf-field"><span>Bibliothek auf dem Anzeige-PC</span>
       <input id="sg-path" class="pf-input mono" type="text" autocomplete="off" spellcheck="false" placeholder="C:\Users\*\foilpresenter Bibliothek" /></label>
     <div class="pf-hint">* steht für einen unbekannten Teil eines Namens, z. B. C:\Users\*\foilpresenter Bibliothek.</div>
-    <div class="pf-field"><label for="sg-ip">Anzeige auf</label>
+    <div class="pf-field"><label for="sg-ip">Bibliothek auf dem PC</label>
       <div class="pc-select-row">
         <select id="sg-ip" class="pf-input"></select>
         <button type="button" class="pc-edit-btn" data-open-target-pcs title="Namen und IP-Adressen der PCs ändern">PCs…</button>
       </div></div>
-    <div class="pf-field"><span class="pf-label" id="sg-monitor-label">Monitor</span>
-      <div id="sg-monitor" class="monitor-picker" role="radiogroup" aria-labelledby="sg-monitor-label"></div></div>
+    <div class="pf-field"><span class="pf-label" id="sg-targets-label">Liedtext zeigen auf · ein oder mehrere Bildschirme</span>
+      <div id="sg-targets" class="song-targets" role="group" aria-labelledby="sg-targets-label"></div>
+      <span class="pf-hint">Jeder Schritt geht an alle gewählten Bildschirme gleichzeitig; je PC ein Monitor.</span></div>
     <div class="pf-grid">
       <label class="pf-field"><span>Schrift</span>
         <input id="sg-font" class="pf-input" type="text" maxlength="60" autocomplete="off" /></label>
@@ -651,7 +654,7 @@
 <dialog id="shortcut-dialog" class="update-dialog profile-dialog shortcut-dialog" aria-labelledby="shortcut-dialog-title">
   <form id="shortcut-form" class="update-body" novalidate>
     <h3 id="shortcut-dialog-title">Shortcut bearbeiten</h3>
-    <div class="pf-hint">Was der Shortcut tut, wie bei einem Programmpunkt. Er läuft über seine Taste unter Desktop, und Programmpunkte können ihn als ihre ganze Konfiguration verwenden: Änderungen hier gelten dann für alle diese Programmpunkte.</div>
+    <div class="pf-hint">Was der Shortcut tut, wie bei einem Programmpunkt. Er läuft über seine Taste unter Desktop; in einen Programmpunkt übernimmt ihn „⋮ → Shortcut laden“ (eine Kopie: spätere Änderungen hier ändern keine Programmpunkte).</div>
     <table class="program-table shortcut-table"><tbody id="shortcut-editor"></tbody></table>
     <div id="shortcut-error" class="update-lcd err" hidden></div>
     <div class="update-actions">
@@ -660,16 +663,22 @@
     </div>
   </form>
 </dialog>
+<dialog id="shortcut-load-dialog" class="update-dialog profile-dialog shortcut-load-dialog" aria-labelledby="shortcut-load-title">
+  <div class="update-body">
+    <h3 id="shortcut-load-title">Shortcut laden</h3>
+    <div class="pf-hint">Übernimmt die Einstellungen des Shortcuts in diesen Programmpunkt; danach bleiben sie hier änderbar. Uhrzeit, Titel, Person und Lied bleiben.</div>
+    <div id="shortcut-load-list" class="shortcut-load-list"></div>
+    <div id="shortcut-load-empty" class="pf-hint" hidden>Noch keine Shortcuts – unter Desktop mit + anlegen oder im Programm über „⋮ → Als Shortcut speichern“.</div>
+    <div class="update-actions">
+      <button type="button" id="shortcut-load-cancel">Abbrechen</button>
+    </div>
+  </div>
+</dialog>
 <div id="program-head-menu" class="tile-menu panel-menu" role="menu" hidden>
   <button type="button" role="menuitem" id="program-export-btn" title="Programmpunkte als bearbeitbare JSON-Datei exportieren"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M12 4v11M7.5 10.5L12 15l4.5-4.5M5 19h14"/></svg><span>JSON exportieren</span></button>
   <button type="button" role="menuitem" id="program-import-btn" title="Programmpunkte aus einer JSON-Datei importieren (ersetzt das Programm)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M12 15V4M7.5 8.5L12 4l4.5 4.5M5 19h14"/></svg><span>JSON importieren…</span></button>
   <div class="menu-sep" role="separator"></div>
   <button type="button" role="menuitem" id="program-reset-btn" class="danger" title="Startzeiten und Verzögerungen vergessen (neuer Gottesdienst, Probe)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 13a8 8 0 1 0 2.3-5.7"/><path d="M4 4v7h7"/></svg><span>Ablauf zurücksetzen…</span></button>
-</div>
-<div id="program-menu" class="tile-menu" role="menu" hidden>
-  <button type="button" role="menuitem" data-menu-action="clone"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/></svg>Duplizieren</button>
-  <button type="button" role="menuitem" data-menu-action="shortcut"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="1.5"/><path d="M9 20h6M12 16v4M10 7.5l4 2.5-4 2.5z"/></svg><span id="program-menu-shortcut-text">Als Shortcut speichern</span></button>
-  <button type="button" role="menuitem" data-menu-action="delete" class="danger"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6"/></svg>Löschen</button>
 </div>
 
 
@@ -694,6 +703,8 @@
 <script src="js/program.js?v=__BUILD_ID__"></script>
 <script src="js/files.js?v=__BUILD_ID__"></script>
 <script src="js/songs.js?v=__BUILD_ID__"></script>
+<script src="js/song-dock.js?v=__BUILD_ID__"></script>
+<script src="js/song-screens.js?v=__BUILD_ID__"></script>
 <script src="js/templates.js?v=__BUILD_ID__"></script>
 <script src="js/song-settings.js?v=__BUILD_ID__"></script>
 <script src="js/lights.js?v=__BUILD_ID__"></script>

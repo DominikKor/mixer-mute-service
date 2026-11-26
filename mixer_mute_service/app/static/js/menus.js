@@ -45,7 +45,7 @@ function menuButtonHtml(label, key, extra = "") {
 }
 
 // ---- one menu open at a time ---------------------------------------------------
-// Two kinds: a fixed menu in index.html (#program-menu, #shortcut-menu, the
+// Two kinds: a fixed menu in index.html (#shortcut-menu, the
 // section heads' menus; their buttons carry their own handlers) or one built
 // from a list of items (openActionMenu). Both sit under the key that opened
 // them (above it near the bottom of the window), take arrow keys and Escape,

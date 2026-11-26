@@ -22,6 +22,33 @@ if tkinter is not None:
     from desktop_agent import show_image_agent as agent
 
 
+_module_patches = []
+
+
+def setUpModule():
+    # A play makes a local copy of its source in the background (see
+    # tests/test_agent_audio_cache.py): here it must neither write into the
+    # real cache folder nor run yt-dlp against YouTube.
+    if tkinter is None:
+        return
+    cache = tempfile.TemporaryDirectory()
+    _module_patches.extend([
+        cache,
+        patch.object(agent, "audio_cache_directory", return_value=Path(cache.name)),
+        patch.object(agent, "prefetch_audio", return_value=None),
+    ])
+    for item in _module_patches[1:]:
+        item.start()
+
+
+def tearDownModule():
+    for item in reversed(_module_patches[1:]):
+        item.stop()
+    if _module_patches:
+        _module_patches[0].cleanup()
+    _module_patches.clear()
+
+
 class FakeProcess:
     pid = 1234
 

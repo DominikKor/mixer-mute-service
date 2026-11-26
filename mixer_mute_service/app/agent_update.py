@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import json
 import logging
 import time
 from ipaddress import IPv4Address
@@ -37,12 +38,39 @@ from fastapi import APIRouter, Request
 
 from . import display_agent
 from .agent_download import SCRIPT_NAME, _agent_files, _version, agent_dir
+from .mission_spotlight import profile_path
 from .responses import fail
 
 router = APIRouter()
 log = logging.getLogger("mixer.agent_update")
 
 RESTART_WAIT_SECONDS = 45
+
+# Every /info call carries the audio sources (files, YouTube links) of the
+# PC's audio profiles. Current agents keep a local copy of each and
+# play that: the music is on a Google Drive drive, whose files are fetched
+# only when opened, so mpv may wait for Drive before the first sound. Older
+# agents ignore the field. Every open page asks /update/agents every 30 s
+# (and with every Update), so new and changed profiles reach the agents
+# soon; the agent looks at each source at most once per 5 minutes and tries
+# a failed one again only after a growing pause (5 min doubling to 1 h).
+MAX_AUDIO_SOURCES = 20
+MAX_AUDIO_SOURCES_BYTES = 6000  # the agent takes at most 8 KiB for /info
+
+
+def audio_sources(request: Request, target: str) -> list:
+    sources: list = []
+    profiles = request.app.state.cfg.desktop_display.profiles
+    for profile in profiles.values():
+        if profile.kind != "audio" or profile.target_ip != target or not profile.path:
+            continue
+        path = profile_path(profile)
+        if path in sources:
+            continue
+        if len(sources) >= MAX_AUDIO_SOURCES or len(json.dumps(sources + [path])) > MAX_AUDIO_SOURCES_BYTES:
+            break
+        sources.append(path)
+    return sources
 
 
 def client_pc(request: Request) -> str:
@@ -68,7 +96,8 @@ async def _agent_info(request: Request, target: str) -> dict:
     if not target or not display_agent.allowed_target(target):
         return {**base, "present": False, "reason": "no display agent on this device"}
     try:
-        answer = await display_agent.call(cfg, target, "/info", {}, timeout=2.0)
+        answer = await display_agent.call(cfg, target, "/info", {"audio": audio_sources(request, target)},
+                                          timeout=2.0)
     except display_agent.AgentError as exc:
         if exc.agent_status == 404:
             # Answers, but does not know /info: an agent from before.
@@ -78,7 +107,9 @@ async def _agent_info(request: Request, target: str) -> dict:
     info = {**base, "present": True, "version": version, "current": version == latest, "self_update": True}
     # Agents since 1.2.1-16x say which mpv / yt-dlp they find (None: not
     # found) and what of the user's environment they had to fill in at start.
-    for key in ("mpv", "ytdlp", "restored_env", "started_at"):
+    # Since the local audio copies also where mpv's last start spent its
+    # time (audio_start; see mpv_start_report in the agent).
+    for key in ("mpv", "ytdlp", "restored_env", "started_at", "audio_start"):
         if key in answer:
             info[key] = answer[key]
     # Agents with POST /restart say so; older ones can only be updated.
@@ -129,6 +160,8 @@ async def agent_pcs(request: Request) -> list:
     songs = getattr(state, "songs", None)
     if songs is not None:
         names.setdefault(songs.settings.target_ip, "Liedanzeige")
+        for target in songs.settings.targets:
+            names.setdefault(target.ip, "Liedanzeige")
     caller = client_pc(request)
     if caller and caller != "127.0.0.1":
         names.setdefault(caller, "dieser PC")
