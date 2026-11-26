@@ -1,0 +1,140 @@
+/* Song dock (js/song-dock.js): the running program row's song, in a drawer
+   that slides out under the row's summary line and spans the whole card --
+     [ < ]  [T][1][R][2][R]  first line of the slide …   3/7  [Schwarz]  [Weiter >]
+   It opens by growing its grid row from 0fr to 1fr (no fixed height) and
+   reaches the card's left, right and bottom edge, so it reads as part of the
+   row. Another song or none on screen: one slim line with "Zeigen". */
+.program-table td.song-dock {
+  grid-column: 1 / -1; display: grid; grid-template-rows: 0fr; gap: 0;
+  margin: 0 -10px 0 -12px; opacity: 0;
+  transition: grid-template-rows .26s ease-out, margin-bottom .26s ease-out, opacity .2s ease-out;
+}
+.program-table td.song-dock::before { content: none; }
+.program-table td.song-dock.open { grid-template-rows: 1fr; margin-bottom: -6px; opacity: 1; }
+.program-table tr.program-open td.song-dock.open { margin-bottom: -12px; }
+/* Closed row: the drawer sits right under the summary line (the row has no
+   other lines then); an open row shows it after its fields. */
+.program-table tr.song-docked:not(.program-open) { row-gap: 0; }
+.program-table tr.program-hidden td.song-dock { opacity: 1; filter: none; }
+@media (prefers-reduced-motion: reduce) { .program-table td.song-dock { transition: none; } }
+.program-table td.song-dock.instant { transition: none; }
+
+.song-dock-drawer {
+  min-height: 0; overflow: hidden; border-radius: 0 0 7px 7px;
+  background: linear-gradient(to bottom, #0b0e11, #111519);
+  border-top: 1px solid #000;
+  box-shadow: inset 0 7px 9px -7px rgba(0,0,0,.9), inset 0 -1px 0 rgba(255,255,255,.03);
+}
+/* Both states as high as the keys' line (52 px keys + padding): the drawer
+   keeps its height when the song leaves the screen or comes back. */
+.song-dock-bar, .song-dock-off { padding: 8px 10px 8px 12px; min-height: 68px; }
+.song-dock-bar {
+  display: grid; align-items: center; gap: 8px;
+  grid-template-columns: 72px minmax(0, 1fr) auto auto auto 148px;
+}
+.song-dock:not(.live) .song-dock-bar, .song-dock.live .song-dock-off { display: none; }
+
+.song-dock button { min-height: 52px; padding: 0 12px; }
+.song-dock button.sd-prev { display: grid; place-items: center; padding: 0; }
+.song-dock button.sd-next {
+  display: flex; align-items: center; justify-content: center; gap: 6px; font-size: 15px; padding: 0 10px 0 16px;
+}
+.song-dock button.sd-hide { min-width: 64px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
+.song-dock button.sd-blank { min-width: 96px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
+.song-dock button.sd-blank.on {
+  color: #fff; border-color: #000; background: linear-gradient(to bottom, #4b5058, #2b2f36);
+  box-shadow: inset 0 2px 4px rgba(0,0,0,.6);
+}
+/* Keys wait for the last press without the grey flash of a disabled key */
+.song-dock.busy button:disabled { opacity: .85; cursor: progress; }
+
+/* Slide chips: one line, scrolled inside the strip (never the page); the
+   first line of the slide on screen takes the room that is left. */
+.sd-mid {
+  display: grid; grid-template-columns: minmax(0, max-content) minmax(0, 1fr); align-items: center; gap: 12px; min-width: 0;
+}
+.sd-chips {
+  display: flex; gap: 6px; min-width: 0; padding: 4px 2px; overflow-x: auto; overscroll-behavior-x: contain;
+  scrollbar-width: none; scroll-snap-type: x proximity;
+}
+.sd-chips::-webkit-scrollbar { display: none; }
+.sd-chips.more-right { -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 36px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 36px), transparent); }
+.sd-chips.more-left { -webkit-mask-image: linear-gradient(to left, #000 calc(100% - 36px), transparent); mask-image: linear-gradient(to left, #000 calc(100% - 36px), transparent); }
+.sd-chips.more-left.more-right {
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 36px, #000 calc(100% - 36px), transparent);
+  mask-image: linear-gradient(to right, transparent, #000 36px, #000 calc(100% - 36px), transparent);
+}
+.song-dock button.sd-chip {
+  flex: 0 0 auto; min-width: 44px; min-height: 44px; height: 44px; padding: 0 8px; scroll-snap-align: center;
+  font: 800 15px/1 var(--mono); color: var(--lcd-dim); background: var(--lcd-bg); border: 1px solid #000;
+  box-shadow: var(--lcd-shadow); text-shadow: none;
+}
+.song-dock button.sd-chip.current {
+  color: #0b1a10; border-color: #3ee07f; background: radial-gradient(ellipse at 50% 30%, #7ff0a8, #3ee07f 60%, #22a356);
+  box-shadow: 0 0 0 1px #3ee07f, 0 0 10px rgba(62,224,127,.45);
+}
+.sd-line {
+  min-width: 0; font-size: 14px; font-weight: 600; color: #b9c1cc; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.sd-status { display: flex; align-items: center; gap: 8px; }
+.sd-pos { font: 700 13px/1 var(--mono); color: #8d96a3; white-space: nowrap; }
+/* A screen missed the last step: amber key, a tap names it and why */
+.song-dock button.sd-warn {
+  min-width: 52px; padding: 0 10px; font-size: 18px; color: #ffbf4d; border-color: #4a3410;
+  box-shadow: 0 0 10px rgba(255,191,77,.25), inset 0 1px 0 rgba(255,255,255,.1);
+}
+
+.song-dock-off { display: flex; align-items: center; gap: 10px; }
+.sd-note { display: grid; place-items: center; color: #7ff0a8; flex-shrink: 0; }
+.sd-off-text { flex: 1; min-width: 0; font-size: 13px; font-weight: 600; color: #9aa3b0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.song-dock-off button.sd-show { min-height: 44px; min-width: 96px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
+
+/* Phones (not a target, but nothing may break): the chips get their own line */
+@media (max-width: 640px) {
+  .song-dock-bar { grid-template-columns: 64px minmax(0, 1fr) 120px; }
+  .sd-mid { grid-column: 1 / -1; grid-row: 1; }
+  .sd-pos { display: none; }
+}
+
+/* Song screens (js/song-screens.js) -------------------------------------------
+   Liedanzeige: where the lyrics go; a screen that failed in amber with why. */
+.song-screens { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; }
+.song-screens-label { font-size: 10px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; color: #7d8594; }
+.song-screen {
+  display: inline-flex; align-items: center; gap: 6px; max-width: 100%; padding: 3px 9px; border-radius: 10px;
+  font-size: 12px; font-weight: 600; color: var(--lcd-text); background: #0b1418; border: 1px solid #000;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.song-screen::before { content: ""; flex-shrink: 0; width: 7px; height: 7px; border-radius: 50%; background: #59616d; }
+.song-screen.ok::before { background: #3ee07f; box-shadow: 0 0 6px rgba(62,224,127,.6); }
+.song-screen.failed { color: #ffbf4d; border-color: #4a3410; white-space: normal; }
+.song-screen.failed::before { background: #ffbf4d; box-shadow: 0 0 6px rgba(255,191,77,.6); }
+
+/* Settings: one row per PC -- a toggle (checkbox look, the whole name is the
+   key) and that PC's monitor keys, usable once the PC is switched on. */
+.song-targets { display: grid; gap: 6px; }
+.song-target {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 10px;
+  padding: 4px; border-radius: 8px; border: 1px solid #08090b; background: rgba(0,0,0,.18);
+}
+.song-target.on { border-color: #0a2550; background: rgba(79,156,255,.08); }
+button.song-target-toggle {
+  display: grid; grid-template-columns: 22px minmax(0, auto) minmax(0, 1fr); align-items: center; gap: 10px;
+  min-height: 44px; padding: 0 12px; text-align: left; font-size: 13px; font-weight: 700;
+}
+.song-target-box {
+  width: 20px; height: 20px; border-radius: 4px; border: 2px solid #59616d; background: #0b0e11;
+  display: grid; place-items: center;
+}
+button.song-target-toggle[aria-pressed="true"] .song-target-box { border-color: #3584e6; background: #3584e6; }
+button.song-target-toggle[aria-pressed="true"] .song-target-box::after {
+  content: ""; width: 9px; height: 5px; margin-top: -2px; border: solid #fff; border-width: 0 0 2.5px 2.5px; transform: rotate(-45deg);
+}
+.song-target-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.song-target-ip { font: 600 11px/1 var(--mono); color: #7d8594; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.song-target-monitors { flex-wrap: nowrap; }
+.song-target:not(.on) .song-target-monitors .monitor-key { color: #6f7783; }
+@media (max-width: 560px) {
+  .song-target { grid-template-columns: 1fr; }
+  .song-target-monitors .monitor-key { flex: 1; width: auto; }
+}

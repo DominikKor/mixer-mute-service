@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from typing import List, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StrictBool, StrictInt
 
 
 class GroupCreate(BaseModel):
@@ -59,6 +59,19 @@ class CameraPanTiltRequest(BaseModel):
 class PowerOffConfigRequest(BaseModel):
     target_ips: List[str] = Field(default_factory=list)
     beamer: bool = False
+
+
+class CameraPresetRecallRequest(BaseModel):
+    # Any VISCA preset number the service uses, named in the app or not.
+    preset: StrictInt = Field(ge=1, le=16)
+
+
+class CameraPresetSaveRequest(BaseModel):
+    # The camera's current position becomes this preset number, with a name.
+    preset: StrictInt = Field(ge=1, le=16)
+    name: str = Field(max_length=58)
+    # A number the app already names is only overwritten when asked for.
+    overwrite: StrictBool = False
 
 
 class CameraStreamRequest(BaseModel):
@@ -118,11 +131,9 @@ class ProgramActionFields(BaseModel):
 class ProgramItemRequest(ProgramActionFields):
     time: str
     person: str = ""
-    # A shortcut id: the row runs the shortcut's fields instead of its own.
-    shortcut: Optional[str] = None
-    # Before: a list of shortcuts run after the row's own steps; the first
-    # one is taken as the shortcut when "shortcut" is not given.
-    shortcuts: Optional[List[str]] = None
+    # "shortcut" / "shortcuts" from pages of v1.2.1-210 and before are
+    # ignored: a row always runs its own fields ("Shortcut laden" copies a
+    # shortcut's fields into them).
 
 
 class ShortcutRequest(ProgramActionFields):

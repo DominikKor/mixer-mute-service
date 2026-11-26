@@ -43,6 +43,7 @@ function fileTargetOptions() {
   const ips = new Set([
     ...TARGET_PCS.filter(pc => pc.id !== "streaming").map(pc => pc.ip),
     ...PROGRAM_DESKTOP_PROFILES.map(p => p.target_ip), SONG_SETTINGS && SONG_SETTINGS.target_ip,
+    ...((SONG_SETTINGS && SONG_SETTINGS.targets) || []).map(t => t.ip),
   ]);
   ips.delete(THIS_PC);
   return [

@@ -224,6 +224,7 @@ async function saveTargetPcs(event) {
   for (const select of [$("pf-ip"), $("sg-ip")]) {
     if (select.options.length) fillTargetPcSelect(select, moves[select.value] || select.value);
   }
+  moveSongTargets(moves);
   $("target-pcs-dialog").close();
   const moved = result.data.moved || {};
   const problems = moved.problems || [];
