@@ -1,11 +1,16 @@
-"""When the program moves on, what desktop profiles showed or played before
-stops (a video window closes, background music fades out).
+"""When the program moves on, what the rows before showed or played stops
+(a video window closes, background music fades out).
 
-The service notes every image, file and audio profile it starts, from a
-program row, a shortcut or a Desktop key (programs such as OBS are never
-noted: they are never closed). When a program row starts (Play or "Weiter"),
-everything noted that the new row does not start itself is stopped, in the
-background: the new row's own steps never wait for it.
+Only what a program row started counts (Play, "Weiter", the dock, Companion:
+app/api/program.py runs the row inside program_starts()). The service notes
+each image, file and audio profile such a row starts (programs such as OBS
+are never noted: they are never closed). Whatever the operator starts by
+hand (a Desktop key, a shortcut key) is not noted and keeps running; a
+profile the program started becomes the operator's once its Desktop key is
+used by hand. When a program row starts, everything noted that the new row
+does not start itself is stopped, in the background: the new row's own
+steps never wait for it. Notes live in memory only: after a restart
+nothing is noted, so nothing is stopped.
 
 - audio: the agent's normal stop (POST /audio stop), with the profile's
   fade-out; not on a PC where the new row starts audio (its start replaces
@@ -22,8 +27,10 @@ anything up. Song windows are not profiles and stay as they are.
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import logging
 import time
+from contextlib import contextmanager
 from typing import Optional
 
 from . import display_agent
@@ -37,24 +44,56 @@ AUDIO_STOP_TIMEOUT_SECONDS = 3.0  # the agent answers at once and fades in the b
 DOWN_SECONDS = 30.0
 # Kinds whose output a new one of the same kind replaces on the same PC.
 _ONE_PER_PC = ("audio", "image")
+# True while a program row runs its steps (program_starts()).
+_PROGRAM_ROW = contextvars.ContextVar("program_row", default=False)
+
+
+@contextmanager
+def program_starts():
+    """Profiles started inside count as the program's."""
+    token = _PROGRAM_ROW.set(True)
+    try:
+        yield
+    finally:
+        _PROGRAM_ROW.reset(token)
+
+
+def by_program() -> bool:
+    return _PROGRAM_ROW.get()
 
 
 class ShownProfiles:
-    """What desktop profiles the service started and may still be showing."""
+    """The desktop profiles program rows started that may still be showing."""
 
     def __init__(self) -> None:
         self._shown: dict[str, tuple[str, str]] = {}  # profile id -> (target ip, kind)
         self._down_until: dict[str, float] = {}
         self._tasks: set = set()
 
-    def started(self, profile_id: str, target_ip: str, kind: str) -> None:
-        if kind == "program":
-            return
+    def _replace_on(self, target_ip: str, kind: str) -> None:
+        """Audio and images: one at a time per PC, a new one replaces the old."""
         if kind in _ONE_PER_PC:
             for other, (ip, other_kind) in list(self._shown.items()):
                 if ip == target_ip and other_kind == kind:
                     del self._shown[other]
+
+    def started(self, profile_id: str, target_ip: str, kind: str) -> None:
+        """A program row starts it (noted before the agent answers, so a slow
+        answer cannot lose it)."""
+        if kind == "program":
+            return
+        self._replace_on(target_ip, kind)
         self._shown[profile_id] = (target_ip, kind)
+
+    def started_by_hand(self, profile_id: str, target_ip: str, kind: str) -> None:
+        """The operator took over: it is no longer the program's, nor what it
+        replaced on that PC (a stop sent there would end the operator's)."""
+        self._shown.pop(profile_id, None)
+        self._replace_on(target_ip, kind)
+
+    def restore(self, profile_id: str, target_ip: str, kind: str) -> None:
+        """A stop that did not reach the agent: try again on the next row."""
+        self._shown.setdefault(profile_id, (target_ip, kind))
 
     def audio_stopped(self, target_ip: str) -> None:
         """The music on that PC was stopped (the agent plays one track at a time)."""
@@ -114,6 +153,7 @@ async def _stop_all(state, tracker: ShownProfiles, stops: list) -> None:
 async def _stop_one(state, tracker: ShownProfiles, profile_id: str, target_ip: str, kind: str) -> None:
     if tracker.is_down(target_ip):
         log.info("Not stopping %s on %s: the agent did not answer a moment ago", profile_id, target_ip)
+        tracker.restore(profile_id, target_ip, kind)
         return
     cfg = state.cfg.desktop_display
     try:
@@ -131,6 +171,7 @@ async def _stop_one(state, tracker: ShownProfiles, profile_id: str, target_ip: s
     except AgentError as exc:
         if exc.agent_status is None and exc.status == 502:
             tracker.mark_down(target_ip)
+            tracker.restore(profile_id, target_ip, kind)
             log.warning("Program moved on: %s on %s not stopped, agent unavailable (skipped for %.0f s)",
                         profile_id, target_ip, DOWN_SECONDS)
         elif exc.agent_status == 404:

@@ -1,7 +1,8 @@
-"""When the program moves on, the desktop profiles shown or played before
+"""When the program moves on, the desktop profiles the rows before started
 stop (app/profile_stops.py): a video window closes, music fades out; what
-the new row starts itself keeps running; an agent that is off never holds
-the new row up. The agent's side (POST /close) is tested at the end.
+the new row starts itself, and whatever the operator started by hand, keeps
+running; an agent that is off never holds the new row up. The agent's side
+(POST /close) is tested at the end.
 
 The display agents are faked (app.display_agent._post records the calls)."""
 
@@ -108,13 +109,54 @@ class AdvanceTests(unittest.TestCase):
             self.assertEqual(agents.stops(), [], "a stop sent alongside could end the new track")
             self.assertEqual(client.app.state.shown_profiles.shown(), {"lied": (MUSIC_PC, "audio")})
 
-    def test_music_started_by_hand_fades_too(self):
+    def test_what_the_operator_started_by_hand_keeps_running(self):
         agents = FakeAgents()
         with app_client(PROFILES, env=ENV) as (client, _folder), patch("app.display_agent._post", agents.post):
             self.assertTrue(client.post("/desktop/musik/audio/play").json()["ok"])
-            item = client.post("/program/items", json=row("Predigt", desktop=["qr"])).json()["item"]
+            self.assertTrue(client.post("/desktop/spotlight/open").json()["ok"])
+            made = client.post("/shortcuts", json={"title": "QR", "desktop": ["qr"]}).json()["shortcut"]
+            self.assertTrue(client.post(f"/shortcuts/{made['id']}/play").json()["ok"], "a shortcut key is by hand too")
+            item = client.post("/program/items", json=row("Predigt")).json()["item"]
             self.play(client, item["id"])
-            self.assertEqual([s[:2] for s in agents.wait_for(1)], [(MUSIC_PC, "/audio")])
+            time.sleep(0.2)
+            self.assertEqual(agents.stops(), [])
+            self.assertEqual(client.app.state.shown_profiles.shown(), {})
+
+    def test_the_operator_takes_over_what_the_program_started(self):
+        agents = FakeAgents()
+        with app_client(PROFILES, env=ENV) as (client, _folder), patch("app.display_agent._post", agents.post):
+            first = client.post("/program/items", json=row("Spotlight", desktop=["spotlight", "musik", "qr"])).json()["item"]
+            second = client.post("/program/items", json=row("Predigt")).json()["item"]
+            self.play(client, first["id"])
+            self.assertEqual(set(client.app.state.shown_profiles.shown()), {"spotlight", "musik", "qr"})
+            # The operator presses the video's and the music's Desktop keys.
+            client.post("/desktop/spotlight/open")
+            client.post("/desktop/musik/audio/play")
+            self.play(client, second["id"])
+            self.assertEqual(agents.wait_for(1), [(VIDEO_PC, "/close", {"id": "qr"})],
+                             "only what is still the program's stops")
+            time.sleep(0.1)
+            self.assertEqual(len(agents.stops()), 1)
+
+    def test_a_slow_agent_at_the_start_does_not_lose_the_profile(self):
+        agents = FakeAgents(dead={VIDEO_PC})
+        with app_client(PROFILES, env=ENV) as (client, _folder), patch("app.display_agent._post", agents.post):
+            first = client.post("/program/items", json=row("Spotlight", desktop=["spotlight"])).json()["item"]
+            second = client.post("/program/items", json=row("Predigt")).json()["item"]
+            client.post(f"/program/items/{first['id']}/play")  # no answer in time: it may have started
+            self.assertIn("spotlight", client.app.state.shown_profiles.shown())
+            agents.dead = set()
+            self.play(client, second["id"])
+            self.assertEqual(agents.wait_for(1), [(VIDEO_PC, "/close", {"id": "spotlight"})])
+
+    def test_a_refused_start_is_not_noted(self):
+        def post(url, token, payload, timeout):
+            raise urllib.error.HTTPError(url, 503, "Configured target is not available", None, None)
+
+        with app_client(PROFILES, env=ENV) as (client, _folder), patch("app.display_agent._post", post):
+            first = client.post("/program/items", json=row("Spotlight", desktop=["spotlight"])).json()["item"]
+            client.post(f"/program/items/{first['id']}/play")
+            self.assertEqual(client.app.state.shown_profiles.shown(), {})
 
     def test_music_stopped_by_hand_is_not_stopped_again(self):
         agents = FakeAgents()
@@ -151,6 +193,8 @@ class AdvanceTests(unittest.TestCase):
             agents.wait_for(1)
             time.sleep(1.2)  # the stop timed out: the PC is marked down
             self.assertTrue(client.app.state.shown_profiles.is_down(VIDEO_PC))
+            self.assertIn("spotlight", client.app.state.shown_profiles.shown(),
+                          "kept: the next row tries again once the PC answers")
             # Noted again (e.g. shown by hand just before it went off), then the
             # program moves on: the PC marked down is skipped, not waited for.
             client.app.state.shown_profiles.started("spotlight", VIDEO_PC, "file")

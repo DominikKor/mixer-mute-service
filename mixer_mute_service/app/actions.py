@@ -28,6 +28,7 @@ from .file_actions import is_file_action, not_found_reason, run_file_action, run
 from .mission_spotlight import profile_path
 from .native_controls import NativeControlError
 from .program_items import SHORTCUT_KEYS
+from .profile_stops import by_program
 from .responses import Result, controller_result
 
 log = logging.getLogger("mixer.actions")
@@ -237,13 +238,14 @@ async def show_profile(request: Request, profile_id: str) -> Result:
         if profile.kind != "image":
             return {"ok": False, "reason": "several monitors are only possible for images"}, 400
         payload["monitors"] = profile.monitors
+    _note_start(request, profile_id, profile)
     try:
         answer = await display_agent.call(cfg, profile.target_ip, "/display", payload)
     except AgentError as exc:
+        _note_failed(request, profile_id, exc)
         if exc.agent_status == 503:
             return {"ok": False, "reason": not_found_reason(payload["path"])}, 502
         return exc.answer(), exc.status
-    _note_shown(request, profile_id, profile)
     return answer, 200
 
 
@@ -252,10 +254,24 @@ def _shown_profiles(request: Request):
     return getattr(request.app.state, "shown_profiles", None)
 
 
-def _note_shown(request: Request, profile_id: str, profile) -> None:
+def _note_start(request: Request, profile_id: str, profile) -> None:
+    """A program row's start is noted (it stops when the program moves on);
+    one by hand takes the profile over (it keeps running)."""
     shown = _shown_profiles(request)
-    if shown is not None:
+    if shown is None:
+        return
+    if by_program():
         shown.started(profile_id, profile.target_ip, profile.kind)
+    else:
+        shown.started_by_hand(profile_id, profile.target_ip, profile.kind)
+
+
+def _note_failed(request: Request, profile_id: str, exc: AgentError) -> None:
+    """The agent refused: nothing started. One that did not answer in time may
+    still have started it: kept, so the next row stops it."""
+    shown = _shown_profiles(request)
+    if shown is not None and by_program() and not (exc.agent_status is None and exc.status == 502):
+        shown.forget(profile_id)
 
 
 async def control_audio(request: Request, profile_id: str, action: str) -> Result:
@@ -273,10 +289,14 @@ async def control_audio(request: Request, profile_id: str, action: str) -> Resul
         # always full volume now, so every agent version accepts it.
         payload["fade"] = {"db": AUDIO_FADE_FULL_DB, "seconds": profile.fade_seconds}
     cfg = request.app.state.cfg.desktop_display
+    if action == "play":
+        _note_start(request, profile_id, profile)
     try:
         answer = await display_agent.call(cfg, profile.target_ip, "/audio", payload,
                                           timeout=display_agent.AUDIO_TIMEOUT_SECONDS)
     except AgentError as exc:
+        if action == "play":
+            _note_failed(request, profile_id, exc)
         if exc.agent_status is None:
             return exc.answer(), exc.status
         if exc.body is not None:
@@ -286,11 +306,12 @@ async def control_audio(request: Request, profile_id: str, action: str) -> Resul
             # Agents before fading reject the extra field.
             reason += "; update the desktop agent on this PC for fading"
         return {"ok": False, "reason": reason}, exc.agent_status
-    if answer.get("ok") is not False:
-        if action == "play":
-            _note_shown(request, profile_id, profile)
-        elif _shown_profiles(request) is not None:
-            _shown_profiles(request).audio_stopped(profile.target_ip)
+    shown = _shown_profiles(request)
+    if shown is not None:
+        if action == "play" and answer.get("ok") is False and by_program():
+            shown.forget(profile_id)  # refused: nothing plays
+        elif action == "stop" and answer.get("ok") is not False:
+            shown.audio_stopped(profile.target_ip)
     return answer, 200
 
 

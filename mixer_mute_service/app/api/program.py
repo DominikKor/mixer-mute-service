@@ -28,7 +28,7 @@ from ..actions import (
 )
 from ..models import ProgramItemRequest, ShortcutRequest
 from ..native_controls import NativeControlError
-from ..profile_stops import stop_previous
+from ..profile_stops import program_starts, stop_previous
 from ..program_items import ProgramItemError, validated_shortcut_id, without_own_actions
 from ..responses import fail, respond, unwrap
 from ..lights import apply_scene
@@ -373,7 +373,9 @@ async def _play(item_id: str, request: Request):
         played = await program_store.mark_played(item_id)
         return {"delay_seconds": played["last_delay_seconds"]}
 
-    return await _run_steps(request, item, summary, started)
+    # What the row starts counts as the program's (stopped on the next row).
+    with program_starts():
+        return await _run_steps(request, item, summary, started)
 
 
 async def _run_steps(request: Request, item: dict, summary: dict, started=None):
