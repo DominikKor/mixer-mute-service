@@ -140,6 +140,34 @@ class StoredDataTests(unittest.TestCase):
             self.assertFalse(any(b.get("saved") for b in asyncio.run(reloaded.camera_buttons())))
             self.assertEqual(list(self.path.parent.glob("*.corrupt*")), [])
 
+    def test_invisible_only_names_are_empty(self):
+        for invisible in ("\u200b", "\ufeff", "\u2060", "\u200b\u2060\ufeff", " \u200b ", "\u200d", "\u0301"):
+            self.assertEqual(clean_label(invisible), "", repr(invisible))
+        self.assertEqual(clean_label("Kan\u200bzel\ufeff"), "Kanzel")
+        # The ZWJ inside an emoji sequence stays.
+        self.assertEqual(clean_label("\u200b👨\u200d👩\u200d👧\u2060"), "👨\u200d👩\u200d👧")
+        store = CompanionButtonStore(self.path, COMPANION_BUTTONS)
+        # "CAM1" with only invisible characters after it: no name.
+        with self.assertRaises(ValueError):
+            asyncio.run(store.save_camera_preset("cam1", 13, "CAM1 \u200b"))
+        asyncio.run(store.save_camera_preset("cam1", 13, "CAM1 Taufe"))
+        with self.assertRaises(ValueError):
+            asyncio.run(store.set_camera_label("native-cam1-preset-13", "CAM1 \ufeff\u2060"))
+        # A catalog key goes back to its catalog name.
+        asyncio.run(store.set_camera_label("native-cam1-preset-1", "CAM1 Kanzel"))
+        self.assertEqual(asyncio.run(store.set_camera_label("native-cam1-preset-1", "CAM1 \u200b"))["label"], "CAM1 Pult nah")
+
+    def test_invisible_stored_labels_are_dropped(self):
+        CompanionButtonStore(self.path, COMPANION_BUTTONS)
+        data = json.loads(self.path.read_text())
+        data["camera_labels"] = {"native-cam1-preset-1": "CAM1 \u200b"}
+        data["saved_camera_presets"] = {"native-cam1-preset-13": "CAM1 \ufeff", "native-cam1-preset-14": "CAM1 Ok"}
+        self.path.write_text(json.dumps(data))
+        labels = {b["id"]: b["label"] for b in asyncio.run(CompanionButtonStore(self.path, COMPANION_BUTTONS).camera_buttons())}
+        self.assertEqual(labels["native-cam1-preset-1"], "CAM1 Pult nah")
+        self.assertNotIn("native-cam1-preset-13", labels)
+        self.assertEqual(labels["native-cam1-preset-14"], "CAM1 Ok")
+
     def test_too_long_stored_labels_are_dropped(self):
         CompanionButtonStore(self.path, COMPANION_BUTTONS)
         data = json.loads(self.path.read_text())
@@ -322,6 +350,15 @@ class CameraPresetRouteTests(unittest.TestCase):
         self.assertEqual(self.labels()["native-cam1-preset-9"], "CAM1 Kanzel")
         self.sent()
         self.assertEqual(self.client.post("/cameras/cam1/presets", json={"preset": 10, "name": "\x00\u202e"}).status_code, 400)
+        for invisible in ("\u200b", "\ufeff", "\u2060 \u200b"):
+            r = self.client.post("/cameras/cam1/presets", json={"preset": 13, "name": invisible})
+            self.assertEqual(r.status_code, 400, repr(invisible))
+        self.assertNotIn("native-cam1-preset-13", self.labels())
+        self.client.post("/cameras/cam1/presets", json={"preset": 14, "name": "Taufe"})
+        self.sent()
+        self.assertEqual(self.client.put("/camera-presets/native-cam1-preset-14/label",
+                                         json={"name": "CAM1 \u200b"}).status_code, 400)
+        self.assertEqual(self.labels()["native-cam1-preset-14"], "CAM1 Taufe")
         for flag in ("true", 1, "yes"):
             self.assertEqual(self.client.post("/cameras/cam1/presets",
                                               json={"preset": 9, "name": "X", "overwrite": flag}).status_code, 422)

@@ -230,28 +230,46 @@ def _saved_preset_key(button_id: str) -> Optional[tuple]:
 # Bidirectional formatting characters: an override (U+202E) shows a name
 # reversed and can make one key look like another.
 _BIDI_CONTROLS = frozenset("\u061c\u200e\u200f\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069")
+# Invisible characters that are not whitespace to str.split(): zero width
+# space, word joiner, byte order mark. (The zero width joiner U+200D stays:
+# it glues emoji sequences together.)
+_INVISIBLE = frozenset("\u200b\u2060\ufeff")
 MAX_LABEL_LENGTH = 64
+_CAMERA_PREFIX = re.compile(r"^cam\s*\d+\s*", re.IGNORECASE)
+
+
+def _visible(text: str) -> bool:
+    """At least one letter, digit, punctuation mark or symbol."""
+    return any(unicodedata.category(ch)[0] in "LNPS" for ch in text)
 
 
 def clean_label(label) -> str:
-    """A camera key's name: whitespace runs become one space, control and
-    bidi formatting characters (NUL, U+202E, ...) are dropped. ValueError:
-    not text, or longer than MAX_LABEL_LENGTH."""
+    """A camera key's name: whitespace runs become one space; control, bidi
+    formatting and invisible characters (NUL, U+202E, U+200B, ...) are
+    dropped; a name with nothing visible left is "". ValueError: not text,
+    or longer than MAX_LABEL_LENGTH."""
     if not isinstance(label, str):
         raise ValueError(f"label must be text of at most {MAX_LABEL_LENGTH} characters")
     kept = "".join(
         ch for ch in label
-        if ch.isspace() or (unicodedata.category(ch) != "Cc" and ch not in _BIDI_CONTROLS)
+        if ch.isspace() or (unicodedata.category(ch) != "Cc" and ch not in _BIDI_CONTROLS and ch not in _INVISIBLE)
     )
     label = " ".join(kept.split())
     if len(label) > MAX_LABEL_LENGTH:
         raise ValueError(f"label must be text of at most {MAX_LABEL_LENGTH} characters")
-    return label
+    return label if _visible(label) else ""
+
+
+def _clean_camera_label(label) -> str:
+    """clean_label, and "CAM1" with no name after it counts as empty (the
+    camera section would show the key without a name)."""
+    label = clean_label(label)
+    return label if _visible(_CAMERA_PREFIX.sub("", label)) else ""
 
 
 def _stored_label(value) -> bool:
-    """A label read from the file: text, not empty, not too long."""
-    return isinstance(value, str) and bool(value.strip()) and len(value) <= MAX_LABEL_LENGTH
+    """A label read from the file: text, not too long, a visible name."""
+    return isinstance(value, str) and len(value) <= MAX_LABEL_LENGTH and bool(_clean_camera_label(value))
 # Bump when catalog actions change; stored native keys then get the new action.
 # v3 added the keys below, v4 made the Overall macros switch the light on,
 # v5 added state-aware Beamer hide/unhide actions, v6 adds direct projector
@@ -508,7 +526,7 @@ class CompanionButtonStore:
         the catalog key's label, or a saved preset. ValueError: bad input."""
         if camera not in PRESET_CAMERAS or not valid_camera_preset(preset):
             raise ValueError("unknown camera or preset number")
-        label = clean_label(label)
+        label = _clean_camera_label(label)
         if not label:
             raise ValueError("a preset needs a name")
         async with self._lock:
@@ -531,7 +549,7 @@ class CompanionButtonStore:
         saved = _saved_preset_key(button_id) is not None
         if button_id not in CAMERA_BUTTON_IDS and not (saved and button_id in self._saved_presets):
             raise KeyError(button_id)
-        label = clean_label(label)
+        label = _clean_camera_label(label)
         async with self._lock:
             if saved:
                 if button_id not in self._saved_presets:
