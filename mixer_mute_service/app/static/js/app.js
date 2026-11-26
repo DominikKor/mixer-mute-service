@@ -179,7 +179,9 @@ function initSections() {
 // Views: "three" (page at least SECTION_THREE_MIN_PX wide): widths as set;
 // "two" (narrower, e.g. iPad upright): ⅓ and ½ are half, ⅔ and whole are
 // whole; "one" (narrow window below 900 px, and the stage): one column in
-// order.
+// order. A section whose content does not fit its chosen width (measured, or
+// --min-section-width in its CSS) gets the next wider one that holds it; the
+// width key shows the width it gets, the choice stays for wider screens.
 // Calm during a service: a section keeps the place it had (remembered per
 // view, also across reloads). While only contents change (program rows, song
 // text, a window that keeps its view) it stays there and just moves up or
@@ -203,6 +205,7 @@ const SECTION_STICK_PX = 120;       // a better place must be this much higher
 const SECTION_THREE_MIN_PX = 1100;  // page width for thirds
 const SECTION_SETTLE_MS = 4000;     // after loading: contents still arrive
 const SECTION_HEIGHTS = {};         // section -> height in grid rows, measured by packSections
+let SECTION_MIN_SPAN = {};          // section -> grid columns its content needs now (measured)
 let SECTION_DEFAULT_ORDER = [];
 let SECTION_ORDER = [];             // sections in the user's order
 let SECTION_WIDTH = {};             // section -> 2 | 3 | 4 | 6
@@ -211,10 +214,22 @@ let SECTION_FREE_UNTIL = 0;         // until then (performance.now) sections may
 let SECTION_DRAG = null;
 
 // The width of a section in a view, in grid columns.
-function sectionSpan(width, view) {
-  if (view === "one") return SECTION_GRID_COLUMNS;
-  if (view === "two") return width <= 3 ? 3 : SECTION_GRID_COLUMNS;
-  return width;
+// `min`: the section's content needs at least that many columns (see
+// sectionMinSpan): then the next wider width of the view, the chosen one stays.
+function sectionSpan(width, view, min = 0) {
+  const spans = view === "one" ? [SECTION_GRID_COLUMNS] : view === "two" ? [3, SECTION_GRID_COLUMNS] : SECTION_WIDTHS;
+  const base = view === "one" ? SECTION_GRID_COLUMNS : view === "two" ? (width <= 3 ? 3 : SECTION_GRID_COLUMNS) : width;
+  return spans.find(span => span >= base && span >= min) || SECTION_GRID_COLUMNS;
+}
+
+// The fewest grid columns that are `needPx` wide (columns `colPx`, gaps
+// `gapPx`); 0 when nothing is needed.
+function sectionMinSpan(needPx, colPx, gapPx) {
+  if (!(needPx > 0)) return 0;
+  for (let span = 1; span < SECTION_GRID_COLUMNS; span++) {
+    if (span * colPx + (span - 1) * gapPx >= needPx - 0.5) return span;
+  }
+  return SECTION_GRID_COLUMNS;
 }
 
 // The first columns a section of `span` columns may start at (aligned to its
@@ -228,13 +243,15 @@ function sectionStarts(span) {
 
 // Where every section goes: {section: {start, span, top, bottom}}, columns
 // 0..5 of the page grid, tops and bottoms in grid rows. widthOf(section):
-// 2 | 3 | 4 | 6; heightOf(section): grid rows. `places` (section -> start)
-// are kept when `keep`, else when at most `stick` rows lower than the best
-// place. Pure (tests/test_section_layout.py).
-function layoutSections(order, widthOf, heightOf, { view = "three", places = {}, stick = 0, keep = false } = {}) {
+// 2 | 3 | 4 | 6; heightOf(section): grid rows; minSpan: section -> columns
+// its content needs. `places` (section -> start) are kept when `keep`, else
+// when at most `stick` rows lower than the best place. Pure
+// (tests/test_section_layout.py).
+function layoutSections(order, widthOf, heightOf, { view = "three", places = {}, stick = 0, keep = false,
+                                                     minSpan = {} } = {}) {
   const skyline = new Array(SECTION_GRID_COLUMNS).fill(0), layout = {};
   for (const section of order) {
-    const span = sectionSpan(widthOf(section), view), starts = sectionStarts(span);
+    const span = sectionSpan(widthOf(section), view, minSpan[section] || 0), starts = sectionStarts(span);
     const topAt = at => Math.max(...skyline.slice(at, at + span));
     let start = starts[0];
     for (const at of starts) if (topAt(at) < topAt(start)) start = at;
@@ -264,12 +281,13 @@ function sectionOrderAfterMove(order, section, dir, layoutOf) {
 }
 
 // The next width of the width key: the next one that looks different in
-// `view` (null when none does, as in the one-column view).
-function nextSectionWidth(width, view) {
+// `view` with the content's minimum `min` (null when none does, as in the
+// one-column view).
+function nextSectionWidth(width, view, min = 0) {
   const i = SECTION_WIDTHS.indexOf(width);
   for (let k = 1; k < SECTION_WIDTHS.length; k++) {
     const next = SECTION_WIDTHS[(i + k) % SECTION_WIDTHS.length];
-    if (sectionSpan(next, view) !== sectionSpan(width, view)) return next;
+    if (sectionSpan(next, view, min) !== sectionSpan(width, view, min)) return next;
   }
   return null;
 }
@@ -319,7 +337,8 @@ function sectionLayoutFor(order, view, { drop = null, keep = false } = {}) {
   const places = { ...(SECTION_PLACES[view] || {}) };
   if (drop) delete places[drop];
   return layoutSections(order, section => SECTION_WIDTH[section], section => SECTION_HEIGHTS[section] || 1,
-                        { view, places, stick: SECTION_STICK_PX / SECTION_GRID_ROW_PX, keep });
+                        { view, places, stick: SECTION_STICK_PX / SECTION_GRID_ROW_PX, keep,
+                          minSpan: view === "one" ? {} : SECTION_MIN_SPAN });
 }
 
 function initSectionOrder() {
@@ -448,14 +467,19 @@ function placeSections(page, free, animate) {
   const panels = sectionPanelsInOrder();
   const view = currentSectionView();
   const firsts = animate && !stageReducedMotion() ? new Map(panels.map(p => [p, p.getBoundingClientRect()])) : null;
-  // Measure at the new widths, rows let loose: with its old row kept, a
-  // section that no longer fits there would go into extra grid columns of
-  // another width and be measured wrong.
-  for (const panel of panels) {
-    const span = sectionSpan(SECTION_WIDTH[panel.dataset.section], view);
+  // Measure with the rows let loose: with its old row kept, a section that no
+  // longer fits there would go into extra grid columns of another width and
+  // be measured wrong. First at the chosen widths: a section whose content
+  // is wider (or that sets --min-section-width) gets the next wider width
+  // that holds it; then the heights at the widths it gets.
+  const setSpans = min => panels.forEach(panel => {
+    const span = sectionSpan(SECTION_WIDTH[panel.dataset.section], view, min[panel.dataset.section] || 0);
     panel.style.gridColumn = view === "one" ? "" : `span ${span}`;
     panel.style.gridRow = "";
-  }
+  });
+  setSpans({});
+  SECTION_MIN_SPAN = view === "one" ? {} : sectionMinSpans(page, panels);
+  if (Object.keys(SECTION_MIN_SPAN).length) setSpans(SECTION_MIN_SPAN);
   for (const panel of panels) {
     const margin = parseFloat(getComputedStyle(panel).marginTop) || 0;
     SECTION_HEIGHTS[panel.dataset.section] = Math.max(1, Math.ceil((panel.offsetHeight + margin) / SECTION_GRID_ROW_PX));
@@ -473,6 +497,24 @@ function placeSections(page, free, animate) {
     saveSectionArrangement();
   }
   if (firsts) glideSections(firsts);
+}
+
+// The grid columns each section's content needs (only those that need more
+// than they have): content wider than the section (its scrollWidth), or the
+// section's --min-section-width.
+function sectionMinSpans(page, panels) {
+  const style = getComputedStyle(page);
+  const gap = parseFloat(style.columnGap) || 0;
+  const inner = page.clientWidth - (parseFloat(style.paddingLeft) || 0) - (parseFloat(style.paddingRight) || 0);
+  const col = (inner - (SECTION_GRID_COLUMNS - 1) * gap) / SECTION_GRID_COLUMNS;
+  const min = {};
+  for (const panel of panels) {
+    const declared = parseFloat(getComputedStyle(panel).getPropertyValue("--min-section-width")) || 0;
+    const content = panel.scrollWidth > panel.clientWidth + 1 ? panel.scrollWidth + panel.offsetWidth - panel.clientWidth : 0;
+    const span = sectionMinSpan(Math.max(declared, content), col, gap);
+    if (span) min[panel.dataset.section] = span;
+  }
+  return min;
 }
 
 // FLIP: sections that changed place glide there from where they were.
@@ -503,7 +545,8 @@ function moveSection(section, dir, button) {
 }
 
 function cycleSectionWidth(section) {
-  const next = nextSectionWidth(SECTION_WIDTH[section], currentSectionView());
+  const view = currentSectionView();
+  const next = nextSectionWidth(SECTION_WIDTH[section], view, view === "one" ? 0 : SECTION_MIN_SPAN[section] || 0);
   if (!next) return;
   SECTION_WIDTH = { ...SECTION_WIDTH, [section]: next };
   forgetSectionPlace(section);
@@ -530,11 +573,17 @@ function syncSectionMoveButtons() {
     }
     const width = panel.querySelector("[data-section-width]");
     if (width) {
-      const span = sectionSpan(SECTION_WIDTH[section], view), next = nextSectionWidth(SECTION_WIDTH[section], view);
+      // The width as it is on screen; when the content needs more than the
+      // chosen one, the title says so (the choice is kept for wider screens).
+      const min = view === "one" ? 0 : SECTION_MIN_SPAN[section] || 0, chosen = SECTION_WIDTH[section];
+      const span = sectionSpan(chosen, view, min), next = nextSectionWidth(chosen, view, min);
+      const widened = span !== sectionSpan(chosen, view);
       width.textContent = SECTION_WIDTH_LABELS[span];
       width.disabled = !next;
+      width.classList.toggle("widened", widened);
       width.title = `${panel.querySelector(".section-toggle").textContent.trim()} Breite: ${SECTION_WIDTH_LABELS[span]}`
-        + (next ? ` (antippen: ${SECTION_WIDTH_LABELS[sectionSpan(next, view)]})` : "");
+        + (widened ? ` (gewählt ${SECTION_WIDTH_LABELS[chosen]}, der Inhalt braucht hier mehr Platz)` : "")
+        + (next ? `; antippen: ${SECTION_WIDTH_LABELS[sectionSpan(next, view, min)]}` : "");
       width.setAttribute("aria-label", width.title);
     }
     const handle = panel.querySelector("[data-section-drag]");
@@ -561,7 +610,7 @@ function startSectionDrag(panel, event) {
     handle.removeEventListener("pointermove", move);
     handle.removeEventListener("pointerup", end);
     handle.removeEventListener("pointercancel", end);
-    endSectionDrag();
+    endSectionDrag(e.type === "pointercancel");
   };
   handle.addEventListener("pointermove", move);
   handle.addEventListener("pointerup", end);
@@ -594,13 +643,19 @@ function dragSectionTo(x, y) {
   drag.panel.style.transform = `translate(${x - drag.grabX - home.left}px, ${y - drag.grabY - home.top}px)`;
 }
 
-function endSectionDrag() {
+// Let go: the new order is kept; a cancelled touch (the system took over)
+// puts the old one back.
+function endSectionDrag(cancelled = false) {
   const drag = SECTION_DRAG;
   SECTION_DRAG = null;
   const first = drag.panel.getBoundingClientRect();
   drag.panel.style.transform = "";
   drag.panel.classList.remove("section-dragging");
-  if (SECTION_ORDER.join() !== drag.before.join()) {
+  if (cancelled && SECTION_ORDER.join() !== drag.before.join()) {
+    SECTION_ORDER = drag.before;
+    saveSectionArrangement();  // placing may have saved the dragged order meanwhile
+    packSections({ free: true, animate: true });
+  } else if (SECTION_ORDER.join() !== drag.before.join()) {
     saveSectionArrangement();
     applySectionOrder(drag.before);
   }

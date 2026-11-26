@@ -5,7 +5,8 @@ highest (masonry). Checked on many random arrangements: nothing overlaps,
 every section is as high as its columns allow, remembered places are kept
 (always during a service, otherwise unless another place is much higher),
 the arrows and the width key always do something and can always be undone
-(no "row" to get stuck in), and saved rows from earlier versions are taken
+(no "row" to get stuck in), a section whose content needs more room gets
+the next wider width (its choice stays), and saved rows from earlier versions are taken
 over. Skips without quickjs; with REQUIRE_TK=1 (CI) a missing quickjs is an
 error.
 """
@@ -26,7 +27,7 @@ except ImportError:  # pragma: no cover - only where quickjs is not installed
 
 APP_JS = Path(__file__).resolve().parent.parent / "app" / "static" / "js" / "app.js"
 CONSTANTS = ("SECTION_GRID_COLUMNS", "SECTION_GRID_ROW_PX", "SECTION_WIDTHS", "SECTION_STICK_PX")
-FUNCTIONS = ("sectionSpan", "sectionStarts", "layoutSections", "sectionOrderAfterMove", "nextSectionWidth",
+FUNCTIONS = ("sectionSpan", "sectionMinSpan", "sectionStarts", "layoutSections", "sectionOrderAfterMove", "nextSectionWidth",
              "sectionArrangementFromPrefs", "keptInOrder")
 SECTIONS = ["desktop", "cameras", "channels", "program", "songs", "lights", "groups", "companion"]
 VIEWS = ("three", "two", "one")
@@ -46,10 +47,11 @@ class SectionLayoutTests(unittest.TestCase):
     def call(self, expression):
         return json.loads(self.js.eval(f"JSON.stringify({expression})"))
 
-    def layout(self, order, widths, heights, view="three", places=None, keep=False):
+    def layout(self, order, widths, heights, view="three", places=None, keep=False, min_span=None):
         return self.call(f"layoutSections({json.dumps(order)}, s => ({json.dumps(widths)})[s], "
                          f"s => ({json.dumps(heights)})[s], {{ view: {json.dumps(view)}, "
-                         f"places: {json.dumps(places or {})}, stick: {self.stick}, keep: {json.dumps(keep)} }})")
+                         f"places: {json.dumps(places or {})}, stick: {self.stick}, keep: {json.dumps(keep)}, "
+                         f"minSpan: {json.dumps(min_span or {})} }})")
 
     def move(self, order, section, direction, widths, heights, view="three"):
         return self.call(f"sectionOrderAfterMove({json.dumps(order)}, {json.dumps(section)}, {json.dumps(direction)}, "
@@ -59,13 +61,15 @@ class SectionLayoutTests(unittest.TestCase):
     def spans(self, view):
         return {w: self.call(f"sectionSpan({w}, {json.dumps(view)})") for w in (2, 3, 4, 6)}
 
-    def assert_gallery(self, order, widths, heights, view, layout):
+    def assert_gallery(self, order, widths, heights, view, layout, min_span=None):
         """No overlaps, allowed places, and every section as high as its columns allow."""
-        spans = self.spans(view)
+        min_span = min_span or {}
         skyline = [0] * 6
         for section in order:
             box = layout[section]
-            self.assertEqual(box["span"], spans[widths[section]])
+            self.assertEqual(box["span"], self.call(f"sectionSpan({widths[section]}, {json.dumps(view)}, "
+                                                    f"{min_span.get(section, 0)})"))
+            self.assertGreaterEqual(box["span"], min_span.get(section, 0))
             self.assertIn(box["start"], self.call(f"sectionStarts({box['span']})"))
             columns = range(box["start"], box["start"] + box["span"])
             self.assertEqual(box["top"], max(skyline[c] for c in columns), (section, layout))
@@ -120,6 +124,32 @@ class SectionLayoutTests(unittest.TestCase):
         self.assertEqual(self.layout(order, {**widths, "songs": 4}, heights, places={"songs": 3},
                                      keep=True)["songs"]["start"], 0)
 
+    def test_content_too_wide_gets_the_next_wider_width(self):
+        span = lambda w, view, m: self.call(f"sectionSpan({w}, {json.dumps(view)}, {m})")  # noqa: E731
+        self.assertEqual([span(2, "three", m) for m in (0, 2, 3, 4, 5, 6)], [2, 2, 3, 4, 6, 6])
+        self.assertEqual([span(4, "three", m) for m in (0, 3, 5)], [4, 4, 6])
+        self.assertEqual([span(2, "two", m) for m in (0, 3, 4)], [3, 3, 6])
+        self.assertEqual(span(3, "one", 0), 6)
+        # 1440 px page (1392 inside, 18 px gaps): a third is 452 px, Licht needs 470.
+        col = (1392 - 5 * 18) / 6
+        self.assertEqual(self.call(f"sectionMinSpan(470, {col}, 18)"), 3)
+        self.assertEqual(self.call(f"sectionMinSpan(452, {col}, 18)"), 2)
+        self.assertEqual(self.call(f"sectionMinSpan(0, {col}, 18)"), 0)
+        self.assertEqual(self.call(f"sectionMinSpan(5000, {col}, 18)"), 6)
+        # In the gallery: Licht takes half, the others stay thirds and still fill up.
+        order = ["program", "lights", "channels", "groups"]
+        widths = {s: 2 for s in order}
+        heights = {"program": 300, "lights": 200, "channels": 80, "groups": 60}
+        layout = self.layout(order, widths, heights, min_span={"lights": 3})
+        self.assertEqual((layout["lights"]["start"], layout["lights"]["span"]), (3, 3))
+        self.assertEqual([layout[s]["span"] for s in ("program", "channels", "groups")], [2, 2, 2])
+        self.assert_gallery(order, widths, heights, "three", layout, {"lights": 3})
+        # The width key skips what looks the same and is off when nothing changes.
+        self.assertEqual(self.call("nextSectionWidth(2, 'three', 3)"), 4)
+        self.assertEqual(self.call("nextSectionWidth(4, 'three', 3)"), 6)
+        self.assertEqual(self.call("nextSectionWidth(6, 'three', 3)"), 2)
+        self.assertIsNone(self.call("nextSectionWidth(2, 'three', 6)"))
+
     def test_width_key_and_arrows_always_get_out_again(self):
         self.assertEqual([self.call(f"nextSectionWidth({w}, 'three')") for w in (2, 3, 4, 6)], [3, 4, 6, 2])
         self.assertEqual([self.call(f"nextSectionWidth({w}, 'two')") for w in (2, 3, 4, 6)], [4, 4, 2, 2])
@@ -170,6 +200,9 @@ class SectionLayoutTests(unittest.TestCase):
             heights = {s: rng.choice((rng.randint(20, 90), rng.randint(90, 250), rng.randint(250, 700)))
                        for s in order}
             view = VIEWS[case % 3]
+            min_span = {s: rng.randint(1, 6) for s in rng.sample(order, rng.randint(0, 3))}
+            widened = self.layout(order, widths, heights, view, min_span=min_span)
+            self.assert_gallery(order, widths, heights, view, widened, min_span)
             free = self.layout(order, widths, heights, view)
             self.assert_gallery(order, widths, heights, view, free)
             # Without remembered places each one takes the highest place (left on a tie).
