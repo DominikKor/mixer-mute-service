@@ -8,6 +8,7 @@ const LIGHTS = {
   dragging: new Set(),  // sliders the user holds: the poll leaves them alone
   sending: {},          // per slider: {busy, again, released} of its one request in flight
   busy: new Set(),      // keys with a request in flight
+  pick: new Set(),      // new scene: chosen lights ("zone:left", "color", "circuit:light-tech")
 };
 const LIGHT_SEND_MS = 60;   // while dragging, at most one send per this time
 const LIGHT_POLL_MS = 3000;
@@ -126,6 +127,7 @@ function renderLights() {
   settings.querySelector('[data-light-slider="steps"]').min = "5";
   renderLightCircuits(data.circuits);
   renderLightScenes(data.scenes);
+  renderLightPick();
 }
 
 async function sendLightSlider(range, fade) {
@@ -260,7 +262,7 @@ async function switchRoomLight(states, button) {
 
 function renderLightScenes(scenes) {
   const box = $("light-scenes");
-  const sig = JSON.stringify(scenes.map(s => [s.id, s.name]));
+  const sig = JSON.stringify([scenes.map(s => [s.id, s.name, s.stage, s.circuits]), LIGHTS.data && LIGHTS.data.zone_labels]);
   if (box.dataset.sig === sig) return;
   box.dataset.sig = sig;
   box.replaceChildren();
@@ -279,7 +281,7 @@ function renderLightScenes(scenes) {
     apply.className = "light-scene-key";
     apply.dataset.lightScene = scene.id;
     apply.textContent = scene.name;
-    apply.title = `Szene „${scene.name}“ einblenden`;
+    apply.title = `Szene „${scene.name}“ einblenden · ${lightSceneParts(scene)}`;
     const del = document.createElement("button");
     del.type = "button";
     del.className = "light-scene-delete";
@@ -294,13 +296,91 @@ function renderLightScenes(scenes) {
   }
 }
 
+// What a scene sets, for its key's title: only these lights change.
+function lightSceneParts(scene) {
+  const data = LIGHTS.data;
+  const zoneLabels = (data && data.zone_labels) || {};
+  const circuitLabels = Object.fromEntries(((data && data.circuits) || []).map(c => [c.id, c.label]));
+  const stage = Object.keys(scene.stage.zones).map(z => zoneLabels[z] || z);
+  if (scene.stage.warm !== null && scene.stage.warm !== undefined) stage.push("Farbe");
+  const room = Object.keys(scene.circuits).map(c => circuitLabels[c] || c);
+  return [stage.length ? `Bühne: ${stage.join(", ")}` : "", room.length ? `Raumlicht: ${room.join(", ")}` : ""]
+    .filter(Boolean).join(" · ");
+}
+
+// ---- new scene: which lights belong to it ------------------------------------------
+
+function lightPickKey(box, id, label, now, disabled = false) {
+  let key = box.querySelector(`[data-light-pick="${id}"]`);
+  if (!key) {
+    key = document.createElement("button");
+    key.type = "button";
+    key.className = "light-pick-key";
+    key.dataset.lightPick = id;
+    key.innerHTML = '<span class="light-pick-name"></span><span class="light-pick-now"></span>';
+    box.appendChild(key);
+  }
+  const chosen = LIGHTS.pick.has(id) && !disabled;
+  key.querySelector(".light-pick-name").textContent = label;
+  key.querySelector(".light-pick-now").textContent = now;
+  key.disabled = disabled;
+  key.setAttribute("aria-pressed", String(chosen));
+  key.title = disabled ? `${label}: antwortet nicht, kann nicht gespeichert werden`
+    : `${label} ${chosen ? "nicht mehr in die Szene nehmen" : "in die Szene nehmen"}`;
+  return key;
+}
+
+function renderLightPick() {
+  const data = LIGHTS.data;
+  if (!data || !$("light-scene-create").classList.contains("visible")) return;
+  const stage = $("light-pick-stage");
+  for (const [zone, label] of Object.entries(data.zone_labels)) {
+    lightPickKey(stage, `zone:${zone}`, label, lightPercent(data.stage.zones[zone]));
+  }
+  // Warm and cold together: "100/20 %".
+  lightPickKey(stage, "color", "Farbe", `${lightPercent(data.stage.warm).replace(" %", "")}/${lightPercent(data.stage.cold)}`);
+  const room = $("light-pick-room");
+  for (const circuit of data.circuits) {
+    const unknown = circuit.on !== true && circuit.on !== false;
+    if (unknown) LIGHTS.pick.delete(`circuit:${circuit.id}`);
+    lightPickKey(room, `circuit:${circuit.id}`, circuit.label, unknown ? "?" : circuit.on ? "An" : "Aus", unknown);
+  }
+  for (const all of document.querySelectorAll("[data-light-pick-all]")) {
+    const keys = [...$(`light-pick-${all.dataset.lightPickAll}`).querySelectorAll("[data-light-pick]:not(:disabled)")];
+    const every = keys.length > 0 && keys.every(k => LIGHTS.pick.has(k.dataset.lightPick));
+    all.textContent = every ? "Keine" : "Alle";
+    all.setAttribute("aria-label", `${every ? "Keine" : "Alle"} ${all.dataset.lightPickAll === "stage" ? "Bühnenlichter" : "Raumlicht-Kreise"} wählen`);
+  }
+  // Nothing chosen: nothing to save.
+  $("light-scene-save").disabled = !LIGHTS.pick.size;
+}
+
+function openLightSceneCreate() {
+  LIGHTS.pick.clear();
+  $("light-scene-create").classList.add("visible");
+  renderLightPick();
+  $("light-scene-name").focus();
+}
+
+function closeLightSceneCreate() {
+  $("light-scene-create").classList.remove("visible");
+  LIGHTS.pick.clear();
+}
+
 async function saveLightScene(replace = false) {
   const name = $("light-scene-name").value.trim();
   if (!name) { $("light-scene-name").focus(); return; }
+  if (!LIGHTS.pick.size) return;
+  const picked = [...LIGHTS.pick];
+  const lights = {
+    zones: picked.filter(id => id.startsWith("zone:")).map(id => id.slice(5)),
+    color: LIGHTS.pick.has("color"),
+    circuits: picked.filter(id => id.startsWith("circuit:")).map(id => id.slice(8)),
+  };
   const button = $("light-scene-save");
   button.disabled = true;
   try {
-    const result = await api("POST", "/lights/scenes", { name, replace }, { timeout: lightTimeout() });
+    const result = await api("POST", "/lights/scenes", { name, replace, lights }, { timeout: lightTimeout() });
     if (result.status === 409 && !replace) {
       if (await confirmDelete(button, `Es gibt schon eine Szene „${name}“. Mit dem aktuellen Licht ersetzen?`, "Ersetzen")) {
         button.disabled = false;
@@ -312,11 +392,11 @@ async function saveLightScene(replace = false) {
     const unknown = result.data.unknown_circuits || [];
     toast(`Szene „${result.data.scene.name}“ gespeichert` + (unknown.length ? ` (${unknown.length === 1 ? "1 Raumlicht-Kreis" : unknown.length + " Raumlicht-Kreise"} ohne Antwort nicht enthalten)` : ""), !unknown.length);
     $("light-scene-name").value = "";
-    $("light-scene-create").classList.remove("visible");
+    closeLightSceneCreate();
     await loadLights();
     loadProgramLightScenes();
   } finally {
-    button.disabled = false;
+    button.disabled = !LIGHTS.pick.size && $("light-scene-create").classList.contains("visible");
   }
 }
 
@@ -412,15 +492,27 @@ $("light-scenes").addEventListener("click", async event => {
   await lightRequest(del, "DELETE", `/lights/scenes/${encodeURIComponent(del.dataset.lightSceneDelete)}`);
   loadProgramLightScenes();
 });
-$("light-scene-add").addEventListener("click", () => {
-  $("light-scene-create").classList.add("visible");
-  $("light-scene-name").focus();
-});
-$("light-scene-cancel").addEventListener("click", () => $("light-scene-create").classList.remove("visible"));
+$("light-scene-add").addEventListener("click", openLightSceneCreate);
+$("light-scene-cancel").addEventListener("click", closeLightSceneCreate);
 $("light-scene-save").addEventListener("click", () => saveLightScene());
 $("light-scene-name").addEventListener("keydown", event => {
   if (event.key === "Enter") { event.preventDefault(); saveLightScene(); }
-  if (event.key === "Escape") $("light-scene-create").classList.remove("visible");
+  if (event.key === "Escape") closeLightSceneCreate();
+});
+$("light-scene-create").addEventListener("click", event => {
+  const key = event.target.closest("[data-light-pick]");
+  const all = event.target.closest("[data-light-pick-all]");
+  if (key && !key.disabled) {
+    const id = key.dataset.lightPick;
+    if (LIGHTS.pick.has(id)) LIGHTS.pick.delete(id); else LIGHTS.pick.add(id);
+  } else if (all) {
+    const keys = [...$(`light-pick-${all.dataset.lightPickAll}`).querySelectorAll("[data-light-pick]:not(:disabled)")];
+    const every = keys.every(k => LIGHTS.pick.has(k.dataset.lightPick));
+    for (const k of keys) {
+      if (every) LIGHTS.pick.delete(k.dataset.lightPick); else LIGHTS.pick.add(k.dataset.lightPick);
+    }
+  } else return;
+  renderLightPick();
 });
 
 // Pencils of the zones and room light circuits: the name is stored on the

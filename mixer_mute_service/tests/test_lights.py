@@ -148,6 +148,65 @@ class LightsApiTests(unittest.TestCase):
         self.assertEqual(self.client.delete(f"/lights/scenes/{scene['id']}").status_code, 200)
         self.assertEqual(self.client.get("/lights").json()["scenes"], [])
 
+    def test_scene_holds_only_the_chosen_lights(self):
+        self.client.post("/lights/stage", json={"zones": {"left": 90, "center-left": 30, "center-right": 30, "right": 90},
+                                                "warm": 200, "cold": 40})
+        self.devices.shelly["light-front"] = True
+        r = self.client.post("/lights/scenes", json={
+            "name": "Kanzel", "lights": {"zones": ["left"], "color": False, "circuits": ["light-front"]}})
+        self.assertEqual(r.status_code, 200, r.text)
+        scene = r.json()["scene"]
+        self.assertEqual(scene["stage"], {"zones": {"left": 90}, "warm": None, "cold": None})
+        self.assertEqual(scene["circuits"], {"light-front": True})
+
+        # Everything else changes; applying sets only the chosen lights.
+        self.client.post("/lights/stage", json={"zones": {z: 255 for z in native_mod.ARTNET_ZONES}, "warm": 10, "cold": 250})
+        self.client.post("/lights/circuits", json={"states": {"light-front": False, "light-tech": False}})
+        self.assertEqual(self.client.post(f"/lights/scenes/{scene['id']}/apply").status_code, 200)
+        self.assertEqual(self.devices.zone_white("left"), 90)
+        self.assertEqual(self.devices.zone_white("right"), 255)
+        stage = self.client.get("/lights").json()["stage"]
+        self.assertEqual((stage["warm"], stage["cold"]), (10, 250))
+        self.assertTrue(self.devices.shelly["light-front"])
+        self.assertFalse(self.devices.shelly["light-tech"])
+
+        # Only the room light: the stage is not touched at all.
+        room = self.client.post("/lights/scenes", json={
+            "name": "Raum", "lights": {"circuits": ["light-tech"]}}).json()["scene"]
+        self.assertEqual(room["stage"], {"zones": {}, "warm": None, "cold": None})
+        frames = len(self.devices.frames)
+        self.assertEqual(self.client.post(f"/lights/scenes/{room['id']}/apply").status_code, 200)
+        self.assertEqual(len(self.devices.frames), frames)
+
+        # The colour alone: warm and cold, the zones keep their level.
+        color = self.client.post("/lights/scenes", json={"name": "Warm", "lights": {"color": True}}).json()["scene"]
+        self.assertEqual(color["stage"], {"zones": {}, "warm": 10, "cold": 250})
+
+        for bad in ({}, {"zones": ["nope"]}, {"circuits": ["x"]}, {"color": "ja"}, {"zones": "left"}, []):
+            r = self.client.post("/lights/scenes", json={"name": "Falsch", "lights": bad})
+            self.assertEqual(r.status_code, 400, bad)
+        # A chosen circuit that does not answer is left out; alone it is no scene.
+        self.devices.offline.add("light-stage")
+        r = self.client.post("/lights/scenes", json={"name": "Stumm", "lights": {"circuits": ["light-stage"]}})
+        self.assertEqual(r.status_code, 400)
+        self.assertEqual(r.json()["unknown_circuits"], ["light-stage"])
+        r = self.client.post("/lights/scenes", json={"name": "Teil", "lights": {"zones": ["right"], "circuits": ["light-stage"]}})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json()["unknown_circuits"], ["light-stage"])
+        self.assertEqual(r.json()["scene"]["circuits"], {})
+
+    def test_scenes_saved_before_the_choice_still_load(self):
+        from app.lights import LightSceneStore, SceneError, _clean_scene
+        old = {"id": "a", "name": "Alt", "stage": {"zones": {z: 50 for z in native_mod.ARTNET_ZONES}, "warm": 1, "cold": 2},
+               "circuits": {"light-tech": True}}
+        path = self.folder / "old_scenes.json"
+        path.write_text(json.dumps([old]), encoding="utf-8")
+        scenes = asyncio.run(LightSceneStore(path).list())
+        self.assertEqual(scenes, [old])
+        for stage in ({"zones": {}, "warm": 1, "cold": None}, {"zones": {}, "warm": None, "cold": None}):
+            with self.assertRaises(SceneError):
+                _clean_scene({"name": "x", "stage": stage, "circuits": {}})
+
     def test_program_row_applies_its_light_scene(self):
         self.client.post("/lights/stage", json={"zones": {z: 80 for z in native_mod.ARTNET_ZONES}})
         scene = self.client.post("/lights/scenes", json={"name": "Gebet"}).json()["scene"]
