@@ -3,7 +3,9 @@
 // of index.html; main.js runs last and starts everything.
 
 // ---- Steuerung (control keys) ----------------------------------------------
-let COMPANION_BUTTON_BUSY = false;
+// Keys whose press is still running. Only the same key waits; any other key
+// works at once (one global flag swallowed every press while an Overall ran).
+const COMPANION_BUTTON_BUSY = new Set();
 const COMPANION_CATEGORY_BUSY = new Set();
 let COMPANION_DATA = { categories: [], buttons: [], companion_targets: [] };
 let COMPANION_GROUPS = {};
@@ -393,11 +395,13 @@ $("companion-categories").addEventListener("click", async (event) => {
     return;
   }
   const button = event.target.closest("[data-companion-press]");
-  if (!button || COMPANION_BUTTON_BUSY) return;
-  COMPANION_BUTTON_BUSY = true;
+  if (!button) return;
+  const pressId = button.dataset.companionPress;
+  if (COMPANION_BUTTON_BUSY.has(pressId)) return;
+  COMPANION_BUTTON_BUSY.add(pressId);
   button.disabled = true;
   try {
-    const result = await api("POST", `/companion/buttons/${encodeURIComponent(button.dataset.companionPress)}/press`);
+    const result = await api("POST", `/companion/buttons/${encodeURIComponent(pressId)}/press`);
     if (!result.ok || result.data.ok === false) toast(`${button.textContent}: ${result.data.reason || "HTTP " + result.status}`, false);
     else {
       const isBeamerMode = button.dataset.companionPress === "beamer-hide" || button.dataset.companionPress === "beamer-unhide";
@@ -406,12 +410,14 @@ $("companion-categories").addEventListener("click", async (event) => {
         renderBeamerState(state.ok ? state.data : null);
         toast(result.data.changed === false ? `${button.textContent}: bereits gesetzt, kein Toggle` : `${button.textContent}: ausgeführt`, true);
       } else {
-        toast(`${button.textContent}: ausgeführt`, true);
+        // Overall: the camera cut follows after the wait; say so.
+        const camera = result.data.camera && result.data.camera.message;
+        toast(`${button.textContent}: ausgeführt${camera ? ` – ${camera}` : ""}`, true);
       }
       if (button.classList.contains("channel") || button.classList.contains("group")) await refresh();
     }
   } finally {
-    COMPANION_BUTTON_BUSY = false;
+    COMPANION_BUTTON_BUSY.delete(pressId);
     button.disabled = (button.dataset.companionPress === "beamer-hide" || button.dataset.companionPress === "beamer-unhide")
       && typeof BEAMER_HIDDEN !== "boolean";
   }

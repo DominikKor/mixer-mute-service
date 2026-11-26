@@ -58,14 +58,98 @@ class NativeControlTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.controls._dmx[12], 40)  # right zone white: two steps
         self.assertEqual(self.controls._dmx[0], 20)   # left zone white: one step
 
-    async def test_zones_on_switches_off_zones_on_and_keeps_lit_ones(self):
-        self.controls._dmx[12] = 90  # right zone already lit
+    async def test_zones_set_switches_the_pattern_and_keeps_lit_zones(self):
+        self.controls._dmx[12] = 90   # right zone already lit
+        self.controls._dmx[4] = 200   # center-left lit, to be switched off
+        self.controls._dmx[8] = 70    # center-right not named: stays
         with patch.object(self.controls, "_fade_to", new_callable=AsyncMock):
-            for _ in range(2):  # pressing a macro twice must not switch off
-                await self.controls.press({"type": "artnet-zones-on", "zones": ["left", "right"]})
+            for _ in range(2):  # pressing an Overall twice must not toggle
+                await self.controls.press({"type": "artnet-zones-set",
+                                           "on": ["left", "right"], "off": ["center-left"]})
 
-        self.assertEqual(self.controls._dmx[0], 255)
-        self.assertEqual(self.controls._dmx[12], 90)
+        self.assertEqual(self.controls._dmx[0], 255)   # left: off -> start brightness
+        self.assertEqual(self.controls._dmx[12], 90)   # right: keeps its level
+        self.assertEqual(self.controls._dmx[4], 0)     # center-left: off
+        self.assertEqual(self.controls._dmx[8], 70)    # center-right: untouched
+
+    async def test_zones_set_rejects_bad_patterns(self):
+        for action in ({"on": [], "off": []}, {"on": ["left"], "off": ["left"]},
+                       {"on": ["stage"]}, {"on": "left"}):
+            with self.subTest(action=action), self.assertRaises(NativeControlError):
+                await self.controls.press({"type": "artnet-zones-set", **action})
+
+    async def test_shelly_group_tries_every_circuit_and_names_the_silent_ones(self):
+        called = []
+
+        def rpc(host, method, params):
+            called.append(host)
+            if host == "192.168.188.23":  # Vorne does not answer
+                raise NativeControlError(f"Shelly {host} unreachable")
+            return {}
+
+        with patch("app.native_controls._shelly_rpc", side_effect=rpc):
+            with self.assertRaises(NativeControlError) as caught:
+                await self.controls.press({"type": "shelly-set-group", "on": True,
+                                           "targets": ["light-left", "light-front", "light-stage"]})
+        self.assertEqual(sorted(called), ["192.168.188.23", "192.168.188.24", "192.168.188.25"],
+                         "the circuits after the silent one are still switched")
+        self.assertIn("light-front", str(caught.exception))
+
+    async def test_overlay_toggle_shows_text_hides_beamer_and_goes_live(self):
+        requests = []
+        enabled = {"value": False}
+
+        def obs(host, port, request_type, data=None):
+            requests.append((request_type, data))
+            if request_type == "GetSceneItemList":
+                return {"sceneItems": [{"sourceName": "BibleShow", "sceneItemId": 7,
+                                        "sceneItemEnabled": enabled["value"]}]}
+            if request_type == "SetSceneItemEnabled":
+                enabled["value"] = data["sceneItemEnabled"]
+            return {}
+
+        action = {"type": "obs-overlay-toggle", "scene": "Cam 1", "source": "BibleShow",
+                  "hide_beamer_while_shown": True}
+        await self.controls.set_beamer_state(False)
+        with patch("app.native_controls._obs_request", side_effect=obs), \
+                patch.object(self.controls, "_toggle_beamer", new_callable=AsyncMock) as beamer:
+            shown = await self.controls.press(action)
+            hidden = await self.controls.press(action)
+        self.assertEqual((shown["shown"], hidden["shown"]), (True, False))
+        self.assertEqual(beamer.await_count, 2)
+        self.assertFalse(await self.controls.get_beamer_state())
+        self.assertEqual([r for r, _ in requests if r == "SetCurrentProgramScene"], ["SetCurrentProgramScene"] * 2)
+        self.assertEqual(requests[2], ("SetCurrentProgramScene", {"sceneName": "Cam 1"}))
+
+    async def test_live_key_switches_even_if_the_scene_lacks_the_source(self):
+        requests = []
+
+        def obs(host, port, request_type, data=None):
+            requests.append((request_type, data))
+            if request_type == "GetSceneItemList":
+                return {"sceneItems": [{"sourceName": "Capture_PC2", "sceneItemId": 3, "sceneItemEnabled": True}]}
+            return {}
+
+        with patch("app.native_controls._obs_request", side_effect=obs):
+            result = await self.controls.press({"type": "obs-live", "scene": "Cam 1", "source": "Cam1"})
+            with self.assertRaises(NativeControlError):  # a toggle key still needs its source
+                await self.controls.press({"type": "obs-source-toggle", "scene": "Preview Scene", "source": "Cam1_klein"})
+        self.assertTrue(result["ok"])
+        self.assertIn(("SetCurrentProgramScene", {"sceneName": "Cam 1"}), requests)
+        self.assertNotIn("SetSceneItemEnabled", [r for r, _ in requests])
+
+    async def test_overlay_toggle_still_goes_live_when_the_beamer_state_is_unknown(self):
+        def obs(host, port, request_type, data=None):
+            if request_type == "GetSceneItemList":
+                return {"sceneItems": [{"sourceName": "BibleShow", "sceneItemId": 7, "sceneItemEnabled": False}]}
+            return {}
+
+        with patch("app.native_controls._obs_request", side_effect=obs) as calls:
+            with self.assertRaises(NativeControlError) as caught:
+                await self.controls.press({"type": "obs-overlay-toggle", "scene": "Cam 2",
+                                           "source": "BibleShow", "hide_beamer_while_shown": True})
+        self.assertIn("beamer", str(caught.exception))
+        self.assertEqual(calls.call_args.args[2:], ("SetCurrentProgramScene", {"sceneName": "Cam 2"}))
 
     async def test_socket_error_becomes_native_control_error(self):
         with patch("app.native_controls._send_artnet_frame", side_effect=OSError("network down")):

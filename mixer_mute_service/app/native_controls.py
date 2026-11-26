@@ -675,18 +675,24 @@ class NativeControlService:
             target = await self._update_dmx(toggle)
             return {"ok": True, "level": target[zone["white"] - 1]}
 
-        if action_type == "artnet-zones-on":
-            zones = action.get("zones")
-            if not isinstance(zones, list) or not zones or any(z not in ARTNET_ZONES for z in zones):
-                raise NativeControlError("unknown Art-Net zone")
+        if action_type == "artnet-zones-set":
+            # Companion's Overall keys: these zones on (a zone that is on keeps
+            # its level, one that is off comes up to the start brightness),
+            # those off; zones not named stay as they are.
+            on, off = action.get("on") or [], action.get("off") or []
+            if not isinstance(on, list) or not isinstance(off, list) or not (on or off) \
+                    or any(z not in ARTNET_ZONES for z in [*on, *off]) or set(on) & set(off):
+                raise NativeControlError("invalid Art-Net zone set")
 
-            def switch_on(frame: list[int]) -> list[int]:
-                for zone_name in zones:
+            def switch(frame: list[int]) -> list[int]:
+                for zone_name in on:
                     white = frame[ARTNET_ZONES[zone_name]["white"] - 1]
                     self._set_zone(frame, zone_name, white or self._levels["start"])
+                for zone_name in off:
+                    self._set_zone(frame, zone_name, 0)
                 return frame
 
-            await self._update_dmx(switch_on)
+            await self._update_dmx(switch)
             return {"ok": True}
 
         if action_type in {"artnet-zone-adjust", "artnet-all-adjust"}:
@@ -771,6 +777,14 @@ class NativeControlService:
             data = await asyncio.to_thread(_obs_request, OBS_HOST, OBS_PORT, "GetSceneItemList", {"sceneName": source_scene})
             items = data.get("sceneItems", [])
             item = next((entry for entry in items if entry.get("sourceName") == source), None)
+            if item is None and action_type == "obs-live":
+                # Making the source visible is a courtesy; going live is the
+                # point. Companion carried on as well when a scene lacked the
+                # source (the "Cam N Live" keys used to fail in every scene
+                # without a "CamN" source, e.g. PC2 or a title).
+                log.info("OBS: %s not in scene %s; switching to %s anyway", source, source_scene, scene)
+                await asyncio.to_thread(_obs_request, OBS_HOST, OBS_PORT, "SetCurrentProgramScene", {"sceneName": scene})
+                return {"ok": True, "source_missing": True}
             if item is None:
                 raise NativeControlError(f"OBS source not found: {source}")
             visible = True if action_type == "obs-live" else not bool(item.get("sceneItemEnabled"))
@@ -787,6 +801,9 @@ class NativeControlService:
                 await asyncio.to_thread(_obs_request, OBS_HOST, OBS_PORT, "SetCurrentProgramScene", {"sceneName": scene})
             return {"ok": True}
 
+        if action_type == "obs-overlay-toggle":
+            return await self._overlay_toggle(action)
+
         if action_type == "beamer-set":
             hidden = action.get("hidden")
             if not isinstance(hidden, bool):
@@ -797,3 +814,31 @@ class NativeControlService:
             return await self._beamer_command(action.get("command"))
 
         raise NativeControlError("unsupported native action")
+
+    async def _overlay_toggle(self, action: dict) -> dict:
+        """Companion's "Bibel Cam N Beamer": show or hide an overlay source
+        (the Bible text) in a camera scene and put that scene on air. While the
+        overlay shows, the projector is hidden (the stream shows the text);
+        hiding the overlay shows the projector again. The scene is switched
+        even if the projector fails; the failure is reported."""
+        scene, source = action.get("scene"), action.get("source")
+        if not isinstance(scene, str) or not scene or not isinstance(source, str) or not source:
+            raise NativeControlError("invalid OBS overlay action")
+        data = await asyncio.to_thread(_obs_request, OBS_HOST, OBS_PORT, "GetSceneItemList", {"sceneName": scene})
+        item = next((entry for entry in data.get("sceneItems", []) if entry.get("sourceName") == source), None)
+        if item is None:
+            raise NativeControlError(f"OBS source not found: {source}")
+        shown = not bool(item.get("sceneItemEnabled"))
+        await asyncio.to_thread(_obs_request, OBS_HOST, OBS_PORT, "SetSceneItemEnabled", {
+            "sceneName": scene, "sceneItemId": item["sceneItemId"], "sceneItemEnabled": shown,
+        })
+        beamer_error = None
+        if action.get("hide_beamer_while_shown"):
+            try:
+                await self._set_beamer_mode(shown)
+            except NativeControlError as exc:
+                beamer_error = str(exc)
+        await asyncio.to_thread(_obs_request, OBS_HOST, OBS_PORT, "SetCurrentProgramScene", {"sceneName": scene})
+        if beamer_error:
+            raise NativeControlError(f"{source} {'shown' if shown else 'hidden'}, but beamer: {beamer_error}")
+        return {"ok": True, "shown": shown}

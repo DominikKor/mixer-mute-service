@@ -13,6 +13,7 @@ Values of a program action field:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from copy import deepcopy
 from typing import Optional
@@ -20,6 +21,7 @@ from typing import Optional
 from fastapi import Request
 
 from . import display_agent
+from .camera_program import CAMERAS, DEFAULT_WAIT_SECONDS
 from .companion_buttons import CAMERA_BUTTON_IDS, CATALOG_ONLY_IDS, COMPANION_BUTTONS_BY_ID
 from .display_agent import AgentError
 from .file_actions import is_file_action, not_found_reason, run_file_action, runs_from_network_share
@@ -35,6 +37,8 @@ PROGRAM_ACTION_FIELDS = ("playback", "translation", "lyrics")
 # unknown keys).
 _AGENT_EXCLUDED_FIELDS = {"target_ip", "fade", "fade_seconds", "monitors", "mission_spotlight"}
 AUDIO_FADE_FULL_DB = 0.0  # audio fades always go up to full player volume
+# Catalog actions that change what OBS has on air.
+_OBS_PROGRAM_ACTIONS = {"obs-scene", "obs-live", "obs-overlay-toggle"}
 
 
 # -- keys ------------------------------------------------------------------
@@ -76,6 +80,12 @@ async def press_native(request: Request, button_id: str, action: dict) -> Result
     """Run one catalog action (light, camera, OBS, beamer, Overall macro)."""
     if action.get("type") == "group-macro":
         return await _press_group_macro(request, button_id, action)
+    if action.get("type") in _OBS_PROGRAM_ACTIONS:
+        # A key that puts something on air wins over a camera cut still
+        # waiting from an Overall key or a program row.
+        camera_program = getattr(request.app.state, "camera_program", None)
+        if camera_program is not None:
+            camera_program.cancel()
     try:
         result = await request.app.state.native_controls.press(action)
     except NativeControlError as exc:
@@ -85,38 +95,68 @@ async def press_native(request: Request, button_id: str, action: dict) -> Result
 
 
 async def _press_group_macro(request: Request, button_id: str, action: dict) -> Result:
-    """Overall: the group's mutes, then the light, then the linked keys.
-    Stops at the first step that fails."""
-    result = await request.app.state.controller.group_set(action["group"], False)
+    """Overall (see the catalog in app/companion_buttons.py): the group's
+    mutes first; a blocked group stops the key before anything changes. Then
+    the stage light fades while the cameras and keys run: only the camera
+    that is off air moves now, the cut follows in the background after the
+    wait. Every part is tried even if another one fails (a camera that does
+    not answer must not keep OBS or the light from switching); the answer
+    lists what failed."""
+    state = request.app.state
+    result = await state.controller.group_set(action["group"], False)
     if not result.get("ok"):
         return controller_result({**result, "button": button_id})
-    steps = []
-    if action.get("light_zones_on"):
-        steps.append(("light-on", {"type": "artnet-zones-on", "zones": action["light_zones_on"]}))
+    failed = []
+    stage = action.get("stage")
+    light = None
+    if stage and (stage.get("on") or stage.get("off")):
+        light = asyncio.create_task(state.native_controls.press(
+            {"type": "artnet-zones-set", "on": stage.get("on") or [], "off": stage.get("off") or []}))
+
+    camera = None
+    camera_program = getattr(state, "camera_program", None)
+    presets = {cam: (action.get("cameras") or {}).get(cam) for cam in CAMERAS}
+    if any(presets.values()):
+        if camera_program is None:
+            camera = {"ok": False, "reason": "camera presets unavailable"}
+        else:
+            camera = await camera_program.run(
+                presets, action.get("camera_wait_seconds") or DEFAULT_WAIT_SECONDS,
+                COMPANION_BUTTONS_BY_ID.get(button_id, {}).get("label", button_id),
+                switch_if_none_live="cam1")
+        if not camera.get("ok"):
+            failed.append(f"cameras: {camera.get('reason')}")
+
+    # Its OBS key (PC2, Ende) also cancels a camera cut still waiting from an
+    # earlier key (press_native).
+    linked = []
     for linked_id in action.get("buttons", []):
         # Linked steps come from the built-in catalog, so renaming or
         # deleting a key in Steuerung does not break the macro.
         target = COMPANION_BUTTONS_BY_ID.get(linked_id)
         if target is None or target["kind"] != "native" or target["native_action"].get("type") == "group-macro":
-            steps.append((linked_id, None))
-        else:
-            steps.append((linked_id, target["native_action"]))
-    linked = []
-    for linked_id, linked_action in steps:
-        if linked_action is None:
             data, status = {"ok": False, "reason": "unknown linked action"}, 500
         else:
-            data, status = await press_native(request, linked_id, linked_action)
+            data, status = await press_native(request, linked_id, target["native_action"])
         linked.append({"button": linked_id, **data})
         if status != 200 or data.get("ok") is False:
-            return {
-                "ok": False,
-                "button": button_id,
-                "reason": "linked native action failed",
-                "group_result": result,
-                "linked_actions": linked,
-            }, status
-    return {"ok": True, "button": button_id, "group_result": result, "linked_actions": linked}, 200
+            failed.append(f"{target['label'] if target else linked_id}: {data.get('reason')}")
+
+    light_result = None
+    if light is not None:
+        try:
+            light_result = await light
+        except NativeControlError as exc:
+            light_result = {"ok": False, "reason": str(exc)}
+            failed.append(f"light: {exc}")
+            log.warning("Overall light failed button=%s reason=%s", button_id, exc)
+
+    answer = {"ok": not failed, "button": button_id, "group_result": result,
+              "light": light_result, "camera": camera, "linked_actions": linked}
+    if failed:
+        log.warning("Overall %s: mute group set, but %s", button_id, "; ".join(failed))
+        return {**answer, "reason": "group set, but " + "; ".join(failed)}, 502
+    return answer, 200
 
 
 async def press_button(request: Request, button_id: str) -> Result:

@@ -199,8 +199,29 @@ mixer keys of the export are mapped to the safe channel endpoints instead of
 replaying its raw HEX. Categories and key changes are stored in
 `companion_buttons.json` next to `config.yaml`. New keys can call one of the
 built-in actions, a mixer channel or a mute group; arbitrary shell commands and
-raw HEX are not accepted. "Overall" macros activate a mute group, then run their
-linked light/camera/OBS keys in order.
+raw HEX are not accepted.
+
+"Overall" keys run as they did in Companion (catalog version 9, table in
+`app/companion_buttons.py`):
+
+1. the mute group (unmuted exclusively); a blocked group stops the key before
+   anything else changes;
+2. the four stage zones go to the key's pattern (e.g. Predigt: Links and
+   Rechts on, Klavier and Logo off); a zone that is already on keeps its
+   level, one that comes on gets the start brightness; the light fades while
+   the next steps run;
+3. only the camera that is off air drives to its preset; 4 s later it goes
+   live, then the other camera follows to its preset (the same sequence as
+   program rows, `app/camera_program.py`). With no camera on air both move and
+   Cam 1 goes live after the wait; if OBS was switched meanwhile (in OBS or
+   with an OBS key here), nothing is cut;
+4. their OBS key, if any (Mission Video: PC2, Ende: the end scene).
+
+Every part is tried even if another fails; the answer (and the toast) names
+what failed. "Licht AN/AUS" leave the Technik circuit alone, as in Companion,
+and switch all other circuits at once. "Cam N Live" makes the camera's source
+visible in its own scene and puts that scene on air; a scene without the
+source no longer stops the switch.
 
 | Method | Path | Purpose |
 | ------ | ---- | ------- |
@@ -444,7 +465,8 @@ Kamera selbst.
 Die Kamera-Tasten (Presets, Zoom) stehen seit Katalog-Version 7 nicht mehr in
 der Steuerung; eine bestehende `companion_buttons.json` wird beim Start
 umgestellt (umbenannte Presets behalten ihre Beschriftung im Kamera-Bereich).
-Die Overall-Makros und Programmpunkte rufen die Presets weiter per ID auf.
+Programmpunkte rufen die Presets weiter per ID auf; die Overall-Tasten nennen
+ihre Presets selbst (seit Katalog-Version 9).
 
 ## Dateien und Programme auf Netzwerk-PCs oeffnen
 

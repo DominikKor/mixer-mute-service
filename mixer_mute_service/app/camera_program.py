@@ -15,7 +15,9 @@ there visibly, and that jerky move must never be seen on the stream. So:
    preset. It is not switched to; the operator does that by hand.
 
 With no camera live (title, PC or beamer on air) both presets are applied at
-once and nothing is switched. A preset for a camera that is live, and every
+once and nothing is switched, unless the caller names a camera to go to then
+(``switch_if_none_live``, the Overall keys: as in Companion, they always end
+on a camera). A preset for a camera that is live, and every
 preset while both are live (picture in picture), is skipped.
 
 Each camera of a row may also name an OBS scene. It replaces the switch in
@@ -24,7 +26,8 @@ the scene of a moved camera (Cam 1 first) follows after the wait, so a
 moving camera is never seen. A scene only counts for a camera whose preset
 is applied; when nothing moves, OBS stays as it is.
 
-Steps 3 and 4 run in the background; a new row cancels a sequence still
+Steps 3 and 4 run in the background; a new row, an Overall key or a key that
+puts something on air in OBS (app/actions.py) cancels a sequence still
 waiting. The last outcome is kept for the UI (``status``).
 """
 
@@ -158,12 +161,13 @@ class CameraProgram:
         self._task = None
 
     async def run(self, presets: Dict[str, Optional[int]], wait_seconds: float, title: str = "",
-                  scenes: Optional[Dict[str, Optional[str]]] = None) -> dict:
+                  scenes: Optional[Dict[str, Optional[str]]] = None,
+                  switch_if_none_live: Optional[str] = None) -> dict:
         """Phase one now (preset of the camera that is off air); switching and
         the second preset follow in the background. Returns what was done,
         with the status number it left (the UI reports later ones)."""
         chosen = {cam: scene for cam, scene in (scenes or {}).items() if cam in CAMERAS and scene}
-        result = await self._run(presets, wait_seconds, title, chosen)
+        result = await self._run(presets, wait_seconds, title, chosen, switch_if_none_live)
         return {**result, "seq": self.status["seq"]}
 
     async def _to_scene(self, scene: str) -> None:
@@ -172,7 +176,7 @@ class CameraProgram:
         await self._switch_scene(scene)
 
     async def _run(self, presets: Dict[str, Optional[int]], wait_seconds: float, title: str,
-                   scenes: Dict[str, str]) -> dict:
+                   scenes: Dict[str, str], switch_if_none_live: Optional[str] = None) -> dict:
         wanted = {cam: presets.get(cam) for cam in CAMERAS if valid_preset(presets.get(cam))}
         if not wanted:
             return {"ok": True, "applied": [], "skipped": []}
@@ -203,6 +207,13 @@ class CameraProgram:
                     self._task = asyncio.create_task(self._finish_scene(scene, wait))
                     return {"ok": True, "message": message, "applied": applied, "skipped": [],
                             "switch_to": None, "scene": scene, "switch_in_seconds": wait}
+                if switch_if_none_live in wanted:
+                    cam = switch_if_none_live
+                    message = f"Keine Kamera live: {moved}, {CAMERA_LABELS[cam]} live in {wait:g} s"
+                    self._set_status("waiting", message)
+                    self._task = asyncio.create_task(self._finish_scene(None, wait, cam))
+                    return {"ok": True, "message": message, "applied": applied, "skipped": [],
+                            "switch_to": cam, "switch_in_seconds": wait}
                 message = f"Keine Kamera live: {moved}, nicht umgeschaltet"
                 self._set_status("done", message)
                 return {"ok": True, "message": message, "applied": applied, "skipped": [], "switch_to": None}
@@ -229,20 +240,25 @@ class CameraProgram:
                 "switch_to": off_air, "scene": scene, "switch_in_seconds": wait,
                 "then": on_air if later else None}
 
-    async def _finish_scene(self, scene: str, wait: float) -> None:
-        """No camera was live: the row's scene after the presets had time to move."""
+    async def _finish_scene(self, scene: Optional[str], wait: float, cam: Optional[str] = None) -> None:
+        """No camera was live: the row's scene (or ``cam`` live) after the
+        presets had time to move."""
+        shown = f"OBS-Szene „{scene}“" if scene else f"{CAMERA_LABELS.get(cam, cam)} live"
         try:
             await self._sleep(wait)
             if await self._read_live():
-                self._set_status("aborted", f"OBS wurde inzwischen umgeschaltet, Szene „{scene}“ nicht geschaltet")
+                self._set_status("aborted", f"OBS wurde inzwischen umgeschaltet, {shown} nicht geschaltet")
                 return
-            await self._to_scene(scene)
-            self._set_status("done", f"OBS-Szene „{scene}“")
+            if scene:
+                await self._to_scene(scene)
+            else:
+                await self._switch(cam)
+            self._set_status("done", shown)
         except asyncio.CancelledError:
-            self._set_status("aborted", "Vom nächsten Programmpunkt abgelöst")
+            self._set_status("aborted", "Abgelöst: neuere Taste oder nächster Programmpunkt")
             raise
         except NativeControlError as exc:
-            self._set_status("failed", f"OBS-Szene „{scene}“ nicht geschaltet: {exc}")
+            self._set_status("failed", f"{shown} nicht geschaltet: {exc}")
         except Exception:  # noqa: BLE001 - a background task must report, not vanish
             log.exception("Camera program failed")
             self._set_status("failed", "Kamera-Ablauf abgebrochen (interner Fehler)")
@@ -273,7 +289,7 @@ class CameraProgram:
             await self._recall(on_air, later)
             self._set_status("done", f"{shown}, {CAMERA_LABELS[on_air]} fährt Preset {later} an")
         except asyncio.CancelledError:
-            self._set_status("aborted", "Vom nächsten Programmpunkt abgelöst")
+            self._set_status("aborted", "Abgelöst: neuere Taste oder nächster Programmpunkt")
             raise
         except NativeControlError as exc:
             self._set_status("failed", f"Kamera-Ablauf abgebrochen: {exc}")
