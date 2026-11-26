@@ -109,7 +109,7 @@ $("new-person-name").addEventListener("keydown", (e) => {
 });
 $("panic-btn").addEventListener("click", () => {
   const path = SERVICE_ENABLED === false ? "/panic/enable" : "/panic/disable";
-  act("POST", path, undefined, "panic");
+  act("POST", path, undefined, "Panic");
 });
 $("desktop-profiles").addEventListener("click", (event) => {
   const trigger = event.target.closest("button[data-profile-menu]");

@@ -510,13 +510,13 @@ async function runGroupAction(label, buildSteps) {
   for (const s of steps) {
     const r = await api("POST", s.path, s.body);
     if (!(r.ok && r.data.ok !== false)) {
-      toast(`${label} abgebrochen bei ch${s.ch}: ${r.data.reason || "HTTP " + r.status} (${sent} von ${steps.length} gesendet)`, false);
+      toast(`${label} abgebrochen bei Kanal ${s.ch}: ${r.data.reason || "HTTP " + r.status} (${sent} von ${steps.length} gesendet)`, false);
       await refresh();
       return;
     }
     sent++;
   }
-  toast(`${label}: ${sent} ok`, true);
+  toast(`${label}: ${sent} ${sent === 1 ? "Kanal" : "Kanäle"} gesetzt`, true);
   await refresh();
 }
 

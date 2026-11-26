@@ -184,7 +184,7 @@ async function act(method, path, body, label, options) {
   const r = await api(method, path, body, options);
   const ok = r.ok && r.data.ok !== false;
   if (ok) {
-    toast(`${label}: ok`, true);
+    toast(`${label}: ausgeführt`, true);
   } else {
     const reason = r.data.reason || `HTTP ${r.status}`;
     const extra = r.data.age_seconds !== undefined ? ` (age ${r.data.age_seconds}s)` : "";
