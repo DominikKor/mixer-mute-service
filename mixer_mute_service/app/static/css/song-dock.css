@@ -1,6 +1,6 @@
 /* Song dock (js/song-dock.js): the running program row's song, in a drawer
    that slides out under the row's summary line and spans the whole card --
-     [ < ]  [T][1][R][2][R]  first line of the slide …   3/7  [Schwarz]  [Weiter >]
+     [ < ]  [T][1][R][2][R]  first line of the slide …  ⚠ 3/7  [Aus] [Schwarz]  [Weiter >]
    It opens by growing its grid row from 0fr to 1fr (no fixed height) and
    reaches the card's left, right and bottom edge, so it reads as part of the
    row. Another song or none on screen: one slim line with "Zeigen". */
