@@ -255,6 +255,7 @@ function songBooks(song) {
 }
 
 function renderSongLive() {
+  renderSongDock();   // js/song-dock.js: the same keys at the running program row
   const wrap = $("song-live");
   const song = SONG_LIVE.song;
   wrap.classList.toggle("idle", !song);
