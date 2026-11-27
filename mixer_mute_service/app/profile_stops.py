@@ -53,6 +53,7 @@ from typing import Optional
 from . import display_agent
 from .display_agent import AgentError
 from .file_actions import file_kind, is_file_action, parse_file_action
+from .row_files import is_via, parse_via, path_kind, profile_of_start, step_start_id
 
 log = logging.getLogger("mixer.profile_stops")
 
@@ -155,23 +156,28 @@ class ShownProfiles:
         self._down_until[target_ip] = time.monotonic() + DOWN_SECONDS
 
 
-def row_profiles(row: dict) -> set:
-    """The desktop profiles a program row starts (its desktop list and
-    action fields naming a profile)."""
-    ids = set(row.get("desktop") or [])
+def _row_values(row: dict) -> list:
+    """The row's Desktop steps (app/row_files.py) and any value still in the
+    old Playback / Übersetzung / Liedtext fields."""
+    values = [step for step in row.get("desktop") or [] if isinstance(step, str)]
     for field in ("playback", "translation", "lyrics"):
         value = row.get(field)
-        if isinstance(value, str) and value.startswith(DESKTOP_PREFIX):
-            ids.add(value.removeprefix(DESKTOP_PREFIX))
-    return ids
+        if isinstance(value, str) and value:
+            values.append(value.removeprefix(DESKTOP_PREFIX) if value.startswith(DESKTOP_PREFIX) else value)
+    return values
+
+
+def row_profiles(row: dict) -> set:
+    """What a program row starts, by the id the agent knows it: Desktop keys
+    by their id, a key with another file by key and file (start_id)."""
+    return {start for start in map(step_start_id, _row_values(row)) if start is not None}
 
 
 def row_audio_pcs(row: dict, profiles: dict) -> set:
-    """The PCs on which a program row starts audio: audio desktop profiles
-    and audio files in its file fields."""
-    pcs = {profiles[p].target_ip for p in row_profiles(row) if p in profiles and profiles[p].kind == "audio"}
-    for field in ("playback", "translation", "lyrics"):
-        value = row.get(field)
+    """The PCs on which a program row starts audio: audio Desktop keys, and
+    audio files through a key or (older) on a PC named in the row."""
+    pcs = set()
+    for value in _row_values(row):
         if is_file_action(value):
             try:
                 target, path = parse_file_action(value)
@@ -179,6 +185,15 @@ def row_audio_pcs(row: dict, profiles: dict) -> set:
                 continue
             if file_kind(path) == "audio":
                 pcs.add(target)
+        elif is_via(value):
+            try:
+                profile_id, path = parse_via(value)
+            except ValueError:
+                continue
+            if path_kind(path) == "audio" and profile_id in profiles:
+                pcs.add(profiles[profile_id].target_ip)
+        elif value in profiles and profiles[value].kind == "audio":
+            pcs.add(profiles[value].target_ip)
     return pcs
 
 
@@ -239,7 +254,8 @@ async def _send_stop(state, profile_id: str, target_ip: str, kind: str, stamp: O
     if kind != "audio":
         body = {"id": profile_id} if stamp is None else {"id": profile_id, "stamp": stamp}
         return await display_agent.call(cfg, target_ip, "/close", body, timeout=CLOSE_TIMEOUT_SECONDS)
-    profile = cfg.profiles.get(profile_id)
+    # A row's file through a Desktop key fades like that key (app/row_files.py).
+    profile = cfg.profiles.get(profile_id) or cfg.profiles.get(profile_of_start(profile_id))
     payload = {"id": profile_id, "action": "stop", "path": None}
     if profile is not None and profile.fade:
         # Its normal fade-out (app/actions.py control_audio).

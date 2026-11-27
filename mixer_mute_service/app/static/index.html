@@ -98,6 +98,8 @@
         </span>
         <span id="program-cue-count" class="program-cue-count"></span>
       </div>
+      <span id="program-freeze-badge" class="freeze-badge" role="status" aria-live="polite" hidden title="Der Beamer ist eingefroren: erst ein Schritt „Beamer auftauen“ oder die Taste „Beamer freeze“ zeigt wieder Neues">Beamer eingefroren</span>
+      <button id="program-stop-btn" type="button" class="program-stop" disabled title="Stopp: was der Programmablauf gestartet hat, endet (Musik blendet aus, Fenster und Bilder gehen zu); von Hand Gestartetes läuft weiter">Stopp</button>
       <button id="program-go-btn" class="program-play program-go" title="Nächsten Programmpunkt starten (Presenter: Bild ab, wenn kein Lied läuft)">Weiter</button>
     </div>
     <div class="program-table-wrap">
@@ -258,12 +260,22 @@
   </div>
   <div id="companion-body" class="panel-body">
     <div id="beamer-state-control" class="beamer-state-bar">
-      <span class="beamer-state-title">Beamer-Zustand festlegen</span>
-      <div class="beamer-state-options" role="group" aria-label="Aktuellen Beamerzustand setzen">
-        <button type="button" class="beamer-state-key" data-beamer-state="true" aria-pressed="false" title="Zustand auf Hide setzen, ohne den Beamer umzuschalten">Hide</button>
-        <button type="button" class="beamer-state-key" data-beamer-state="false" aria-pressed="false" title="Zustand auf Unhide setzen, ohne den Beamer umzuschalten">Unhide</button>
-      </div>
-      <span id="beamer-state-current" class="beamer-state-current" role="status" aria-live="polite">Zustand unbekannt</span>
+      <span class="beamer-state-group">
+        <span class="beamer-state-title">Beamer-Zustand festlegen</span>
+        <span class="beamer-state-options" role="group" aria-label="Aktuellen Beamerzustand setzen">
+          <button type="button" class="beamer-state-key" data-beamer-state="true" aria-pressed="false" title="Zustand auf Hide setzen, ohne den Beamer umzuschalten">Hide</button>
+          <button type="button" class="beamer-state-key" data-beamer-state="false" aria-pressed="false" title="Zustand auf Unhide setzen, ohne den Beamer umzuschalten">Unhide</button>
+        </span>
+        <span id="beamer-state-current" class="beamer-state-current" role="status" aria-live="polite">Zustand unbekannt</span>
+      </span>
+      <span class="beamer-state-group">
+        <span class="beamer-state-title">Freeze-Zustand festlegen</span>
+        <span class="beamer-state-options" role="group" aria-label="Aktuellen Freeze-Zustand setzen">
+          <button type="button" class="beamer-state-key" data-beamer-frozen="true" aria-pressed="false" title="Zustand auf eingefroren setzen, ohne den Beamer umzuschalten">Eingefroren</button>
+          <button type="button" class="beamer-state-key" data-beamer-frozen="false" aria-pressed="false" title="Zustand auf live setzen, ohne den Beamer umzuschalten">Live</button>
+        </span>
+        <span id="beamer-frozen-badge" class="freeze-badge" role="status" aria-live="polite" hidden>Eingefroren</span>
+      </span>
     </div>
     <section id="power-off-panel" class="power-off-panel" aria-labelledby="power-off-title">
       <div class="power-off-head">

@@ -19,6 +19,7 @@ let PROGRAM_OBS_SCENES = null;     // scene names from OBS; null while OBS was n
 let PROGRAM_DRAFT = false;
 let PROGRAM_STATUS = { current_id: null, next_id: null };
 const PROGRAM_BUSY = new Set();     // play / clone in progress, per item
+let PROGRAM_STOPPING = false;       // "Stopp" sent, not answered yet
 const PROGRAM_SAVING = new Set();   // a save is in flight, per item
 const PROGRAM_RESAVE = new Set();   // another edit arrived meanwhile
 // Hide key: shows what a click does, like the title: struck through while the
@@ -154,7 +155,6 @@ function buildProgramAction(field, label, item) {
     link.appendChild(buildSongPicker(item.song));
     choose.appendChild(programIconButton("song", ICON_SONG, "Lied", "Lied aus der Bibliothek wählen"));
   }
-  choose.appendChild(programIconButton("file", ICON_FILE, "Datei", `${label}: Datei oder Pfad angeben`));
   const current = document.createElement("div");
   current.className = "program-action-current";
   current.appendChild(Object.assign(document.createElement("span"), { className: "program-action-legacy" }));
@@ -165,10 +165,11 @@ function buildProgramAction(field, label, item) {
   clear.innerHTML = ICON_CLEAR;
   clear.title = `${label} entfernen`;
   clear.setAttribute("aria-label", clear.title);
-  link.append(choose, buildFileAction(label, item[field]), current, clear);
+  link.append(choose, current, clear);
   syncProgramAction(link);
   return link;
 }
+
 
 function programIconButton(pick, icon, text, title) {
   const button = document.createElement("button");
@@ -186,7 +187,7 @@ function syncProgramAction(link) {
   const value = control.value;
   const songInput = link.querySelector('[data-program-field="song"]');
   const song = songInput ? songInput.value : "";
-  const legacy = !!value && !isFileAction(value) && value !== FILE_CHOOSE;
+  const legacy = !!value && !isRowFile(value) && value !== FILE_CHOOSE;
   link.querySelector(".program-action-choose").hidden = !!(value || song);
   const picker = link.querySelector(".song-picker");
   if (picker) picker.hidden = !song;
@@ -212,6 +213,7 @@ function pickProgramAction(button) {
     control.value = "";  // a song or a file, not both
     syncSongPicker(link.querySelector(".song-picker"));
     syncProgramAction(link);
+    syncSongStep(button.closest("tr"), song.id);  // its Liedtext step, last
     const title = button.closest("tr").querySelector('[data-program-field="title"]');
     if (title && !title.value.trim()) title.value = song.title;
     songInput.dispatchEvent(new Event("change", { bubbles: true }));
@@ -226,6 +228,7 @@ function clearProgramAction(button) {
   if (songInput) {
     songInput.value = "";
     syncSongPicker(link.querySelector(".song-picker"));
+    syncSongStep(button.closest("tr"), "");  // the Liedtext step goes with it
   }
   syncProgramAction(link);
   control.dispatchEvent(new Event("change", { bubbles: true }));
@@ -325,18 +328,70 @@ const ICON_SHORTCUT_LOAD = `<svg viewBox="0 0 24 24" width="18" height="18" fill
 const ICON_EARLIER = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg>`;
 const ICON_PLUS = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>`;
 
+// ---- Desktop steps (app/row_files.py) ---------------------------------------
+// A row's "desktop" list runs in its order: Desktop keys (optionally with
+// another file: "via:<key>|<path>"), "@freeze" / "@unfreeze" (Beamer
+// einfrieren / auftauen), "@song" (the row's Liedtext), and from older rows a
+// file on a PC ("file:<ip>|<path>", until a Desktop key is chosen) or a
+// Steuerung key ("key:<id>"). The hidden field holds the list as JSON (paths
+// may contain commas).
+
+const STEP_FREEZE = "@freeze", STEP_UNFREEZE = "@unfreeze", STEP_SONG = "@song";
+// "Pfad zurücksetzen" (an arrow back), unlike the ✕ that removes the step.
+const ICON_PATH_RESET = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12a8 8 0 1 0 2.4-5.7"/><path d="M4 4v4h4"/></svg>`;
+const STEP_PSEUDO = { [STEP_FREEZE]: "Beamer einfrieren", [STEP_UNFREEZE]: "Beamer auftauen", [STEP_SONG]: "Liedtext" };
+
+function readSteps(control) {
+  const text = control.value || "";
+  if (!text) return [];
+  try {
+    const list = JSON.parse(text);
+    return Array.isArray(list) ? list.filter(step => typeof step === "string" && step) : [];
+  } catch (_) {
+    return text.split(",").filter(Boolean);  // an older page's form
+  }
+}
+
+function writeSteps(control, steps) { control.value = JSON.stringify(steps); }
+
+// The Desktop key a step runs through, else "".
+function stepProfileId(step) {
+  if (isViaAction(step)) return parseViaAction(step).profile;
+  if (STEP_PSEUDO[step] || isFileAction(step) || step.startsWith("key:")) return "";
+  return step;
+}
+
+function stepProfile(step) {
+  const id = stepProfileId(step);
+  return id ? PROGRAM_DESKTOP_PROFILES.find(p => p.id === id) || null : null;
+}
+
+// {text, kind}: what the step is called; kind "missing" / "warn" / "pseudo" / "".
+function programStepLabel(step, song) {
+  if (step === STEP_SONG) {
+    const known = song && SONG_INDEX.get(song);
+    return song ? { text: `Liedtext · ${known ? known.title : song.replace(/\.(foil|pptx)$/i, "")}`, kind: "pseudo" }
+      : { text: "Liedtext · kein Lied gewählt", kind: "missing" };
+  }
+  if (STEP_PSEUDO[step]) return { text: STEP_PSEUDO[step], kind: "pseudo" };
+  if (isFileAction(step)) return { text: `${fileBaseName(parseFileAction(step).path)} · Desktop-Taste wählen`, kind: "warn" };
+  if (step.startsWith("key:")) return { text: `Taste · ${programLegacyLabel(step.slice(4))}`, kind: "" };
+  const profile = stepProfile(step);
+  return profile ? { text: profile.title, kind: "" } : { text: `Gelöscht (${stepProfileId(step)})`, kind: "missing" };
+}
+
 function buildProgramDesktop(item) {
   const box = document.createElement("div");
   box.className = "program-desktop";
   const hidden = document.createElement("input");
   hidden.type = "hidden";
   hidden.dataset.programField = "desktop";
-  hidden.value = (item.desktop || []).join(",");
+  writeSteps(hidden, item.desktop || []);
   const chosen = document.createElement("div");
   chosen.className = "program-desktop-chosen";
   const add = document.createElement("button");
   add.type = "button";
-  add.className = "program-desktop-add";
+  add.className = "program-desktop-add ghost-add";
   add.setAttribute("aria-expanded", "false");
   const pick = document.createElement("div");
   pick.className = "program-desktop-pick";
@@ -344,67 +399,119 @@ function buildProgramDesktop(item) {
   const note = document.createElement("span");
   note.className = "program-desktop-note";
   chosen.append(add, note);
-  box.append(hidden, chosen, pick);
+  // Another file for a key: path, "Durchsuchen…" (on the streaming PC), done.
+  const pathEditor = document.createElement("div");
+  pathEditor.className = "file-action step-path-editor";
+  pathEditor.hidden = true;
+  pathEditor.innerHTML = `<input type="text" class="file-path" autocomplete="off" spellcheck="false" maxlength="400"
+      placeholder="Pfad, z. B. I:\\Uebersetzung\\Predigt.pdf" aria-label="Datei für diese Desktop-Taste">
+    <div class="file-action-row"><button type="button" class="file-browse">Durchsuchen…</button>
+      <button type="button" class="step-path-done" data-step-path-done="1">Fertig</button></div>
+    <div class="file-kind"></div>`;
+  box.append(hidden, chosen, pick, pathEditor);
   syncProgramDesktop(box);
   return box;
 }
 
+function programRowSong(box) {
+  const song = box.closest("tr")?.querySelector('[data-program-field="song"]');
+  return song ? song.value : "";
+}
+
 function syncProgramDesktop(box) {
   if (!box) return;
-  const chosen = box.querySelector("[data-program-field]").value.split(",").filter(Boolean);
+  const steps = readSteps(box.querySelector(":scope > [data-program-field]"));
+  const song = programRowSong(box);
   const profiles = PROGRAM_DESKTOP_PROFILES.map(p => ({ id: p.id, title: p.title }));
-  const titleOf = id => (profiles.find(p => p.id === id) || {}).title;
-  const rest = profiles.filter(p => !chosen.includes(p.id));
-  const sig = JSON.stringify([chosen.map(id => [id, titleOf(id) || null]), rest]);
+  const sig = JSON.stringify([steps, song, profiles, PROGRAM_BUTTONS.length]);
   const add = box.querySelector(".program-desktop-add");
   const pick = box.querySelector(".program-desktop-pick");
   if (box.dataset.sig !== sig) {
     box.dataset.sig = sig;
-    const chips = chosen.map((id, index) => {
+    const chips = steps.map((step, index) => {
+      const label = programStepLabel(step, song);
       const chip = document.createElement("span");
-      chip.className = "program-desktop-chip" + (titleOf(id) ? "" : " missing");
+      chip.className = "program-desktop-chip" + (label.kind ? ` ${label.kind}` : "");
       if (index > 0) {
         const earlier = document.createElement("button");
         earlier.type = "button";
         earlier.className = "program-desktop-earlier";
-        earlier.dataset.choiceEarlier = id;
+        earlier.dataset.choiceEarlier = String(index);
         earlier.innerHTML = ICON_EARLIER;
-        earlier.title = `${titleOf(id) || id} früher ausführen (vor ${titleOf(chosen[index - 1]) || chosen[index - 1]})`;
+        earlier.title = `${label.text} früher ausführen (vor ${programStepLabel(steps[index - 1], song).text})`;
         earlier.setAttribute("aria-label", earlier.title);
         chip.appendChild(earlier);
       }
-      const label = document.createElement("span");
-      label.className = "program-desktop-chip-label";
-      label.textContent = `${index + 1}. ${titleOf(id) || `Gelöscht (${id})`}`;
+      const text = document.createElement("span");
+      text.className = "program-desktop-chip-label";
+      text.textContent = `${index + 1}. ${label.text}`;
+      chip.appendChild(text);
+      if (stepProfileId(step)) {
+        // The key's own file, or another one chosen here.
+        const path = document.createElement("button");
+        path.type = "button";
+        path.className = "step-path";
+        path.dataset.stepPath = String(index);
+        const own = isViaAction(step) ? parseViaAction(step).path : "";
+        path.textContent = own ? fileBaseName(own) : "(Pfad der Taste)";
+        path.title = own ? `Datei: ${own} – ändern` : "Andere Datei über diese Taste zeigen (Pfad…)";
+        chip.appendChild(path);
+        if (own) {
+          const clear = document.createElement("button");
+          clear.type = "button";
+          clear.className = "step-path-clear";
+          clear.dataset.stepPathClear = String(index);
+          clear.innerHTML = ICON_PATH_RESET;
+          clear.title = "Pfad zurücksetzen: wieder die Datei der Taste";
+          clear.setAttribute("aria-label", clear.title);
+          chip.appendChild(clear);
+        }
+      } else if (isFileAction(step)) {
+        // An older file on a PC: choose the Desktop key that shows it.
+        const select = document.createElement("select");
+        select.className = "step-profile";
+        select.dataset.stepProfile = String(index);
+        select.setAttribute("aria-label", "Desktop-Taste für diese Datei");
+        setSelectOptions(select, fileProfileOptions(), "Desktop-Taste wählen", "");
+        chip.appendChild(select);
+      }
+      if (step === STEP_SONG && song) {
+        // Goes with the song (Liedtext ✕ above); only its place is chosen here.
+        chip.classList.add("song-step");
+        chip.title = "Kommt und geht mit dem Lied unter Liedtext; hier nur seine Stelle";
+        return chip;
+      }
       const remove = document.createElement("button");
       remove.type = "button";
       remove.className = "program-desktop-remove";
-      remove.dataset.choiceRemove = id;
+      remove.dataset.choiceRemove = String(index);
       remove.innerHTML = ICON_CLEAR;
-      remove.title = `${titleOf(id) || id} entfernen`;
+      remove.title = `${label.text} entfernen`;
       remove.setAttribute("aria-label", remove.title);
-      chip.append(label, remove);
+      chip.appendChild(remove);
       return chip;
     });
     box.querySelector(".program-desktop-chosen").replaceChildren(...chips, add, box.querySelector(".program-desktop-note"));
-    pick.replaceChildren(...rest.map(profile => {
+    const choices = [
+      ...profiles.map(profile => ({ step: profile.id, text: profile.title, kind: "" })),
+      { step: STEP_FREEZE, text: STEP_PSEUDO[STEP_FREEZE], kind: "pseudo" },
+      { step: STEP_UNFREEZE, text: STEP_PSEUDO[STEP_UNFREEZE], kind: "pseudo" },
+      ...(steps.includes(STEP_SONG) ? [] : [{ step: STEP_SONG, text: song ? "Liedtext" : "Liedtext (Lied oben wählen)", kind: "pseudo" }]),
+    ];
+    pick.replaceChildren(...choices.map(choice => {
       const key = document.createElement("button");
       key.type = "button";
-      key.className = "program-desktop-key";
-      key.dataset.choiceAdd = profile.id;
-      key.textContent = profile.title;
-      key.title = `${profile.title} hinzufügen (läuft als ${chosen.length + 1}.)`;
+      key.className = "program-desktop-key" + (choice.kind ? ` ${choice.kind}` : "");
+      key.dataset.choiceAdd = choice.step;
+      key.textContent = choice.text;
+      key.title = `${choice.text} hinzufügen (läuft als ${steps.length + 1}.)`;
       return key;
     }));
   }
-  add.innerHTML = `${ICON_PLUS}<span>${chosen.length ? "Profil" : "Desktop-Profil"}</span>`;
-  // Nothing left to add: a visible note instead of a dead key.
-  add.hidden = !rest.length;
-  box.querySelector(".program-desktop-note").textContent = !profiles.length ? "Keine Desktop-Profile – unter Desktop anlegen"
-    : !rest.length ? "Alle Desktop-Profile gewählt" : "";
-  add.title = "Desktop-Profil hinzufügen";
+  add.innerHTML = `${ICON_PLUS}<span>${steps.length ? "Schritt" : "Desktop-Taste, Freeze, Liedtext"}</span>`;
+  add.title = "Desktop-Taste, Beamer einfrieren / auftauen oder Liedtext hinzufügen";
   add.setAttribute("aria-label", add.title);
-  if (!rest.length) pick.hidden = true;
+  box.querySelector(".program-desktop-note").textContent = !profiles.length ? "Keine Desktop-Tasten – unter Desktop anlegen" : "";
   add.setAttribute("aria-expanded", String(!pick.hidden));
 }
 
@@ -415,28 +522,100 @@ function toggleProgramDesktopPick(add) {
   if (!pick.hidden) pick.querySelector("button")?.focus({ preventScroll: true });
 }
 
+// Write the steps, redraw, save (the field's change).
+function commitProgramSteps(box, steps, focusSelector) {
+  writeSteps(box.querySelector(":scope > [data-program-field]"), steps);
+  syncProgramDesktop(box);
+  const focus = focusSelector && box.querySelector(focusSelector);
+  (focus || box.querySelector(".program-desktop-add"))?.focus({ preventScroll: true });
+  box.querySelector(":scope > [data-program-field]").dispatchEvent(new Event("change", { bubbles: true }));
+}
+
 function changeProgramDesktop(button) {
   const box = button.closest(".program-desktop");
-  const hidden = box.querySelector("[data-program-field]");
-  const chosen = hidden.value.split(",").filter(Boolean);
+  const steps = readSteps(box.querySelector(":scope > [data-program-field]"));
+  let focus = null;
   if (button.dataset.choiceAdd) {
-    chosen.push(button.dataset.choiceAdd);
+    steps.push(button.dataset.choiceAdd);
     box.querySelector(".program-desktop-pick").hidden = true;
+    focus = `[data-choice-remove="${steps.length - 1}"]`;
+  } else if (button.dataset.choiceRemove) {
+    steps.splice(Number(button.dataset.choiceRemove), 1);
+  } else if (button.dataset.choiceEarlier) {
+    const at = Number(button.dataset.choiceEarlier);
+    if (at > 0) [steps[at - 1], steps[at]] = [steps[at], steps[at - 1]];
+    focus = at > 1 ? `[data-choice-earlier="${at - 1}"]` : `[data-choice-remove="${at - 1}"]`;
   }
-  let next = button.dataset.choiceRemove ? chosen.filter(id => id !== button.dataset.choiceRemove) : chosen;
-  const earlier = button.dataset.choiceEarlier;
-  const at = earlier ? next.indexOf(earlier) : -1;
-  if (at > 0) next = [...next.slice(0, at - 1), earlier, next[at - 1], ...next.slice(at + 1)];
-  hidden.value = [...new Set(next)].join(",");
+  box.querySelector(".step-path-editor").hidden = true;
+  commitProgramSteps(box, steps, focus);
+}
+
+// "Pfad…" of a key step: the editor under the list, for that step.
+function openStepPath(button) {
+  const box = button.closest(".program-desktop");
+  const index = Number(button.dataset.stepPath);
+  const step = readSteps(box.querySelector(":scope > [data-program-field]"))[index] || "";
+  const editor = box.querySelector(".step-path-editor");
+  editor.dataset.stepIndex = String(index);
+  editor.hidden = false;
+  const path = editor.querySelector(".file-path");
+  path.value = isViaAction(step) ? parseViaAction(step).path : "";
+  editor.querySelector(".file-browse").hidden = !FILE_BROWSE_AVAILABLE;
+  const kind = editor.querySelector(".file-kind");
+  kind.textContent = `Für ${programStepLabel(step, "").text}: leer = die Datei der Taste`;
+  kind.classList.remove("bad");
+  path.focus();
+}
+
+// The path editor's file (typed, or picked in "Durchsuchen…"): into its step.
+function commitStepPath(editor) {
+  const box = editor.closest(".program-desktop");
+  const steps = readSteps(box.querySelector(":scope > [data-program-field]"));
+  const index = Number(editor.dataset.stepIndex);
+  const profile = stepProfileId(steps[index] || "");
+  if (!profile) return;
+  const path = editor.querySelector(".file-path").value.trim();
+  const hint = fileKindText(path);
+  const kind = editor.querySelector(".file-kind");
+  kind.textContent = hint || "Leer: die Datei der Taste";
+  kind.classList.toggle("bad", hint.startsWith("Bitte"));
+  if (hint.startsWith("Bitte")) return;
+  const next = path ? `via:${profile}|${path}` : profile;
+  if (next === steps[index]) return;
+  steps[index] = next;
+  commitProgramSteps(box, steps, `[data-step-path="${index}"]`);
+}
+
+function clearStepPath(button) {
+  const box = button.closest(".program-desktop");
+  const steps = readSteps(box.querySelector(":scope > [data-program-field]"));
+  const index = Number(button.dataset.stepPathClear);
+  steps[index] = stepProfileId(steps[index] || "") || steps[index];
+  box.querySelector(".step-path-editor").hidden = true;
+  commitProgramSteps(box, steps, `[data-step-path="${index}"]`);
+}
+
+// An older file step gets its Desktop key: from then on "via:<key>|<path>".
+function chooseStepProfile(select) {
+  const box = select.closest(".program-desktop");
+  const steps = readSteps(box.querySelector(":scope > [data-program-field]"));
+  const index = Number(select.dataset.stepProfile);
+  if (!select.value || !isFileAction(steps[index] || "")) return;
+  steps[index] = `via:${select.value}|${parseFileAction(steps[index]).path}`;
+  commitProgramSteps(box, steps, `[data-step-path="${index}"]`);
+}
+
+// The row's song chosen or removed: its Liedtext step follows (added last,
+// removed with it).
+function syncSongStep(row, song) {
+  const box = row && row.querySelector(".program-desktop");
+  if (!box) return;
+  const control = box.querySelector(":scope > [data-program-field]");
+  const steps = readSteps(control);
+  const has = steps.includes(STEP_SONG);
+  if (song && !has) writeSteps(control, [...steps, STEP_SONG]);
+  else if (!song && has) writeSteps(control, steps.filter(step => step !== STEP_SONG));
   syncProgramDesktop(box);
-  // Keep the focus on the moved profile's key (or on "+").
-  const focus = (earlier && box.querySelector(`[data-choice-earlier="${CSS.escape(earlier)}"]`))
-    || (earlier && box.querySelector(`[data-choice-remove="${CSS.escape(earlier)}"]`))
-    || box.querySelector(".program-desktop-add:not([hidden])")
-    // The last profile added: "+" is gone, so the new profile's ✕.
-    || (button.dataset.choiceAdd && box.querySelector(`[data-choice-remove="${CSS.escape(button.dataset.choiceAdd)}"]`));
-  if (focus) focus.focus({ preventScroll: true });
-  hidden.dispatchEvent(new Event("change", { bubbles: true }));
 }
 
 // ---- "Shortcut laden" ----------------------------------------------------------
@@ -492,7 +671,11 @@ function loadShortcutIntoRow(row, shortcut) {
     const value = shortcut[field];
     loaded[field] = Array.isArray(value) ? [...value] : (value ?? null);
   }
-  if (current.song) loaded.lyrics = null;
+  if (current.song) {
+    loaded.lyrics = null;
+    // The row's song keeps its step (last, if the shortcut has none for it).
+    if (!(loaded.desktop || []).includes(STEP_SONG)) loaded.desktop = [...(loaded.desktop || []), STEP_SONG];
+  }
   fillProgramFields(row, loaded, true);
   if (row.dataset.programId) {
     // Saved like any edit of the row; the toast once it is saved (a failed
@@ -586,13 +769,11 @@ function buildProgramRow(item, draft = false, kind = draft ? "draft" : "program"
   edit("Mute Gruppe", programSelect("group", "Mute Gruppe", item.group, programGroupOptions(), NO_PROGRAM_GROUP), "group");
   edit("Licht", programSelect("light", "Licht-Preset", item.light, programLightOptions(item.light), NO_PROGRAM_LIGHT), "light");
 
-  for (const [field, label] of [["playback", "Playback"], ["translation", "Übersetzung"], ["lyrics", "Liedtext"]]) {
-    edit(label, buildProgramAction(field, label, item), field);
-  }
-
+  // Liedtext: the song from the library (where it runs: its step in Desktop).
+  if (!shortcut) edit("Liedtext", buildProgramAction("lyrics", "Liedtext", item), "lyrics");
+  edit("Beamer · vor den Desktop-Schritten", programSelect("beamer", "Beamer", item.beamer, PROGRAM_BEAMER_OPTIONS, NO_PROGRAM_BEAMER), "beamer");
+  edit("Desktop · Schritte in dieser Reihenfolge", buildProgramDesktop(item), "desktop");
   edit("Kamera-Presets · nur auf der Kamera, die nicht live ist", buildProgramCamera(item), "camera");
-  edit("Desktop · läuft in dieser Reihenfolge", buildProgramDesktop(item), "desktop");
-  edit("Beamer", programSelect("beamer", "Beamer", item.beamer, PROGRAM_BEAMER_OPTIONS, NO_PROGRAM_BEAMER), "beamer");
   if (shortcut) {
     row.querySelectorAll("select[data-program-field]").forEach(syncSingleChoice);
     return row;
@@ -686,9 +867,12 @@ function programChips(item) {
   if (item.light) add("light", "Licht", (PROGRAM_LIGHT_SCENES.find(scene => scene.id === item.light) || {}).name || "Gelöschtes Preset");
   for (const [field, label] of [["playback", "Playback"], ["translation", "Übersetzung"], ["lyrics", "Liedtext"]]) {
     const value = item[field];
-    if (value) add("file", label, isFileAction(value) ? fileBaseName(parseFileAction(value).path) : programLegacyLabel(value));
+    if (!value) continue;
+    // A file without its Desktop key (older row, key deleted) is marked.
+    const keyless = isFileAction(value) || (isViaAction(value) && !PROGRAM_DESKTOP_PROFILES.some(p => p.id === parseViaAction(value).profile));
+    add(keyless ? "warn" : "file", label, isRowFile(value) ? rowFileChipText(value) : programLegacyLabel(value));
   }
-  if (item.song) {
+  if (item.song && !(item.desktop || []).includes(STEP_SONG)) {  // older: no Liedtext step of its own
     const song = SONG_INDEX.get(item.song);
     add("song", "Lied", song ? song.title : item.song.replace(/\.(foil|pptx)$/i, ""));
   }
@@ -699,7 +883,11 @@ function programChips(item) {
     const scene = item[`${cam}_scene`] ? ` → OBS ${item[`${cam}_scene`]}` : "";
     add("camera", camLabel, (option ? option.label.replace(/^[^·]*·\s*/, "") : `Preset ${preset}`) + scene);
   }
-  for (const id of item.desktop || []) add("desktop", "Desktop", (PROGRAM_DESKTOP_PROFILES.find(p => p.id === id) || {}).title || id);
+  (item.desktop || []).forEach((step, index) => {
+    const label = programStepLabel(step, item.song);
+    const own = isViaAction(step) ? ` · ${fileBaseName(parseViaAction(step).path)}` : "";
+    add(label.kind === "warn" || label.kind === "missing" ? "warn" : "desktop", `${index + 1}.`, label.text + own);
+  });
   if (item.beamer) add("beamer", "Beamer", item.beamer);
   return chips;
 }
@@ -784,7 +972,8 @@ function fillProgramFields(row, item, force = false) {
       }
       setSelectOptions(control, groupOptions, NO_PROGRAM_GROUP, value);
     } else if (!keep) {
-      control.value = Array.isArray(item[field]) ? item[field].join(",") : (item[field] ?? "");
+      if (field === "desktop") writeSteps(control, item.desktop || []);
+      else control.value = Array.isArray(item[field]) ? item[field].join(",") : (item[field] ?? "");
     }
   }
   const picker = row.querySelector(".song-picker");
@@ -1072,6 +1261,11 @@ function clockText(date) {
 
 // Clock, the next row and the time until it is due.
 function updateProgramCue() {
+  const stop = $("program-stop-btn");
+  stop.disabled = !PROGRAM_STATUS.started || PROGRAM_STOPPING;
+  stop.title = PROGRAM_STATUS.started
+    ? `Stopp: ${PROGRAM_STATUS.started === 1 ? "das" : `die ${PROGRAM_STATUS.started}`} vom Programmablauf Gestartete beenden (Musik blendet aus, Fenster und Bilder gehen zu)`
+    : "Stopp: nichts vom Programmablauf läuft";
   const now = new Date();
   $("program-clock").textContent = clockText(now);
   const next = PROGRAM_ITEMS.find(item => item.id === PROGRAM_STATUS.next_id);
@@ -1116,7 +1310,8 @@ function readProgramRow(row) {
     if (result[field] === FILE_CHOOSE) result[field] = null;  // file chosen, path not entered yet
     result[field] ||= null;
   }
-  result.desktop = result.desktop ? result.desktop.split(",").filter(Boolean) : [];
+  const steps = row.querySelector('[data-program-field="desktop"]');
+  result.desktop = steps ? readSteps(steps) : [];
   for (const [cam] of PROGRAM_CAMERAS) {
     result[`${cam}_preset`] = result[`${cam}_preset`] ? Number(result[`${cam}_preset`]) : null;
   }
@@ -1226,7 +1421,7 @@ async function deleteProgramItem(itemId, button) {
 // named briefly, in one line.
 const PROGRAM_AREA_LABELS = {
   mixer: "Mischpult", light: "Licht", beamer: "Beamer", playback: "Playback", translation: "Übersetzung",
-  lyrics: "Liedtext", desktop: "Desktop", song: "Lied", cameras: "Kameras",
+  lyrics: "Liedtext", desktop: "Desktop", song: "Lied", cameras: "Kameras", freeze: "Beamer freeze",
 };
 const PROGRAM_AREA_REASONS = [
   [/no mixer connection|not connected/i, "nicht verbunden"],
@@ -1239,6 +1434,7 @@ const PROGRAM_AREA_REASONS = [
   [/^unknown song$/i, "Lied nicht gefunden"],
   [/^unknown desktop profile/i, "Profil gelöscht"],
   [/song library not loaded/i, "Liedbibliothek nicht geladen"],
+  [/freeze state is unknown/i, "Freeze-Zustand unbekannt (in Steuerung unter „Freeze-Zustand festlegen“ setzen)"],
   [/switches mutes/i, "Taste schaltet Mutes (die Mutegruppe des Punkts tut das)"],
 ];
 
@@ -1316,6 +1512,20 @@ function playProgramItem(itemId, button) {
 }
 
 
+$("program-stop-btn").addEventListener("click", async () => {
+  if (PROGRAM_STOPPING) return;
+  PROGRAM_STOPPING = true;
+  updateProgramCue();
+  try {
+    const result = await api("POST", "/program/stop");
+    if (!result.ok || result.data.ok === false) toast(`Stopp: ${result.data.reason || "HTTP " + result.status}`, false);
+    else toast(result.data.stopped ? `Gestoppt (${result.data.stopped})` : "Nichts zu stoppen", true);
+    await refreshProgramState();
+  } finally {
+    PROGRAM_STOPPING = false;
+    updateProgramCue();
+  }
+});
 $("program-go-btn").addEventListener("click", event => startProgram("next", "/program/next", event.currentTarget));
 $("program-export-btn").addEventListener("click", () => {
   const link = document.createElement("a");
@@ -1433,6 +1643,17 @@ onProgramEditors("click", event => {
   if (add) return toggleProgramDesktopPick(add);
   const choice = event.target.closest("[data-choice-add], [data-choice-remove], [data-choice-earlier]");
   if (choice) return changeProgramDesktop(choice);
+  const stepPath = event.target.closest("[data-step-path]");
+  if (stepPath) return openStepPath(stepPath);
+  const stepClear = event.target.closest("[data-step-path-clear]");
+  if (stepClear) return clearStepPath(stepClear);
+  const stepDone = event.target.closest("[data-step-path-done]");
+  if (stepDone) {
+    const editor = stepDone.closest(".step-path-editor");
+    commitStepPath(editor);
+    editor.hidden = true;
+    return;
+  }
   const pick = event.target.closest("[data-action-pick]");
   if (pick) return pickProgramAction(pick);
   const clear = event.target.closest("[data-action-clear]");
@@ -1441,8 +1662,12 @@ onProgramEditors("click", event => {
   if (single) toggleSingleChoice(single);
 });
 onProgramEditors("change", event => {
+  const stepProfile = event.target.closest("[data-step-profile]");
+  if (stepProfile) return chooseStepProfile(stepProfile);
   const link = event.target.closest(".program-action-link");
-  if (link) syncProgramAction(link);
+  // A change in the file editor (path, Desktop key) is files.js's to commit
+  // first; the field's own change that follows syncs the cell.
+  if (link && !event.target.closest(".file-action")) syncProgramAction(link);
 });
 // The scene list is asked again when a scene is about to be chosen (OBS may have started since).
 onProgramEditors("focusin", event => {

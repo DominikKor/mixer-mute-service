@@ -411,9 +411,9 @@ with TestClient(app) as client:
           and updated_program.json()["item"]["person"] == "Anna M.")
     with patch.object(app.state.controller, "group_set", AsyncMock(
         return_value={"ok": True, "group": "drums"}
-    )) as activate_group, patch("app.actions.run_profile", new=AsyncMock(
+    )) as activate_group, patch("app.api.program.run_profile", new=AsyncMock(
         return_value=({"ok": True}, 200)
-    )) as play_desktop, patch("app.actions.press_button", new=AsyncMock(
+    )) as play_desktop, patch("app.api.program.press_button", new=AsyncMock(
         return_value=({"ok": True}, 200)
     )) as play_linked:
         successful_program_play = client.post(f"/program/items/{program_id}/play")
@@ -425,7 +425,7 @@ with TestClient(app) as client:
               and [call.args[1] for call in play_linked.await_args_list]
               == ["cam1-live", "cam2-live-bottom"])
     with patch.object(app.state.native_controls, "press", AsyncMock(return_value={"ok": True})) as program_native, \
-            patch("app.actions.run_profile", new=AsyncMock(return_value=({"ok": True}, 200))) as program_desktop:
+            patch("app.api.program.run_profile", new=AsyncMock(return_value=({"ok": True}, 200))) as program_desktop:
         blocked_program_play = client.post(f"/program/items/{program_id}/play")
         blocked = blocked_program_play.json()
         # Best effort per area: the mixer part is blocked as a whole (nothing
@@ -435,17 +435,18 @@ with TestClient(app) as client:
               and blocked["areas"]["mixer"]["ok"] is False and blocked["group_result"]["ok"] is False)
         check("program play runs the other areas when the group is blocked",
               program_native.await_count == 2 and program_desktop.await_count == 1
-              and blocked["areas"]["playback"] == {"ok": True} and blocked["partial"] is True)
-    # A key deleted after the row was saved: only that field is skipped.
+              and blocked["areas"]["desktop"] == {"ok": True} and blocked["partial"] is True)
+    # A key deleted after the row was saved: only that step fails, the rest runs.
     with patch.object(app.state.companion_button_store, "get_button", AsyncMock(return_value=None)), \
             patch.object(app.state.controller, "group_set", AsyncMock(return_value={"ok": True})) as dangling_group, \
-            patch("app.actions.run_profile", new=AsyncMock(return_value=({"ok": True}, 200))):
+            patch("app.api.program.run_profile", new=AsyncMock(return_value=({"ok": True}, 200))):
         dangling_play = client.post(f"/program/items/{program_id}/play")
         areas = dangling_play.json()["areas"]
         check("program play skips a deleted linked key",
-              dangling_play.status_code == 200 and areas["translation"] == {"ok": False, "reason": "unknown button", "skipped": True})
+              dangling_play.status_code == 200 and areas["desktop"]["ok"] is False
+              and "cam1-live: unknown button" in areas["desktop"]["reason"])
         check("program play with a deleted key: the rest runs (group set)",
-              dangling_group.await_count == 1 and areas["mixer"] == {"ok": True} and areas["playback"] == {"ok": True})
+              dangling_group.await_count == 1 and areas["mixer"] == {"ok": True} and areas["desktop"].get("partial") is True)
     played_program = client.get("/program/items").json()[0]
     check("program play stores timing delay", played_program["last_delay_seconds"] is not None
           and played_program["last_played_at"] is not None)
@@ -463,8 +464,8 @@ with TestClient(app) as client:
     check("status: started row is current, duplicate is next",
           status["current_id"] == program_id and status["next_id"] == dup_id)
     with patch.object(app.state.controller, "group_set", AsyncMock(return_value={"ok": True})), \
-            patch("app.actions.run_profile", new=AsyncMock(return_value=({"ok": True}, 200))), \
-            patch("app.actions.press_button", new=AsyncMock(return_value=({"ok": True}, 200))):
+            patch("app.api.program.run_profile", new=AsyncMock(return_value=({"ok": True}, 200))), \
+            patch("app.api.program.press_button", new=AsyncMock(return_value=({"ok": True}, 200))):
         nxt = client.post("/program/next")
         check("Weiter starts the next row", nxt.status_code == 200 and nxt.json()["program_item_id"] == dup_id)
         finished = client.post("/program/next")
@@ -474,7 +475,7 @@ with TestClient(app) as client:
     # profiles are faked so nothing reaches OBS or a display PC.
     with patch.object(app.state.controller, "group_set", AsyncMock(return_value={"ok": False, "reason": "unsafe group operation"})), \
             patch.object(app.state.native_controls, "press", AsyncMock(return_value={"ok": True})), \
-            patch("app.actions.run_profile", new=AsyncMock(return_value=({"ok": True}, 200))):
+            patch("app.api.program.run_profile", new=AsyncMock(return_value=({"ok": True}, 200))):
         client.post("/program/reset")
         blocked_next = client.post("/program/next")
         check("blocked group: the program moves on all the same",
@@ -490,7 +491,7 @@ with TestClient(app) as client:
     })
     check("row without group can be saved", no_group.status_code == 200 and no_group.json()["item"]["group"] == "")
     with patch.object(app.state.controller, "group_set", AsyncMock(return_value={"ok": True})) as ng_group, \
-            patch("app.actions.press_button", new=AsyncMock(return_value=({"ok": True}, 200))) as ng_press:
+            patch("app.api.program.press_button", new=AsyncMock(return_value=({"ok": True}, 200))) as ng_press:
         ng_play = client.post(f"/program/items/{no_group.json()['item']['id']}/play")
         check("row without group plays its actions without touching mutes",
               ng_play.status_code == 200 and ng_group.await_count == 0 and ng_press.await_count == 1)

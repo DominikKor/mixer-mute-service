@@ -8,7 +8,8 @@ key behaves the same wherever it is pressed. Every function returns
 Values of a program action field:
   "<button id>"           a Steuerung key or a catalog camera key
   "desktop:<profile id>"  a desktop profile (audio profiles start playing)
-  "file:<ip>|<path>"      a file on a PC (app/file_actions.py)
+  "via:<profile>|<path>"  a file shown through a Desktop key (app/row_files.py)
+  "file:<ip>|<path>"      older: a file on a PC chosen in the row (app/file_actions.py)
 """
 
 from __future__ import annotations
@@ -16,6 +17,8 @@ from __future__ import annotations
 import asyncio
 import logging
 from copy import deepcopy
+from pathlib import PureWindowsPath
+from types import SimpleNamespace
 from typing import Optional
 
 from fastapi import Request
@@ -30,6 +33,7 @@ from .mission_spotlight import profile_path
 from .native_controls import NativeControlError
 from .profile_stops import program_row
 from .responses import Result, controller_result
+from .row_files import KEY_PREFIX, is_via, parse_via, path_kind, start_id, step_error, step_profile, via_error
 
 log = logging.getLogger("mixer.actions")
 
@@ -353,11 +357,68 @@ async def run_profile(request: Request, profile_id: str) -> Result:
     return await show_profile(request, profile_id)
 
 
+async def run_via(request: Request, value: str) -> Result:
+    """A row's file through its Desktop key ("via:<profile>|<path>"): the
+    key's PC, monitor(s), full screen, position and fade, the row's path; the
+    kind comes from the path. Started (and stopped when the program moves
+    on) like a profile, by the id start_id() gives (key and file)."""
+    profile_id, path = parse_via(value)
+    profile = _profile(request, profile_id)
+    if profile is None:
+        return {"ok": False, "reason": "unknown desktop profile"}, 404
+    kind = path_kind(path)
+    if network_program(kind, path):
+        return {"ok": False, "reason": "programs must be on the target PC, not on a network share"}, 400
+    cfg = request.app.state.cfg.desktop_display
+    start = start_id(profile_id, path)
+    name = PureWindowsPath(path).name
+    output = SimpleNamespace(target_ip=profile.target_ip, kind=kind)  # what _tracked_start notes
+    if kind == "audio":
+        payload = {"id": start, "action": "play", "path": path}
+        if profile.fade:
+            payload["fade"] = {"db": AUDIO_FADE_FULL_DB, "seconds": profile.fade_seconds}
+        route, timeout = "/audio", display_agent.AUDIO_TIMEOUT_SECONDS
+    else:
+        payload = {"id": start, "title": f"{profile.title}: {name}", "kind": kind, "path": path,
+                   # The key's program arguments only for a program of its own kind.
+                   # The key's arguments belong to its own program: only for a program.
+                   "args": list(profile.args) if kind == "program" and profile.kind == "program" else [],
+                   "fullscreen": profile.fullscreen, "monitor": profile.monitor, "position": profile.position}
+        if kind == "image" and profile.monitors:
+            payload["monitors"] = profile.monitors
+        route, timeout = "/display", display_agent.AUDIO_TIMEOUT_SECONDS
+    try:
+        answer = await _tracked_start(request, start, output, lambda extra: display_agent.call(
+            cfg, profile.target_ip, route, {**payload, **extra}, timeout=timeout))
+    except AgentError as exc:
+        if exc.agent_status == 503:
+            agent_reason = (exc.body or {}).get("reason")
+            if kind == "audio" and isinstance(agent_reason, str) and agent_reason.startswith(PLAYER_FAILURE_PREFIX):
+                return {"ok": False, "reason": agent_reason, "file": name, "profile": profile_id}, 502
+            return {"ok": False, "reason": await no_file_reason(request, profile.target_ip, path),
+                    "file": name, "profile": profile_id}, 502
+        return {**exc.answer(), "file": name, "profile": profile_id}, exc.status
+    log.info("FILE %s %s via %s on %s", "play" if kind == "audio" else "open", path, profile_id, profile.target_ip)
+    result = {"ok": answer.get("ok", True) is not False, "file": name, "kind": kind,
+              "target": profile.target_ip, "monitor": profile.monitor, "profile": profile_id}
+    if answer.get("kept"):
+        result["kept"] = True
+    if "shown" in answer:  # the agent drew it (true) or did not get it on screen in time (false)
+        result["shown"] = answer["shown"] is True
+    # TODO(doc-presentation, claude/doc-presentation-3c2ea4): once app/documents.py is on main,
+    # call documents.note_shown(request.app.state, profile.target_ip, profile_id) here when
+    # result["ok"] and the path is a document (.pdf .ppt .pptx .pps .ppsx .odp .doc .docx .odt
+    # .rtf), so /documents/next|prev page on this PC.
+    return result, 200
+
+
 # -- program action fields --------------------------------------------------
 
 
 async def run_action(request: Request, value: str) -> Result:
     """Run the value of a program action field."""
+    if is_via(value):
+        return await run_via(request, value)
     if is_file_action(value):
         return await run_file_action(request, value)
     if value.startswith(DESKTOP_PREFIX):
@@ -376,15 +437,28 @@ async def program_reference_error(request: Request, item: dict) -> Optional[str]
         value = item.get(field)
         if not value or is_file_action(value):
             continue  # file paths are checked when saved; the file itself when it runs
+        if is_via(value):
+            problem = via_error(value)
+            if problem:
+                return f"{field}: {problem}"
+            if parse_via(value)[0] not in state.cfg.desktop_display.profiles:
+                return f"unknown {field} desktop profile"
+            continue
         if value.startswith(DESKTOP_PREFIX):
             profile_id = value.removeprefix(DESKTOP_PREFIX)
             if not profile_id or profile_id not in state.cfg.desktop_display.profiles:
                 return f"unknown {field} desktop profile"
         elif await pressable_button(request, value) is None:
             return f"unknown {field} button"
-    for profile_id in item.get("desktop") or []:
-        if profile_id not in state.cfg.desktop_display.profiles:
+    for step in item.get("desktop") or []:  # the Desktop steps (app/row_files.py)
+        problem = step_error(step)
+        if problem:
+            return f"desktop step {step}: {problem}"
+        profile_id = step_profile(step)
+        if profile_id is not None and profile_id not in state.cfg.desktop_display.profiles:
             return f"unknown desktop profile {profile_id}"
+        if step.startswith(KEY_PREFIX) and await pressable_button(request, step.removeprefix(KEY_PREFIX)) is None:
+            return f"unknown desktop step key {step.removeprefix(KEY_PREFIX)}"
     # Only checked once the library has been read (it lives on the display PC).
     songs = state.songs.songs
     if item.get("song") and songs and item["song"] not in songs:
@@ -402,11 +476,16 @@ async def program_conflict_error(request: Request, item: dict) -> Optional[str]:
         return None
     for field in PROGRAM_ACTION_FIELDS:
         value = item.get(field)
-        if not value or is_file_action(value) or value.startswith(DESKTOP_PREFIX):
+        if not value or is_file_action(value) or is_via(value) or value.startswith(DESKTOP_PREFIX):
             continue
         button = await pressable_button(request, value)
         if button is not None and switches_mutes(button):
             return f"{field}: this key switches mutes; a row with a mute group sets them itself"
+    for step in item.get("desktop") or []:
+        if isinstance(step, str) and step.startswith(KEY_PREFIX):
+            button = await pressable_button(request, step.removeprefix(KEY_PREFIX))
+            if button is not None and switches_mutes(button):
+                return f"desktop step {step}: this key switches mutes; a row with a mute group sets them itself"
     return None
 
 
@@ -425,6 +504,13 @@ async def program_area_problems(request: Request, item: dict) -> dict:
         value = item.get(field)
         if not value or is_file_action(value):
             continue
+        if is_via(value):
+            problem = via_error(value)
+            if problem:
+                problems[field] = problem
+            elif parse_via(value)[0] not in state.cfg.desktop_display.profiles:
+                problems[field] = "unknown desktop profile"
+            continue
         if value.startswith(DESKTOP_PREFIX):
             profile_id = value.removeprefix(DESKTOP_PREFIX)
             if not profile_id or profile_id not in state.cfg.desktop_display.profiles:
@@ -435,7 +521,8 @@ async def program_area_problems(request: Request, item: dict) -> dict:
             problems[field] = "unknown button"
         elif item.get("group") and switches_mutes(button):
             problems[field] = "this key switches mutes; the row's mute group sets them itself"
-    gone = [p for p in item.get("desktop") or [] if p not in state.cfg.desktop_display.profiles]
+    gone = [p for p in (step_profile(s) for s in item.get("desktop") or [] if isinstance(s, str))
+            if p is not None and p not in state.cfg.desktop_display.profiles]
     if gone:
         problems["desktop"] = "unknown desktop profile " + ", ".join(gone)
     songs = state.songs.songs

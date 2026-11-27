@@ -55,8 +55,9 @@ class TargetPcRouteTests(unittest.TestCase):
 
                     # Things that use the Anzeige PC by its address.
                     client.put("/songs/settings", json={"target_ip": DISPLAY})
+                    # An older file step (no Desktop key chosen yet) names the PC by its address.
                     row = client.post("/program/items", json={
-                        "time": "10:00", "title": "Intro", "group": "", "playback": FILE_ON_DISPLAY})
+                        "time": "10:00", "title": "Intro", "group": "", "desktop": [FILE_ON_DISPLAY]})
                     self.assertEqual(row.status_code, 200, row.text)
                     saved = client.post("/program/templates", json={"name": "Sonntag", "slots": []})
                     self.assertEqual(saved.status_code, 200, saved.text)
@@ -80,10 +81,10 @@ class TargetPcRouteTests(unittest.TestCase):
                     self.assertIn("# on the display PC", text)  # config.yaml edited in place
                     self.assertEqual(yaml.safe_load(text)["desktop_display"]["profiles"]["qr"]["target_ip"], NEW)
                     self.assertEqual(client.get("/songs/settings").json()["target_ip"], NEW)
-                    self.assertEqual(client.get("/program/items").json()[0]["playback"],
-                                     f"file:{NEW}|I:\\Musik\\Intro.mp3")
+                    self.assertEqual(client.get("/program/items").json()[0]["desktop"],
+                                     [f"file:{NEW}|I:\\Musik\\Intro.mp3"])
                     template = client.get("/program/templates").json()["templates"][0]
-                    self.assertEqual(template["rows"][0]["playback"], f"file:{NEW}|I:\\Musik\\Intro.mp3")
+                    self.assertEqual(template["rows"][0]["desktop"], [f"file:{NEW}|I:\\Musik\\Intro.mp3"])
                     power = json.loads((data / "power_off_config.json").read_text(encoding="utf-8"))
                     self.assertEqual(power["targets"], [NEW])
 

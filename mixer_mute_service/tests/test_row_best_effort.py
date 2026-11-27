@@ -114,7 +114,10 @@ class RowTests(unittest.TestCase):
                                          playback=jingle, song="lied.foil")
             failed = {area for area, entry in answer["areas"].items() if not entry["ok"]}
             self.assertEqual(failed, {"mixer", "light", "desktop"})
-            self.assertTrue(answer["areas"]["playback"]["ok"] and answer["areas"]["song"]["ok"])
+            # The jingle (an old Playback file, now a step through the music key) ran.
+            self.assertTrue(answer["areas"]["song"]["ok"])
+            self.assertNotIn("jingle", answer["areas"]["desktop"]["reason"])
+            self.assertIn((MUSIC_PC, "/audio"), [(pc, path) for pc, path, _p, _t in agents.calls])
             self.assertIn("Mission Spotlight: display agent unavailable", answer["areas"]["desktop"]["reason"])
             self.assertIn("QR: display agent unavailable", answer["areas"]["desktop"]["reason"],
                           "a failed profile does not stop the next one")

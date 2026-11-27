@@ -124,14 +124,27 @@ async def companion_button_press(button_id: str, request: Request):
 
 @router.get("/beamer/state")
 async def beamer_state(request: Request):
-    hidden = await request.app.state.native_controls.get_beamer_state()
+    native = request.app.state.native_controls
+    hidden = await native.get_beamer_state()
     return {
         "ok": True,
         "hidden": hidden,
         "mode": None if hidden is None else ("hide" if hidden else "unhide"),
+        # Freeze (a toggle): None while the service does not know it.
+        "frozen": await native.get_beamer_frozen(),
     }
 
 
 @router.post("/beamer/state")
 async def set_beamer_state(body: BeamerStateRequest, request: Request):
-    return await request.app.state.native_controls.set_beamer_state(body.hidden)
+    """Set what the service takes the beamer to be: hidden and/or frozen
+    (nothing is sent to the beamer)."""
+    native = request.app.state.native_controls
+    if body.hidden is None and body.frozen is None:
+        return fail("hidden or frozen is required", 400)
+    answer = {"ok": True}
+    if body.hidden is not None:
+        answer.update(await native.set_beamer_state(body.hidden))
+    if body.frozen is not None:
+        answer.update(await native.set_beamer_frozen_state(body.frozen))
+    return answer

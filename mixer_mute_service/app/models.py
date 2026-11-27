@@ -39,7 +39,9 @@ class AlwaysOnRequest(BaseModel):
 
 
 class BeamerStateRequest(BaseModel):
-    hidden: bool
+    """The state the service takes the beamer to be in (nothing is sent)."""
+    hidden: Optional[bool] = None
+    frozen: Optional[bool] = None
 
 
 class StagePreferenceRequest(BaseModel):

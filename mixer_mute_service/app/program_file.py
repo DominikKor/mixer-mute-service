@@ -20,6 +20,10 @@ from .actions import DESKTOP_PREFIX, PROGRAM_ACTION_FIELDS, pressable_button
 from .camera_program import CAMERAS
 from .companion_buttons import CATALOG_ONLY_IDS, COMPANION_BUTTONS_BY_ID
 from .file_actions import is_file_action
+from .row_files import KEY_PREFIX, PSEUDO_STEPS, STEP_FREEZE, STEP_SONG, STEP_UNFREEZE, is_via, parse_via, via_value
+
+# Names of the Desktop steps that are no key (app/row_files.py).
+STEP_NAMES = {STEP_FREEZE: "Beamer einfrieren", STEP_UNFREEZE: "Beamer auftauen", STEP_SONG: "Liedtext"}
 
 _KEY_FIELDS = PROGRAM_ACTION_FIELDS  # playback, translation, lyrics: a key or "desktop:<profile>"
 
@@ -67,9 +71,31 @@ class Names:
     # -- export ------------------------------------------------------------
 
     def key_name(self, value: str) -> Optional[str]:
+        if is_via(value):  # a file through a Desktop key: the key's name
+            try:
+                return self.profiles.get(parse_via(value)[0])
+            except ValueError:
+                return None
         if value.startswith(DESKTOP_PREFIX):
             return self.profiles.get(value.removeprefix(DESKTOP_PREFIX))
         return self.buttons.get(value)
+
+    def step_name(self, step) -> Optional[str]:
+        """A Desktop step's readable name: the key's title (also for a key
+        with another file), "Beamer einfrieren" and so on, a Steuerung key's
+        label; None for an older file step."""
+        if not isinstance(step, str):
+            return None
+        if step in STEP_NAMES:
+            return STEP_NAMES[step]
+        if is_via(step):
+            try:
+                return self.profiles.get(parse_via(step)[0])
+            except ValueError:
+                return None
+        if step.startswith(KEY_PREFIX):
+            return self.buttons.get(step.removeprefix(KEY_PREFIX))
+        return self.profiles.get(step)
 
     def song_book(self, song: dict) -> str:
         return ", ".join(f"{b.get('name', '')} {b.get('number', '')}".strip() for b in song.get("books") or [])
@@ -92,7 +118,7 @@ async def annotate(row: dict, names: Names) -> dict:
             if name:
                 result[f"{field}_name"] = name
         elif field == "desktop" and value:
-            result["desktop_names"] = [names.profiles.get(pid) for pid in value]
+            result["desktop_names"] = [names.step_name(step) for step in value]
         elif field == "song" and value in names.songs:
             result["song_title"] = names.songs[value]["title"]
             book = names.song_book(names.songs[value])
@@ -131,6 +157,22 @@ async def resolve(row: dict, names: Names) -> Tuple[dict, List[dict]]:
         if not value or is_file_action(value):
             continue
         name = _text(row.get(f"{field}_name"))
+        if is_via(value):  # a file through a Desktop key: the key by its name, the path stays
+            try:
+                profile_id, path = parse_via(value)
+            except ValueError:
+                continue  # for the validation of the row
+            if profile_id in names.profiles:
+                continue
+            name = name or profile_id
+            found, problem = _only([i for i, t in names.profiles.items() if _same(t, name)])
+            if found:
+                row[field] = via_value(found, path)
+            else:
+                # Without its Desktop key the file has no output here: dropped, and said so.
+                row[field] = None
+                drop(field, "Desktop-Taste", name, problem)
+            continue
         if value.startswith(DESKTOP_PREFIX):  # a desktop profile stays one: only profiles are searched
             if value.removeprefix(DESKTOP_PREFIX) in names.profiles:
                 continue
@@ -146,20 +188,45 @@ async def resolve(row: dict, names: Names) -> Tuple[dict, List[dict]]:
         row[field] = found
         if problem:
             drop(field, kind, name, problem)
-    profiles = row.get("desktop")
-    if isinstance(profiles, list):
+    steps = row.get("desktop")
+    if isinstance(steps, list):
         titles = row.get("desktop_names") if isinstance(row.get("desktop_names"), list) else []
         kept = []
-        for index, pid in enumerate(profiles):
-            if not isinstance(pid, str) or pid in names.profiles:
-                kept.append(pid)  # (a wrong type is for the validation)
+        for index, step in enumerate(steps):
+            title = _text(titles[index]) if index < len(titles) else None
+            if not isinstance(step, str) or step in PSEUDO_STEPS or is_file_action(step):
+                kept.append(step)  # (a wrong type is for the validation)
                 continue
-            name = (_text(titles[index]) if index < len(titles) else None) or pid
+            if step.startswith(KEY_PREFIX):
+                key = step.removeprefix(KEY_PREFIX)
+                if await pressable_button(names.request, key) is not None:
+                    kept.append(step)
+                    continue
+                name = title or key
+                found, problem = _only([i for i, label in names.buttons.items() if _same(label, name)])
+                if found:
+                    kept.append(KEY_PREFIX + found)
+                else:
+                    drop("desktop", "Taste", name, problem)
+                continue
+            path = None
+            if is_via(step):
+                try:
+                    profile_id, path = parse_via(step)
+                except ValueError:
+                    kept.append(step)  # for the validation
+                    continue
+            else:
+                profile_id = step
+            if profile_id in names.profiles:
+                kept.append(step)
+                continue
+            name = title or profile_id
             found, problem = _only([i for i, t in names.profiles.items() if _same(t, name)])
             if found:
-                kept.append(found)
+                kept.append(via_value(found, path) if path is not None else found)
             else:
-                drop("desktop", "Desktop-Profil", name, problem)
+                drop("desktop", "Desktop-Taste", name, problem)
         row["desktop"] = kept
     value = _text(row.get("song"))
     if value and names.songs and value not in names.songs:  # the library may not be loaded: then it stays

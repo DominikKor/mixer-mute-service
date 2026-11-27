@@ -24,7 +24,24 @@ function syncBeamerCommandButtons() {
   }
 }
 
+// The beamer's freeze as the service knows it: true, false, or null (unknown:
+// program steps then send nothing). Shown in the Beamer section and the program.
+let BEAMER_FROZEN = null;
+
 function renderBeamerState(data) {
+  BEAMER_FROZEN = data && typeof data.frozen === "boolean" ? data.frozen : null;
+  document.querySelectorAll("[data-beamer-frozen]").forEach(button => {
+    button.setAttribute("aria-pressed", String(BEAMER_FROZEN === (button.dataset.beamerFrozen === "true")));
+  });
+  $("beamer-frozen-badge").hidden = BEAMER_FROZEN !== true;
+  // Program head: frozen in amber; unknown quietly (a freeze step would send nothing).
+  const badge = $("program-freeze-badge");
+  badge.hidden = BEAMER_FROZEN === false || !data;
+  badge.classList.toggle("unknown", BEAMER_FROZEN === null);
+  badge.textContent = BEAMER_FROZEN === null ? "Freeze: unbekannt" : "Beamer eingefroren";
+  badge.title = BEAMER_FROZEN === null
+    ? "Der Dienst weiß nicht, ob der Beamer eingefroren ist: Freeze-Schritte senden nichts. In Steuerung unter „Freeze-Zustand festlegen“ setzen."
+    : "Der Beamer ist eingefroren: erst ein Schritt „Beamer auftauen“ oder die Taste „Beamer freeze“ zeigt wieder Neues";
   BEAMER_HIDDEN = data && typeof data.hidden === "boolean" ? data.hidden : null;
   const label = BEAMER_HIDDEN === null ? "Zustand unbekannt" : `Ist-Zustand: ${BEAMER_HIDDEN ? "Hide" : "Unhide"}`;
   $("beamer-state-current").textContent = data && data.ok === false ? "Status nicht erreichbar" : label;
@@ -474,6 +491,18 @@ $("companion-categories").addEventListener("click", async (event) => {
   }
 });
 $("beamer-state-control").addEventListener("click", async (event) => {
+  const frozenKey = event.target.closest("[data-beamer-frozen]");
+  if (frozenKey && !frozenKey.disabled) {
+    const frozen = frozenKey.dataset.beamerFrozen === "true";
+    frozenKey.disabled = true;
+    const result = await api("POST", "/beamer/state", { frozen });
+    frozenKey.disabled = false;
+    if (!result.ok || result.data.ok === false) { toast(result.data.reason || `HTTP ${result.status}`, false); return; }
+    const state = await api("GET", "/beamer/state");
+    renderBeamerState(state.ok ? state.data : null);
+    toast(`Freeze-Zustand auf ${frozen ? "eingefroren" : "live"} gesetzt`, true);
+    return;
+  }
   const button = event.target.closest("[data-beamer-state]");
   if (!button || button.disabled) return;
   const hidden = button.dataset.beamerState === "true";
@@ -484,7 +513,8 @@ $("beamer-state-control").addEventListener("click", async (event) => {
     toast(result.data.reason || `HTTP ${result.status}`, false);
     return;
   }
-  renderBeamerState(result.data);
+  const state = await api("GET", "/beamer/state");
+  renderBeamerState(state.ok ? state.data : null);
   toast(`Beamer-Ist-Zustand auf ${hidden ? "Hide" : "Unhide"} gesetzt`, true);
 });
 $("power-off-targets").addEventListener("change", event => {

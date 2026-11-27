@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from pathlib import PureWindowsPath
 from typing import Optional
 
 from fastapi import APIRouter, Body, Request
@@ -20,16 +21,19 @@ from pydantic import ValidationError
 
 from ..camera_program import CAMERAS, DEFAULT_WAIT_SECONDS, obs_scene_names
 from ..actions import (
-    DESKTOP_PREFIX,
-    PROGRAM_ACTION_FIELDS,
     program_area_problems,
     program_conflict_error,
     program_reference_error,
+    press_button,
     press_native,
-    run_action,
+    pressable_button,
     run_profile,
+    run_via,
+    switches_mutes,
 )
-from ..file_actions import is_file_action, parse_file_action
+from ..file_actions import is_file_action, run_file_action
+from ..row_files import (KEY_PREFIX, STEP_FREEZE, STEP_SONG, STEP_UNFREEZE, fold_legacy, is_via, path_kind,
+                         step_profile, streaming_pc_ips)
 from ..models import ProgramItemRequest, ShortcutRequest
 from ..program_file import Names, annotate, resolve
 from ..native_controls import NativeControlError
@@ -56,8 +60,15 @@ _PROGRAM_FILE_FIELDS = (
 _program_lock = asyncio.Lock()
 
 
+async def _folded(request: Request, item: dict) -> dict:
+    """A row (or shortcut) as it came in, with any old Playback /
+    Übersetzung / Liedtext moved into its Desktop steps (app/row_files.py)."""
+    fold_legacy(item, request.app.state.cfg.desktop_display.profiles, await streaming_pc_ips(request.app.state))
+    return item
+
+
 async def _validate(body, request: Request):
-    item = body.model_dump()
+    item = body if isinstance(body, dict) else body.model_dump()
     reason = await program_reference_error(request, item)
     if reason is not None:
         return fail(reason, 404 if reason == "unknown group" else 400)
@@ -128,10 +139,11 @@ async def import_program(request: Request, body: dict = Body(...)):
             item = ProgramItemRequest.model_validate(row)
         except ValidationError:
             return fail(f"item {index + 1} has invalid fields", 400)
-        invalid = await _validate(item, request)
+        data = await _folded(request, item.model_dump())
+        invalid = await _validate(data, request)
         if invalid:
             return invalid
-        imported.append({**item.model_dump(), "hidden": hidden})
+        imported.append({**data, "hidden": hidden})
 
     try:
         items = await request.app.state.program_items.replace_all(imported, preserve_hidden=True)
@@ -142,11 +154,12 @@ async def import_program(request: Request, body: dict = Body(...)):
 
 @router.post("/program/items")
 async def create_program_item(body: ProgramItemRequest, request: Request):
-    invalid = await _validate(body, request)
+    data = await _folded(request, body.model_dump())
+    invalid = await _validate(data, request)
     if invalid:
         return invalid
     try:
-        item = await request.app.state.program_items.create(body.model_dump())
+        item = await request.app.state.program_items.create(data)
     except ProgramItemError as exc:
         return fail(str(exc), 400)
     return {"ok": True, "item": item}
@@ -154,11 +167,12 @@ async def create_program_item(body: ProgramItemRequest, request: Request):
 
 @router.put("/program/items/{item_id}")
 async def update_program_item(item_id: str, body: ProgramItemRequest, request: Request):
-    invalid = await _validate(body, request)
+    data = await _folded(request, body.model_dump())
+    invalid = await _validate(data, request)
     if invalid:
         return invalid
     try:
-        item = await request.app.state.program_items.update(item_id, body.model_dump())
+        item = await request.app.state.program_items.update(item_id, data)
     except ProgramItemError as exc:
         return fail(str(exc), 400)
     if item is None:
@@ -221,11 +235,12 @@ async def create_shortcut(body: ShortcutRequest, request: Request):
     store = _shortcut_store(request)
     if store is None:
         return fail("shortcuts unavailable", 503)
-    invalid = await _validate(body, request)
+    data = await _folded(request, body.model_dump())
+    invalid = await _validate(data, request)
     if invalid:
         return invalid
     try:
-        shortcut = await store.create(body.model_dump())
+        shortcut = await store.create(data)
     except ProgramItemError as exc:
         return fail(str(exc), 400)
     return {"ok": True, "shortcut": shortcut}
@@ -236,11 +251,12 @@ async def update_shortcut(shortcut_id: str, body: ShortcutRequest, request: Requ
     store = _shortcut_store(request)
     if store is None:
         return fail("shortcuts unavailable", 503)
-    invalid = await _validate(body, request)
+    data = await _folded(request, body.model_dump())
+    invalid = await _validate(data, request)
     if invalid:
         return invalid
     try:
-        shortcut = await store.update(shortcut_id, body.model_dump())
+        shortcut = await store.update(shortcut_id, data)
     except ProgramItemError as exc:
         return fail(str(exc), 400)
     if shortcut is None:
@@ -304,7 +320,24 @@ async def program_status(request: Request):
     background, so the UI learns here whether it happened)."""
     status = await request.app.state.program_items.status()
     camera_program = getattr(request.app.state, "camera_program", None)
-    return {**status, "camera": camera_program.status if camera_program is not None else None}
+    shown = getattr(request.app.state, "shown_profiles", None)
+    return {**status, "camera": camera_program.status if camera_program is not None else None,
+            # What program rows started and may still show or play ("Stopp").
+            "started": len(shown.shown()) if shown is not None else 0}
+
+
+@router.post("/program/stop")
+async def stop_program(request: Request):
+    """Stopp: everything program rows started (music fades out, windows
+    close, images go); the program's place stays. What was started by hand
+    keeps running (app/profile_stops.py)."""
+    async with _program_lock:  # not while a row is starting
+        shown = getattr(request.app.state, "shown_profiles", None)
+        count = len(shown.shown()) if shown is not None else 0
+        task = stop_previous(request.app.state, {})
+    if task is not None:
+        await task
+    return {"ok": True, "stopped": count}
 
 
 @router.post("/program/items/{item_id}/duplicate")
@@ -457,25 +490,66 @@ async def _run_steps(request: Request, item: dict, summary: dict, started=None):
     return answer
 
 
-def _step_pcs(request: Request, value: str) -> set:
-    """The PCs a file / key field's step goes to ("keys": no PC)."""
-    if is_file_action(value):
-        try:
-            return {parse_file_action(value)[0]}
-        except ValueError:
-            return {"keys"}
-    if value.startswith(DESKTOP_PREFIX):
-        profile = request.app.state.cfg.desktop_display.profiles.get(value.removeprefix(DESKTOP_PREFIX))
-        return {profile.target_ip} if profile is not None else {"keys"}
-    return {"keys"}
+# A step that shows something (an image, a file, a program, the song) gets
+# this long to be on screen before the next step that freezes or unfreezes
+# the beamer or shows something on the same PC, unless the agent said it is
+# there ("shown": true, from agents that draw documents themselves).
+# Pictures on other PCs do not wait for it.
+SETTLE_SECONDS = 2.0
+_PSEUDO_TITLES = {STEP_FREEZE: "Beamer einfrieren", STEP_UNFREEZE: "Beamer auftauen", STEP_SONG: "Liedtext"}
+
+
+def _step_title(request: Request, step: str) -> str:
+    """The step as the operator knows it (for the toast and the log)."""
+    profiles = request.app.state.cfg.desktop_display.profiles
+    if step in _PSEUDO_TITLES:
+        return _PSEUDO_TITLES[step]
+    if is_file_action(step) or is_via(step):
+        name = PureWindowsPath(step.split("|", 1)[-1]).name
+        profile = profiles.get(step_profile(step) or "")
+        return f"{name} über {profile.title}" if profile is not None else name
+    if step.startswith(KEY_PREFIX):
+        return step.removeprefix(KEY_PREFIX)
+    profile = profiles.get(step)
+    return profile.title if profile is not None else step
+
+
+def _step_pcs(request: Request, item: dict, step: str) -> set:
+    """The PCs a step shows something on."""
+    profiles = request.app.state.cfg.desktop_display.profiles
+    if step == STEP_SONG:
+        settings = getattr(getattr(request.app.state, "songs", None), "settings", None)
+        return {target.ip for target in settings.targets} if settings is not None else set()
+    if is_file_action(step):
+        return {step[len("file:"):].split("|", 1)[0]}
+    profile = profiles.get(step_profile(step) or "")
+    return {profile.target_ip} if profile is not None else set()
+
+
+def _step_shows(request: Request, step: str) -> bool:
+    """Whether a step puts a picture on a screen (not audio, not a key)."""
+    profiles = request.app.state.cfg.desktop_display.profiles
+    if step == STEP_SONG:
+        return True
+    if is_via(step) or is_file_action(step):
+        return path_kind(step.split("|", 1)[-1]) != "audio"
+    profile = profiles.get(step)
+    return profile is not None and profile.kind != "audio"
 
 
 async def _run_content(request, item, problems, guarded, done, linked_actions, results) -> None:
-    """Beamer hide, the file / key fields, the desktop profiles, the song,
-    beamer unhide. Each step is its own; steps on the same PC run in this
-    order (a song after the image on its screen), others side by side."""
+    """Beamer hide / unhide as the row says, then the Desktop steps in their
+    order (app/row_files.py), then the song if no step has it.
+
+    Order: steps on the same PC one after the other, a freeze / unfreeze
+    after everything before it, everything after it after it; steps on other
+    PCs side by side (a PC that does not answer holds up only its own). A
+    step that shows something is given SETTLE_SECONDS (unless the agent
+    answered "shown": true) before a freeze / unfreeze or the next picture on
+    its PC. A step that fails is logged and reported; the next steps run all
+    the same. Only a freeze right after a failed step is skipped (it would
+    freeze the wrong picture), and said so."""
     state = request.app.state
-    profiles = state.cfg.desktop_display.profiles
 
     async def beamer(hidden: bool):
         button_id = "beamer-hide" if hidden else "beamer-unhide"
@@ -484,72 +558,138 @@ async def _run_content(request, item, problems, guarded, done, linked_actions, r
         ok = status_code == 200 and result.get("ok") is not False
         done("beamer", ok, None if ok else f"{'hide' if hidden else 'unhide'}: {result.get('reason', 'HTTP ' + str(status_code))}")
 
-    def field_step(field: str, value: str):
-        async def step():
-            result, status_code = await run_action(request, value)
-            linked_actions.append({"field": field, **result})
-            ok = status_code == 200 and result.get("ok") is not False
-            done(field, ok, None if ok else str(result.get("reason") or f"HTTP {status_code}"))
-        return step
-
-    desktop_failures: list = []
-    desktop_ran: list = []
-
-    def profile_step(profile_id: str):
-        async def step():
-            result, status_code = await run_profile(request, profile_id)
-            linked_actions.append({"field": "desktop", "profile": profile_id, **result})
-            if status_code != 200 or result.get("ok") is False:
-                title = profiles[profile_id].title if profile_id in profiles else profile_id
-                desktop_failures.append(f"{title}: {result.get('reason') or 'HTTP ' + str(status_code)}")
-            else:
-                desktop_ran.append(profile_id)
-        return step
-
     async def song():
         result, status_code = unwrap(await show_slide(request, item["song"], 0))
         results["song"] = result
         ok = status_code == 200 and result.get("ok") is not False
         done("song", ok, None if ok else str(result.get("reason") or f"HTTP {status_code}"))
 
-    # (area, the PCs it goes to, the step), in the row's order.
-    steps = []
-    for field in PROGRAM_ACTION_FIELDS:
-        value = item.get(field)
-        if value:
-            steps.append((field, _step_pcs(request, value), field_step(field, value)))
-    desktop = [p for p in item.get("desktop") or [] if p in profiles]
-    for profile_id in desktop:
-        steps.append(("desktop", {profiles[profile_id].target_ip}, profile_step(profile_id)))
-    if item.get("song"):
-        song_service = getattr(state, "songs", None)
-        settings = getattr(song_service, "settings", None)
-        pcs = {target.ip for target in settings.targets} if settings is not None else {"song"}
-        steps.append(("song", pcs, song))
+    async def run_step(step: str):
+        if is_via(step):
+            return await run_via(request, step)
+        if is_file_action(step):
+            return await run_file_action(request, step)
+        if step.startswith(KEY_PREFIX):
+            button = await pressable_button(request, step.removeprefix(KEY_PREFIX))
+            if button is None:
+                return {"ok": False, "reason": "unknown button"}, 404
+            if item.get("group") and switches_mutes(button):
+                return {"ok": False, "reason": "this key switches mutes; the row's mute group sets them itself"}, 409
+            return await press_button(request, step.removeprefix(KEY_PREFIX))
+        return await run_profile(request, step)
 
-    if item.get("beamer") == "hide":
-        await guarded("beamer", lambda: beamer(True))  # before anything new is shown
-    last: dict = {}  # PC -> the latest step on it
-    tasks = []
-    for area, pcs, step in steps:
-        before = [last[pc] for pc in pcs if pc in last]
-        task = asyncio.create_task(_after(before, guarded(area, step)))
-        for pc in pcs:
-            last[pc] = task
+    if item.get("beamer") in ("hide", "unhide"):
+        await guarded("beamer", lambda: beamer(item["beamer"] == "hide"))  # before anything new is shown
+
+    steps = list(item.get("desktop") or [])
+    if item.get("song") and STEP_SONG not in steps:
+        steps.append(STEP_SONG)  # a row from before the song was a step: last, as it ran
+    failures: list = []
+    ran = [0]
+    outcome: dict = {}         # step index -> ok
+    unconfirmed: set = set()   # PCs whose last picture may not be there yet
+
+    async def settle(pcs=None):
+        """Wait for an unconfirmed picture: before a freeze (pcs None) any,
+        before another picture only one on the same PC."""
+        if unconfirmed and (pcs is None or unconfirmed & pcs):
+            await asyncio.sleep(SETTLE_SECONDS)
+            unconfirmed.difference_update(unconfirmed if pcs is None else pcs)
+
+    async def run_one(index: int, step: str) -> None:
+        title = _step_title(request, step)
+        if step == STEP_SONG:
+            if not item.get("song"):
+                outcome[index] = True  # the step stays for a song chosen later (or a template's slot)
+                return
+            pcs = _step_pcs(request, item, step)
+            await settle(pcs)
+            await guarded("song", song)
+            outcome[index] = areas_ok(results["song"])
+            if outcome[index]:
+                unconfirmed.update(pcs)
+            return
+        if step in (STEP_FREEZE, STEP_UNFREEZE):
+            freeze = step == STEP_FREEZE
+            if freeze and index > 0 and not outcome.get(index - 1, True):
+                log.warning("Program %s: %s skipped, the step before did not work or showed nothing",
+                            item.get("title"), title)
+                failures.append(f"{title}: übersprungen, der Schritt davor hat nicht geklappt")
+                outcome[index] = False
+                return
+            native = getattr(state, "native_controls", None)
+            if native is None or await native.get_beamer_frozen() is None:
+                # Unknown: nothing would be sent anyway; no settle wait for it.
+                log.warning("Program %s: %s not sent, the freeze state is unknown", item.get("title"), title)
+                failures.append(f"{title}: Beamer freeze state is unknown (set it in the Beamer section)")
+                outcome[index] = False
+                return
+            await settle()
+            try:
+                result, status_code = await press_native(request, "beamer-freeze" if freeze else "beamer-unfreeze",
+                                                         {"type": "beamer-freeze-set", "frozen": freeze})
+            except Exception as exc:  # noqa: BLE001 - the next steps run whatever the beamer does
+                result, status_code = {"ok": False, "reason": f"beamer control unavailable: {exc}"}, 503
+        else:
+            shows = _step_shows(request, step)
+            if shows:
+                await settle(_step_pcs(request, item, step))
+            try:
+                result, status_code = await run_step(step)
+            except Exception as exc:  # noqa: BLE001 - one step never stops the others
+                log.exception("Program step %s failed", step)
+                result, status_code = {"ok": False, "reason": f"internal error: {exc}"}, 500
+        linked_actions.append({"field": "desktop", "step": step,
+                               **({"profile": step_profile(step)} if step_profile(step) else {}), **result})
+        ok = status_code == 200 and result.get("ok") is not False
+        # A document the agent did not get on screen in time ("shown": false)
+        # counts as not shown for a freeze right after it.
+        outcome[index] = ok and result.get("shown") is not False
+        if ok:
+            ran[0] += 1
+            if step not in (STEP_FREEZE, STEP_UNFREEZE) and _step_shows(request, step):
+                pcs = _step_pcs(request, item, step)
+                if result.get("shown") is None:
+                    unconfirmed.update(pcs)  # no word from the agent: give it the settle time
+                else:
+                    unconfirmed.difference_update(pcs)  # drawn, or reported as not drawn: no wait
+        else:
+            failures.append(f"{title}: {result.get('reason') or 'HTTP ' + str(status_code)}")
+            log.warning("Program %s: step %s failed: %s", item.get("title"), title, result.get("reason"))
+
+    # In order where it matters: a step waits for the step before it on the
+    # same PC(s) and for the last freeze / unfreeze; a freeze / unfreeze waits
+    # for every step before it. Steps on other PCs do not wait for a PC that
+    # does not answer.
+    tasks: list = []
+    last_on: dict = {}   # PC -> its latest step's task
+    barrier = None       # the latest freeze / unfreeze
+    for index, step in enumerate(steps):
+        if step in (STEP_FREEZE, STEP_UNFREEZE):
+            before = list(tasks)
+        else:
+            pcs = _step_pcs(request, item, step) or {"keys"}
+            before = [last_on[pc] for pc in pcs if pc in last_on] + ([barrier] if barrier is not None else [])
+        task = asyncio.create_task(_after(before, run_one(index, step)))
+        if step in (STEP_FREEZE, STEP_UNFREEZE):
+            barrier = task
+        else:
+            for pc in _step_pcs(request, item, step) or {"keys"}:
+                last_on[pc] = task
         tasks.append(task)
     await asyncio.gather(*tasks)
-    if desktop or "desktop" in problems:
-        failures = desktop_failures + ([problems["desktop"]] if "desktop" in problems else [])
-        # Some profiles ran, others not: "partial".
+    if failures or ran[0]:
         done("desktop", not failures, "; ".join(failures) or None,
-             **({"partial": True} if failures and desktop_ran else {}))
-    if item.get("beamer") == "unhide":
-        # Only once the content is there (or did not come).
-        await guarded("beamer", lambda: beamer(False))
+             **({"partial": True} if failures and ran[0] else {}))
 
 
 async def _after(before: list, step) -> None:
-    """Run step once the steps before it on the same PC are done (however)."""
+    """Run step once the steps it waits for are done (however)."""
     if before:
         await asyncio.gather(*before, return_exceptions=True)
     await step
+
+
+def areas_ok(result) -> bool:
+    """A step's answer said it worked."""
+    return isinstance(result, dict) and result.get("ok") is not False and result.get("ok") is not None

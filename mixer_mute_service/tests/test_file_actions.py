@@ -1,6 +1,8 @@
 """Files opened straight from a program row (app/file_actions.py), agent stubbed.
 
-Verifies: "file:<ip>|<path>" values are checked when a row is saved, starting
+These are the older "file:<ip>|<path>" values (a PC chosen in the row), kept as
+Desktop steps while no Desktop key on that PC exists (app/row_files.py).
+Verifies: "file:<ip>|<path>" steps are checked when a row is saved, starting
 the row plays music on the target PC (/audio), starts .exe files and opens
 other files (/display), a missing file is reported, and the folder browser
 refuses requests that do not come from the streaming PC itself.
@@ -21,6 +23,9 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 import app.file_actions as file_actions  # noqa: E402
 import app.display_agent as display_agent  # noqa: E402
+import app.api.program as program_api  # noqa: E402
+
+program_api.SETTLE_SECONDS = 0.0  # steps on one PC wait for each other's picture; not here
 from app.main import app  # noqa: E402
 
 PASS = 0
@@ -73,22 +78,26 @@ def main():
             ("internet address", "file:8.8.8.8|C:\\Musik\\a.mp3"),
             ("program on a network share", "file:192.168.188.11|\\\\server\\share\\Start.exe"),
         ]:
-            r = client.post("/program/items", json={**row, "playback": value})
-            check(f"{name} refused", r.status_code == 400 and r.json()["reason"].startswith("playback:"))
+            r = client.post("/program/items", json={**row, "desktop": [value]})
+            check(f"{name} refused", r.status_code == 400 and r.json()["reason"].startswith("desktop step"))
         long_path = "I:\\GoogleDrive\\Musikbeiträge\\" + "Sehr langer Ordnername\\" * 4 + "Hintergrundmusik.mp3"
+        # From an older page: the three fields; no Desktop keys here, so they stay file steps.
         r = client.post("/program/items", json={
             **row, "playback": "file:127.0.0.1|" + long_path,
             "translation": "file:192.168.188.11|C:\\Programme\\Uhr\\Start.exe",
             "lyrics": "file:192.168.188.11|C:\\Users\\Beamer\\Desktop\\Uhr.url",
         })
         check("row with three file actions saved (paths longer than key IDs)",
-              r.status_code == 200 and r.json()["item"]["playback"].endswith("Hintergrundmusik.mp3"))
+              r.status_code == 200 and r.json()["item"]["desktop"][0].endswith("Hintergrundmusik.mp3")
+              and len(r.json()["item"]["desktop"]) == 3 and r.json()["item"]["playback"] is None)
         item_id = r.json()["item"]["id"]
 
         print("== starting ==")
         r = client.post(f"/program/items/{item_id}/play")
         check("row started", r.status_code == 200 and r.json()["ok"] is True)
-        (u1, p1), (u2, p2), (u3, p3) = agent.calls
+        # Calls to different PCs run side by side: match them by PC and kind, not by order.
+        by_target = sorted(agent.calls, key=lambda call: (call[0], call[1].get("kind") != "program"))
+        (u1, p1), (u2, p2), (u3, p3) = by_target
         check("music plays on this PC via /audio",
               u1 == "http://127.0.0.1:8766/audio" and p1 == {"id": "program-file", "action": "play", "path": long_path})
         check(".exe starts on the target PC",
