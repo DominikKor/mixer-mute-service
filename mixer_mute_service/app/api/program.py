@@ -37,7 +37,7 @@ from ..row_files import (KEY_PREFIX, STEP_FREEZE, STEP_SONG, STEP_UNFREEZE, fold
 from ..models import ProgramItemRequest, ShortcutRequest
 from ..program_file import Names, annotate, resolve
 from ..native_controls import NativeControlError
-from ..profile_stops import program_starts, stop_previous
+from ..profile_stops import program_starts, running_steps, stop_previous, stop_started
 from ..program_items import ProgramItemError, unlink_shortcut
 from ..responses import fail, respond, unwrap
 from ..lights import apply_scene
@@ -325,16 +325,26 @@ async def program_status(request: Request):
     status = await request.app.state.program_items.status()
     camera_program = getattr(request.app.state, "camera_program", None)
     shown = getattr(request.app.state, "shown_profiles", None)
+    current = await request.app.state.program_items.get(status["current_id"]) if status["current_id"] else None
     return {**status, "camera": camera_program.status if camera_program is not None else None,
             # What program rows started and may still show or play ("Stopp").
-            "started": len(shown.shown()) if shown is not None else 0}
+            "started": len(shown.shown()) if shown is not None else 0,
+            # The running row's steps among them (a stop key on their chips).
+            "running": running_steps(request.app.state, current)}
 
 
 @router.post("/program/stop")
-async def stop_program(request: Request):
+async def stop_program(request: Request, body: Optional[dict] = Body(None)):
     """Stopp: everything program rows started (music fades out, windows
     close, images go); the program's place stays. What was started by hand
-    keeps running (app/profile_stops.py)."""
+    keeps running (app/profile_stops.py). With {"step": start id} (a step's
+    stop key, ids from GET /program/status "running") only that one."""
+    step = (body or {}).get("step")
+    if step is not None:
+        if not isinstance(step, str) or not step or len(step) > 200:
+            return fail("step must be a start id", 400)
+        answer, status = await stop_started(request.app.state, step)
+        return answer if status == 200 else fail(answer["reason"], status, step=step)
     async with _program_lock:  # not while a row is starting
         shown = getattr(request.app.state, "shown_profiles", None)
         count = len(shown.shown()) if shown is not None else 0

@@ -876,6 +876,12 @@ blendet aus, Fenster und Bilder gehen zu, `POST /program/stop`); von Hand
 Gestartetes läuft weiter. Der Agent kennt einen Schritt mit anderer Datei als
 `<profil-id>--<kurzer Hash des Pfads>`, so dass „offen lassen“ und das Beenden
 beim nächsten Programmpunkt (`app/profile_stops.py`) Taste *und* Datei unterscheiden.
+Im **laufenden** Programmpunkt trägt jeder Schritt, den der Ablauf gestartet
+hat und der noch spielen oder zeigen kann (Musik, Video, Dokument, Bild), ein
+kleines rotes Stopp-Quadrat auf seinem Chip: es beendet nur diesen Schritt
+(Musik blendet mit der Ausblendzeit ihrer Taste aus, Fenster gehen zu), die
+anderen laufen weiter (`POST /program/stop {"step": <Start-Id>}`; welche
+Schritte das sind, steht in `GET /program/status` unter `running`).
 
 Früher gab es eigene Felder *Playback*, *Übersetzung* und *Liedtext* (als Datei).
 Beim Start des Dienstes (und bei Zeilen von älteren Seiten oder aus

@@ -837,13 +837,27 @@ dialog.shortcut-dialog { width: min(1000px, calc(100vw - 32px)); }
 .program-sum-head { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
 .program-sum-title { font-size: 15px; font-weight: 800; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .program-sum-person { font-size: 13px; color: #9aa3b0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.program-sum-chips { display: flex; flex-wrap: wrap; gap: 4px; min-width: 0; }
+.program-sum-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; min-width: 0; }
 .program-chip {
   display: inline-flex; align-items: baseline; gap: 5px; max-width: 260px; padding: 3px 8px; border-radius: 10px;
   font-size: 11px; font-weight: 600; color: var(--lcd-text); background: #0b1418; border: 1px solid #000;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .program-chip b { font-size: 9px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; color: #7d8594; }
+/* A step of the running row that still plays or shows: its stop key, the
+   red stop of the Desktop music keys, small; the tap area is 44 x 44 px */
+.program-chip.has-stop { align-items: center; padding: 0 0 0 8px; overflow: visible; }
+.program-chip-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.program-step-stop { display: inline-grid; place-items: center; flex: none; width: 44px; height: 44px; cursor: pointer; }
+.program-step-stop::before, .program-step-stop::after { content: ""; grid-area: 1 / 1; }
+.program-step-stop::before {
+  width: 26px; height: 26px; border-radius: 6px; border: 1px solid #3d0a05;
+  background: linear-gradient(to bottom, #d9483a, #b02a1e 55%, #8f1f15);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.25), inset 0 -2px 0 rgba(0,0,0,.25), 0 1px 3px rgba(0,0,0,.55);
+}
+.program-step-stop::after { width: 9px; height: 9px; border-radius: 1px; background: rgba(255,255,255,.85); }
+.program-step-stop:focus-visible { outline: 2px solid var(--accent); outline-offset: -4px; border-radius: 8px; }
+.program-step-stop[aria-disabled="true"] { opacity: .5; }
 .program-chip.group { border-color: #3d2a0a; }
 .program-chip.light { border-color: #3d3a0a; }
 .program-chip.camera { border-color: #0d2a4d; }
