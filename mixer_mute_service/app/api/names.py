@@ -48,7 +48,8 @@ async def rename_light_scene(scene_id: str, request: Request, body: dict = Body(
     except KeyError:
         return fail("unknown light scene", 404)
     except FileExistsError:
-        return fail("a light scene with this name already exists", 409)
+        return fail("Es gibt schon ein Preset mit diesem Namen – Namen von Presets müssen eindeutig sein "
+                    "(Groß-/Kleinschreibung zählt nicht).", 409)
     except SceneError as exc:
         return fail(str(exc), 400)
     return {"ok": True, "scene": scene}

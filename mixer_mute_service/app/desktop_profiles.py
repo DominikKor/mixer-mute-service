@@ -28,6 +28,7 @@ import yaml
 from pydantic import ValidationError
 
 from .config import MAX_DESKTOP_MONITORS, Config, DesktopProfileConfig
+from .documents import is_document
 from .youtube import is_youtube_url
 
 PROFILE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
@@ -66,8 +67,8 @@ def validate_profile(profile: DesktopProfileConfig) -> None:
         raise ProfileEditError("title is too long (max 80 characters)")
     if profile.monitor > MAX_DESKTOP_MONITORS:
         raise ProfileEditError(f"monitor must be 1 to {MAX_DESKTOP_MONITORS}")
-    if profile.monitors and profile.kind != "image":
-        raise ProfileEditError("several monitors are only possible for images")
+    if profile.monitors and profile.kind != "image" and not (profile.kind == "file" and is_document(profile.path)):
+        raise ProfileEditError("several monitors are only possible for images and documents")
     if is_youtube_url(profile.path):
         # The agent plays a YouTube link's sound (mpv + yt-dlp); nothing else
         # can use a link.

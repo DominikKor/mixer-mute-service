@@ -520,7 +520,7 @@ class AgentCloseTests(unittest.TestCase):
     def test_a_late_launch_leaves_a_newer_one_alone(self):
         agent._launching["ms"] = (agent.time.monotonic() + 5, "new")
         agent._cancelled.add("ms")
-        profile = {"id": "ms", "kind": "file", "path": "I:/x.pdf", "monitor": 1, "fullscreen": False,
+        profile = {"id": "ms", "kind": "file", "path": "I:/x.url", "monitor": 1, "fullscreen": False,
                    "position": "top-left", "args": [], "launch_token": "old"}
         try:
             with patch.object(agent, "_visible_windows", side_effect=RuntimeError("test")), \

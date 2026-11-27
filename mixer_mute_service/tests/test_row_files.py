@@ -155,7 +155,9 @@ class RunViaTests(unittest.TestCase):
             item = f.create(desktop=[f"file:{BEAMER_PC}|{TRANSLATION}"])
             self.assertTrue(f.play(item)["ok"])
             (pc, shown), = f.events.agent("/display")
-            self.assertEqual((pc, shown["id"], shown["path"]), (BEAMER_PC, "program-file", TRANSLATION))
+            # A document (app/documents.py): under that PC's document id, paged there.
+            self.assertEqual((pc, shown["id"], shown["path"]), (BEAMER_PC, "doc-192-168-188-11", TRANSLATION))
+            self.assertEqual(f.client.app.state.document_shown, (BEAMER_PC, "doc-192-168-188-11"))
 
 
 # The production desktop profiles of 2026-11-26.

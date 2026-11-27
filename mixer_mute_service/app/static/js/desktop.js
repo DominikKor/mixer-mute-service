@@ -125,11 +125,19 @@ function setRadio(groupEl, attr, value) {
   });
 }
 
-// Images may show on several monitors at once (the same image on each);
-// programs and files open on one.
+// Images and documents (PDF, PowerPoint, Word: the display agent shows their
+// pages itself) may show on several monitors at once (the same on each);
+// programs and other files open on one. Keep in step with app/documents.py.
+const PROFILE_DOCUMENT_RE = /\.(pdf|pptx?|pptm|ppsx?|ppsm|odp|docx?|docm|odt|rtf)$/i;
+
+function profileMultiMonitor() {
+  return PROFILE_FORM.kind === "image"
+    || (PROFILE_FORM.kind === "file" && PROFILE_DOCUMENT_RE.test($("pf-path").value.trim()));
+}
+
 function renderMonitorKeys() {
   const wrap = $("pf-monitor");
-  const multi = PROFILE_FORM.kind === "image";
+  const multi = profileMultiMonitor();
   if (!multi) PROFILE_FORM.monitors = PROFILE_FORM.monitors.slice(0, 1);
   const count = Math.max(MAX_MONITORS, ...PROFILE_FORM.monitors);
   if (wrap.children.length !== count) {
@@ -150,12 +158,12 @@ function renderMonitorKeys() {
     b.tabIndex = multi || on ? 0 : -1;
   });
   $("pf-monitor-hint").textContent = multi
-    ? "von links gezählt · mehrere wählbar: gleiches Bild auf jedem"
+    ? `von links gezählt · mehrere wählbar: ${PROFILE_FORM.kind === "image" ? "gleiches Bild" : "gleiche Seite"} auf jedem`
     : "von links gezählt";
 }
 
 function pickMonitor(n) {
-  if (PROFILE_FORM.kind !== "image") { PROFILE_FORM.monitors = [n]; return; }
+  if (!profileMultiMonitor()) { PROFILE_FORM.monitors = [n]; return; }
   const set = new Set(PROFILE_FORM.monitors);
   if (set.has(n)) { if (set.size > 1) set.delete(n); } else set.add(n);
   PROFILE_FORM.monitors = [...set].sort((a, b) => a - b);
@@ -362,7 +370,7 @@ function readProfileForm() {
     if (!$("pf-fade-seconds").value.trim() || !(fadeSeconds >= 0.5 && fadeSeconds <= 30)) return profileFormError("Dauer: 0,5 bis 30 Sekunden", $("pf-fade-seconds"));
   }
   if (PROFILE_FORM.monitors.some(m => m > MAX_MONITORS)) return profileFormError(`Monitor: 1 bis ${MAX_MONITORS}`, $("pf-monitor"));
-  const monitors = kind === "image" ? PROFILE_FORM.monitors : PROFILE_FORM.monitors.slice(0, 1);
+  const monitors = profileMultiMonitor() ? PROFILE_FORM.monitors : PROFILE_FORM.monitors.slice(0, 1);
   return {
     // No kind: the service takes it from the path (as shown in the dialog).
     id, title, path, args, target_ip: ip, fullscreen: $("pf-fullscreen").checked,

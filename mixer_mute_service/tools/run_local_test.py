@@ -192,6 +192,28 @@ class FakeDevices:
             self.agent_started[host] = self.agent_started.get(host, 1000.0) + 1.0
         if path == "/songs/library":
             return {"ok": True, "files": []}
+        host = url.split("/")[2]
+        documents = self.__dict__.setdefault("documents", {})  # host -> the document it shows
+        if path == "/display" and payload.get("kind") == "file":
+            from app.documents import is_document
+            if is_document(payload.get("path", "")):
+                # A 12 page document, shown at once (desktop_agent/documents.py).
+                if not (payload.get("keep_if_open") and documents.get(host, {}).get("path") == payload["path"]):
+                    documents[host] = {"id": payload["id"], "path": payload["path"], "page": 1, "pages": 12,
+                                       "title": payload["path"].replace("/", "\\").rsplit("\\", 1)[-1]}
+                log.info("FAKE display agent %s shows document %s", host, payload["path"])
+                return {"ok": True, "profile": payload["id"], "shown": True}
+        if path == "/close" and documents.get(host, {}).get("id") == payload.get("id"):
+            documents.pop(host)
+        if path == "/document":
+            shown = documents.get(host)
+            if not shown:
+                import urllib.error
+                raise urllib.error.HTTPError(url, 409, "no document shown", {}, None)
+            from desktop_agent.documents import step
+            shown["page"] = step(shown["page"] - 1, shown["pages"], payload["action"], payload.get("page")) + 1
+            log.info("FAKE display agent %s document page %s/%s", host, shown["page"], shown["pages"])
+            return {"ok": True, **{k: v for k, v in shown.items() if k != "path"}}
         if path == "/song/metrics":
             # A 1920 x 1080 monitor and Verdana-like widths (the service's estimate).
             from app.slide_layout import estimate_metrics

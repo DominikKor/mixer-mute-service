@@ -23,7 +23,7 @@ from typing import Optional
 
 from fastapi import Request
 
-from . import display_agent
+from . import display_agent, documents
 from .camera_program import CAMERAS, DEFAULT_WAIT_SECONDS
 from .companion_buttons import CATALOG_ONLY_IDS, COMPANION_BUTTONS_BY_ID, resolve_alias
 from .display_agent import AgentError
@@ -244,20 +244,41 @@ async def show_profile(request: Request, profile_id: str) -> Result:
     # Exactly the keys the agent expects (it rejects any other).
     payload = {"id": profile_id, **profile.model_dump(exclude=_AGENT_EXCLUDED_FIELDS),
                "path": profile_path(profile)}
+    # A document the agent shows page by page (app/documents.py): like an
+    # image, also on several monitors; its start is answered once the first
+    # page is on screen.
+    document = profile.kind == "file" and documents.is_document(profile.path)
     # Only sent when used, so a single-monitor profile still works with an older agent.
     if profile.monitors:
-        if profile.kind != "image":
-            return {"ok": False, "reason": "several monitors are only possible for images"}, 400
+        if profile.kind != "image" and not document:
+            return {"ok": False, "reason": "several monitors are only possible for images and documents"}, 400
         payload["monitors"] = profile.monitors
     # A video plays in mpv on the right monitor if the agent finds mpv.exe
     # there (desktop_agent: its own choice, for every video).
+    timeout = documents.DISPLAY_TIMEOUT_SECONDS if document else 3.0
+
+    async def send(extra: dict) -> dict:
+        try:
+            return await display_agent.call(cfg, profile.target_ip, "/display", {**payload, **extra}, timeout=timeout)
+        except AgentError as exc:
+            if not (exc.agent_status == 400 and document and "monitors" in payload):
+                raise
+        # An agent from before documents knows several monitors only for images:
+        # its default app on the first monitor.
+        log.warning("Agent %s rejected several monitors for a document; sent with one (update the agent)",
+                    profile.target_ip)
+        single = {key: value for key, value in payload.items() if key != "monitors"}
+        return await display_agent.call(cfg, profile.target_ip, "/display", {**single, **extra}, timeout=timeout)
+
     try:
-        answer = await _tracked_start(request, profile_id, profile, lambda extra: display_agent.call(
-            cfg, profile.target_ip, "/display", {**payload, **extra}))
+        answer = await _tracked_start(request, profile_id, profile, send)
     except AgentError as exc:
         if exc.agent_status == 503:
             return {"ok": False, "reason": await _no_file_reason(request, profile, payload["path"])}, 502
         return exc.answer(), exc.status
+    if document and answer.get("ok") is not False:
+        # Shown page by page by the agent: paging goes there (app/documents.py).
+        documents.note_shown(request.app.state, profile.target_ip, profile_id)
     return answer, 200
 
 
@@ -373,6 +394,7 @@ async def run_via(request: Request, value: str) -> Result:
     start = start_id(profile_id, path)
     name = PureWindowsPath(path).name
     output = SimpleNamespace(target_ip=profile.target_ip, kind=kind)  # what _tracked_start notes
+    document = False
     if kind == "audio":
         payload = {"id": start, "action": "play", "path": path}
         if profile.fade:
@@ -380,16 +402,31 @@ async def run_via(request: Request, value: str) -> Result:
         route, timeout = "/audio", display_agent.AUDIO_TIMEOUT_SECONDS
     else:
         payload = {"id": start, "title": f"{profile.title}: {name}", "kind": kind, "path": path,
-                   # The key's program arguments only for a program of its own kind.
                    # The key's arguments belong to its own program: only for a program.
                    "args": list(profile.args) if kind == "program" and profile.kind == "program" else [],
                    "fullscreen": profile.fullscreen, "monitor": profile.monitor, "position": profile.position}
-        if kind == "image" and profile.monitors:
+        # A document the agent shows page by page (app/documents.py): like an
+        # image, also on several monitors; answered once its first page shows.
+        document = kind == "file" and documents.is_document(path)
+        if (kind == "image" or document) and profile.monitors:
             payload["monitors"] = profile.monitors
-        route, timeout = "/display", display_agent.AUDIO_TIMEOUT_SECONDS
+        route = "/display"
+        timeout = documents.DISPLAY_TIMEOUT_SECONDS if document else display_agent.AUDIO_TIMEOUT_SECONDS
+
+    async def send(extra: dict) -> dict:
+        try:
+            return await display_agent.call(cfg, profile.target_ip, route, {**payload, **extra}, timeout=timeout)
+        except AgentError as exc:
+            if not (exc.agent_status == 400 and document and "monitors" in payload):
+                raise
+        # An agent from before documents knows several monitors only for images.
+        log.warning("Agent %s rejected several monitors for a document; sent with one (update the agent)",
+                    profile.target_ip)
+        single = {key: value for key, value in payload.items() if key != "monitors"}
+        return await display_agent.call(cfg, profile.target_ip, route, {**single, **extra}, timeout=timeout)
+
     try:
-        answer = await _tracked_start(request, start, output, lambda extra: display_agent.call(
-            cfg, profile.target_ip, route, {**payload, **extra}, timeout=timeout))
+        answer = await _tracked_start(request, start, output, send)
     except AgentError as exc:
         if exc.agent_status == 503:
             agent_reason = (exc.body or {}).get("reason")
@@ -405,10 +442,9 @@ async def run_via(request: Request, value: str) -> Result:
         result["kept"] = True
     if "shown" in answer:  # the agent drew it (true) or did not get it on screen in time (false)
         result["shown"] = answer["shown"] is True
-    # TODO(doc-presentation, claude/doc-presentation-3c2ea4): once app/documents.py is on main,
-    # call documents.note_shown(request.app.state, profile.target_ip, profile_id) here when
-    # result["ok"] and the path is a document (.pdf .ppt .pptx .pps .ppsx .odp .doc .docx .odt
-    # .rtf), so /documents/next|prev page on this PC.
+    if document and result["ok"]:
+        # Shown page by page by the agent: paging goes there (app/documents.py).
+        documents.note_shown(request.app.state, profile.target_ip, start)
     return result, 200
 
 

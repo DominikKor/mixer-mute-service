@@ -28,6 +28,16 @@ import tkinter as tk
 import tkinter.font as tkfont
 from PIL import Image, ImageOps, ImageTk
 
+# Documents shown page by page (documents.py next to this file). Without it
+# (a partial update) documents open with their default app as before.
+try:
+    from . import documents  # imported as desktop_agent.show_image_agent (tests)
+except ImportError:
+    try:
+        import documents  # run as a script: the file next to this one
+    except ImportError:
+        documents = None
+
 
 HOST = "0.0.0.0"
 PORT = 8766
@@ -424,9 +434,13 @@ def runs_from_network_share(target: Path) -> bool:
 
 
 def _launch_profile(profile: dict) -> None:
+    document = False
     try:
-        before = set(_visible_windows())
         path = Path(profile["path"])
+        if profile["kind"] == "file" and _open_document(profile, path):
+            document = True  # its /display answer comes from the tk thread (or the cancel)
+            return
+        before = set(_visible_windows())
         mpv = _video_player(profile, path)
         if profile["kind"] == "program":
             process_id = subprocess.Popen(
@@ -452,6 +466,8 @@ def _launch_profile(profile: dict) -> None:
                 if _launching.get(profile["id"], (0.0, None))[1] == profile.get("launch_token"):
                     _launching.pop(profile["id"], None)
                     _cancelled.discard(profile["id"])
+        if not document:
+            _finish_reply(profile, False)  # not shown by the agent (default app, failed)
 
 
 # -- videos in mpv -----------------------------------------------------------------
@@ -551,6 +567,456 @@ def _remember_video_window(profile_id: str, process_id: int, before: set, find=N
         time.sleep(0.25)
     _remember_unknown(profile_id)
     logger.warning("Video window of pid=%s (profile=%s) not found within %.0f s", process_id, profile_id, timeout)
+
+
+# -- documents page by page ------------------------------------------------------
+# A file profile (or a file in a row's field) that is a PDF, PowerPoint or
+# Word document is shown by the agent itself (documents.py renders the
+# pages) on the profile's monitor (the same numbering as images), in its own
+# window above the image / song window, so whatever was there shows again
+# when it closes. Like an image: full screen, or a framed window in the work
+# area at the profile's position (a corner: a quarter of it), and with
+# "monitors" the same page on each of them. POST /document and the keys in
+# its window page through it (arrows, Page Up / Page Down as a presenter
+# sends them, Home, End; Escape hides it). The agent takes the keyboard
+# focus only when nothing else has it (its own windows or none in front): it
+# never takes it from someone working on that PC; a click on the page gives
+# it the focus (it never turns a page). POST /close hides it like an image
+# (by profile and stamp); keep_if_open keeps it, on its page, when the next
+# row shows the same file. One document at a time: a new one replaces it.
+# When the agent cannot render it (no pypdfium2, neither Office nor
+# LibreOffice) the file opens with its default app as before.
+
+DOCUMENT_PENDING_SECONDS = 240.0  # how long a close cancels a document still being prepared
+# Converting (waiting for another conversion included) ends well before that.
+DOCUMENT_CONVERT_SECONDS = 200.0
+# A framed window's border and title bar at 100 %, for the first rendering;
+# once the window is placed its real client size counts (_fit_document_client).
+DOCUMENT_FRAME = (16, 39)
+
+
+class _DocumentView:
+    def __init__(self, profile: dict, pages, screens: list) -> None:
+        self.profile_id = profile["id"]
+        self.stamp = profile.get("stamp")
+        self.requested = profile.get("requested", profile["path"])  # as sent (with "*")
+        self.path = profile["path"]
+        self.title = profile["title"]
+        self.fullscreen = profile["fullscreen"]
+        self.position = profile["position"]
+        self.pages = pages
+        self.page = 0
+        # [{"monitor", "area": monitor or work area, "rect": (x, y, w, h) of the window, "client": (w, h)}]
+        self.screens = screens
+
+    def state(self) -> dict:
+        return {"id": self.profile_id, "title": self.title, "page": self.page + 1, "pages": self.pages.count}
+
+    def render(self, page: int) -> list:
+        """The page for each screen (one render per size)."""
+        return [self.pages.render(page, *screen["client"]) for screen in self.screens]
+
+
+_document_lock = threading.RLock()
+_document_view: _DocumentView | None = None  # what the document windows show (set on the tk thread)
+_document_windows: list = []  # [(Toplevel, Label)], one per screen, made on first use
+
+
+def document_cache_directory() -> Path:
+    return agent_log_directory() / "documents"
+
+
+def _document_screens(profile: dict, bounds=None, work_area=None) -> list:
+    """Where the document goes on each of its monitors, like an image: the
+    whole monitor, or in the work area the whole of it (center) or a quarter
+    in the profile's corner. Raises RuntimeError for a missing monitor."""
+    bounds = bounds or monitor_bounds
+    work_area = work_area or monitor_work_area
+    screens = []
+    for monitor in profile.get("monitors") or [profile["monitor"]]:
+        if profile["fullscreen"]:
+            left, top, right, bottom = area = bounds(monitor)
+            width, height = right - left, bottom - top
+            screens.append({"monitor": monitor, "area": area, "rect": (left, top, width, height),
+                            "client": (width, height)})
+            continue
+        left, top, right, bottom = area = work_area(monitor)
+        if profile["position"] == "center":
+            width, height = right - left, bottom - top
+        else:
+            width, height = (right - left) // 2, (bottom - top) // 2
+        x, y = _window_position(area, width, height, profile["position"])
+        screens.append({"monitor": monitor, "area": area, "rect": (x, y, width, height),
+                        "client": (max(1, width - DOCUMENT_FRAME[0]), max(1, height - DOCUMENT_FRAME[1]))})
+    return screens
+
+
+def _document_superseded(profile_id: str, stamp: str | None) -> bool:
+    """Closed (POST /close) or started again while it was being prepared."""
+    with _opened_lock:
+        if profile_id in _cancelled:
+            return True
+        return stamp is not None and _opened_stamps.get(profile_id) != stamp
+
+
+DOCUMENT_ACK_SECONDS = 15.0  # the longest a /display of a document waits for its first page
+
+
+class _DocumentReply:
+    """The /display answer of a document waits for this: set once its first
+    page is on screen (shown) or once it will not be (default app, closed)."""
+
+    def __init__(self) -> None:
+        self.done = threading.Event()
+        self.shown = False
+
+    def finish(self, shown: bool) -> None:
+        if not self.done.is_set():
+            self.shown = shown
+            self.done.set()
+
+
+def _document_reply(body: dict, target: Path) -> _DocumentReply | None:
+    """A reply to wait for when the agent will show this file as a document."""
+    if (body["kind"] != "file" or documents is None or documents.document_type(target) is None
+            or documents.pdfium() is None):
+        return None
+    return _DocumentReply()
+
+
+def _finish_reply(profile: dict, shown: bool) -> None:
+    reply = profile.get("reply")
+    if reply is not None:
+        reply.finish(shown)
+
+
+def _open_document(profile: dict, path: Path, screens=None, pdf_for=None, pages_class=None) -> bool:
+    """Prepare a document's first page (background thread) and hand it to
+    the tk thread. False when it is no document or cannot be rendered here:
+    the caller opens it with its default app then."""
+    if documents is None or documents.document_type(path) is None:
+        return False
+    if documents.pdfium() is None and pages_class is None:
+        logger.warning("Document %s: pypdfium2 is not installed, opened with its default app", path)
+        return False
+    profile_id, stamp = profile["id"], profile.get("stamp")
+    screens = screens or _document_screens
+    deadline = time.monotonic() + DOCUMENT_CONVERT_SECONDS
+    pdf_for = pdf_for or (lambda source, deadline, cancelled: documents.pdf_for(
+        source, document_cache_directory(), deadline=deadline, cancelled=cancelled))
+    pages_class = pages_class or documents.PdfPages
+    with _opened_lock:
+        # A conversion takes longer than a window opening: a close meanwhile
+        # cancels it (only this launch's entry: a newer start keeps its own).
+        current = _launching.get(profile_id)
+        if current is None or current[1] == profile.get("launch_token"):
+            _launching[profile_id] = (time.monotonic() + DOCUMENT_PENDING_SECONDS, profile.get("launch_token"))
+    try:
+        placed = screens(profile)
+        pages = pages_class(pdf_for(path, deadline, lambda: _document_superseded(profile_id, stamp)))
+    except documents.DocumentCancelled:
+        logger.info("Document %s (profile=%s) closed or started again before its conversion; not shown",
+                    path, profile_id)
+        _finish_reply(profile, False)
+        return True
+    except Exception as exc:  # noqa: BLE001 - DocumentError, a missing monitor, a broken file
+        if _closed_meanwhile(profile, path):
+            return True
+        logger.warning("Document %s cannot be shown by the agent (%s); opened with its default app", path, exc)
+        return False
+    view = _DocumentView(profile, pages, placed)
+    try:
+        images = view.render(0)
+    except Exception:  # noqa: BLE001 - pdfium errors
+        pages.close()
+        if _closed_meanwhile(profile, path):
+            return True
+        logger.exception("Document %s: first page could not be rendered; opened with its default app", path)
+        return False
+    if _document_superseded(profile_id, stamp):
+        pages.close()
+        logger.info("Document %s (profile=%s) closed or started again while it was prepared; not shown",
+                    path, profile_id)
+        _finish_reply(profile, False)
+        return True
+    logger.info("Document %s: %s pages, monitors %s", path, pages.count,
+                ", ".join(f"{s['monitor']} ({s['client'][0]}x{s['client'][1]})" for s in placed))
+    requests.put({"kind": "document", "id": profile_id, "view": view, "images": images,
+                  "reply": profile.get("reply")})
+    return True
+
+
+def _closed_meanwhile(profile: dict, path: Path) -> bool:
+    """A failed document that was closed or started again meanwhile: no late
+    default app for it (the program has moved on)."""
+    if not _document_superseded(profile["id"], profile.get("stamp")):
+        return False
+    logger.info("Document %s (profile=%s) failed after it was closed or started again; nothing opened",
+                path, profile["id"])
+    _finish_reply(profile, False)
+    return True
+
+
+def _keep_document(profile_id: str, requested: str, stamp: str | None) -> bool:
+    """keep_if_open for a document: the same file of the same profile is
+    still shown; it stays (on its page) and takes the new start's stamp."""
+    with _document_lock:
+        view = _document_view
+        if view is None or view.profile_id != profile_id or view.requested.lower() != requested.lower():
+            return False
+        if stamp is not None:
+            view.stamp = stamp
+            with _opened_lock:
+                _opened_stamps[profile_id] = stamp
+        return True
+
+
+def _document_command(body: dict) -> dict | None:
+    """Page through the shown document (POST /document, its keys). None when
+    no document (or not the one named by "id") is shown. The page is rendered
+    outside the lock; only the newest step reaches the window."""
+    with _document_lock:
+        view = _document_view
+        if view is None or ("id" in body and body["id"] != view.profile_id):
+            return None
+        action = body["action"]
+        if action == "status":
+            return view.state()
+        page = documents.step(view.page, view.pages.count, action, body.get("page"))
+        if page == view.page:
+            return view.state()
+        view.page = page
+        state = view.state()
+    try:
+        images = view.render(page)
+    except documents.DocumentError:
+        return state  # hidden or replaced meanwhile
+    with _document_lock:
+        if _document_view is view and view.page == page:
+            requests.put({"kind": "document-page", "id": view.profile_id, "view": view, "page": page,
+                          "images": images})
+            logger.info("Document %s page %s/%s", view.profile_id, page + 1, view.pages.count)
+    return state
+
+
+def _document_key(action: str) -> None:
+    """A key in the document window: rendered off the tk thread."""
+    def run():
+        try:
+            _document_command({"action": action})
+        except Exception:  # noqa: BLE001 - a key must never end the agent
+            logger.exception("Document key %s failed", action)
+    threading.Thread(target=run, daemon=True).start()
+
+
+# Not Space, Return or Backspace: typing on that PC must never turn a page.
+DOCUMENT_KEYS = {
+    "next": ("<Right>", "<Down>", "<Next>"),
+    "prev": ("<Left>", "<Up>", "<Prior>"),
+    "first": ("<Home>",),
+    "last": ("<End>",),
+}
+
+
+def _document_widgets(root, count: int) -> list:
+    """At least ``count`` document windows (made once, kept hidden)."""
+    while len(_document_windows) < count:
+        window = tk.Toplevel(root, background="black")
+        window.withdraw()
+        window.protocol("WM_DELETE_WINDOW", lambda: _hide_document())
+        window.bind("<Escape>", lambda _event: _hide_document())
+        for action, keys in DOCUMENT_KEYS.items():
+            for key in keys:
+                window.bind(key, lambda _event, action=action: _document_key(action))
+        # A click (mouse, touch screen) gives the keys to the document; it turns no page.
+        window.bind("<Button-1>", lambda _event, window=window: window.focus_force())
+        label = tk.Label(window, background="black", borderwidth=0)
+        label.pack(fill="both", expand=True)
+        _document_windows.append((window, label))
+    return _document_windows
+
+
+def _set_document_image(label, image) -> None:
+    photo = ImageTk.PhotoImage(image)
+    label.configure(image=photo)
+    label.image = photo
+
+
+# The desktop and the taskbar in front: nobody is working in a window.
+SHELL_WINDOW_CLASSES = {"Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd"}
+
+
+def _window_class(hwnd: int) -> str:
+    import ctypes
+
+    name = ctypes.create_unicode_buffer(256)
+    ctypes.windll.user32.GetClassNameW(hwnd, name, 256)
+    return name.value
+
+
+def _may_take_focus(foreground=None, window_pid=None, window_class=None) -> bool:
+    """Only when nothing else has the keyboard: no window in front, the
+    desktop or taskbar, or one of the agent's own (an image, the song, the
+    document)."""
+    if os.name != "nt" and foreground is None:
+        return False
+    if foreground is None:
+        import ctypes
+
+        foreground = ctypes.windll.user32.GetForegroundWindow()
+    if not foreground:
+        return True
+    window_pid = window_pid or _window_process_id
+    window_class = window_class or _window_class
+    return window_pid(foreground) == os.getpid() or window_class(foreground) in SHELL_WINDOW_CLASSES
+
+
+def _place_document_window(window, screen: dict, fullscreen: bool, position: str) -> None:
+    """Windows only: the window's outer frame exactly where it belongs (full
+    screen and topmost, or framed in the work area like an image)."""
+    import ctypes
+    from ctypes import wintypes
+
+    user32 = ctypes.windll.user32
+    user32.GetParent.argtypes = [wintypes.HWND]
+    user32.GetParent.restype = wintypes.HWND
+    user32.SetWindowPos.argtypes = [
+        wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, wintypes.UINT,
+    ]
+    hwnd = window.winfo_id()
+    hwnd = user32.GetParent(hwnd) or hwnd
+    x, y, width, height = screen["rect"]
+    if fullscreen:
+        # HWND_TOPMOST, SWP_SHOWWINDOW | SWP_FRAMECHANGED
+        insert_after, flags = -1, 0x0040 | 0x0020
+    else:
+        x, y = _framed_window_position(screen["area"], width, height, _invisible_border(hwnd), position)
+        insert_after, flags = -2, 0x0040  # HWND_NOTOPMOST, SWP_SHOWWINDOW
+    if not user32.SetWindowPos(hwnd, insert_after, x, y, width, height, flags):
+        raise ctypes.WinError()
+
+
+def _show_document(root, request: dict, may_take_focus=None) -> bool:
+    """Tk thread: show a prepared document (replacing one shown before).
+    False when it was closed or started again since it was prepared."""
+    global _document_view
+    view = request["view"]
+    if _document_superseded(view.profile_id, view.stamp):
+        view.pages.close()
+        logger.info("Document profile=%s closed or started again before it was shown", view.profile_id)
+        return False
+    with _document_lock:
+        old, _document_view = _document_view, view
+    if old is not None and old is not view:
+        old.pages.close()
+    windows = _document_widgets(root, len(view.screens))
+    for window, _label in windows[len(view.screens):]:
+        window.withdraw()
+    for (window, label), screen, image in zip(windows, view.screens, request["images"]):
+        x, y, width, height = screen["rect"]
+        if not view.fullscreen:
+            width, height = screen["client"]
+        _set_document_image(label, image)
+        window.withdraw()
+        window.overrideredirect(view.fullscreen)
+        window.attributes("-topmost", view.fullscreen)
+        window.title(view.title)
+        window.geometry(f"{width}x{height}+{x}+{y}")
+        window.deiconify()
+        window.state("normal")
+        window.update_idletasks()
+        window.lift()
+        if os.name == "nt":
+            _place_document_window(window, screen, view.fullscreen, view.position)
+    _fit_document_client(view, [window for window, _label in windows[:len(view.screens)]])
+    # The keys (a presenter on this PC) go to the document, unless someone works there.
+    if (may_take_focus or _may_take_focus)():
+        windows[0][0].focus_force()
+    logger.info("Document shown profile=%s monitors=%s fullscreen=%s position=%s pages=%s", view.profile_id,
+                [s["monitor"] for s in view.screens], view.fullscreen, view.position, view.pages.count)
+    return True
+
+
+def _client_size(window) -> tuple[int, int]:
+    """The real client area of a placed window (its frame's, as Windows has it)."""
+    if os.name != "nt":
+        window.update_idletasks()
+        return window.winfo_width(), window.winfo_height()
+    import ctypes
+    from ctypes import wintypes
+
+    user32 = ctypes.windll.user32
+    user32.GetParent.argtypes = [wintypes.HWND]
+    user32.GetParent.restype = wintypes.HWND
+    user32.GetClientRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+    hwnd = window.winfo_id()
+    hwnd = user32.GetParent(hwnd) or hwnd
+    rect = wintypes.RECT()
+    if not user32.GetClientRect(hwnd, ctypes.byref(rect)):
+        return 0, 0
+    return rect.right - rect.left, rect.bottom - rect.top
+
+
+def _fit_document_client(view: _DocumentView, windows: list, client_size=None) -> bool:
+    """Tk thread: a framed window's real client size (borders and title bar
+    depend on the display scaling) replaces the guess; the page is rendered
+    again for it in the background. True when something changed."""
+    if view.fullscreen:
+        return False
+    client_size = client_size or _client_size
+    changed = False
+    for window, screen in zip(windows, view.screens):
+        actual = client_size(window)
+        if actual[0] > 1 and actual[1] > 1 and any(abs(a - b) > 2 for a, b in zip(actual, screen["client"])):
+            screen["client"] = actual
+            changed = True
+    if changed:
+        threading.Thread(target=_refresh_document, args=(view,), daemon=True).start()
+    return changed
+
+
+def _refresh_document(view: _DocumentView) -> None:
+    """The current page again (a window's size changed)."""
+    with _document_lock:
+        page = view.page
+    try:
+        images = view.render(page)
+    except Exception:  # noqa: BLE001 - hidden meanwhile, pdfium errors: the old picture stays
+        return
+    with _document_lock:
+        if _document_view is view and view.page == page:
+            requests.put({"kind": "document-page", "id": view.profile_id, "view": view, "page": page,
+                          "images": images})
+
+
+def _show_document_page(request: dict) -> None:
+    """Tk thread: another page of the document still shown (the newest step only)."""
+    with _document_lock:
+        view = _document_view
+        current = view is request["view"] and view.page == request["page"]
+    if current:
+        for (window, label), image in zip(_document_windows, request["images"]):
+            _set_document_image(label, image)
+            window.lift()
+
+
+def _hide_document(profile_id: str | None = None, stamp: str | None = None) -> bool:
+    """Tk thread: hide the document windows (Escape, the close button, or
+    POST /close naming its profile and start). True if it was hidden."""
+    global _document_view
+    with _document_lock:
+        view = _document_view
+        if view is None:
+            return False
+        if profile_id is not None and (view.profile_id != profile_id
+                                       or (stamp is not None and view.stamp not in (None, stamp))):
+            return False
+        _document_view = None
+    view.pages.close()
+    for window, _label in _document_windows:
+        window.withdraw()
+    logger.info("Document hidden profile=%s", view.profile_id)
+    return True
 
 
 # -- closing what a profile opened (POST /close) ---------------------------------
@@ -2560,8 +3026,11 @@ def _valid_monitors(body: dict) -> bool:
     """The same image on several monitors: 2 to 5 different ones, the first
     being "monitor"."""
     monitors = body["monitors"]
+    # Images, and documents the agent shows itself (documents page by page).
+    document = (body.get("kind") == "file" and documents is not None and isinstance(body.get("path"), str)
+                and documents.document_type(body["path"]) is not None)
     return (
-        body.get("kind") == "image"
+        (body.get("kind") == "image" or document)
         and isinstance(monitors, list)
         and 2 <= len(monitors) <= MAX_MONITORS
         and all(type(m) is int and 1 <= m <= MAX_MONITORS for m in monitors)
@@ -2654,7 +3123,8 @@ def _show_song(root: tk.Tk, canvas: tk.Canvas, body: dict) -> None:
 class DisplayHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         if self.path not in ("/display", "/audio", "/close", "/song", "/song/metrics", "/songs/library",
-                             "/songs/save", "/power", "/info", "/update", "/restart", "/pick-file"):
+                             "/songs/save", "/power", "/info", "/update", "/restart", "/pick-file",
+                             "/document"):
             self.send_error(404)
             return
 
@@ -2687,6 +3157,9 @@ class DisplayHandler(BaseHTTPRequestHandler):
             try:
                 # Remote diagnosis: which players this agent finds (None: not
                 # found), and what of the user's environment it filled in at start.
+                if documents is not None:
+                    # What documents can be shown with (pypdfium2, LibreOffice).
+                    info["documents"] = documents.capabilities()
                 info.update(cached_tools(), restored_env=RESTORED_ENV, audio_start=mpv_start_report(),
                             **agent_account())
             except Exception:  # noqa: BLE001 - the version must always come back
@@ -2704,6 +3177,9 @@ class DisplayHandler(BaseHTTPRequestHandler):
             return
         if self.path == "/close":
             self._handle_close(body)
+            return
+        if self.path == "/document":
+            self._handle_document(body)
             return
         if self.path == "/songs/library":
             self._handle_song_library(body)
@@ -2768,10 +3244,14 @@ class DisplayHandler(BaseHTTPRequestHandler):
         ):
             self.send_error(400)
             return
-        if body.get("keep_if_open") and _keep_open(body["id"], body.get("stamp")):
+        kept_document = body.get("keep_if_open") and _keep_document(body["id"], body["path"], body.get("stamp"))
+        if kept_document or (body.get("keep_if_open") and _keep_open(body["id"], body.get("stamp"))):
             # The program's next row starts it again: its window stays as it is.
             logger.info("Profile %s kept open", body["id"])
-            self._send_json(202, {"ok": True, "profile": body["id"], "display": body["monitor"], "kept": True})
+            answer = {"ok": True, "profile": body["id"], "display": body["monitor"], "kept": True}
+            if kept_document:
+                answer["shown"] = True  # still on screen
+            self._send_json(202, answer)
             return
         program = body["kind"] == "program"
         try:
@@ -2796,14 +3276,42 @@ class DisplayHandler(BaseHTTPRequestHandler):
                 _launching[body["id"]] = (time.monotonic() + LAUNCH_PENDING_SECONDS, launch_token)
                 _cancelled.discard(body["id"])
         # Profiles open the file the path resolved to ("*" filled in).
-        requests.put({**body, "path": str(target),
-                      **({"launch_token": launch_token} if body["kind"] == "file" else {})})
-        result = json.dumps({"ok": True, "profile": body["id"], "display": body["monitor"]}).encode()
+        reply = _document_reply(body, target)
+        requests.put({**body, "path": str(target), "requested": body["path"],
+                      **({"launch_token": launch_token} if body["kind"] == "file" else {}),
+                      **({"reply": reply} if reply else {})})
+        answer = {"ok": True, "profile": body["id"], "display": body["monitor"]}
+        if reply:
+            # A document: the answer comes once its first page is on screen
+            # (the service freezes the beamer after it), at most
+            # DOCUMENT_ACK_SECONDS; "shown": false when it is not (yet).
+            reply.done.wait(DOCUMENT_ACK_SECONDS)
+            answer["shown"] = reply.shown
+        result = json.dumps(answer).encode()
         self.send_response(202)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(result)))
         self.end_headers()
         self.wfile.write(result)
+
+    def _handle_document(self, body: dict) -> None:
+        """Page through the document shown (see "documents page by page")."""
+        if documents is None:
+            self.send_error(404)
+            return
+        if not documents.valid_document_request(body):
+            self.send_error(400)
+            return
+        try:
+            state = _document_command(body)
+        except Exception:  # noqa: BLE001 - a broken page must not end the request thread silently
+            logger.exception("Document %s failed", body["action"])
+            self._send_json(500, {"ok": False, "reason": "page could not be rendered"})
+            return
+        if state is None:
+            self._send_json(409, {"ok": False, "reason": "no document shown"})
+            return
+        self._send_json(200, {"ok": True, **state})
 
     def _handle_close(self, body: dict) -> None:
         """{"id": profile}: close the windows it opened, hide its image if it
@@ -3110,6 +3618,15 @@ def handle_request(root, image_label, canvas, profile: dict) -> None:
         if _shown_image == profile["id"] and (stamp is None or _shown_image_stamp in (None, stamp)):
             _hide_all(root)
             logger.info("Image hidden profile=%s", profile["id"])
+        _hide_document(profile["id"], stamp)
+    elif profile["kind"] == "document":
+        shown = False
+        try:
+            shown = _show_document(root, profile)
+        finally:
+            _finish_reply(profile, shown)
+    elif profile["kind"] == "document-page":
+        _show_document_page(profile)
     else:
         threading.Thread(target=_launch_profile, args=(profile,), daemon=True).start()
 
@@ -3148,6 +3665,10 @@ def main() -> None:
     except Exception:  # noqa: BLE001 - the agent must start in any case
         logger.exception("Could not read the user's environment")
     cached_tools()  # first search in the background, for /info
+    if documents is not None and os.name == "nt":
+        # The Update key runs no pip: a new requirement (pypdfium2) comes this way.
+        threading.Thread(target=documents.install_missing_requirements, daemon=True, args=(
+            agent_version(), agent_log_directory() / "pip-install.json")).start()
     # Local copies of the audio sources known from before (see above).
     threading.Thread(target=refresh_audio_cache, daemon=True).start()
     if RESTORED_ENV:
