@@ -1270,9 +1270,6 @@ button.program-go:disabled { opacity: .45; animation: none; }
   .program-table td.pc-desktop { grid-area: 9 / 1 / 10 / 3; }
   .program-table td.pc-camera { grid-area: 10 / 1 / 11 / 3; }
   .program-table td.pc-lyrics { grid-area: 11 / 1 / 12 / 3; }
-  .program-actions { gap: 4px; }
-  .program-actions button { width: 46px; }
-  .program-actions button.program-play { width: 72px; }
   /* The summary: the time line above the title, so title and chips get the width */
   .program-table button.program-summary { grid-template-columns: minmax(0, 1fr) 24px; gap: 4px 6px; align-items: start; }
   .program-sum-when { grid-area: 1 / 1; display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 8px; }
@@ -1281,14 +1278,53 @@ button.program-go:disabled { opacity: .45; animation: none; }
   .program-sum-time { font-size: 17px; }
   .program-chip { max-width: 100%; }
 }
-@container section (max-width: 852px) {
+/* Collapsed and open rows below 1180 px: the summary keeps the whole row;
+   Play, hide and "⋮" (compact) sit in its top-right corner, a float of their
+   size keeps the title line clear of them, and the chips run on underneath
+   them at the full width. A long title takes two lines. The chevron stands
+   just left of the keys. (A new row keeps its own columns: three wider keys.) */
+@container section (max-width: 1179px) {
+  .program-table tr { --pa-w: 172px; }
+  .program-actions { gap: 4px; }
+  .program-actions button { width: 46px; }
+  .program-actions button.program-play { width: 72px; }
+  .program-table tr:not(.program-draft-row) td.program-summary-cell { grid-row: 1; grid-column: 1 / -1; }
+  .program-table tr:not(.program-draft-row) td.program-actions-cell {
+    grid-row: 1; grid-column: 1 / -1; justify-self: end; align-self: start; z-index: 1;
+  }
+  .program-table tr:not(.program-draft-row) button.program-summary {
+    position: relative; grid-template-columns: 84px minmax(0, 1fr); align-items: start;
+  }
+  .program-table tr:not(.program-draft-row) .program-sum-main { display: block; }
+  .program-table tr:not(.program-draft-row) .program-sum-main::before {
+    content: ""; float: right; width: calc(var(--pa-w) + 30px); height: 48px;
+  }
+  .program-table tr:not(.program-draft-row) .program-sum-head { flex-wrap: wrap; row-gap: 2px; margin-bottom: 5px; }
+  .program-table tr:not(.program-draft-row) .program-sum-person { flex: 0 1 auto; min-width: 0; }
+  .program-table tr:not(.program-draft-row) .program-sum-title {
+    display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; white-space: normal; overflow-wrap: anywhere;
+  }
+  .program-table tr:not(.program-draft-row) .program-sum-chips { display: block; }
+  .program-table tr:not(.program-draft-row) .program-chip { margin: 0 4px 4px 0; vertical-align: top; }
+  .program-table tr:not(.program-draft-row) .program-sum-chevron {
+    position: absolute; top: 14px; right: calc(var(--pa-w) + 4px); width: 24px; height: 24px;
+  }
+}
+@container section (max-width: 559px) {
+  /* ⅓: the time line on top, title and chips below; the float only beside
+     the rest of the keys' height */
+  .program-table tr:not(.program-draft-row) button.program-summary { grid-template-columns: minmax(0, 1fr); }
+  .program-table tr:not(.program-draft-row) .program-sum-main::before { height: 26px; }
+  .program-table tr:not(.program-draft-row) .program-sum-chevron { top: 2px; }
+}
+@container section (max-width: 999px) {
   .program-cue { flex-wrap: wrap; }
   button.program-go { flex: 1; }
 }
 /* A narrower section: the display gets the whole line (Weiter below it);
    in a narrow one (a third) the clock and the due time on one line, what
    comes next on its own line below, so its title keeps room. */
-@container section (max-width: 852px) {
+@container section (max-width: 999px) {
   .program-cue-lcd { flex: 1 1 100%; }
 }
 @container section (max-width: 640px) {
