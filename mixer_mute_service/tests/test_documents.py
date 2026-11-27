@@ -762,10 +762,57 @@ class ServiceTests(unittest.TestCase):
         answer = client.post(f"/program/items/{item_id}/play").json()
         self.assertTrue(answer["ok"], answer)
 
-    def test_a_file_field_document_goes_full_screen_to_the_song_monitor(self):
+    def test_a_document_through_a_desktop_key_takes_the_keys_screen(self):
+        from app.row_files import start_id
+
+        sent = []
+
+        def post(url, _token, payload, timeout):
+            sent.append((url, payload, timeout))
+            if "monitors" in payload and old:
+                raise urllib.error.HTTPError(url, 400, "x", {}, None)
+            return {"ok": True, "shown": True}
+
+        lesung = "C:\\Predigt\\Lesung.pdf"
+        with app_client(PROFILES, env=ENV) as (client, _folder), patch("app.display_agent._post", post):
+            old = False
+            item = client.post("/program/items", json=row("Lesung", desktop=[f"via:predigt|{lesung}"])).json()["item"]
+            self.play(client, item["id"])
+            (url, body, timeout), = [entry for entry in sent if entry[0].endswith("/display")]
+            self.assertIn(BEAMER_PC, url)
+            self.assertEqual({k: body[k] for k in ("id", "kind", "fullscreen", "monitor", "path")}, {
+                "id": start_id("predigt", lesung), "kind": "file", "fullscreen": True, "monitor": 3, "path": lesung},
+                "the key's PC, monitor and full screen, the step's file")
+            self.assertEqual(timeout, 20.0, "waited for until the first page is on screen")
+            self.assertEqual(client.app.state.document_shown, (BEAMER_PC, start_id("predigt", lesung)), "paged there")
+            # A key on several monitors: the same page on each; an agent from before documents: one.
+            sent[:] = []
+            item = client.post("/program/items", json=row("Spiegel", desktop=[f"via:spiegel|{lesung}"])).json()["item"]
+            self.play(client, item["id"])
+            self.assertEqual([body["monitors"] for url, body, _t in sent if url.endswith("/display")], [[2, 3]])
+            old, sent[:] = True, []
+            item = client.post("/program/items", json=row("Alt", desktop=[f"via:spiegel|{lesung}"])).json()["item"]
+            self.play(client, item["id"])
+            starts = [body for url, body, _t in sent if url.endswith("/display")]
+            self.assertNotIn("monitors", starts[-1])
+            # Not a document: no waiting, no paging there.
+            client.app.state.document_shown = None
+            sent[:] = []
+            item = client.post("/program/items", json=row("Bild", desktop=["via:predigt|C:\\Bilder\\a.png"])).json()["item"]
+            self.play(client, item["id"])
+            self.assertLess([t for url, _b, t in sent if url.endswith("/display")][0], 20.0)
+            self.assertIsNone(client.app.state.document_shown)
+
+    def test_an_old_file_field_becomes_a_step_through_the_key_on_that_pc(self):
+        with app_client(PROFILES, env=ENV) as (client, _folder):
+            item = client.post("/program/items", json=row("Predigt", translation=DOC_A)).json()["item"]
+            # Übersetzung: the key on that PC that shows on monitor 2 (the beamer).
+            self.assertEqual(item["desktop"], ["via:spiegel|C:\\Predigt\\Übersetzung.pptx"])
+
+    def test_an_old_file_step_goes_full_screen_to_the_song_monitor(self):
         agents = FakeAgents()
         with app_client(PROFILES, env=ENV) as (client, _folder), patch("app.display_agent._post", agents.post):
-            item = client.post("/program/items", json=row("Predigt", translation=DOC_A)).json()["item"]
+            item = client.post("/program/items", json=row("Predigt", desktop=[DOC_A])).json()["item"]
             self.play(client, item["id"])
             (pc, sent), = agents.of("/display")
             self.assertEqual(pc, BEAMER_PC)
@@ -779,13 +826,14 @@ class ServiceTests(unittest.TestCase):
         agents = FakeAgents()
         with app_client(PROFILES, env=ENV) as (client, _folder), patch("app.display_agent._post", agents.post):
             answer = client.post("/program/items", json=row("x", translation=f"file:{STREAM_PC}|C:\\a.pdf")).json()
+            self.assertEqual(answer["item"]["desktop"], [f"file:{STREAM_PC}|C:\\a.pdf"], "no Desktop key on that PC")
             self.play(client, answer["item"]["id"])
             self.assertEqual(agents.of("/display")[0][1]["monitor"], 1)
 
     def test_an_old_agent_gets_the_start_without_the_new_fields(self):
         agents = FakeAgents(display_status=400)
         with app_client(PROFILES, env=ENV) as (client, _folder), patch("app.display_agent._post", agents.post):
-            item = client.post("/program/items", json=row("Predigt", translation=DOC_A)).json()["item"]
+            item = client.post("/program/items", json=row("Predigt", desktop=[DOC_A])).json()["item"]
             self.play(client, item["id"])
             starts = agents.of("/display")
             self.assertEqual(len(starts), 2)
@@ -794,7 +842,7 @@ class ServiceTests(unittest.TestCase):
     def test_the_next_row_keeps_the_same_file_and_closes_another(self):
         agents = FakeAgents()
         with app_client(PROFILES, env=ENV) as (client, _folder), patch("app.display_agent._post", agents.post):
-            ids = [client.post("/program/items", json=row(title, translation=value)).json()["item"]["id"]
+            ids = [client.post("/program/items", json=row(title, desktop=[value])).json()["item"]["id"]
                    for title, value in (("Predigt 1", DOC_A), ("Predigt 2", DOC_A), ("Lesung", DOC_B))]
             ids.append(client.post("/program/items", json=row("Segen")).json()["item"]["id"])
             self.play(client, ids[0])
@@ -815,6 +863,28 @@ class ServiceTests(unittest.TestCase):
             closes = agents.wait_closes(before + 1)[before:]
             self.assertEqual([body["id"] for _pc, body in closes], ["doc-192-168-188-11"], "a row without it")
             self.assertEqual(closes[0][1]["stamp"], agents.of("/display")[2][1]["stamp"], "the last start's")
+
+    def test_the_next_row_keeps_the_same_file_through_the_same_key(self):
+        from app.row_files import start_id
+
+        agents = FakeAgents()
+        lesung, text = "C:\\Predigt\\Lesung.pdf", "C:\\Predigt\\Text.pdf"
+        with app_client(PROFILES, env=ENV) as (client, _folder), patch("app.display_agent._post", agents.post):
+            ids = [client.post("/program/items", json=row(title, desktop=[value])).json()["item"]["id"]
+                   for title, value in (("Lesung 1", f"via:predigt|{lesung}"), ("Lesung 2", f"via:predigt|{lesung}"),
+                                        ("Text", f"via:predigt|{text}"), ("Segen", "@song"))]
+            self.play(client, ids[0])
+            self.play(client, ids[1])
+            time.sleep(0.1)
+            self.assertEqual(agents.of("/close"), [], "the same file through the same key stays, on its page")
+            self.assertTrue(agents.of("/display")[1][1]["keep_if_open"])
+            self.play(client, ids[2])
+            self.assertNotIn("keep_if_open", agents.of("/display")[2][1], "another file: another start")
+            closes = agents.wait_closes(1)
+            self.assertEqual([body["id"] for _pc, body in closes], [start_id("predigt", lesung)])
+            self.play(client, ids[3])
+            closes = agents.wait_closes(2)
+            self.assertEqual([body["id"] for _pc, body in closes[1:]], [start_id("predigt", text)])
 
     def test_a_document_profile_is_paged_too(self):
         agents = FakeAgents()

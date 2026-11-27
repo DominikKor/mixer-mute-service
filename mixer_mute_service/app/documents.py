@@ -1,7 +1,8 @@
 """Documents (PDF, PowerPoint, Word) shown page by page by a display agent.
 
-A program row's file field (Übersetzung, ...) or a file profile that is a
-document is not handed to Windows' default app: the agent renders its pages
+A Desktop step of a program row that shows a document (a file profile, a
+Desktop key with another file "via:<key>|<path>", an older file step) is
+not handed to Windows' default app: the agent renders its pages
 itself, full screen on the right monitor (desktop_agent/documents.py), and
 pages through them on request:
 
@@ -17,7 +18,9 @@ Without "pc" they go to the PC that showed a document last (one document per
 agent, a new one replaces it). An agent from before documents answers 404:
 the answer then says so.
 
-File fields (file:<ip>|<path>) open a document on the monitor of that PC's
+A Desktop key with another file takes the key's PC, monitor(s), full screen
+and position, under its start id (key and file, app/row_files.py). Older
+file steps (file:<ip>|<path>) open a document on the monitor of that PC's
 Liedanzeige screen (the projector), else monitor 1, always full screen, under
 one profile id per PC ("doc-192-168-188-11"): the program's next row closes
 it (app/profile_stops.py) unless it shows the same file again; then it stays

@@ -836,28 +836,79 @@ unter `C:\\ProgramData\\MixerMuteService\\config.yaml` muss
 `desktop_display.enabled: true` stehen. Die API listet Profile ueber
 `GET /desktop/profiles`; ein Button sendet `POST /desktop/{profile_id}/open`.
 
-## Dateien direkt im Programm
+## Desktop-Schritte eines Programmpunkts
 
-Ein Programmpunkt kann in *Playback*, *Übersetzung* oder *Liedtext* direkt eine
-Datei starten (Tasten aus Steuerung und Desktop-Profile stehen dort nicht mehr
-zur Wahl; ältere Zeilen behalten sie als „(bisher)“, bis etwas anderes gewählt
-wird). Desktop-Profile wählt die Zeile *Desktop* des Programmpunkts. **Datei oder
-Pfad…** wählen, den vollständigen Pfad auf dem Ziel-PC eintragen und den PC
-wählen (*Streaming-PC (dieser Service)* oder ein PC aus den Desktop-Profilen).
-Musikdateien (mp3, wav, m4a, aac, flac, ogg, opus, wma) spielt der Display-Agent
-dort ohne Fenster mit mpv, `.exe` startet er, Dokumente zeigt er selbst (siehe
-unten), alles andere öffnet Windows mit der Standard-App. Gespeichert wird
-`file:<ip>|<pfad>` im jeweiligen Feld.
+Was ein Programmpunkt zeigt und abspielt, steht in seiner Zeile *Desktop* als
+Folge von Schritten, die in dieser Reihenfolge laufen (`app/row_files.py`,
+`app/api/program.py`). Mit **+** (gestrichelt) kommt ein Schritt hinzu, mit **‹**
+rückt er vor, **✕** entfernt ihn:
 
-**Dokumente (PDF, PowerPoint, Word) als Vollbild:** `.pdf`, `.ppt/.pptx/.pps/.ppsx/.odp`
-und `.doc/.docx/.odt/.rtf` öffnet der Display-Agent nicht mit der Standard-App,
-sondern zeigt die Seiten selbst im Vollbild auf dem richtigen Monitor (dieselbe
-Nummerierung wie bei Bildern), in einem eigenen Fenster über Bild und Liedanzeige.
-Ein Desktop-Profil (auch mit eigener Datei im Programmpunkt) nimmt seinen
-Monitor, Vollbild und Position wie ein Bild: ohne Vollbild ein Fenster im
-Arbeitsbereich (Mitte: der ganze, Ecke: ein Viertel), mit mehreren Monitoren
-dieselbe Seite auf jedem. Ältere Zeilen mit `file:<ip>|<pfad>` gehen auf den
-Monitor der Liedanzeige dieses PCs (Anzeige-PC: der Beamer), sonst Monitor 1. PDFs rendert der Agent mit `pypdfium2`; PowerPoint- und
+- **eine Desktop-Taste** – wie sie unter Desktop eingerichtet ist. Mit **Pfad…**
+  zeigt sie stattdessen eine andere Datei: PC, Monitor(e), Vollbild, Position
+  und Ein-/Ausblenden kommen von der Taste, die Datei vom Schritt; die Art
+  (Bild, Musik, Programm, Datei) kommt aus dem Pfad. ✕ daneben nimmt wieder die
+  Datei der Taste. Gespeichert als `via:<profil-id>|<pfad>`.
+- **Beamer einfrieren** / **Beamer auftauen** (`@freeze` / `@unfreeze`) – Freeze
+  ist am Beamer ein Umschalter; der Dienst merkt sich den Zustand und sendet nur,
+  wenn er anders ist. Nach einem Neustart des Dienstes ist er unbekannt: dann
+  wird nichts gesendet (im Log, der Schritt meldet es) – im Steuerung-Bereich
+  unter *Freeze-Zustand festlegen* setzen. Beamer an/aus heißt: nicht
+  eingefroren; die Taste „Beamer freeze“ schaltet um. Aufgetaut wird nur durch
+  einen Schritt *Beamer auftauen* oder die Taste. Solange er eingefroren ist,
+  zeigen der Programmkopf („Beamer eingefroren“) und der Steuerung-Bereich das an.
+- **Liedtext** (`@song`) – das oben gewählte Lied aus der Liedbibliothek, höchstens
+  einmal. Wird ein Lied gewählt, kommt der Schritt ans Ende; wird es entfernt,
+  geht er mit.
+
+Ablauf: Mischpult, Licht und Kameras wie bisher; dann *Beamer* (hide / unhide,
+vor allen Schritten), dann die Schritte. Schritte auf demselben PC laufen
+nacheinander, ein Freeze/Auftauen nach allem davor und alles danach nach ihm;
+Schritte auf anderen PCs warten nicht auf einen PC, der nicht antwortet. Ein
+Schritt, der etwas zeigt, bekommt 2 s (`SETTLE_SECONDS`), bevor ein Freeze oder
+das nächste Bild auf demselben PC kommt – außer der Agent meldet `"shown": true`
+(er hat es schon gezeichnet). Ein Schritt, der nicht klappt, steht im Log und in
+der Meldung; die folgenden laufen trotzdem. Nur ein Freeze direkt nach einem
+gescheiterten Schritt entfällt (er würde das falsche Bild einfrieren).
+Beispiel: Übersetzung (Taste Beamer + PDF) → Beamer einfrieren → Liedtext.
+
+**Stopp** im Programmkopf beendet, was der Programmablauf gestartet hat (Musik
+blendet aus, Fenster und Bilder gehen zu, `POST /program/stop`); von Hand
+Gestartetes läuft weiter. Der Agent kennt einen Schritt mit anderer Datei als
+`<profil-id>--<kurzer Hash des Pfads>`, so dass „offen lassen“ und das Beenden
+beim nächsten Programmpunkt (`app/profile_stops.py`) Taste *und* Datei unterscheiden.
+
+Früher gab es eigene Felder *Playback*, *Übersetzung* und *Liedtext* (als Datei).
+Beim Start des Dienstes (und bei Zeilen von älteren Seiten oder aus
+Programmdateien) werden sie zu Schritten, in der Reihenfolge, in der sie liefen:
+Playback, Übersetzung, Liedtext, dann die bisherigen Desktop-Profile, das Lied
+als letzter Schritt. Eine Datei `file:<ip>|<pfad>` bekommt eine Desktop-Taste auf
+demselben PC (am liebsten gleiche Art, Musik eine Taste ohne Einblenden, bei
+Übersetzung Monitor 2; `127.0.0.1` ist der Streaming-PC; gibt es für Musik nur
+eine Taste mit Einblenden, wird sie genommen und das steht im Log); gibt es dort keine, bleibt sie ein Datei-Schritt, läuft wie
+bisher und zeigt „Desktop-Taste wählen“ (Auswahl direkt im Schritt).
+`desktop:<id>` wird die Taste (außer sie ist schon ein Schritt), eine
+Steuerung-Taste ein Schritt `key:<id>`. Das gilt auch für Vorlagen (eine
+Lied-Lücke bekommt den Liedtext-Schritt) und Shortcuts und steht im Log. In
+der Programmdatei steht eine selbst benannte Steuerung-Taste (Benutzer-Taste,
+gespeichertes Kamera-Preset) als `key:<Name>` (wie Licht und Tasten sonst
+auch; ist der Name nicht eindeutig oder sieht er wie eine ID aus, bleibt die
+ID und der Export warnt), Desktop-Tasten und `via:<profil-id>|<pfad>` bleiben
+wie sie sind; `desktop_names` nennt jeden Schritt nur zum Lesen. Der Import
+sucht eine unbekannte Taste über ihren Namen (benannte Tasten zuerst), dann
+über den Namen daneben.
+
+**Dokumente (PDF, PowerPoint, Word) als Vollbild:** Zeigt ein Schritt eine
+`.pdf`, `.ppt/.pptx/.pps/.ppsx/.odp` oder `.doc/.docx/.odt/.rtf` (die Datei
+einer Desktop-Taste oder eine andere Datei über **Pfad…**), öffnet der
+Display-Agent sie nicht mit der Standard-App, sondern zeigt die Seiten selbst,
+in einem eigenen Fenster über Bild und Liedanzeige. Monitor(e), Vollbild und
+Position kommen von der Taste, wie bei einem Bild (dieselbe Nummerierung):
+ohne Vollbild ein Fenster im Arbeitsbereich (Mitte: der ganze, Ecke: ein
+Viertel), mit mehreren Monitoren dieselbe Seite auf jedem. Der Dienst wartet
+bis zu 20 s, bis die erste Seite steht (`"shown": true`); erst dann kommt ein
+folgendes *Beamer einfrieren* (steht sie nicht rechtzeitig, entfällt es).
+Ältere Datei-Schritte `file:<ip>|<pfad>` gehen auf den Monitor der Liedanzeige
+dieses PCs (Anzeige-PC: der Beamer), sonst Monitor 1, immer im Vollbild. PDFs rendert der Agent mit `pypdfium2`; PowerPoint- und
 Word-Dateien wandelt einmal das installierte Office (unsichtbar, per COM) oder
 sonst LibreOffice in ein PDF um. Die Kopie liegt unter
 `%LOCALAPPDATA%\MixerMuteDisplayAgent\documents`, ein zweites Öffnen geht sofort.
@@ -874,7 +925,7 @@ Seitenzahl. Eine Umwandlung endet nach spätestens gut drei Minuten; hängt
 Office dabei, beendet der Agent genau die Office-Instanz, die er selbst
 gestartet hat (nie ein vom Benutzer geöffnetes Office), und ein mit Kennwort
 geschütztes Word-Dokument schlägt sofort fehl. Geht das Programm weiter, schließt der nächste Programmpunkt das Dokument;
-zeigt er dieselbe Datei, bleibt sie auf ihrer Seite stehen. Fehlt `pypdfium2`,
+zeigt er dieselbe Datei über dieselbe Taste, bleibt sie auf ihrer Seite stehen. Fehlt `pypdfium2`,
 installiert der Agent genau diese Version (`pypdfium2==5.15.2`) beim Start selbst
 (`pip`, im Hintergrund, einmal je Agent-Version, nach einem Fehlschlag erst nach
 einer Stunde wieder, dann seltener; das Update über den UPDATE-Knopf führt kein

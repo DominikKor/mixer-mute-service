@@ -1,7 +1,9 @@
 """Readable names in the program file (app/program_file.py): the export puts a
 name next to every ID, the import trusts the ID and falls back to an exact name
 (any case) that fits one item; unknown or ambiguous references are dropped with
-a warning; files without names (and unknown *_name fields) still import."""
+a warning; files without names (and unknown *_name fields) still import. The
+Desktop steps (app/row_files.py) carry one name each; old files with Playback /
+Übersetzung come in as steps."""
 
 import asyncio
 import unittest
@@ -26,13 +28,17 @@ def scene(client, name):
     return asyncio.run(client.app.state.light_scenes.save({"name": name, "stage": {"fixtures": {"left": {"on": True, "level": 100}}}}))
 
 
+# A key from the old Übersetzung field, two Desktop keys, the song.
+STEPS = ["key:native-cam1-preset-1", "qr", "logo", "@song"]
+STEP_NAMES = ["CAM1 Pult nah", "QR Gemeinde", "Logo", "Liedtext"]
+
+
 def setup(client):
     client.app.state.songs.songs = dict(LIBRARY)
     asyncio.run(client.app.state.companion_button_store.save_camera_preset("cam1", 9, "Kanzel"))
     light = scene(client, "Predigt hell")
     row = {"time": "10:00", "title": "Predigt", "person": "Anna", "group": "Predigt", "light": light["id"],
-           "desktop": ["qr", "logo"], "song": "a.foil", "cam1_preset": 9, "playback": "desktop:qr",
-           "translation": "native-cam1-preset-1"}
+           "desktop": STEPS, "song": "a.foil", "cam1_preset": 9}
     assert client.post("/program/items", json=row).status_code == 200
     return light
 
@@ -54,13 +60,12 @@ class ProgramFileNameTests(unittest.TestCase):
             item = payload["items"][0]
             self.assertEqual(item["light"], "Predigt hell")  # the scene's hex ID is written as its name
             self.assertNotIn("light_name", item)
-            self.assertEqual((item["desktop"], item["desktop_names"]), (["qr", "logo"], ["QR Gemeinde", "Logo"]))
+            self.assertEqual((item["desktop"], item["desktop_names"]), (STEPS, STEP_NAMES))  # catalog key: its ID
             self.assertEqual((item["song"], item["song_title"], item["song_book"]),
                              ("a.foil", "Above all", "Glauben Hoffen Singen 371"))
             self.assertEqual(item["cam1_preset"], 9)
             self.assertEqual(item["cam1_preset_name"], "9 · Kanzel")
-            self.assertEqual((item["playback"], item["playback_name"]), ("desktop:qr", "QR Gemeinde"))
-            self.assertEqual((item["translation"], item["translation_name"]), ("native-cam1-preset-1", "CAM1 Pult nah"))
+            self.assertIsNone(item["playback"])
             self.assertEqual(item["group"], "Predigt")  # readable IDs stay: group, song file, desktop profile
 
     def test_user_keys_and_saved_presets_are_written_as_names(self):
@@ -69,17 +74,23 @@ class ProgramFileNameTests(unittest.TestCase):
             store = client.app.state.companion_button_store
             key = asyncio.run(store.create_button("Kollekte Musik", "overall", {"kind": "channel", "channel": 1, "operation": "mute"}))
             self.assertTrue(key["id"].startswith("user-"))
+            row = client.get("/program/items").json()[0]
+            # (a key that switches mutes may not share a row with a group)
+            steps = ["key:" + key["id"], "key:native-cam1-preset-9", "qr", "@song"]  # a saved preset: "9 · Kanzel"
+            self.assertEqual(client.put(f"/program/items/{row['id']}", json={**row, "desktop": steps, "group": ""}).status_code, 200)
             payload = export(client)
-            payload["items"][0].update(translation=key["id"], playback="native-cam1-preset-9",  # a saved preset: "9 · Kanzel"
-                                       group="")  # (a key that switches mutes may not share a row with a group)
-            self.assertEqual(import_(client, payload).status_code, 200)
-            item = export(client)["items"][0]
-            self.assertEqual((item["translation"], item["playback"]), ("Kollekte Musik", "Kanzel"))
-            self.assertNotIn("translation_name", item)
-            self.assertNotIn("playback_name", item)
-            r = import_(client, {**export(client)})  # and back to the IDs
+            self.assertNotIn("warnings", payload)
+            item = payload["items"][0]
+            self.assertEqual(item["desktop"], ["key:Kollekte Musik", "key:Kanzel", "qr", "@song"])
+            self.assertEqual(item["desktop_names"], ["Kollekte Musik", "Kanzel", "QR Gemeinde", "Liedtext"])
+            self.assertEqual(import_(client, payload).json()["warnings"], [])  # and back to the IDs
+            self.assertEqual(client.get("/program/items").json()[0]["desktop"], steps)
+            # A file from before the steps, with the names in Playback / Übersetzung: steps as well.
+            item.update(desktop=["qr"], desktop_names=["QR Gemeinde"], playback="Kanzel", translation="kollekte MUSIK")
+            self.assertEqual(import_(client, payload).json()["warnings"], [])
             now = client.get("/program/items").json()[0]
-            self.assertEqual((now["translation"], now["playback"]), (key["id"], "native-cam1-preset-9"))
+            self.assertEqual(now["desktop"], ["key:native-cam1-preset-9", "key:" + key["id"], "qr", "@song"])
+            self.assertEqual((now["playback"], now["translation"]), (None, None))
 
     def test_a_named_key_comes_before_a_catalog_key_of_the_same_name(self):
         with app_client(CONFIG) as (client, _):
@@ -87,16 +98,38 @@ class ProgramFileNameTests(unittest.TestCase):
             store = client.app.state.companion_button_store
             key = asyncio.run(store.create_button("Beamer hide", "overall", {"kind": "companion", "target_button_id": "beamer-hide"}))
             payload = export(client)
-            payload["items"][0].update(translation="beamer HIDE", group="")
+            payload["items"][0].pop("desktop_names")
+            payload["items"][0].update(desktop=["key:beamer HIDE", "key:beamer-hide"], group="")
             self.assertEqual(import_(client, payload).json()["warnings"], [])
-            self.assertEqual(client.get("/program/items").json()[0]["translation"], key["id"])
-            self.assertEqual(export(client)["items"][0]["translation"], "Beamer hide")
+            self.assertEqual(client.get("/program/items").json()[0]["desktop"],
+                             ["key:" + key["id"], "key:beamer-hide", "@song"])  # an existing ID stays itself
+            self.assertEqual(export(client)["items"][0]["desktop"], ["key:Beamer hide", "key:beamer-hide", "@song"])
+
+    def test_a_stale_name_next_to_a_key_step_does_not_win(self):
+        with app_client(CONFIG) as (client, _):
+            setup(client)
+            store = client.app.state.companion_button_store
+            action = {"kind": "channel", "channel": 1, "operation": "mute"}
+            first = asyncio.run(store.create_button("Kollekte", "overall", action))
+            asyncio.run(store.create_button("Segen", "overall", action))
+            payload = export(client)
+            # edited by hand: the step says "Kollekte", the name next to it is still the old one
+            payload["items"][0].update(desktop=["key:kollekte", "key:user-000000000000"], group="",
+                                       desktop_names=["Segen", "Gibt es nicht"])
+            r = import_(client, payload)
+            self.assertEqual([w["reason"] for w in r.json()["warnings"]],
+                             ["Taste „Gibt es nicht“ nicht gefunden; Verweis entfernt"])
+            self.assertEqual(client.get("/program/items").json()[0]["desktop"], ["key:" + first["id"], "@song"])
 
     def test_round_trip_is_byte_stable(self):
         with app_client(CONFIG) as (client, _):
             setup(client)
+            key = asyncio.run(client.app.state.companion_button_store.create_button(
+                "Kollekte Musik", "overall", {"kind": "channel", "channel": 1, "operation": "mute"}))
             client.post("/program/items", json={"time": "10:30", "title": "Zweite Zeile", "person": "", "group": "",
-                                                "song": "b.foil", "desktop": ["logo"]})
+                                                "song": "b.foil", "desktop": ["key:" + key["id"], "logo",
+                                                                             "via:qr|C:\\Bilder\\b.pdf", "@freeze"]})
+            self.assertIn('"key:Kollekte Musik"', client.get("/program/export").text)
             first = client.get("/program/export").content
             self.assertEqual(import_(client, client.get("/program/export").json()).status_code, 200)
             second = client.get("/program/export").content
@@ -112,7 +145,8 @@ class ProgramFileNameTests(unittest.TestCase):
             item.update(light=light["id"], light_name="Predigt hell")  # the form before names were the keys
             r = import_(client, old)
             self.assertEqual((r.status_code, r.json()["warnings"]), (200, []))
-            self.assertEqual(client.get("/program/items").json()[0]["light"], light["id"])
+            before = client.get("/program/items").json()[0]
+            self.assertEqual((before["light"], before["desktop"], before["song"]), (light["id"], STEPS, "a.foil"))
             for key in [k for k in item if k.endswith("_name") or k.endswith("_names") or k in ("song_title", "song_book")]:
                 item.pop(key)  # even without any name next to the ID
             r = import_(client, old)
@@ -133,21 +167,17 @@ class ProgramFileNameTests(unittest.TestCase):
             item = payload["items"][0]
             item["light"] = "f" * 32  # the scene has another ID on this installation
             item["light_name"] = "predigt  HELL"
-            item["desktop"] = ["alt1", "logo"]
-            item["desktop_names"] = ["qr gemeinde", "Logo"]
+            item["desktop"] = ["key:native-gibt-es-nicht", "alt1", "via:alt2|C:\\Bilder\\a.png", "@song"]
+            item["desktop_names"] = ["cam1 pult nah", "qr gemeinde", "QR GEMEINDE", "Liedtext"]
             item["song"] = "weg.foil"
             item["song_title"] = "ACH MEIN HERR JESU"
-            item["playback"] = "desktop:alt"
-            item["playback_name"] = "QR Gemeinde"
-            item["translation"] = "native-gibt-es-nicht"
-            item["translation_name"] = "cam1 pult nah"
             r = import_(client, payload)
             self.assertEqual((r.status_code, r.json()["warnings"]), (200, []), r.text)
             now = client.get("/program/items").json()[0]
             self.assertEqual(now["light"], light["id"])
-            self.assertEqual(now["desktop"], ["qr", "logo"])
+            # A key with another file keeps its file.
+            self.assertEqual(now["desktop"], ["key:native-cam1-preset-1", "qr", "via:qr|C:\\Bilder\\a.png", "@song"])
             self.assertEqual(now["song"], "b.foil")
-            self.assertEqual((now["playback"], now["translation"]), ("desktop:qr", "native-cam1-preset-1"))
 
     def test_the_id_wins_when_it_exists(self):
         with app_client(CONFIG) as (client, _):
@@ -179,11 +209,11 @@ class ProgramFileNameTests(unittest.TestCase):
             self.assertEqual(r.status_code, 200, r.text)
             self.assertEqual(len(r.json()["warnings"]), 5)
             reasons = " | ".join(w["reason"] for w in r.json()["warnings"])
-            self.assertIn("Desktop-Profil „logo“ mehrdeutig (2 passen)", reasons)
+            self.assertIn("Desktop-Taste „logo“ mehrdeutig (2 passen)", reasons)
             self.assertIn("Licht „Gibt es nicht“ nicht gefunden", reasons)
             self.assertIn("Mute-Gruppe „Gibt es nicht“ nicht gefunden", reasons)
             self.assertIn("Lied „Gibt es nicht“ nicht gefunden", reasons)
-            self.assertEqual({w["kind"] for w in r.json()["warnings"]}, {"Licht", "Desktop-Profil", "Lied", "Mute-Gruppe"})
+            self.assertEqual({w["kind"] for w in r.json()["warnings"]}, {"Licht", "Desktop-Taste", "Lied", "Mute-Gruppe"})
             self.assertEqual(r.json()["warnings"][0]["title"], "Predigt")
             now = client.get("/program/items").json()[0]
             self.assertEqual((now["desktop"], now["light"], now["song"], now["group"]), (["qr"], None, None, ""))
@@ -328,21 +358,20 @@ class UniqueNamesTests(unittest.TestCase):
             action = {"kind": "channel", "channel": 1, "operation": "mute"}
             for label in ("desktop:qr", "file:x", "via:y", "key:z", "@Anna", "beamer-hide"):
                 key = asyncio.run(store.create_button(label, "overall", action))
-                payload = export(client)
-                payload["items"][0].update(translation=key["id"], group="")
-                self.assertEqual(import_(client, payload).status_code, 200)
+                row = client.get("/program/items").json()[0]
+                client.put(f"/program/items/{row['id']}", json={**row, "desktop": ["key:" + key["id"]], "group": ""})
                 payload = export(client)
                 item = payload["items"][0]
-                self.assertEqual((item["translation"], item["translation_name"]), (key["id"], label), label)
+                self.assertEqual((item["desktop"], item["desktop_names"]), (["key:" + key["id"], "@song"], [label, "Liedtext"]), label)
                 self.assertEqual(payload["warnings"][0]["kind"], "Taste", label)
                 self.assertIn("sieht aus wie eine ID", payload["warnings"][0]["reason"])
                 self.assertEqual(import_(client, payload).json()["warnings"], [])  # by ID: the same key again
-                self.assertEqual(export(client)["items"][0]["translation"], key["id"])
+                self.assertEqual(export(client)["items"][0]["desktop"][0], "key:" + key["id"])
                 asyncio.run(store.delete_button(key["id"]))
             # a light preset named like its own or another scene's ID
             other = scene(client, light["id"])
             row = client.get("/program/items").json()[0]
-            client.put(f"/program/items/{row['id']}", json={**row, "light": other["id"], "translation": ""})
+            client.put(f"/program/items/{row['id']}", json={**row, "light": other["id"], "desktop": ["qr"]})
             item = export(client)["items"][0]
             self.assertEqual((item["light"], item["light_name"]), (other["id"], light["id"]))
 
@@ -409,9 +438,11 @@ class ProgramFileRobustnessTests(unittest.TestCase):
             r = import_(client, payload)
             self.assertEqual(r.status_code, 200, r.text)
             now = client.get("/program/items").json()[0]
+            # An old file: Playback (a profile already among the steps) and Übersetzung
+            # (a key) become steps, the song the last one.
             self.assertEqual((now["light"], now["desktop"], now["song"], now["group"]),
-                             (light["id"], ["qr"], "a.foil", "Predigt"))
-            self.assertEqual((now["playback"], now["translation"]), ("desktop:qr", "native-cam1-preset-1"))
+                             (light["id"], ["key:native-cam1-preset-1", "qr", "@song"], "a.foil", "Predigt"))
+            self.assertEqual((now["playback"], now["translation"]), (None, None))
             self.assertEqual([w["name"] for w in r.json()["warnings"]], ["Logo2"])
 
     def test_a_row_without_title_is_still_reported(self):

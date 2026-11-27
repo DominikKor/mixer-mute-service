@@ -3,13 +3,15 @@
 A row refers to a light scene, keys, desktop profiles, a song and camera
 presets. Where the ID is opaque (a light scene's hex ID, a user key ``user-...``,
 a saved camera preset) the export writes the NAME instead
-(``"light": "Predigt hell"``), so a person can read and edit the file: names of
-scenes and keys are unique (case-insensitive), so they serve as keys. Where the
-ID is readable already (``desktop:qr``, a group, a song file, a catalog key) it
-stays; the title next to it (``desktop_names``, ``song_title`` ...) is only for
-reading and is ignored by the import. A name that is not unique cannot be a key:
-that reference keeps its ID (with ``light_name`` / ``<field>_name`` next to it)
-and the export lists it under "warnings".
+(``"light": "Predigt hell"``, a Desktop step ``"key:Kollekte Musik"``), so a
+person can read and edit the file: names of scenes and keys are unique
+(case-insensitive), so they serve as keys. Where the ID is readable already
+(a Desktop key ``qr`` or ``via:qr|<path>``, a group, a song file, a catalog
+key) it stays; the title next to it (``desktop_names``, ``song_title`` ...)
+is only for reading and is ignored by the import. A name that is not unique
+cannot be a key: that reference keeps its ID (with ``light_name`` /
+``<field>_name`` / its ``desktop_names`` entry next to it) and the export
+lists it under "warnings".
 
 The import trusts an ID that exists on this installation; otherwise it takes the
 value (or the ``*_name`` field of an older file) as an exact name, any case; a
@@ -30,6 +32,10 @@ from .actions import DESKTOP_PREFIX, PROGRAM_ACTION_FIELDS, pressable_button
 from .camera_program import CAMERAS
 from .companion_buttons import CATALOG_ONLY_IDS, COMPANION_BUTTONS_BY_ID, _saved_preset_key, label_key
 from .file_actions import is_file_action
+from .row_files import KEY_PREFIX, PSEUDO_STEPS, STEP_FREEZE, STEP_SONG, STEP_UNFREEZE, is_via, parse_via, via_value
+
+# Names of the Desktop steps that are no key (app/row_files.py).
+STEP_NAMES = {STEP_FREEZE: "Beamer einfrieren", STEP_UNFREEZE: "Beamer auftauen", STEP_SONG: "Liedtext"}
 
 _KEY_FIELDS = PROGRAM_ACTION_FIELDS  # playback, translation, lyrics: a key or "desktop:<profile>"
 
@@ -80,9 +86,37 @@ class Names:
     # -- export ------------------------------------------------------------
 
     def key_name(self, value: str) -> Optional[str]:
+        if is_via(value):  # a file through a Desktop key: the key's name
+            try:
+                return self.profiles.get(parse_via(value)[0])
+            except ValueError:
+                return None
         if value.startswith(DESKTOP_PREFIX):
             return self.profiles.get(value.removeprefix(DESKTOP_PREFIX))
         return self.buttons.get(value)
+
+    def step_name(self, step) -> Optional[str]:
+        """A Desktop step's readable name: the key's title (also for a key
+        with another file), "Beamer einfrieren" and so on, a Steuerung key's
+        label; None for an older file step."""
+        if not isinstance(step, str):
+            return None
+        if step in STEP_NAMES:
+            return STEP_NAMES[step]
+        if is_via(step):
+            try:
+                return self.profiles.get(parse_via(step)[0])
+            except ValueError:
+                return None
+        if step.startswith(KEY_PREFIX):
+            return self.buttons.get(step.removeprefix(KEY_PREFIX))
+        return self.profiles.get(step)
+
+    def find_key(self, name: str) -> List[str]:
+        """The keys with that name. A user key may be named like a catalog
+        key: the keys somebody named come first."""
+        return ([i for i, label in self.named_buttons.items() if _same(label, name)]
+                or [i for i, label in self.buttons.items() if _same(label, name)])
 
     def song_book(self, song: dict) -> str:
         return ", ".join(f"{b.get('name', '')} {b.get('number', '')}".strip() for b in song.get("books") or [])
@@ -135,6 +169,21 @@ async def annotate(row: dict, names: Names, warnings: List[dict]) -> dict:
                              f"{kind} „{name}“ ist nicht eindeutig ({count}×): die Datei enthält die ID"})
         return count == 1
 
+    def key_by_name(key_id: str, name: str) -> bool:
+        """A key that goes into the file by its name: one somebody named, its
+        name unique and not to be taken for an ID or a prefix (else: a warning)."""
+        if not _opaque(key_id):
+            return False
+        if _confusable(name, names.ids):
+            _once(warnings, _not_a_key("Taste", name))
+            return False
+        return unique("Taste", name, names.named_buttons.values())
+
+    def key_step(step):
+        key = step.removeprefix(KEY_PREFIX) if isinstance(step, str) and step.startswith(KEY_PREFIX) else None
+        name = names.buttons.get(key) if key else None
+        return KEY_PREFIX + name if name and key_by_name(key, name) else step
+
     for field, value in row.items():
         result[field] = value
         if field == "light" and value in names.scenes:
@@ -148,15 +197,15 @@ async def annotate(row: dict, names: Names, warnings: List[dict]) -> dict:
                 result["light_name"] = name
         elif field in _KEY_FIELDS and isinstance(value, str) and not is_file_action(value):
             name = names.key_name(value)
-            if name and _opaque(value) and _confusable(name, names.ids):
-                result[f"{field}_name"] = name
-                _once(warnings, _not_a_key("Taste", name))
-            elif name and _opaque(value) and unique("Taste", name, names.named_buttons.values()):
+            if name and key_by_name(value, name):
                 result[field] = name
             elif name:
                 result[f"{field}_name"] = name
         elif field == "desktop" and value:
-            result["desktop_names"] = [names.profiles.get(pid) for pid in value]
+            # A named key's step by its name ("key:Kollekte Musik"); Desktop keys,
+            # files and the other steps as they are. The names next to them are for reading.
+            result["desktop"] = [key_step(step) for step in value]
+            result["desktop_names"] = [names.step_name(step) for step in value]
         elif field == "song" and value in names.songs:
             result["song_title"] = names.songs[value]["title"]
             book = names.song_book(names.songs[value])
@@ -209,6 +258,22 @@ async def resolve(row: dict, names: Names) -> Tuple[dict, List[dict]]:
         if not value or is_file_action(value):
             continue
         name = _text(row.get(f"{field}_name"))
+        if is_via(value):  # a file through a Desktop key: the key by its name, the path stays
+            try:
+                profile_id, path = parse_via(value)
+            except ValueError:
+                continue  # for the validation of the row
+            if profile_id in names.profiles:
+                continue
+            name = name or profile_id
+            found, problem = _only([i for i, t in names.profiles.items() if _same(t, name)])
+            if found:
+                row[field] = via_value(found, path)
+            else:
+                # Without its Desktop key the file has no output here: dropped, and said so.
+                row[field] = None
+                drop(field, "Desktop-Taste", name, problem)
+            continue
         if value.startswith(DESKTOP_PREFIX):  # a desktop profile stays one: only profiles are searched
             if value.removeprefix(DESKTOP_PREFIX) in names.profiles:
                 continue
@@ -218,28 +283,49 @@ async def resolve(row: dict, names: Names) -> Tuple[dict, List[dict]]:
         else:  # a key stays one: only keys are searched
             if await pressable_button(names.request, value) is not None:
                 continue
-            # A user key may be named like a catalog key: the keys somebody named come first.
-            found, problem, name = _lookup(value, name, lambda n: (
-                [i for i, label in names.named_buttons.items() if _same(label, n)]
-                or [i for i, label in names.buttons.items() if _same(label, n)]))
+            found, problem, name = _lookup(value, name, names.find_key)
             kind = "Taste"
         row[field] = found
         if problem:
             drop(field, kind, name, problem)
-    profiles = row.get("desktop")
-    if isinstance(profiles, list):
+    steps = row.get("desktop")
+    if isinstance(steps, list):
         titles = row.get("desktop_names") if isinstance(row.get("desktop_names"), list) else []
         kept = []
-        for index, pid in enumerate(profiles):
-            if not isinstance(pid, str) or pid in names.profiles:
-                kept.append(pid)  # (a wrong type is for the validation)
+        for index, step in enumerate(steps):
+            title = _text(titles[index]) if index < len(titles) else None
+            if not isinstance(step, str) or step in PSEUDO_STEPS or is_file_action(step):
+                kept.append(step)  # (a wrong type is for the validation)
                 continue
-            found, problem, name = _lookup(pid, _text(titles[index]) if index < len(titles) else None,
+            if step.startswith(KEY_PREFIX):  # a key stays one: only keys are searched, named ones first
+                key = step.removeprefix(KEY_PREFIX)
+                if await pressable_button(names.request, key) is not None:
+                    kept.append(step)
+                    continue
+                found, problem, name = _lookup(key, title, names.find_key)
+                if found:
+                    kept.append(KEY_PREFIX + found)
+                else:
+                    drop("desktop", "Taste", name, problem)
+                continue
+            path = None
+            if is_via(step):  # a file through a Desktop key: the key by its name, the path stays
+                try:
+                    profile_id, path = parse_via(step)
+                except ValueError:
+                    kept.append(step)  # for the validation
+                    continue
+            else:
+                profile_id = step
+            if profile_id in names.profiles:
+                kept.append(step)
+                continue
+            found, problem, name = _lookup(profile_id, title,
                                            lambda n: [i for i, t in names.profiles.items() if _same(t, n)])
             if found:
-                kept.append(found)
+                kept.append(via_value(found, path) if path is not None else found)
             else:
-                drop("desktop", "Desktop-Profil", name, problem)
+                drop("desktop", "Desktop-Taste", name, problem)
         row["desktop"] = kept
     value = _text(row.get("song"))
     if value and names.songs and value not in names.songs:  # the library may not be loaded: then it stays

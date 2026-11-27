@@ -28,6 +28,9 @@ def _row_numbers(row: dict, camera: str, key_ids: Dict[str, int]) -> set:
         value = row.get(field)
         if isinstance(value, str) and value in key_ids:
             numbers.add(key_ids[value])
+    for step in row.get("desktop") or []:  # a key among the Desktop steps (app/row_files.py)
+        if isinstance(step, str) and step.startswith("key:") and step[4:] in key_ids:
+            numbers.add(key_ids[step[4:]])
     return numbers
 
 

@@ -418,6 +418,13 @@ class NativeControlService:
         # is made from them (_render).
         self._fixtures = {name: _new_fixture() for name in ARTNET_ZONES}
         self._beamer_hidden: Optional[bool] = None
+        # Freeze is a toggle on the beamer too. The service keeps what it knows:
+        # unknown after its start (a freeze may still be on), flipped by every
+        # Freeze it sends (the Beamer-freeze key too), not frozen after power
+        # on/off, set by hand in the Beamer section ("Freeze-Zustand"), unknown
+        # once a Freeze may or may not have arrived. While unknown, program
+        # steps send nothing (a toggle could do the opposite).
+        self._beamer_frozen: Optional[bool] = None
         # Stage sending: one frame at a time (fade steps and the keepalive),
         # when the last one went out, and whether this service drives the
         # stage at all. Until the first stage command it stays silent, so an
@@ -522,6 +529,11 @@ class NativeControlService:
                 else:
                     await self._set_beamer_mode_locked(not self._beamer_hidden)
             return {"ok": True, "command": command}
+        if command == "freeze":
+            # The Beamer-freeze key: a raw toggle; the known state flips with it.
+            async with self._beamer_lock:
+                await self._send_freeze_locked()
+            return {"ok": True, "command": command, "frozen": self._beamer_frozen}
         if command in ("power-on", "power-off"):
             # The beamer starts un-hidden, so after either command the next
             # start shows the picture: the remembered state becomes visible
@@ -530,12 +542,51 @@ class NativeControlService:
             # command leaves the state as it was.
             async with self._beamer_lock:
                 await asyncio.to_thread(_post_beamer_form, *form)
+                self._beamer_frozen = False
                 if self._beamer_hidden is not False:
                     self._beamer_hidden = False
                     self._persist_state()
             return {"ok": True, "command": command, "hidden": False}
         await asyncio.to_thread(_post_beamer_form, *form)
         return {"ok": True, "command": command}
+
+    async def _send_freeze_locked(self) -> None:
+        """Send Freeze (a toggle) and flip the known state. The caller holds
+        ``self._beamer_lock``."""
+        try:
+            await asyncio.to_thread(_post_beamer_form, *BEAMER_COMMAND_FORMS["freeze"])
+        except NativeControlError as exc:
+            if exc.maybe_sent:
+                self._beamer_frozen = None
+                log.warning("Beamer Freeze may or may not have arrived; freeze state is now unknown")
+            raise
+        if self._beamer_frozen is not None:
+            self._beamer_frozen = not self._beamer_frozen
+
+    async def _set_beamer_frozen(self, frozen: bool) -> dict:
+        """Freeze (or unfreeze) the picture: only sent when the state is known
+        and differs (a Freeze sent to a frozen beamer would unfreeze it)."""
+        async with self._beamer_lock:
+            if self._beamer_frozen is None:
+                log.warning("Beamer %s not sent: the freeze state is unknown (set it in the Beamer section)",
+                            "freeze" if frozen else "unfreeze")
+                raise NativeControlError("Beamer freeze state is unknown (set it in the Beamer section)")
+            if self._beamer_frozen == frozen:
+                return {"ok": True, "frozen": frozen, "changed": False}
+            await self._send_freeze_locked()
+            return {"ok": True, "frozen": frozen, "changed": True}
+
+    async def get_beamer_frozen(self) -> Optional[bool]:
+        async with self._beamer_lock:
+            return self._beamer_frozen
+
+    async def set_beamer_frozen_state(self, frozen: bool) -> dict:
+        """What the beamer shows now, as the operator sees it: nothing is sent."""
+        if not isinstance(frozen, bool):
+            raise NativeControlError("invalid Beamer freeze state")
+        async with self._beamer_lock:
+            self._beamer_frozen = frozen
+            return {"ok": True, "frozen": frozen}
 
     async def _set_beamer_mode(self, hidden: bool) -> dict:
         async with self._beamer_lock:
@@ -1016,6 +1067,12 @@ class NativeControlService:
 
         if action_type == "beamer-command":
             return await self._beamer_command(action.get("command"))
+
+        if action_type == "beamer-freeze-set":
+            frozen = action.get("frozen")
+            if not isinstance(frozen, bool):
+                raise NativeControlError("invalid Beamer freeze target")
+            return await self._set_beamer_frozen(frozen)
 
         raise NativeControlError("unsupported native action")
 

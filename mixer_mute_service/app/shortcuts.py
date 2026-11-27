@@ -14,7 +14,7 @@ from typing import List, Optional
 
 from .jsonstore import CorruptJSONError, read_json, write_json_atomic
 from .program_items import _ACTION_FIELDS, ProgramItemError, validated_actions
-from .target_pcs import retarget_file_action
+from .target_pcs import retarget_file_action, retarget_steps
 
 log = logging.getLogger("mixer.shortcuts")
 
@@ -124,6 +124,14 @@ class ShortcutStore:
                 self._persist()
             return changed
 
+    async def map_rows(self, change) -> int:
+        """As ProgramItemStore.map_rows, for every shortcut."""
+        async with self._lock:
+            changed = sum(1 for item in self._items if change(item, f"shortcut {item.get('title')!r}"))
+            if changed:
+                self._persist()
+            return changed
+
     async def retarget_files(self, moves: dict) -> int:
         async with self._lock:
             changed = 0
@@ -133,6 +141,7 @@ class ShortcutStore:
                     if new != item.get(field):
                         item[field] = new
                         changed += 1
+                changed += retarget_steps(item, moves)
             if changed:
                 self._persist()
             return changed

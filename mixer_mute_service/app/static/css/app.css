@@ -800,12 +800,13 @@ button.program-hide[aria-pressed="true"] { color: #ffbf4d; border-color: #4a3410
 .program-table td.pc-person { grid-area: 2 / 3; }
 .program-table td.pc-group { grid-area: 2 / 4; }
 .program-table td.pc-light { grid-area: 2 / 5 / 3 / 7; }
-.program-table td.pc-playback { grid-area: 3 / 1 / 4 / 3; }
-.program-table td.pc-translation { grid-area: 3 / 3 / 4 / 4; }
-.program-table td.pc-lyrics { grid-area: 3 / 4 / 4 / 7; }
-.program-table td.pc-camera { grid-area: 4 / 1 / 5 / 7; }
-.program-table td.pc-desktop { grid-area: 5 / 1 / 6 / 5; }
-.program-table td.pc-beamer { grid-area: 5 / 5 / 6 / 7; }
+/* Liedtext (the song) and Beamer (hide / unhide, before the steps), then the
+   Desktop steps over the whole width (they run in order: keys, freeze,
+   Liedtext), then the camera presets. */
+.program-table td.pc-lyrics { grid-area: 3 / 1 / 4 / 4; }
+.program-table td.pc-beamer { grid-area: 3 / 4 / 4 / 7; }
+.program-table td.pc-desktop { grid-area: 4 / 1 / 5 / 7; }
+.program-table td.pc-camera { grid-area: 5 / 1 / 6 / 7; }
 .program-table [hidden], .song-picker[hidden] { display: none !important; }
 /* Shortcut dialog: the same fields without time and person */
 dialog.shortcut-dialog { width: min(1000px, calc(100vw - 32px)); }
@@ -815,12 +816,9 @@ dialog.shortcut-dialog { width: min(1000px, calc(100vw - 32px)); }
 .program-table.shortcut-table td.pc-title { grid-area: 1 / 1 / 2 / 3; }
 .program-table.shortcut-table td.pc-group { grid-area: 1 / 3 / 2 / 4; }
 .program-table.shortcut-table td.pc-light { grid-area: 1 / 4 / 2 / 5; }
-.program-table.shortcut-table td.pc-playback { grid-area: 2 / 1 / 3 / 2; }
-.program-table.shortcut-table td.pc-translation { grid-area: 2 / 2 / 3 / 3; }
-.program-table.shortcut-table td.pc-lyrics { grid-area: 2 / 3 / 3 / 5; }
-.program-table.shortcut-table td.pc-camera { grid-area: 3 / 1 / 4 / 5; }
-.program-table.shortcut-table td.pc-desktop { grid-area: 4 / 1 / 5 / 4; }
-.program-table.shortcut-table td.pc-beamer { grid-area: 4 / 4 / 5 / 5; }
+.program-table.shortcut-table td.pc-beamer { grid-area: 2 / 1 / 3 / 5; }
+.program-table.shortcut-table td.pc-desktop { grid-area: 3 / 1 / 4 / 5; }
+.program-table.shortcut-table td.pc-camera { grid-area: 4 / 1 / 5 / 5; }
 /* The summary: the whole line is the key that opens and closes the row */
 .program-table button.program-summary {
   display: grid; grid-template-columns: 84px minmax(0, 1fr) 32px; align-items: center; gap: 4px 12px;
@@ -908,15 +906,30 @@ dialog.shortcut-dialog { width: min(1000px, calc(100vw - 32px)); }
 }
 .program-table button.program-single span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .program-table button.program-single svg { flex-shrink: 0; }
-/* Desktop profiles of a row: the chosen ones in run order (✕ removes one),
-   "+" opens the others below to add one */
+/* Desktop steps of a row, in run order (‹ earlier, ✕ removes one): keys
+   (with "Pfad…" for another file), Beamer einfrieren / auftauen, Liedtext;
+   "+" (dashed, like the empty program row) opens the choice below */
 .program-desktop { display: grid; gap: 8px; min-width: 0; }
 .program-desktop-chosen { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; }
 .program-desktop-chip {
   display: inline-flex; align-items: center; min-height: 44px; max-width: 100%; padding-left: 14px; border-radius: 5px;
   color: #fff; border: 1px solid #0a2550; background: linear-gradient(to bottom, #62adff, #3584e6 55%, #2a6cc4);
 }
-.program-desktop-chip.missing { color: #ffbf4d; border-color: #4a3410; background: #1d1608; }
+.program-desktop-chip.missing, .program-desktop-chip.warn { color: #ffbf4d; border-color: #4a3410; background: #1d1608; }
+/* Freeze, unfreeze, Liedtext: steps that are no Desktop key */
+.program-desktop-chip.pseudo { color: #e6f4f8; border-color: #08090b; background: linear-gradient(to bottom, #3b4049, #2b2f36); }
+.program-table button.step-path {
+  min-height: 44px; max-width: 220px; margin-left: 8px; padding: 0 10px; font-size: 11px; font-weight: 600;
+  color: inherit; background: rgba(0,0,0,.22); border: 1px solid rgba(0,0,0,.35); box-shadow: none;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.program-table button.step-path-clear {
+  display: grid; place-items: center; flex-shrink: 0; width: 44px; height: 44px; padding: 0;
+  color: inherit; background: none; border: none; box-shadow: none; opacity: .85;
+}
+.program-table select.step-profile { min-height: 44px; max-width: 220px; margin-left: 8px; }
+.step-path-editor { padding: 8px; border-radius: 6px; background: var(--lcd-bg); border: 1px solid #000; }
+.program-table button.step-path-done { flex: 0 0 auto; min-height: 44px; padding: 0 16px; }
 .program-desktop-chip-label { min-width: 0; font-size: 12px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .program-table button.program-desktop-remove {
   display: grid; place-items: center; flex-shrink: 0; width: 44px; height: 44px; padding: 0;
@@ -929,8 +942,15 @@ dialog.shortcut-dialog { width: min(1000px, calc(100vw - 32px)); }
 .program-desktop-note { font: 600 12px/1.3 var(--mono); color: var(--lcd-dim); }
 .program-desktop-note:empty { display: none; }
 .program-desktop-chip:has(.program-desktop-earlier) { padding-left: 0; }
-.program-table button.program-desktop-add { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 0 14px; font-size: 12px; font-weight: 700; }
-.program-table button.program-desktop-add[aria-expanded="true"] { color: #fff; border-color: #0a2550; }
+.program-table button.program-desktop-add {
+  display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 0 16px; font-size: 12px; font-weight: 700;
+  color: var(--muted); background: transparent; border: 1px dashed #353b46; box-shadow: none; text-shadow: none;
+}
+.program-table button.program-desktop-add:hover:not(:disabled) { color: var(--text); border-color: #4a5260; background: rgba(255,255,255,.03); filter: none; }
+.program-table button.program-desktop-add:active:not(:disabled) { transform: none; box-shadow: none; }
+.program-table button.program-desktop-add[aria-expanded="true"] { color: var(--text); border-color: #3584e6; background: rgba(79,156,255,.08); }
+.program-table button.program-desktop-add .plus-icon, .program-table button.program-desktop-add svg { color: #8fc2ff; }
+.program-table button.program-desktop-key.pseudo { color: #e6f4f8; border-style: dashed; }
 .program-desktop-pick {
   display: flex; flex-wrap: wrap; gap: 6px; padding: 8px; border-radius: 6px;
   background: var(--lcd-bg); border: 1px dashed #2a3442; box-shadow: var(--lcd-shadow);
@@ -968,8 +988,10 @@ button.shortcut-load-item {
 /* A file opened straight from a program row (instead of a desktop key) */
 .file-action { display: flex; flex-direction: column; gap: 6px; }
 .file-action[hidden] { display: none; }
-.file-action-row { display: flex; gap: 6px; }
-.file-action-row select { flex: 1; min-width: 0; }
+.file-action-row { display: flex; flex-wrap: wrap; gap: 6px; }
+/* The Desktop key: on its own line where the cell is narrow ("Durchsuchen…" below) */
+.file-action-row select { flex: 1 1 180px; min-width: 0; min-height: 44px; }
+
 .file-action button.file-browse { flex-shrink: 0; min-height: 44px; padding: 0 12px; }
 .file-kind { font-size: 11px; color: #8d96a3; }
 .file-kind.bad { color: #ff8576; }
@@ -1172,6 +1194,16 @@ button.program-play:hover:not(:disabled) { color: #fff; }
 .program-cue-count { margin-left: auto; font-size: 16px; font-weight: 700; white-space: nowrap; }
 .program-cue-count.late { color: #ffbf4d; text-shadow: 0 0 6px rgba(255,191,77,.45); }
 button.program-go { min-width: 132px; min-height: 52px; font-size: 15px; }
+/* Stopp: what the program started ends (app/api/program.py /program/stop) */
+button.program-stop { min-width: 88px; min-height: 52px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
+/* The beamer is frozen (a "Beamer auftauen" step or the key ends it): amber, so it is not forgotten */
+.freeze-badge {
+  display: inline-flex; align-items: center; align-self: center; min-height: 28px; padding: 4px 10px; border-radius: 14px;
+  font-size: 11px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; white-space: nowrap;
+  color: #2a1d00; background: linear-gradient(to bottom, #ffd27a, #ffbf4d); box-shadow: 0 0 10px rgba(255,191,77,.45);
+}
+.freeze-badge[hidden] { display: none; }
+.freeze-badge.unknown { color: #9aa3b0; background: none; border: 1px dashed #4a5260; box-shadow: none; font-weight: 700; }
 button.program-go:disabled { opacity: .45; animation: none; }
 .program-draft-row { box-shadow: var(--edit-ring), var(--panel-shadow); }
 @container section (max-width: 852px) {
@@ -1304,6 +1336,8 @@ button.person-edit-done { margin-left: auto; }
   border-radius: var(--r-card); border: 1px solid #08090b; background: var(--panel-bg); box-shadow: var(--panel-shadow);
 }
 .beamer-state-options { display: inline-flex; gap: 6px; }
+/* Each title with its keys: they wrap together (iPad portrait) */
+.beamer-state-group { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; min-width: 0; }
 button.beamer-state-key { min-width: 88px; min-height: 44px; padding: 6px 12px; }
 /* "Alles ausschalten": a Steuerung category of its own. Each target is a key
    whose LED turns red when it belongs to the all-off; the red console key

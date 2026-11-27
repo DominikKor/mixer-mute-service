@@ -74,6 +74,17 @@ class TargetPcStore:
             return {old[pc["id"]]: pc["ip"] for pc in new if old[pc["id"]] != pc["ip"]}
 
 
+def retarget_steps(row: dict, moves: Dict[str, str]) -> int:
+    """A row's older file steps ("file:<ip>|<path>" among its Desktop steps)
+    on a moved PC, pointed at its new address; returns how many moved."""
+    steps = row.get("desktop") or []
+    moved = [retarget_file_action(step, moves) for step in steps]
+    count = sum(1 for old, new in zip(steps, moved) if old != new)
+    if count:
+        row["desktop"] = moved
+    return count
+
+
 def retarget_file_action(value, moves: Dict[str, str]):
     """A program file action "file:<ip>|<path>" on a moved PC, pointed at its
     new address; anything else unchanged."""

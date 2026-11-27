@@ -22,15 +22,17 @@ left open by hand is opened again.
 
 - audio: the agent's normal stop with the profile's fade-out, naming the
   profile ("only_if"); never on a PC where the new row starts audio itself
-  (a desktop profile or a file in its Playback / Übersetzung / Liedtext
-  fields): its start replaces the old track anyway;
+  (an audio Desktop key or an audio file among its Desktop steps): its
+  start replaces the old track anyway;
 - image and file: POST /close (desktop_agent): the windows a file opened get
   closed, an image is hidden if it is still the one shown, a document the
   agent shows page by page is hidden.
 
-A document in a file field (file:<ip>|<path>, app/documents.py) counts like
-a file profile under its PC's document id; the next row keeps it (on its
-page) only when it shows the same file on that PC.
+A document through a Desktop key ("via:<key>|<path>") counts like any file
+under its start id (key and file): the next row keeps it (on its page) when
+it shows the same file through the same key. An older file step
+("file:<ip>|<path>", app/documents.py) counts under its PC's document id; the
+next row keeps it only when it shows the same file on that PC.
 
 Ordering without waiting: every start carries a stamp (a random id) that the
 agent keeps with the track, window or image. A stop names the stamp of the
@@ -59,6 +61,7 @@ from . import display_agent
 from .display_agent import AgentError
 from .documents import document_id, is_document
 from .file_actions import file_kind, is_file_action, parse_file_action
+from .row_files import is_via, parse_via, path_kind, profile_of_start, step_start_id
 
 log = logging.getLogger("mixer.profile_stops")
 
@@ -176,22 +179,29 @@ class ShownProfiles:
         self._down_until[target_ip] = time.monotonic() + DOWN_SECONDS
 
 
-def row_profiles(row: dict) -> set:
-    """The desktop profiles a program row starts (its desktop list and
-    action fields naming a profile)."""
-    ids = set(row.get("desktop") or [])
+def _row_values(row: dict) -> list:
+    """The row's Desktop steps (app/row_files.py) and any value still in the
+    old Playback / Übersetzung / Liedtext fields."""
+    values = [step for step in row.get("desktop") or [] if isinstance(step, str)]
     for field in ("playback", "translation", "lyrics"):
         value = row.get(field)
-        if isinstance(value, str) and value.startswith(DESKTOP_PREFIX):
-            ids.add(value.removeprefix(DESKTOP_PREFIX))
-    return ids
+        if isinstance(value, str) and value:
+            values.append(value.removeprefix(DESKTOP_PREFIX) if value.startswith(DESKTOP_PREFIX) else value)
+    return values
+
+
+def row_profiles(row: dict) -> set:
+    """What a program row starts, by the id the agent knows it: Desktop keys
+    by their id, a key with another file by key and file (start_id)."""
+    return {start for start in map(step_start_id, _row_values(row)) if start is not None}
 
 
 def row_documents(row: dict) -> dict:
-    """Document id -> file field value of the documents a row's file fields show."""
+    """Document id -> step value of the documents a row's older file steps
+    ("file:<ip>|<path>") show. A document through a Desktop key ("via:") has
+    its own start id (key and file) and is kept by row_profiles()."""
     shown = {}
-    for field in ("playback", "translation", "lyrics"):
-        value = row.get(field)
+    for value in _row_values(row):
         if is_file_action(value):
             try:
                 target, path = parse_file_action(value)
@@ -203,11 +213,10 @@ def row_documents(row: dict) -> dict:
 
 
 def row_audio_pcs(row: dict, profiles: dict) -> set:
-    """The PCs on which a program row starts audio: audio desktop profiles
-    and audio files in its file fields."""
-    pcs = {profiles[p].target_ip for p in row_profiles(row) if p in profiles and profiles[p].kind == "audio"}
-    for field in ("playback", "translation", "lyrics"):
-        value = row.get(field)
+    """The PCs on which a program row starts audio: audio Desktop keys, and
+    audio files through a key or (older) on a PC named in the row."""
+    pcs = set()
+    for value in _row_values(row):
         if is_file_action(value):
             try:
                 target, path = parse_file_action(value)
@@ -215,6 +224,15 @@ def row_audio_pcs(row: dict, profiles: dict) -> set:
                 continue
             if file_kind(path) == "audio":
                 pcs.add(target)
+        elif is_via(value):
+            try:
+                profile_id, path = parse_via(value)
+            except ValueError:
+                continue
+            if path_kind(path) == "audio" and profile_id in profiles:
+                pcs.add(profiles[profile_id].target_ip)
+        elif value in profiles and profiles[value].kind == "audio":
+            pcs.add(profiles[value].target_ip)
     return pcs
 
 
@@ -277,7 +295,8 @@ async def _send_stop(state, profile_id: str, target_ip: str, kind: str, stamp: O
     if kind != "audio":
         body = {"id": profile_id} if stamp is None else {"id": profile_id, "stamp": stamp}
         return await display_agent.call(cfg, target_ip, "/close", body, timeout=CLOSE_TIMEOUT_SECONDS)
-    profile = cfg.profiles.get(profile_id)
+    # A row's file through a Desktop key fades like that key (app/row_files.py).
+    profile = cfg.profiles.get(profile_id) or cfg.profiles.get(profile_of_start(profile_id))
     payload = {"id": profile_id, "action": "stop", "path": None}
     if profile is not None and profile.fade:
         # Its normal fade-out (app/actions.py control_audio).

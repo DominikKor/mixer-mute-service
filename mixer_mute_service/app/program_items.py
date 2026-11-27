@@ -12,17 +12,17 @@ from pathlib import Path
 from typing import List, Optional
 
 from .camera_program import CAMERAS, DEFAULT_WAIT_SECONDS, MAX_WAIT_SECONDS, MIN_WAIT_SECONDS
-from .desktop_profiles import PROFILE_ID_RE
 from .file_actions import file_action_error, is_file_action
+from .row_files import MAX_STEPS, STEP_SONG, is_via, step_error, via_error
 from .jsonstore import read_json, write_json_atomic
-from .target_pcs import retarget_file_action
+from .target_pcs import retarget_file_action, retarget_steps
 
 log = logging.getLogger("mixer.program")
 
 _TIME_RE = re.compile(r"^(?:[01]\d|2[0-3]):[0-5]\d$")
 _ACTION_FIELDS = ("playback", "translation", "lyrics")
 _DESCRIPTION_FIELDS = ("playback_description", "translation_description", "lyrics_description")
-MAX_DESKTOP_PROFILES = 8
+MAX_DESKTOP_PROFILES = 16  # Desktop steps of a row (app/row_files.py MAX_STEPS)
 MAX_OBS_SCENE_LENGTH = 100
 _SHORTCUT_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 
@@ -42,8 +42,13 @@ def validated_actions(data: dict) -> dict:
     result = {"group": group}
     for field in _ACTION_FIELDS:
         value = data.get(field)
-        if is_file_action(value):
-            # A file opened directly: "file:<ip>|<path>" (app/file_actions.py)
+        if is_via(value):
+            # A file shown through a Desktop key: "via:<profile>|<path>" (app/row_files.py)
+            problem = via_error(value)
+            if problem:
+                raise ProgramItemError(f"{field}: {problem}")
+        elif is_file_action(value):
+            # Older: a file on a PC chosen in the row, "file:<ip>|<path>" (app/file_actions.py)
             problem = file_action_error(value)
             if problem:
                 raise ProgramItemError(f"{field}: {problem}")
@@ -87,12 +92,17 @@ def validated_actions(data: dict) -> dict:
     if light is not None and (not isinstance(light, str) or len(light) > 64):
         raise ProgramItemError("light must be a light scene id or empty")
     result["light"] = light or None
-    # Desktop profiles shown or started when the row starts, in this order.
+    # The Desktop steps, run in this order (app/row_files.py): keys, keys
+    # with another file, freeze / unfreeze, the song.
     desktop = data.get("desktop") or []
-    if (not isinstance(desktop, list) or len(desktop) > MAX_DESKTOP_PROFILES
-            or any(not isinstance(p, str) or not PROFILE_ID_RE.fullmatch(p) for p in desktop)):
-        raise ProgramItemError(f"desktop must be a list of at most {MAX_DESKTOP_PROFILES} desktop profile IDs")
-    result["desktop"] = list(dict.fromkeys(desktop))
+    if not isinstance(desktop, list) or len(desktop) > MAX_STEPS:
+        raise ProgramItemError(f"desktop must be a list of at most {MAX_STEPS} steps")
+    for step in desktop:
+        problem = step_error(step)
+        if problem:
+            raise ProgramItemError(f"desktop step {step!r}: {problem}")
+    # The song at most once (its first place counts).
+    result["desktop"] = [step for i, step in enumerate(desktop) if step != STEP_SONG or desktop.index(STEP_SONG) == i]
     # OBS scene per camera (app/camera_program.py); empty: the camera's "Cam N Live" key.
     for cam in CAMERAS:
         scene = data.get(f"{cam}_scene")
@@ -127,6 +137,9 @@ def apply_shortcut(item: dict, shortcut: dict) -> dict:
     result = {**item, **{key: deepcopy(shortcut[key]) for key in SHORTCUT_KEYS if key in shortcut}}
     if item.get("song"):
         result["lyrics"] = None
+        # The row's song keeps its step (last, if the shortcut has none for it).
+        if STEP_SONG not in (result.get("desktop") or []):
+            result["desktop"] = [*(result.get("desktop") or []), STEP_SONG]
     return result
 
 
@@ -460,6 +473,16 @@ class ProgramItemStore:
                 self._persist()
             return changed
 
+    async def map_rows(self, change) -> int:
+        """change(row, where) changes a row in place and says whether it did
+        (app/row_files.py migrate_stores). Saved once if anything changed;
+        returns how many rows changed."""
+        async with self._lock:
+            changed = sum(1 for item in self._items if change(item, f"row {item['time']} {item['title']!r}"))
+            if changed:
+                self._persist()
+            return changed
+
     async def retarget_files(self, moves: dict) -> int:
         """Point file actions on a PC whose address changed at the new one."""
         async with self._lock:
@@ -470,6 +493,7 @@ class ProgramItemStore:
                     if new != item.get(field):
                         item[field] = new
                         changed += 1
+                changed += retarget_steps(item, moves)
             if changed:
                 self._persist()
             return changed

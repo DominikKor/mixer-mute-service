@@ -362,11 +362,12 @@ class StoreTests(unittest.IsolatedAsyncioTestCase):
     async def test_desktop_and_scene(self):
         with tempfile.TemporaryDirectory() as name:
             store = ProgramItemStore(Path(name) / "program.json")
+            # Desktop steps run in order; a key may come twice (e.g. again after a freeze).
             created = await store.create(row(desktop=["qr", "bild-2", "qr"], cam2_scene="  Predigt "))
             self.assertEqual((created["desktop"], created["cam1_scene"], created["cam2_scene"]),
-                             (["qr", "bild-2"], None, "Predigt"))
+                             (["qr", "bild-2", "qr"], None, "Predigt"))
             self.assertEqual((await store.create(row(cam1_scene="")))["cam1_scene"], None)
-            for bad in ({"desktop": "qr"}, {"desktop": ["a b"]}, {"desktop": [f"p{i}" for i in range(9)]},
+            for bad in ({"desktop": "qr"}, {"desktop": ["a b"]}, {"desktop": [f"p{i}" for i in range(17)]},
                         {"cam1_scene": "x" * 101}, {"cam2_scene": "a\nb"}, {"cam1_scene": 3}):
                 with self.assertRaises(ProgramItemError, msg=bad):
                     await store.create(row(**bad))
@@ -452,7 +453,7 @@ class ApiTests(unittest.TestCase):
             self.assertEqual(ran, ["obs", "qr"])
             self.assertEqual([a["profile"] for a in played["linked_actions"]], ["obs", "qr"])
 
-    def test_beamer_hide_first_unhide_after_the_content(self):
+    def test_beamer_hide_and_unhide_before_the_content(self):
         profiles = ("desktop_display:\n  enabled: true\n  profiles:\n"
                     "    qr:\n      title: QR\n      kind: image\n      path: 'C:\\Bilder\\qr.png'\n")
         with app_client(profiles) as (client, _folder):
@@ -470,7 +471,7 @@ class ApiTests(unittest.TestCase):
                 return {"ok": True}, 200
 
             for beamer, expected in (("hide", [("beamer-hide", True), ("desktop", "qr")]),
-                                     ("unhide", [("desktop", "qr"), ("beamer-unhide", False)])):
+                                     ("unhide", [("beamer-unhide", False), ("desktop", "qr")])):
                 events.clear()
                 item_id = client.post("/program/items", json=row(beamer=beamer, desktop=["qr"])).json()["item"]["id"]
                 with patch("app.api.program.press_native", fake_press), \

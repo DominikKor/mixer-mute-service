@@ -234,7 +234,8 @@ class ApiTests(unittest.TestCase):
             self.assertTrue(imported["ok"], imported)
             got = {i["title"]: i for i in imported["items"]}
             self.assertEqual((got["Verlinkt"]["desktop"], got["Verlinkt"]["beamer"]), (["logo"], "hide"))
-            self.assertEqual((got["Liste"]["desktop"], got["Liste"]["song"]), (["logo"], "lied.foil"))
+            # The song becomes the last Desktop step (app/row_files.py).
+            self.assertEqual((got["Liste"]["desktop"], got["Liste"]["song"]), (["logo", "@song"], "lied.foil"))
             self.assertEqual(got["Gelöscht"]["desktop"], ["qr"])
             self.assertTrue(all("shortcut" not in i for i in imported["items"]))
             self.assertNotIn("shortcut", json.loads(client.get("/program/export").text)["items"][0])

@@ -46,6 +46,7 @@ from .program_items import ProgramItemStore
 from .program_pdf import ProgramPdfStore
 from .shortcuts import ShortcutStore
 from .profile_stops import ShownProfiles
+from .row_files import migrate_stores
 from .program_templates import ProgramTemplateStore
 from .api import router
 from .songs import SongService
@@ -189,6 +190,14 @@ async def lifespan(app: FastAPI):
         app, "power control", lambda: PowerControlStore(data_dir / "power_off_config.json"))
     app.state.target_pcs = _optional(
         app, "target PCs", lambda: TargetPcStore(data_dir / "target_pcs.json"))
+    # The old Playback / Übersetzung / Liedtext fields of program rows,
+    # templates and shortcuts become Desktop steps (a file on a PC: through a
+    # Desktop key on that PC), and a row's song its Liedtext step
+    # (app/row_files.py); logged, only what is still to move.
+    try:
+        await migrate_stores(app.state)
+    except Exception:  # noqa: BLE001 - the old values keep working
+        log.exception("Desktop steps migration failed; the rows keep their fields as they are")
     app.state.companion_button_store = _optional(
         app, "control keys", lambda: CompanionButtonStore(data_dir / "companion_buttons.json", COMPANION_BUTTONS))
     camera_streams = _optional(

@@ -51,7 +51,7 @@ from .program_items import (
     _ACTION_FIELDS, ProgramItemError, ProgramItemStore, keep_references, log_unlink_migration, unlink_shortcut,
 )
 from .program_pdf import PdfImportError, _key, assign_persons, is_spotlight_title, validated_persons
-from .target_pcs import retarget_file_action
+from .target_pcs import retarget_file_action, retarget_steps
 
 router = APIRouter()
 log = logging.getLogger("mixer.program_templates")
@@ -199,6 +199,17 @@ class ProgramTemplateStore:
             self._persist()
             return self._view(template)
 
+    async def map_rows(self, change) -> int:
+        """As ProgramItemStore.map_rows, for every template row (a song slot
+        counts as a song)."""
+        async with self._lock:
+            changed = sum(1 for template in self._templates for row in template["rows"]
+                          if change(row, f"template {template['name']!r} row {row.get('title')!r}",
+                                    song_slot=bool(row.get("song_slot"))))
+            if changed:
+                self._persist()
+            return changed
+
     async def retarget_files(self, moves: dict) -> int:
         """Point file actions on a PC whose address changed at the new one."""
         async with self._lock:
@@ -210,6 +221,7 @@ class ProgramTemplateStore:
                         if new != row.get(field):
                             row[field] = new
                             changed += 1
+                    changed += retarget_steps(row, moves)
             if changed:
                 self._persist()
             return changed
@@ -287,7 +299,7 @@ def fill_template(rows: List[dict], songs: List[dict], library: Optional[dict] =
                 put(row, song)
             else:  # no slot to copy: a plain row named after the song
                 row.update(title=(song.get("title") or song.get("text") or "Lied")[:120],
-                           song=song.get("song_id"))
+                           song=song.get("song_id"), desktop=["@song"] if song.get("song_id") else [])
             added.append(row)
         result[at:at] = added
     return result

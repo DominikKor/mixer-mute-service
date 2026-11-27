@@ -11,6 +11,7 @@ import unittest
 import urllib.error
 from unittest.mock import patch
 
+from app.row_files import start_id
 from tests.helpers import app_client, require_tk
 
 tkinter = require_tk()
@@ -156,7 +157,9 @@ class AdvanceTests(unittest.TestCase):
             time.sleep(0.2)
             self.assertEqual(agents.stops(), [], "the jingle replaces the music; a stop would end the jingle")
             plays = [(pc, p["id"]) for pc, path, p, _t in agents.calls if path == "/audio" and p["action"] == "play"]
-            self.assertEqual(plays, [(MUSIC_PC, "musik"), (MUSIC_PC, "program-file")])
+            # The old file field became a step through a music key on that PC, the
+            # one without fade (app/row_files.py): tracked as key and file.
+            self.assertEqual(plays, [(MUSIC_PC, "musik"), (MUSIC_PC, start_id("lied", "C:\\Musik\\jingle.mp3"))])
 
     def test_what_the_next_row_starts_again_is_sent_with_keep(self):
         # The agent decides: music that still plays and a video window still
@@ -248,11 +251,13 @@ class AdvanceTests(unittest.TestCase):
             c = client.post("/program/items", json=row("Nachspiel", desktop=["musik"])).json()["item"]
             self.play(client, a["id"])
             self.play(client, b["id"])
-            self.assertEqual(client.app.state.shown_profiles.shown(), {}, "the jingle replaced the program's music")
+            jingle = start_id("lied", "C:\\Musik\\jingle.mp3")
+            self.assertEqual(client.app.state.shown_profiles.shown(), {jingle: (MUSIC_PC, "audio")},
+                             "the jingle (the program's now) replaced the program's music")
             self.play(client, c["id"])
             time.sleep(0.2)
             plays = [p["id"] for _pc, path, p in agents.starts() if path == "/audio"]
-            self.assertEqual(plays, ["musik", "program-file", "musik"])
+            self.assertEqual(plays, ["musik", jingle, "musik"])
             self.assertEqual(agents.stops(), [])
 
     def test_an_image_is_shown_again(self):
