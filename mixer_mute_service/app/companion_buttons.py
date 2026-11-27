@@ -426,9 +426,27 @@ class CompanionButtonStore:
             return self._duplicate_labels()
 
     def _check_unique(self, label: str, own_id: Optional[str] = None) -> None:
-        for button_id, other in self._named_labels().items():
+        """DuplicateLabelError when another named key has the name. A key that keeps its
+        name passes: an existing duplicate must not block other edits (category, ...)."""
+        named = self._named_labels()
+        if own_id in named and label_key(named[own_id]) == label_key(label):
+            return
+        for button_id, other in named.items():
             if button_id != own_id and label_key(other) == label_key(label):
                 raise DuplicateLabelError(label)
+
+    async def check_preset_label(self, camera: str, preset: int, label: str) -> None:
+        """Before anything goes to the camera: ValueError (DuplicateLabelError) when the
+        name of this preset would not be accepted by save_camera_preset. A catalog preset
+        keeps its readable ID and is not checked."""
+        if camera not in PRESET_CAMERAS or not valid_camera_preset(preset):
+            raise ValueError("unknown camera or preset number")
+        label = _clean_camera_label(label)
+        if not label:
+            raise ValueError("a preset needs a name")
+        if CATALOG_PRESET_IDS.get((camera, preset)) is None:
+            async with self._lock:
+                self._check_unique(label, saved_preset_id(camera, preset))
 
     def _load(self) -> None:
         data = read_json(self._path, dict, default=None)

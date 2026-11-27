@@ -63,6 +63,7 @@ class Names:
         # The keys somebody named (user keys, saved presets): their names are the keys of a program file.
         self.named_buttons = {i: label for i, label in buttons.items() if _opaque(i)}
         self.songs = request.app.state.songs.songs
+        self.ids = set(self.scenes) | set(buttons) | {f"{DESKTOP_PREFIX}{i}" for i in self.profiles}
 
     @classmethod
     async def load(cls, request: Request) -> "Names":
@@ -100,6 +101,28 @@ def _opaque(button_id: str) -> bool:
     return _HEX_ID.fullmatch(button_id) is not None or _saved_preset_key(button_id) is not None
 
 
+_PREFIXED = ("desktop:", "file:", "via:", "key:", "@")
+
+
+def _confusable(name: str, ids) -> bool:
+    """A name that import would take for something else: it looks like an ID or has the
+    prefix of a reference kind (desktop:, file:, via:, key:, @), or it is an existing ID.
+    Such a name does not go into the file as the key: the row keeps the ID."""
+    text = name.strip()
+    return (_opaque(text.lower()) or text.lower().startswith(_PREFIXED)
+            or text in ids or text.lower() in ids)
+
+
+def _once(warnings: List[dict], warning: dict) -> None:
+    if not any(w["kind"] == warning["kind"] and label_key(w["name"]) == label_key(warning["name"]) for w in warnings):
+        warnings.append(warning)
+
+
+def _not_a_key(kind: str, name: str) -> dict:
+    return {"kind": kind, "name": name,
+            "reason": f"{kind} „{name}“ sieht aus wie eine ID oder ein Präfix: die Datei enthält die ID"}
+
+
 async def annotate(row: dict, names: Names, warnings: List[dict]) -> dict:
     """The row as it goes into the file: opaque references by name, readable IDs
     as they are with a title next to them. warnings gets what cannot be a name."""
@@ -116,13 +139,19 @@ async def annotate(row: dict, names: Names, warnings: List[dict]) -> dict:
         result[field] = value
         if field == "light" and value in names.scenes:
             name = names.scenes[value]
-            if unique("Licht", name, names.scenes.values()):
+            if _confusable(name, names.ids):
+                result["light_name"] = name
+                _once(warnings, _not_a_key("Licht", name))
+            elif unique("Licht", name, names.scenes.values()):
                 result["light"] = name
             else:
                 result["light_name"] = name
         elif field in _KEY_FIELDS and isinstance(value, str) and not is_file_action(value):
             name = names.key_name(value)
-            if name and _opaque(value) and unique("Taste", name, names.named_buttons.values()):
+            if name and _opaque(value) and _confusable(name, names.ids):
+                result[f"{field}_name"] = name
+                _once(warnings, _not_a_key("Taste", name))
+            elif name and _opaque(value) and unique("Taste", name, names.named_buttons.values()):
                 result[field] = name
             elif name:
                 result[f"{field}_name"] = name

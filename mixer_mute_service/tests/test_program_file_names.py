@@ -275,6 +275,77 @@ class UniqueNamesTests(unittest.TestCase):
             store._buttons.append({"id": "user-" + "a" * 12, "label": "zwilling", "category_id": "overall", **action})
             self.assertEqual(asyncio.run(store.duplicate_labels()), [("Zwilling", 2)])
 
+    def test_a_duplicate_camera_preset_name_does_not_touch_the_camera(self):
+        from unittest.mock import AsyncMock, patch
+
+        with app_client(CONFIG) as (client, _):
+            store = client.app.state.companion_button_store
+            asyncio.run(store.save_camera_preset("cam1", 9, "CAM1 Kanzel"))
+            visca = AsyncMock(return_value={"ok": True})
+            with patch.object(client.app.state.native_controls, "store_visca_preset", visca):
+                r = client.post("/cameras/cam1/presets", json={"preset": 10, "name": "kanzel"})
+                self.assertEqual(r.status_code, 400)
+                self.assertIn("eindeutig", r.json()["reason"])
+                visca.assert_not_called()  # the camera's position at 10 was not overwritten
+                self.assertIsNone(asyncio.run(store.camera_preset("cam1", 10)))
+                ok = client.post("/cameras/cam1/presets", json={"preset": 10, "name": "Orgel"})  # a free name stores
+                self.assertEqual(ok.status_code, 200)
+                self.assertEqual(visca.await_count, 1)
+
+    def test_renaming_a_light_preset_to_a_taken_name_answers_in_german(self):
+        with app_client(CONFIG) as (client, _):
+            scene(client, "Predigt hell")
+            other = scene(client, "Andere")
+            r = client.put(f"/lights/scenes/{other['id']}", json={"name": "predigt HELL"})
+            self.assertEqual(r.status_code, 409)
+            self.assertIn("eindeutig", r.json()["reason"])
+
+    def test_existing_duplicates_do_not_block_unrelated_edits(self):
+        with app_client(CONFIG) as (client, _):
+            store = client.app.state.companion_button_store
+            action = {"kind": "channel", "channel": 1, "operation": "mute"}
+            first = asyncio.run(store.create_button("Zwilling", "overall", action))
+            twin_id = "user-" + "a" * 12
+            store._buttons.append({"id": twin_id, "label": "zwilling", "category_id": "overall", **action})
+            categories = asyncio.run(store.snapshot())["categories"]
+            other = next(c["id"] for c in categories if c["id"] != "overall")
+            moved = asyncio.run(store.update_button(twin_id, "zwilling", other))  # same name, new category
+            self.assertEqual(moved["category_id"], other)
+            asyncio.run(store.update_button(first["id"], " ZWILLING ", "overall"))
+            from app.companion_buttons import DuplicateLabelError
+            with self.assertRaises(DuplicateLabelError):  # but a new key with a taken name is still refused
+                asyncio.run(store.create_button("zwilling", "overall", action))
+            # a saved preset keeps its name through an unchanged rename, too
+            asyncio.run(store.save_camera_preset("cam1", 9, "CAM1 Kanzel"))
+            store._saved_presets["native-cam2-preset-9"] = "CAM1 Kanzel"
+            asyncio.run(store.set_camera_label("native-cam2-preset-9", "cam1  kanzel"))
+            asyncio.run(store.save_camera_preset("cam2", 9, "CAM1 Kanzel"))
+
+    def test_names_that_look_like_an_id_or_a_prefix_keep_the_id(self):
+        with app_client(CONFIG) as (client, _):
+            light = setup(client)
+            store = client.app.state.companion_button_store
+            action = {"kind": "channel", "channel": 1, "operation": "mute"}
+            for label in ("desktop:qr", "file:x", "via:y", "key:z", "@Anna", "beamer-hide"):
+                key = asyncio.run(store.create_button(label, "overall", action))
+                payload = export(client)
+                payload["items"][0].update(translation=key["id"], group="")
+                self.assertEqual(import_(client, payload).status_code, 200)
+                payload = export(client)
+                item = payload["items"][0]
+                self.assertEqual((item["translation"], item["translation_name"]), (key["id"], label), label)
+                self.assertEqual(payload["warnings"][0]["kind"], "Taste", label)
+                self.assertIn("sieht aus wie eine ID", payload["warnings"][0]["reason"])
+                self.assertEqual(import_(client, payload).json()["warnings"], [])  # by ID: the same key again
+                self.assertEqual(export(client)["items"][0]["translation"], key["id"])
+                asyncio.run(store.delete_button(key["id"]))
+            # a light preset named like its own or another scene's ID
+            other = scene(client, light["id"])
+            row = client.get("/program/items").json()[0]
+            client.put(f"/program/items/{row['id']}", json={**row, "light": other["id"], "translation": ""})
+            item = export(client)["items"][0]
+            self.assertEqual((item["light"], item["light_name"]), (other["id"], light["id"]))
+
 
 class ProgramFileRobustnessTests(unittest.TestCase):
     def test_a_reference_never_changes_its_kind(self):
