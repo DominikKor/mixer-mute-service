@@ -59,6 +59,11 @@ class FakeAgent:
         return {"ok": True}
 
 
+
+def _field(actions: list, field: str) -> dict:
+    """The result of one row field (the order of the fields is not fixed)."""
+    return next((a for a in actions if a.get("field") == field), {})
+
 def main():
     agent = FakeAgent()
     display_agent._post = agent
@@ -88,7 +93,12 @@ def main():
         print("== starting ==")
         r = client.post(f"/program/items/{item_id}/play")
         check("row started", r.status_code == 200 and r.json()["ok"] is True)
-        (u1, p1), (u2, p2), (u3, p3) = agent.calls
+        # The steps of different PCs run in parallel (app/api/program.py): find each call by what it is.
+        calls = list(agent.calls)
+        (u1, p1) = next((c for c in calls if c[0].endswith("/audio")), ("", {}))
+        (u2, p2) = next((c for c in calls if c[0].endswith("/display") and c[1].get("kind") == "program"), ("", {}))
+        (u3, p3) = next((c for c in calls if c[0].endswith("/display") and c[1].get("kind") == "file"), ("", {}))
+        check("three agent calls", len(calls) == 3)
         check("music plays on this PC via /audio",
               u1 == "http://127.0.0.1:8766/audio" and p1 == {"id": "program-file", "action": "play", "path": long_path})
         check(".exe starts on the target PC",
@@ -101,14 +111,14 @@ def main():
         actions = r.json().get("linked_actions", [])
         # Best effort per area (app/api/program.py): the row runs, the failed area says why.
         check("missing file reported", r.status_code == 200 and r.json()["ok"] is False
-              and actions and actions[0]["reason"] == "Datei auf dem Ziel-PC nicht gefunden.")
+              and _field(actions, "playback").get("reason") == "Datei auf dem Ziel-PC nicht gefunden.")
         agent.missing = False
         reason = "audio player could not be started: mpv ended at once (exit code 2): Could not open audio device"
         agent.player_error = {"ok": False, "reason": reason}
         r = client.post(f"/program/items/{item_id}/play")
         actions = r.json().get("linked_actions", [])
         check("player that did not start: the agent's reason is shown, not 'file not found'",
-              r.status_code == 200 and actions and actions[0]["reason"] == reason)
+              r.status_code == 200 and _field(actions, "playback").get("reason") == reason)
         agent.player_error = None
         audio_timeouts = [t for u, t in agent.timeouts if u.endswith("/audio")]
         check("music start waits long enough for a cold mpv start (agent waits up to 10 s)",
