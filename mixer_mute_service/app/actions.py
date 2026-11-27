@@ -240,24 +240,39 @@ async def show_profile(request: Request, profile_id: str) -> Result:
     # Exactly the keys the agent expects (it rejects any other).
     payload = {"id": profile_id, **profile.model_dump(exclude=_AGENT_EXCLUDED_FIELDS),
                "path": profile_path(profile)}
+    # A document the agent shows page by page (app/documents.py): like an
+    # image, also on several monitors; its start is answered once the first
+    # page is on screen.
+    document = profile.kind == "file" and documents.is_document(profile.path)
     # Only sent when used, so a single-monitor profile still works with an older agent.
     if profile.monitors:
-        if profile.kind != "image":
-            return {"ok": False, "reason": "several monitors are only possible for images"}, 400
+        if profile.kind != "image" and not document:
+            return {"ok": False, "reason": "several monitors are only possible for images and documents"}, 400
         payload["monitors"] = profile.monitors
     # A video plays in mpv on the right monitor if the agent finds mpv.exe
     # there (desktop_agent: its own choice, for every video).
-    # A document is answered once its first page is on screen (app/documents.py).
-    timeout = documents.DISPLAY_TIMEOUT_SECONDS if profile.kind == "file" and documents.is_document(
-        profile.path) else 3.0
+    timeout = documents.DISPLAY_TIMEOUT_SECONDS if document else 3.0
+
+    async def send(extra: dict) -> dict:
+        try:
+            return await display_agent.call(cfg, profile.target_ip, "/display", {**payload, **extra}, timeout=timeout)
+        except AgentError as exc:
+            if not (exc.agent_status == 400 and document and "monitors" in payload):
+                raise
+        # An agent from before documents knows several monitors only for images:
+        # its default app on the first monitor.
+        log.warning("Agent %s rejected several monitors for a document; sent with one (update the agent)",
+                    profile.target_ip)
+        single = {key: value for key, value in payload.items() if key != "monitors"}
+        return await display_agent.call(cfg, profile.target_ip, "/display", {**single, **extra}, timeout=timeout)
+
     try:
-        answer = await _tracked_start(request, profile_id, profile, lambda extra: display_agent.call(
-            cfg, profile.target_ip, "/display", {**payload, **extra}, timeout=timeout))
+        answer = await _tracked_start(request, profile_id, profile, send)
     except AgentError as exc:
         if exc.agent_status == 503:
             return {"ok": False, "reason": await _no_file_reason(request, profile, payload["path"])}, 502
         return exc.answer(), exc.status
-    if profile.kind == "file" and documents.is_document(profile.path) and answer.get("ok") is not False:
+    if document and answer.get("ok") is not False:
         # Shown page by page by the agent: paging goes there (app/documents.py).
         documents.note_shown(request.app.state, profile.target_ip, profile_id)
     return answer, 200

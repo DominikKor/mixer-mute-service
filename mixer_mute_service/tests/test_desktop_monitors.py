@@ -75,7 +75,7 @@ class ServiceMonitorTests(unittest.TestCase):
                     "monitor": 1, "monitors": [1, 2]}
             r = client.post("/desktop/profiles", json=body)
             self.assertEqual(r.status_code, 400)
-            self.assertIn("only possible for images", r.json()["reason"])
+            self.assertIn("only possible for images and documents", r.json()["reason"])
 
             update = {**listed["eins"], "monitors": [2, 4]}
             self.assertEqual(client.put("/desktop/profiles/eins", json=update).status_code, 200)

@@ -32,6 +32,8 @@ PROFILES = (
     "desktop_display:\n  enabled: true\n  profiles:\n"
     f"    predigt:\n      title: Predigt\n      kind: file\n      path: 'C:\\Predigt\\Übersetzung*.pptx'\n"
     f"      target_ip: {BEAMER_PC}\n      monitor: 3\n"
+    f"    spiegel:\n      title: Übersetzung Spiegel\n      kind: file\n      path: 'C:\\Predigt\\Text.pdf'\n"
+    f"      target_ip: {BEAMER_PC}\n      monitors: [2, 3]\n"
 )
 DOC_A = f"file:{BEAMER_PC}|C:\\Predigt\\Übersetzung.pptx"
 DOC_B = f"file:{BEAMER_PC}|C:\\Predigt\\Lesung.pdf"
@@ -82,7 +84,12 @@ class ConversionTests(unittest.TestCase):
         for name in ("Video.mp4", "Bild.png", "Lied.foil", "x.pdfa"):
             self.assertIsNone(regex.search(name), name)
         css = (Path(service.__file__).parent / "static" / "css" / "doc-dock.css").read_text(encoding="utf-8")
-        self.assertIn(".doc-dock button { min-height: 52px;", css, "keys as high as the song dock's")
+        keys = re.search(r"\.doc-dock button \{([^}]*)\}", css).group(1)
+        self.assertIn("min-height: 52px", keys, "keys as high as the song dock's")
+        script_keys = re.findall(r'class="(dd-(?:prev|next))[^"]*"', script)
+        self.assertEqual(script_keys, ["dd-prev", "dd-next"])
+        self.assertNotIn("program-play", script, "never looks like the song's green Weiter")
+        self.assertNotIn("JSON.stringify(item)", script, "titles and notes never count")
 
     def test_a_pdf_is_shown_as_it_is(self):
         def never(*_args):
@@ -94,7 +101,7 @@ class ConversionTests(unittest.TestCase):
     def test_office_converts_once_then_the_cache(self):
         calls = []
 
-        def office(kind, source, target):
+        def office(kind, source, target, timeout):
             calls.append(kind)
             target.write_bytes(b"%PDF-1.4")
 
@@ -113,10 +120,10 @@ class ConversionTests(unittest.TestCase):
             self.assertEqual(calls, ["powerpoint", "powerpoint"], "a changed file is converted again")
 
     def test_libreoffice_when_office_cannot(self):
-        def office(_kind, _source, _target):
+        def office(_kind, _source, _target, timeout):
             raise documents.DocumentError("no Office")
 
-        def libreoffice(soffice, source, target):
+        def libreoffice(soffice, source, target, timeout):
             self.assertEqual(soffice, "C:\\LO\\soffice.exe")
             target.write_bytes(b"%PDF")
 
@@ -128,7 +135,7 @@ class ConversionTests(unittest.TestCase):
             self.assertTrue(pdf.is_file())
 
     def test_neither_says_why(self):
-        def office(_kind, _source, target):
+        def office(_kind, _source, target, timeout):
             target.write_bytes(b"half")  # a partial result is not kept
             raise documents.DocumentError("COM failed")
 
@@ -200,7 +207,7 @@ class ConversionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as name:
             state = Path(name, "pip.json")
             with patch.object(documents, "pdfium", return_value=object()):
-                self.assertIsNone(documents.install_missing_requirements(Path("req.txt"), "v1", state, run=ran.append))
+                self.assertIsNone(documents.install_missing_requirements("v1", state, run=ran.append))
             self.assertEqual((ran, state.exists()), ([], False))
             self.assertEqual(documents.install_status["state"], "not needed")
 
@@ -215,19 +222,19 @@ class ConversionTests(unittest.TestCase):
         install = documents.install_missing_requirements
         with tempfile.TemporaryDirectory() as name, patch.object(documents, "pdfium", return_value=None):
             state = Path(name, "pip.json")
-            self.assertFalse(install(Path("req.txt"), "v1", state, run=pip, now=1000.0))
+            self.assertFalse(install("v1", state, run=pip, now=1000.0))
             self.assertEqual(ran[0][1:5], ["-m", "pip", "install", "--disable-pip-version-check"])
-            self.assertEqual(ran[0][-2:], ["-r", "req.txt"])
+            self.assertEqual(ran[0][-1], documents.PDFIUM_REQUIREMENT, "only pypdfium2: Pillow is loaded")
             self.assertEqual(documents.install_status["state"], "failed")
             self.assertIn("no network", documents.install_status["reason"])
-            self.assertIsNone(install(Path("req.txt"), "v1", state, run=pip, now=1000.0 + 600))
+            self.assertIsNone(install("v1", state, run=pip, now=1000.0 + 600))
             self.assertEqual(documents.install_status["state"], "waiting")
             self.assertEqual(len(ran), 1, "not on every start after a failure")
-            install(Path("req.txt"), "v1", state, run=pip, now=1000.0 + 3601)
+            install("v1", state, run=pip, now=1000.0 + 3601)
             self.assertEqual(len(ran), 2, "again after an hour")
-            self.assertIsNone(install(Path("req.txt"), "v1", state, run=pip, now=4601.0 + 3601))
+            self.assertIsNone(install("v1", state, run=pip, now=4601.0 + 3601))
             self.assertEqual(len(ran), 2, "then after two hours")
-            install(Path("req.txt"), "v2", state, run=pip, now=4601.0 + 3601)
+            install("v2", state, run=pip, now=4601.0 + 3601)
             self.assertEqual(len(ran), 3, "a new agent version tries at once")
 
     def test_pip_success_and_timeout(self):
@@ -236,20 +243,98 @@ class ConversionTests(unittest.TestCase):
                 patch.object(documents, "pdfium", side_effect=lambda: modules.pop(0)):
             state = Path(name, "pip.json")
             self.assertTrue(documents.install_missing_requirements(
-                Path("r.txt"), "v1", state, run=lambda c, **k: Finished(), now=5.0))
+                "v1", state, run=lambda c, **k: Finished(), now=5.0))
             self.assertEqual(documents.install_status, {"state": "ok", "version": "v1"})
 
         def slow(command, **kwargs):
             raise documents.subprocess.TimeoutExpired(command, kwargs["timeout"])
 
         with tempfile.TemporaryDirectory() as name, patch.object(documents, "pdfium", return_value=None):
-            self.assertFalse(documents.install_missing_requirements(Path("r.txt"), "v1", Path(name, "s"), run=slow))
+            self.assertFalse(documents.install_missing_requirements("v1", Path(name, "s"), run=slow))
             self.assertIn("longer than", documents.install_status["reason"])
             self.assertIn("pip", documents.capabilities(lambda: None))
 
     def test_the_requirement_is_pinned(self):
         lines = (Path(documents.__file__).parent / "requirements.txt").read_text().split()
-        self.assertTrue(any(line.startswith("pypdfium2==") for line in lines), lines)
+        self.assertIn(documents.PDFIUM_REQUIREMENT, lines, "the agent installs the same version")
+        dev = (Path(__file__).resolve().parent.parent / "requirements-dev.txt").read_text().split()
+        self.assertIn(documents.PDFIUM_REQUIREMENT, dev, "the real-PDF tests run in CI")
+
+    def test_a_hung_office_is_ended_but_never_the_users(self):
+        ended = []
+
+        def hung(command, timeout, env):
+            Path(env["MIXER_DOC_PIDFILE"]).write_text("4711,815\n", encoding="utf-8")
+            raise documents.subprocess.TimeoutExpired(command, timeout)
+
+        def end_office(pidfile, kind):
+            ended.extend(documents.end_started_office(
+                pidfile, kind, image_of={4711: "POWERPNT.EXE", 815: "notepad.exe"}.get, kill=lambda pid: None))
+
+        with tempfile.TemporaryDirectory() as name:
+            with self.assertRaisesRegex(documents.DocumentError, "longer than 12 s"):
+                documents.convert_with_office("powerpoint", Path(name, "a.pptx"), Path(name, "a.pdf"), timeout=12,
+                                              run=hung, end_office=end_office)
+        self.assertEqual(ended, [4711], "only the Office this conversion started (the pid is checked again)")
+        with tempfile.TemporaryDirectory() as name:
+            empty = Path(name, "pid")
+            empty.write_text("\n", encoding="utf-8")  # COM used the user's own Office: nothing started
+            self.assertEqual(documents.end_started_office(empty, "word", image_of=lambda p: "WINWORD.EXE",
+                                                          kill=lambda p: self.fail("never")), [])
+            self.assertEqual(documents.end_started_office(Path(name, "none"), "word"), [])
+
+    def test_office_script_fails_fast_on_protected_files(self):
+        self.assertIn("'mixer-no-password'", documents._OFFICE_SCRIPT, "Word: a password file fails at once")
+        self.assertIn("DisplayAlerts = 1", documents._OFFICE_SCRIPT, "PowerPoint: no dialogs")
+        self.assertIn("MIXER_DOC_PIDFILE", documents._OFFICE_SCRIPT)
+
+    def test_conversion_ends_by_the_deadline(self):
+        lefts = []
+
+        def office(_kind, _source, _target, timeout):
+            lefts.append(timeout)
+            raise documents.DocumentError("hung")
+
+        def libreoffice(_soffice, _source, _target, timeout):
+            lefts.append(timeout)
+            raise documents.DocumentError("hung")
+
+        with tempfile.TemporaryDirectory() as name:
+            source = Path(name, "Text.docx")
+            source.write_bytes(b"docx")
+            deadline = documents.time.monotonic() + 60
+            with self.assertRaises(documents.DocumentError):
+                documents.pdf_for(source, Path(name, "c"), office=office, libreoffice=libreoffice,
+                                  find_soffice=lambda: "soffice", deadline=deadline)
+            self.assertTrue(all(left <= 60 for left in lefts), lefts)
+            with self.assertRaisesRegex(documents.DocumentError, "no time left"):
+                documents.pdf_for(source, Path(name, "c"), office=office, find_soffice=lambda: None,
+                                  deadline=documents.time.monotonic() + 1)
+
+    def test_cancelled_while_waiting_for_another_conversion(self):
+        with tempfile.TemporaryDirectory() as name:
+            source = Path(name, "Text.docx")
+            source.write_bytes(b"docx")
+            with self.assertRaises(documents.DocumentCancelled):
+                documents.pdf_for(source, Path(name, "c"), office=lambda *a, **k: self.fail("not converted"),
+                                  cancelled=lambda: True)
+            documents._convert_lock.acquire()
+            try:
+                with self.assertRaisesRegex(documents.DocumentError, "still being converted"):
+                    documents.pdf_for(source, Path(name, "c"), deadline=documents.time.monotonic() + 0.2)
+            finally:
+                documents._convert_lock.release()
+
+    def test_umlaut_paths(self):
+        with tempfile.TemporaryDirectory() as name:
+            folder = Path(name, "Übersetzung Gottesdienst")
+            folder.mkdir()
+            source = folder / "Predigt Größe ä.pptx"
+            source.write_bytes(b"pptx")
+            self.assertRegex(documents.cache_name(source), r"^[0-9a-f]{24}\.pdf$")
+            pdf = documents.pdf_for(source, folder / "cache", office=lambda k, s, t, timeout: t.write_bytes(b"%PDF"),
+                                    find_soffice=lambda: None)
+            self.assertTrue(pdf.is_file())
 
 
 @unittest.skipIf(documents.pdfium() is None, "pypdfium2 is not installed here")
@@ -270,6 +355,20 @@ class RenderTests(unittest.TestCase):
             finally:
                 pages.close()
 
+    def test_a_real_pdf_with_umlauts_in_its_path(self):
+        with tempfile.TemporaryDirectory() as name:
+            folder = Path(name, "Übersetzung ä ö ü ß")
+            folder.mkdir()
+            pdf = two_page_pdf(folder)
+            pdf = pdf.rename(folder / "Predigt – Größe.pdf")
+            pages = documents.PdfPages(pdf)
+            try:
+                self.assertEqual(pages.render(1, 640, 360).height, 360)
+            finally:
+                pages.close()
+            with self.assertRaises(documents.DocumentError):
+                pages.render(0, 640, 360)  # closed: never a crash in pdfium
+
     def test_a_broken_pdf_is_a_document_error(self):
         with tempfile.TemporaryDirectory() as name:
             broken = Path(name, "x.pdf")
@@ -283,8 +382,10 @@ class FakePages:
         self.path, self.count, self.closed, self.rendered = path, count, False, []
 
     def render(self, index, width, height):
+        if self.closed:
+            raise documents.DocumentError("the document was closed")
         self.rendered.append((index, width, height))
-        return f"page{index}"
+        return f"page{index}@{width}"
 
     def close(self):
         self.closed = True
@@ -293,6 +394,11 @@ class FakePages:
 DOC_PROFILE = {"id": "doc-192-168-188-11", "title": "Übersetzung.pptx", "kind": "file",
                "path": "C:\\Predigt\\Übersetzung.pptx", "requested": "C:\\Predigt\\Übersetzung*.pptx",
                "args": [], "fullscreen": True, "monitor": 2, "position": "top-left", "stamp": "s1"}
+SCREEN = {"monitor": 2, "area": (1920, 0, 3840, 1080), "rect": (1920, 0, 1920, 1080), "client": (1920, 1080)}
+
+
+def no_office(_path, _deadline, _cancelled):
+    raise documents.DocumentError("Office: not installed; LibreOffice: not installed")
 
 
 @unittest.skipIf(tkinter is None, "the desktop agent needs tkinter")
@@ -308,15 +414,15 @@ class AgentDocumentTests(unittest.TestCase):
         self.addCleanup(patcher.stop)
         self.addCleanup(agent._launching.clear)
 
-    def open(self, profile=DOC_PROFILE, pdf_for=None, pages=None):
+    def open(self, profile=DOC_PROFILE, pdf_for=None, pages=None, screens=None):
         made = []
 
         def pages_class(path):
             made.append((pages or FakePages)(path))
             return made[-1]
 
-        handled = agent._open_document(profile, Path(profile["path"]), window=lambda m, f: (1920, 1080, 1920, 0),
-                                       pdf_for=pdf_for or (lambda p: Path("C:/cache/x.pdf")),
+        handled = agent._open_document(profile, Path(profile["path"]), screens=screens or (lambda p: [SCREEN]),
+                                       pdf_for=pdf_for or (lambda p, d, c: Path("C:/cache/x.pdf")),
                                        pages_class=pages_class)
         return handled, made
 
@@ -332,17 +438,39 @@ class AgentDocumentTests(unittest.TestCase):
         handled, made = self.open()
         self.assertTrue(handled)
         request = self.show()
-        self.assertEqual((request["image"], made[0].rendered), ("page0", [(0, 1920, 1080)]))
+        self.assertEqual((request["images"], made[0].rendered), (["page0@1920"], [(0, 1920, 1080)]))
         self.assertEqual(request["view"].state(),
                          {"id": DOC_PROFILE["id"], "title": "Übersetzung.pptx", "page": 1, "pages": 3})
+
+    def test_screens_like_an_image(self):
+        bounds = {1: (0, 0, 1920, 1080), 2: (1920, 0, 3840, 1080)}.get
+        work = {1: (0, 0, 1920, 1040), 2: (1920, 0, 3840, 1040)}.get
+        full = agent._document_screens({**DOC_PROFILE, "monitors": [1, 2]}, bounds, work)
+        self.assertEqual([s["rect"] for s in full], [(0, 0, 1920, 1080), (1920, 0, 1920, 1080)], "mirrors")
+        corner = agent._document_screens({**DOC_PROFILE, "fullscreen": False, "position": "bottom-right"},
+                                         bounds, work)[0]
+        self.assertEqual(corner["rect"], (2880, 520, 960, 520), "a quarter of the work area, in its corner")
+        self.assertEqual(corner["client"], (960 - agent.DOCUMENT_FRAME[0], 520 - agent.DOCUMENT_FRAME[1]))
+        center = agent._document_screens({**DOC_PROFILE, "fullscreen": False, "position": "center"}, bounds, work)
+        self.assertEqual(center[0]["rect"], (1920, 0, 1920, 1040), "the whole work area, never the taskbar")
+
+    def test_mirrors_show_the_same_page_on_each(self):
+        agent._opened_stamps[DOC_PROFILE["id"]] = "s1"
+        small = {**SCREEN, "monitor": 3, "client": (1280, 720)}
+        self.open(screens=lambda p: [SCREEN, small])
+        view = self.show()["view"]
+        self.assertEqual(self.queue.empty(), True)
+        agent._document_command({"action": "next"})
+        self.assertEqual(self.queue.get_nowait()["images"], ["page1@1920", "page1@1280"])
+        self.assertTrue(agent._valid_monitors({"kind": "file", "path": "C:\\a\\b.pdf", "monitor": 1,
+                                               "monitors": [1, 2]}))
+        self.assertFalse(agent._valid_monitors({"kind": "file", "path": "C:\\a\\b.mp4", "monitor": 1,
+                                                "monitors": [1, 2]}))
+        self.assertTrue(view.screens)
 
     def test_no_document_or_no_renderer_opens_the_default_app(self):
         video = {**DOC_PROFILE, "path": "C:\\Videos\\a.mp4"}
         self.assertFalse(agent._open_document(video, Path(video["path"])))
-
-        def no_office(_path):
-            raise documents.DocumentError("Office: not installed; LibreOffice: not installed")
-
         with self.assertLogs(agent.logger, "WARNING") as logs:
             self.assertEqual(self.open(pdf_for=no_office)[0], False)
         self.assertIn("default app", "\n".join(logs.output))
@@ -354,9 +482,10 @@ class AgentDocumentTests(unittest.TestCase):
     def test_closed_or_started_again_while_converting_is_not_shown(self):
         agent._opened_stamps[DOC_PROFILE["id"]] = "s1"
 
-        def slow_convert(_path):
+        def slow_convert(_path, _deadline, cancelled):
             # POST /close for this start comes while Office works.
             agent._close_profile_windows(DOC_PROFILE["id"], {}.get, lambda h: True, stamp="s1")
+            self.assertTrue(cancelled(), "the conversion is told")
             return Path("C:/cache/x.pdf")
 
         handled, made = self.open(pdf_for=slow_convert)
@@ -368,23 +497,74 @@ class AgentDocumentTests(unittest.TestCase):
         self.assertTrue(self.open()[0])
         self.assertTrue(self.queue.empty())
 
+        def cancelled_in_line(_path, _deadline, _cancelled):
+            raise documents.DocumentCancelled("closed while waiting")
+
+        reply = agent._DocumentReply()
+        self.assertTrue(self.open({**DOC_PROFILE, "reply": reply}, pdf_for=cancelled_in_line)[0])
+        self.assertEqual((reply.done.is_set(), reply.shown), (True, False))
+
+    def test_a_close_between_prepared_and_shown(self):
+        agent._opened_stamps[DOC_PROFILE["id"]] = "s1"
+        self.open()
+        request = self.queue.get_nowait()
+        agent._close_profile_windows(DOC_PROFILE["id"], {}.get, lambda h: True, stamp="s1")
+        self.assertFalse(agent._show_document(None, request), "closed meanwhile: never shown")
+        self.assertTrue(request["view"].pages.closed)
+        self.assertIsNone(agent._document_view)
+
     def test_paging(self):
         agent._opened_stamps[DOC_PROFILE["id"]] = "s1"
         self.open()
         view = self.show()["view"]
         self.assertEqual(agent._document_command({"action": "next"})["page"], 2)
         page = self.queue.get_nowait()
-        self.assertEqual((page["kind"], page["image"], page["view"]), ("document-page", "page1", view))
+        self.assertEqual((page["kind"], page["images"], page["view"], page["page"]),
+                         ("document-page", ["page1@1920"], view, 1))
         self.assertEqual(agent._document_command({"action": "last"})["page"], 3)
         self.assertEqual(agent._document_command({"action": "next"})["page"], 3, "stays on the last page")
         self.assertEqual(agent._document_command({"action": "goto", "page": 1})["page"], 1)
         self.assertEqual(agent._document_command({"action": "status"}),
                          {"id": DOC_PROFILE["id"], "title": "Übersetzung.pptx", "page": 1, "pages": 3})
-        self.assertEqual([r["image"] for r in list(self.queue.queue)], ["page2", "page0"],
+        self.assertEqual([r["images"] for r in list(self.queue.queue)], [["page2@1920"], ["page0@1920"]],
                          "a step that changes nothing draws nothing")
         self.assertIsNone(agent._document_command({"action": "next", "id": "other"}), "not that profile's")
         agent._document_view = None
         self.assertIsNone(agent._document_command({"action": "next"}))
+
+    def test_pages_render_outside_the_lock_and_only_the_newest_shows(self):
+        agent._opened_stamps[DOC_PROFILE["id"]] = "s1"
+        self.open()
+        view = self.show()["view"]
+        seen = []
+
+        def render(page):
+            seen.append(agent._document_lock._is_owned())
+            if page == 1:
+                view.page = 2  # a second step came in while this one rendered
+            return [f"page{page}"]
+
+        with patch.object(view, "render", render):
+            agent._document_command({"action": "next"})
+        self.assertEqual(seen, [False], "the lock is free while pdfium renders")
+        self.assertTrue(self.queue.empty(), "an older step never reaches the window")
+        with patch.object(agent, "_document_windows", []):
+            agent._show_document_page({"view": view, "page": 1, "images": ["old"]})  # ignored, no windows touched
+        view.pages.close()
+        self.assertEqual(agent._document_command({"action": "next"})["page"], 3, "hidden meanwhile: no crash")
+
+    def test_keys_never_turn_pages_by_typing(self):
+        keys = [key for group in agent.DOCUMENT_KEYS.values() for key in group]
+        for key in ("<space>", "<Return>", "<BackSpace>"):
+            self.assertNotIn(key, keys)
+        for key in ("<Next>", "<Prior>", "<Right>", "<Left>", "<Home>", "<End>"):
+            self.assertIn(key, keys, "presenters send Page Up / Down or arrows")
+
+    def test_focus_only_when_nothing_else_has_it(self):
+        mine = agent.os.getpid()
+        self.assertTrue(agent._may_take_focus(0), "nothing in front")
+        self.assertTrue(agent._may_take_focus(77, {77: mine}.get), "the agent's own window in front")
+        self.assertFalse(agent._may_take_focus(88, {88: mine + 1}.get), "someone works on that PC")
 
     def test_kept_when_the_next_row_shows_the_same_file(self):
         agent._opened_stamps[DOC_PROFILE["id"]] = "s1"
@@ -405,7 +585,7 @@ class AgentDocumentTests(unittest.TestCase):
         self.assertFalse(reply.done.is_set(), "prepared, not yet on screen")
         request = self.queue.get_nowait()
         self.assertIs(request["reply"], reply)
-        with patch.object(agent, "_show_document"):
+        with patch.object(agent, "_show_document", return_value=True):
             agent.handle_request(None, None, None, request)
         self.assertEqual((reply.done.is_set(), reply.shown), (True, True))
         failed = agent._DocumentReply()
@@ -413,16 +593,16 @@ class AgentDocumentTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 agent.handle_request(None, None, None, {**request, "reply": failed})
         self.assertEqual((failed.done.is_set(), failed.shown), (True, False))
+        closed = agent._DocumentReply()
+        with patch.object(agent, "_show_document", return_value=False):
+            agent.handle_request(None, None, None, {**request, "reply": closed})
+        self.assertEqual(closed.shown, False, "closed before it was shown")
 
     def test_not_shown_by_the_agent_answers_shown_false(self):
         reply = agent._DocumentReply()
         profile = {**DOC_PROFILE, "reply": reply, "path": "C:\\Predigt\\Text.docx"}
-
-        def no_office(_path):
-            raise documents.DocumentError("Office: not installed; LibreOffice: not installed")
-
         with patch.object(agent, "_open_document", lambda p, path: agent.__dict__["_open_document_real"](
-                p, path, window=lambda m, f: (10, 10, 0, 0), pdf_for=no_office, pages_class=FakePages)), \
+                p, path, screens=lambda p: [SCREEN], pdf_for=no_office, pages_class=FakePages)), \
                 patch.object(agent, "_visible_windows", side_effect=RuntimeError("default app")), \
                 self.assertLogs(agent.logger, "WARNING"):
             agent._launch_profile(profile)
@@ -453,13 +633,16 @@ class AgentDocumentTests(unittest.TestCase):
 class AgentRealPdfTests(unittest.TestCase):
     def test_a_real_pdf_end_to_end_without_a_screen(self):
         with tempfile.TemporaryDirectory() as name, patch.object(agent, "requests", queue.Queue()) as requests:
-            pdf = two_page_pdf(Path(name))
+            folder = Path(name, "Übersetzung")
+            folder.mkdir()
+            pdf = two_page_pdf(folder)
             profile = {**DOC_PROFILE, "path": str(pdf), "requested": str(pdf), "stamp": None}
-            self.assertTrue(agent._open_document(profile, pdf, window=lambda m, f: (1280, 720, 0, 0)))
+            screen = {**SCREEN, "client": (1280, 720)}
+            self.assertTrue(agent._open_document(profile, pdf, screens=lambda p: [screen]))
             request = requests.get_nowait()
             agent._document_view = request["view"]
             try:
-                self.assertEqual(request["image"].size[1], 720)
+                self.assertEqual(request["images"][0].size[1], 720)
                 self.assertEqual(agent._document_command({"action": "next"})["page"], 2)
             finally:
                 agent._hide_document()
@@ -562,6 +745,30 @@ class ServiceTests(unittest.TestCase):
             answer = client.post("/documents/next").json()
             self.assertEqual((answer["ok"], answer["pc"], answer["page"], answer["pages"]), (True, BEAMER_PC, 3, 12))
             self.assertEqual(agents.of("/document")[-1], (BEAMER_PC, {"action": "next"}))
+
+    def test_a_document_on_several_monitors_and_an_old_agent(self):
+        sent = []
+
+        def post(url, _token, payload, timeout):
+            sent.append((payload, timeout))
+            if "monitors" in payload and old:
+                raise urllib.error.HTTPError(url, 400, "x", {}, None)
+            return {"ok": True, "shown": True}
+
+        with app_client(PROFILES, env=ENV) as (client, _folder), patch("app.display_agent._post", post):
+            old = False
+            self.assertTrue(client.post("/desktop/spiegel/open").json()["ok"])
+            self.assertEqual((sent[0][0]["monitors"], sent[0][1]), ([2, 3], 20.0),
+                             "the same page on both; waited for until it is on screen")
+            old, sent[:] = True, []
+            self.assertTrue(client.post("/desktop/spiegel/open").json()["ok"])
+            self.assertNotIn("monitors", sent[-1][0], "an agent from before documents: one monitor")
+            body = {"id": "doku2", "title": "Doku", "path": "C:\\x\\Lesung.docx", "target_ip": BEAMER_PC,
+                    "monitor": 1, "monitors": [1, 2]}
+            self.assertEqual(client.post("/desktop/profiles", json=body).status_code, 200,
+                             "documents may be saved with several monitors")
+            video = {**body, "id": "video2", "path": "C:\\x\\Film.mp4"}
+            self.assertEqual(client.post("/desktop/profiles", json=video).status_code, 400)
 
     def test_paging_answers(self):
         agents = FakeAgents()

@@ -8,9 +8,14 @@
 // agent shows it page by page (app/documents.py), a slim bar sits at the
 // bottom of that row: back, "Übersetzung · Seite 3/12", "Weiter". The song
 // dock (song-dock.js) hangs from the row's top edge, so both can be there at
-// once, the song on top. The page number comes from GET /documents/current,
+// once, the song on top. Its keys read "‹ Seite" / "Seite ›" in a calm blue,
+// never like the song's green "Weiter". The page number comes from GET /documents/current,
 // asked again every few seconds while the bar is there (a presenter on the
 // PC also turns pages); a key's answer brings the new page at once.
+//
+// A row opens a document when one of its Desktop steps (or, in older rows,
+// Übersetzung / Playback / Liedtext) points at a PDF, PowerPoint or Word file:
+// its own path or its Desktop key's. Titles and notes never count.
 //
 // Hooks: renderProgramItems() (program.js) calls renderDocDock(); it reads
 // PROGRAM_ITEMS, PROGRAM_STATUS and DESKTOP_PROFILES.
@@ -21,27 +26,51 @@ const DOC_DOCK_POLL_MS = 4000;
 const DOC_DOCK_GUARD_MS = 600;
 // Keep in sync with app/documents.py DOCUMENT_SUFFIXES.
 const DOC_DOCK_SUFFIX_RE = /\.(pdf|pptx?|pptm|ppsx?|ppsm|odp|docx?|docm|odt|rtf)(?![A-Za-z0-9])/i;
-const DOC_DOCK_FIELDS = [["translation", "Übersetzung"], ["playback", "Dokument"], ["lyrics", "Dokument"]];
+// Older rows: a file in Übersetzung / Playback / Liedtext.
+const DOC_DOCK_FIELDS = [["translation", "Übersetzung"], ["playback", null], ["lyrics", null]];
 
 const ICON_DOC_PREV = `<svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>`;
 const ICON_DOC_NEXT = `<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg>`;
 
-function docDockProfilePath(id) {
-  const profile = (typeof DESKTOP_PROFILES !== "undefined" ? DESKTOP_PROFILES : []).find(p => p.id === id);
-  return profile ? String(profile.path || "") : "";
+function docDockProfile(id) {
+  return (typeof DESKTOP_PROFILES !== "undefined" ? DESKTOP_PROFILES : []).find(p => p.id === id) || null;
 }
 
-// Whether a program row opens a document; its label ("Übersetzung" first).
+// The document a step or field value opens: {path, label} or null. Values:
+// "<profile id>" (a Desktop key), "via:<profile>|<path>" (that key with
+// another file, app/row_files.py), "desktop:<profile>", "file:<ip>|<path>".
+// Only paths and keys count, never a row's title or notes.
+function docDockValue(value, fieldLabel) {
+  if (typeof value !== "string" || !value || value.startsWith("@") || value.startsWith("key:")) return null;
+  let profileId = null;
+  let path = null;
+  if (value.startsWith("via:")) {
+    const bar = value.indexOf("|");
+    profileId = value.slice(4, bar);
+    path = value.slice(bar + 1);
+  } else if (value.startsWith("file:")) {
+    path = value.slice(value.indexOf("|") + 1);
+  } else {
+    profileId = value.startsWith("desktop:") ? value.slice(8) : value;
+  }
+  const profile = profileId ? docDockProfile(profileId) : null;
+  if (path === null) path = profile ? String(profile.path || "") : "";
+  if (!DOC_DOCK_SUFFIX_RE.test(path)) return null;
+  return { path, label: fieldLabel || (profile && profile.title) || "Dokument" };
+}
+
+// Whether a program row opens a document; its label (the field's name, or
+// the Desktop key's title).
 function docDockLabel(item) {
   for (const [field, label] of DOC_DOCK_FIELDS) {
-    const value = item[field];
-    if (typeof value !== "string" || !value) continue;
-    const path = value.startsWith("desktop:") ? docDockProfilePath(value.slice(8)) : value;
-    if (DOC_DOCK_SUFFIX_RE.test(path)) return label;
+    const found = docDockValue(item[field], label);
+    if (found) return found.label;
   }
-  if ((item.desktop || []).some(id => DOC_DOCK_SUFFIX_RE.test(docDockProfilePath(id)))) return "Dokument";
-  // Other forms of a path (a path linked to a desktop key): anywhere in the row.
-  return DOC_DOCK_SUFFIX_RE.test(JSON.stringify(item)) ? "Dokument" : null;
+  for (const step of item.desktop || []) {
+    const found = docDockValue(step, null);
+    if (found) return found.label;
+  }
+  return null;
 }
 
 // The running row, if it opens a document: {item, row, label}.
@@ -59,10 +88,10 @@ function buildDocDock() {
   const cell = document.createElement("td");
   cell.className = "doc-dock";
   cell.innerHTML = `<div class="doc-dock-bar" role="group" aria-label="Dokument am laufenden Programmpunkt">`
-    + `<button type="button" class="dd-prev" data-doc-dock="prev" title="Vorherige Seite" aria-label="Vorherige Seite">${ICON_DOC_PREV}</button>`
+    + `<button type="button" class="dd-prev" data-doc-dock="prev" title="Vorherige Seite" aria-label="Vorherige Seite">${ICON_DOC_PREV}<span class="dd-key-text">Seite</span></button>`
     + `<div class="dd-info"><span class="dd-label"></span><span class="dd-title"></span></div>`
     + `<span class="dd-pos" aria-live="polite"></span>`
-    + `<button type="button" class="dd-next program-play" data-doc-dock="next" title="Nächste Seite" aria-label="Nächste Seite"><span class="dd-next-text">Weiter</span>${ICON_DOC_NEXT}</button>`
+    + `<button type="button" class="dd-next" data-doc-dock="next" title="Nächste Seite" aria-label="Nächste Seite"><span class="dd-key-text">Seite</span>${ICON_DOC_NEXT}</button>`
     + `</div>`;
   return cell;
 }
@@ -122,7 +151,6 @@ function renderDocDock() {
   cell.classList.toggle("busy", DOC_DOCK.busy);
   cell.querySelector(".dd-prev").disabled = DOC_DOCK.busy || page <= 1;
   cell.querySelector(".dd-next").disabled = DOC_DOCK.busy || page >= state.pages;
-  cell.querySelector(".dd-next-text").textContent = page >= state.pages ? "Ende" : "Weiter";
 }
 
 async function docDockStep(action) {

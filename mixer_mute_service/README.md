@@ -853,9 +853,11 @@ unten), alles andere öffnet Windows mit der Standard-App. Gespeichert wird
 und `.doc/.docx/.odt/.rtf` öffnet der Display-Agent nicht mit der Standard-App,
 sondern zeigt die Seiten selbst im Vollbild auf dem richtigen Monitor (dieselbe
 Nummerierung wie bei Bildern), in einem eigenen Fenster über Bild und Liedanzeige.
-Eine Datei im Programmpunkt geht auf den Monitor der Liedanzeige dieses PCs
-(Anzeige-PC: der Beamer), sonst Monitor 1; ein Desktop-Profil nimmt seinen
-eigenen Monitor. PDFs rendert der Agent mit `pypdfium2`; PowerPoint- und
+Ein Desktop-Profil (auch mit eigener Datei im Programmpunkt) nimmt seinen
+Monitor, Vollbild und Position wie ein Bild: ohne Vollbild ein Fenster im
+Arbeitsbereich (Mitte: der ganze, Ecke: ein Viertel), mit mehreren Monitoren
+dieselbe Seite auf jedem. Ältere Zeilen mit `file:<ip>|<pfad>` gehen auf den
+Monitor der Liedanzeige dieses PCs (Anzeige-PC: der Beamer), sonst Monitor 1. PDFs rendert der Agent mit `pypdfium2`; PowerPoint- und
 Word-Dateien wandelt einmal das installierte Office (unsichtbar, per COM) oder
 sonst LibreOffice in ein PDF um. Die Kopie liegt unter
 `%LOCALAPPDATA%\MixerMuteDisplayAgent\documents`, ein zweites Öffnen geht sofort.
@@ -863,11 +865,20 @@ Animationen und Übergänge aus PowerPoint gibt es dabei nicht.
 Blättern: `POST /documents/next` bzw. `prev`, `first`, `last` (optional
 `{"pc": ip}`, sonst der PC, der zuletzt ein Dokument geöffnet hat),
 `GET /documents/current` liefert Seite und Seitenzahl; am Anzeige-PC selbst
-blättern Pfeiltasten, Bild auf/ab, Leertaste und ein Presenter, Esc blendet
-aus. Geht das Programm weiter, schließt der nächste Programmpunkt das Dokument;
+blättern Pfeiltasten, Bild auf/ab, Pos1/Ende und ein Presenter, Esc blendet
+aus (Leertaste, Enter und Rücktaste blättern nie: Tippen an dem PC bleibt
+harmlos). Den Tastaturfokus nimmt der Agent nur, wenn gerade kein anderes
+Fenster ihn hat; ein Klick auf die Seite gibt ihn dem Dokument, ohne zu blättern.
+Im laufenden Programmpunkt zeigt ein Streifen „‹ Seite“ / „Seite ›“ mit der
+Seitenzahl. Eine Umwandlung endet nach spätestens gut drei Minuten; hängt
+Office dabei, beendet der Agent genau die Office-Instanz, die er selbst
+gestartet hat (nie ein vom Benutzer geöffnetes Office), und ein mit Kennwort
+geschütztes Word-Dokument schlägt sofort fehl. Geht das Programm weiter, schließt der nächste Programmpunkt das Dokument;
 zeigt er dieselbe Datei, bleibt sie auf ihrer Seite stehen. Fehlt `pypdfium2`,
-installiert der Agent es beim Start selbst (`pip`, im Hintergrund; das Update
-über den UPDATE-Knopf führt kein pip aus). Kann der Agent ein Dokument nicht
+installiert der Agent genau diese Version (`pypdfium2==5.15.2`) beim Start selbst
+(`pip`, im Hintergrund, einmal je Agent-Version, nach einem Fehlschlag erst nach
+einer Stunde wieder, dann seltener; das Update über den UPDATE-Knopf führt kein
+pip aus, `update-agent.ps1` schon). Kann der Agent ein Dokument nicht
 anzeigen (kein pypdfium2, weder Office noch LibreOffice, älterer Agent), öffnet
 es wie bisher die Standard-App; der Grund steht im Agent-Log, `/info` meldet unter
 `documents`, was vorhanden ist.

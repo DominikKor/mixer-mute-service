@@ -43,7 +43,7 @@ logger = logging.getLogger("display-agent")
 PDF_SUFFIXES = {".pdf"}
 POWERPOINT_SUFFIXES = {".ppt", ".pptx", ".pptm", ".pps", ".ppsx", ".ppsm", ".odp"}
 WORD_SUFFIXES = {".doc", ".docx", ".docm", ".odt", ".rtf"}
-CONVERT_TIMEOUT_SECONDS = 180
+CONVERT_TIMEOUT_SECONDS = 150  # one attempt (Office or LibreOffice)
 MAX_CACHED_PDFS = 40
 MAX_PAGES = 2000
 # Rendered pages kept per document (the current one and its neighbours).
@@ -87,6 +87,9 @@ def pdfium():
     return _pdfium
 
 
+# Only this one package (keep in step with requirements.txt): never upgrades
+# Pillow while the running agent has it loaded.
+PDFIUM_REQUIREMENT = "pypdfium2==5.15.2"
 PIP_TIMEOUT_SECONDS = 600
 PIP_RETRY_SECONDS = 3600.0       # after a failed pip run (same agent version): one hour,
 PIP_RETRY_MAX_SECONDS = 86400.0  # doubling each time, up to a day
@@ -102,9 +105,8 @@ def _read_state(path: Path) -> dict:
         return {}
 
 
-def install_missing_requirements(requirements: Path, version: str, state_file: Path, run=None,
-                                 now=None) -> bool | None:
-    """pip install -r requirements.txt when pypdfium2 is missing (background,
+def install_missing_requirements(version: str, state_file: Path, run=None, now=None) -> bool | None:
+    """pip install PDFIUM_REQUIREMENT when pypdfium2 is missing (background,
     with a timeout). Once per agent version; after a failure only again
     after PIP_RETRY_SECONDS (doubling). None when nothing was run, else
     whether pypdfium2 is importable afterwards. The outcome is logged and
@@ -132,8 +134,8 @@ def install_missing_requirements(requirements: Path, version: str, state_file: P
     else:
         failures = 0
     run = run or subprocess.run
-    command = [sys.executable, "-m", "pip", "install", "--disable-pip-version-check", "-q", "-r", str(requirements)]
-    logger.info("pypdfium2 missing: installing the agent's requirements (%s)", " ".join(command))
+    command = [sys.executable, "-m", "pip", "install", "--disable-pip-version-check", "-q", PDFIUM_REQUIREMENT]
+    logger.info("pypdfium2 missing: installing it (%s)", " ".join(command))
     install_status = {"state": "running", "started": now}
     reason = ""
     try:
@@ -174,14 +176,31 @@ def install_missing_requirements(requirements: Path, version: str, state_file: P
 
 # -- converting PowerPoint and Word to PDF ---------------------------------------------
 
+class DocumentCancelled(DocumentError):
+    """Closed or started again while it waited for its turn to be converted."""
+
+
 # Paths go in through environment variables, never into the script text.
+# The Office process this conversion started (none when the user's own
+# Office was already running: COM then talks to that one) is written to
+# MIXER_DOC_PIDFILE, so a conversion that hangs can end exactly that one.
 _OFFICE_SCRIPT = r"""
 $ErrorActionPreference = 'Stop'
 $source = $env:MIXER_DOC_SOURCE
 $target = $env:MIXER_DOC_TARGET
+$name = if ($env:MIXER_DOC_KIND -eq 'powerpoint') { 'POWERPNT' } else { 'WINWORD' }
+$before = @(Get-Process -Name $name -ErrorAction SilentlyContinue | ForEach-Object { $_.Id })
 if ($env:MIXER_DOC_KIND -eq 'powerpoint') {
     $app = New-Object -ComObject PowerPoint.Application
+} else {
+    $app = New-Object -ComObject Word.Application
+}
+$started = @(Get-Process -Name $name -ErrorAction SilentlyContinue | Where-Object { $before -notcontains $_.Id } |
+    ForEach-Object { $_.Id })
+if ($env:MIXER_DOC_PIDFILE) { Set-Content -LiteralPath $env:MIXER_DOC_PIDFILE -Value ($started -join ',') }
+if ($env:MIXER_DOC_KIND -eq 'powerpoint') {
     try {
+        $app.DisplayAlerts = 1  # ppAlertsNone
         # ReadOnly, Untitled, WithWindow = false: nothing appears on screen.
         $presentation = $app.Presentations.Open($source, -1, 0, 0)
         try { $presentation.SaveAs($target, 32) } finally { $presentation.Close() }
@@ -190,12 +209,12 @@ if ($env:MIXER_DOC_KIND -eq 'powerpoint') {
         [void][Runtime.InteropServices.Marshal]::ReleaseComObject($app)
     }
 } else {
-    $app = New-Object -ComObject Word.Application
     $app.Visible = $false
     $app.DisplayAlerts = 0
     try {
-        # ConfirmConversions = false, ReadOnly = true, AddToRecentFiles = false
-        $document = $app.Documents.Open($source, $false, $true, $false)
+        # ConfirmConversions = false, ReadOnly = true, AddToRecentFiles = false,
+        # PasswordDocument: a protected file fails at once instead of asking.
+        $document = $app.Documents.Open($source, $false, $true, $false, 'mixer-no-password')
         try { $document.ExportAsFixedFormat($target, 17) } finally { $document.Close(0) }
     } finally {
         if ($app.Documents.Count -eq 0) { $app.Quit() }
@@ -203,27 +222,92 @@ if ($env:MIXER_DOC_KIND -eq 'powerpoint') {
     }
 }
 """
+_OFFICE_IMAGES = {"powerpoint": "POWERPNT.EXE", "word": "WINWORD.EXE"}
 
 
-def _hidden(run, command, **kwargs):
-    return run(command, stdin=subprocess.DEVNULL, capture_output=True, timeout=CONVERT_TIMEOUT_SECONDS,
-               creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0), **kwargs)
-
-
-def convert_with_office(kind: str, source: Path, target: Path, run=None) -> None:
-    """PowerPoint / Word (COM) saves the file as PDF. Raises DocumentError."""
+def _taskkill(pid: int, run=None) -> None:
     run = run or subprocess.run
+    run(["taskkill", "/PID", str(pid), "/T", "/F"], stdin=subprocess.DEVNULL, capture_output=True, timeout=15,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+
+
+def _image_of(pid: int, run=None) -> str:
+    """The executable name of a running process ("" when gone)."""
+    run = run or subprocess.run
+    try:
+        finished = run(["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"], stdin=subprocess.DEVNULL,
+                       capture_output=True, timeout=15, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    line = (finished.stdout or b"").decode("utf-8", "replace").strip().splitlines()
+    return line[0].split(",")[0].strip('"') if line and line[0].startswith('"') else ""
+
+
+def end_started_office(pidfile: Path, kind: str, image_of=None, kill=None) -> list:
+    """After a timeout: end the Office process this conversion started (from
+    the pid file), only if that pid still is POWERPNT.EXE / WINWORD.EXE. An
+    Office the user opened is never in the file. Returns the pids ended."""
+    image_of = image_of or _image_of
+    kill = kill or _taskkill
+    try:
+        text = pidfile.read_text(encoding="utf-8-sig").strip()
+    except OSError:
+        return []
+    ended = []
+    for part in text.replace(" ", "").split(","):
+        if not part.isdigit():
+            continue
+        pid = int(part)
+        if image_of(pid).upper() != _OFFICE_IMAGES[kind]:
+            continue
+        try:
+            kill(pid)
+            ended.append(pid)
+            logger.warning("Ended %s (pid %s): the conversion it started hung", _OFFICE_IMAGES[kind], pid)
+        except (OSError, subprocess.SubprocessError):
+            logger.exception("Could not end pid %s", pid)
+    return ended
+
+
+def _run_bounded(command, timeout: float, **kwargs):
+    """subprocess.run, but a timeout ends the whole process tree (soffice.exe
+    starts soffice.bin, which a plain kill would leave behind)."""
+    process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                               creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0), **kwargs)
+    try:
+        stdout, stderr = process.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        if os.name == "nt":
+            try:
+                _taskkill(process.pid)
+            except (OSError, subprocess.SubprocessError):
+                pass
+        process.kill()
+        process.communicate()
+        raise
+    return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
+
+
+def convert_with_office(kind: str, source: Path, target: Path, timeout: float = CONVERT_TIMEOUT_SECONDS,
+                        run=None, end_office=None) -> None:
+    """PowerPoint / Word (COM) saves the file as PDF. Raises DocumentError;
+    on a timeout the Office process it started is ended."""
+    run = run or _run_bounded
+    end_office = end_office or end_started_office
     encoded = base64.b64encode(_OFFICE_SCRIPT.encode("utf-16-le")).decode("ascii")
     command = ["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
                "-EncodedCommand", encoded]
-    environment = {**os.environ, "MIXER_DOC_KIND": kind, "MIXER_DOC_SOURCE": str(source),
-                   "MIXER_DOC_TARGET": str(target)}
-    try:
-        finished = _hidden(run, command, env=environment)
-    except subprocess.TimeoutExpired as exc:
-        raise DocumentError(f"Office took longer than {CONVERT_TIMEOUT_SECONDS} s") from exc
-    except OSError as exc:
-        raise DocumentError(f"PowerShell could not be started: {exc}") from exc
+    with tempfile.TemporaryDirectory(prefix="mixer-office-") as folder:
+        pidfile = Path(folder, "office.pid")
+        environment = {**os.environ, "MIXER_DOC_KIND": kind, "MIXER_DOC_SOURCE": str(source),
+                       "MIXER_DOC_TARGET": str(target), "MIXER_DOC_PIDFILE": str(pidfile)}
+        try:
+            finished = run(command, timeout=timeout, env=environment)
+        except subprocess.TimeoutExpired as exc:
+            end_office(pidfile, kind)
+            raise DocumentError(f"Office took longer than {timeout:.0f} s") from exc
+        except OSError as exc:
+            raise DocumentError(f"PowerShell could not be started: {exc}") from exc
     if finished.returncode != 0 or not target.is_file():
         error = (finished.stderr or b"").decode("utf-8", "replace").strip()
         raise DocumentError(f"Office could not convert it: {error[:300] or finished.returncode}")
@@ -241,18 +325,19 @@ def find_libreoffice(env=None, exists=None) -> str | None:
     return next((place for place in places if place and exists(place)), None)
 
 
-def convert_with_libreoffice(soffice: str, source: Path, target: Path, run=None) -> None:
+def convert_with_libreoffice(soffice: str, source: Path, target: Path, timeout: float = CONVERT_TIMEOUT_SECONDS,
+                             run=None) -> None:
     """LibreOffice converts the file to PDF. Raises DocumentError."""
-    run = run or subprocess.run
+    run = run or _run_bounded
     with tempfile.TemporaryDirectory(prefix="mixer-doc-") as folder:
         # Its own profile: a LibreOffice the user has open does not block it.
         profile = Path(folder, "profile").as_uri()
         command = [soffice, f"-env:UserInstallation={profile}", "--headless", "--norestore", "--nologo",
                    "--convert-to", "pdf", "--outdir", folder, str(source)]
         try:
-            finished = _hidden(run, command)
+            finished = run(command, timeout=timeout)
         except subprocess.TimeoutExpired as exc:
-            raise DocumentError(f"LibreOffice took longer than {CONVERT_TIMEOUT_SECONDS} s") from exc
+            raise DocumentError(f"LibreOffice took longer than {timeout:.0f} s") from exc
         except OSError as exc:
             raise DocumentError(f"LibreOffice could not be started: {exc}") from exc
         produced = Path(folder, source.stem + ".pdf")
@@ -282,10 +367,16 @@ def _trim_cache(folder: Path, keep: Path) -> None:
 _convert_lock = threading.Lock()  # one conversion at a time (Office does not like two)
 
 
-def pdf_for(source: Path, cache: Path, office=None, libreoffice=None, find_soffice=None) -> Path:
+MIN_ATTEMPT_SECONDS = 5.0  # less time left than this: no further attempt
+
+
+def pdf_for(source: Path, cache: Path, office=None, libreoffice=None, find_soffice=None,
+            deadline: float | None = None, cancelled=None) -> Path:
     """The PDF to show for a document: a PDF itself, else its converted copy
-    (from the cache, or converted now by Office, then LibreOffice). Raises
-    DocumentError when neither could do it."""
+    (from the cache, or converted now by Office, then LibreOffice). Everything
+    ends by ``deadline`` (time.monotonic()), waiting for another conversion
+    included; ``cancelled()`` true once it is its turn: DocumentCancelled.
+    Raises DocumentError when neither could do it."""
     kind = document_type(source)
     if kind == "pdf":
         return source
@@ -294,22 +385,31 @@ def pdf_for(source: Path, cache: Path, office=None, libreoffice=None, find_soffi
     office = office or convert_with_office
     libreoffice = libreoffice or convert_with_libreoffice
     find_soffice = find_soffice or find_libreoffice
+    deadline = deadline if deadline is not None else time.monotonic() + 2 * CONVERT_TIMEOUT_SECONDS
     cache.mkdir(parents=True, exist_ok=True)
     target = cache / cache_name(source)
-    with _convert_lock:
+    if not _convert_lock.acquire(timeout=max(0.0, deadline - time.monotonic())):
+        raise DocumentError("another document was still being converted")
+    try:
+        if cancelled is not None and cancelled():
+            raise DocumentCancelled("closed or started again while waiting")
         if target.is_file():
             os.utime(target)  # recently used: kept by _trim_cache
             logger.info("Document %s: converted copy from the cache", source)
             return target
         partial = target.with_suffix(".part.pdf")
         reasons = []
-        attempts = [("Office", lambda: office(kind, source, partial))]
+        attempts = [("Office", lambda left: office(kind, source, partial, timeout=left))]
         soffice = find_soffice()
         if soffice:
-            attempts.append(("LibreOffice", lambda: libreoffice(soffice, source, partial)))
+            attempts.append(("LibreOffice", lambda left: libreoffice(soffice, source, partial, timeout=left)))
         for name, attempt in attempts:
+            left = min(CONVERT_TIMEOUT_SECONDS, deadline - time.monotonic())
+            if left < MIN_ATTEMPT_SECONDS:
+                reasons.append(f"{name}: no time left")
+                continue
             try:
-                attempt()
+                attempt(left)
                 os.replace(partial, target)
                 logger.info("Document %s converted to PDF by %s", source, name)
                 _trim_cache(cache, target)
@@ -322,6 +422,8 @@ def pdf_for(source: Path, cache: Path, office=None, libreoffice=None, find_soffi
                     partial.unlink()
                 except OSError:
                     pass
+    finally:
+        _convert_lock.release()
     if not soffice:
         reasons.append("LibreOffice: not installed")
     raise DocumentError("; ".join(reasons))
@@ -346,6 +448,7 @@ class PdfPages:
             self.close()
             raise DocumentError("the PDF has no pages")
         self._rendered: dict[tuple, Image.Image] = {}
+        self.closed = False
 
     def render(self, index: int, width: int, height: int) -> Image.Image:
         """Page ``index`` (from 0) as large as fits into width x height."""
@@ -353,6 +456,8 @@ class PdfPages:
         if key in self._rendered:
             return self._rendered[key]
         with _pdfium_lock:
+            if self.closed:
+                raise DocumentError("the document was closed")
             page = self._document[index]
             try:
                 page_width, page_height = page.get_size()
@@ -367,6 +472,9 @@ class PdfPages:
 
     def close(self) -> None:
         with _pdfium_lock:
+            if self.closed:
+                return
+            self.closed = True
             try:
                 self._document.close()
             except Exception:  # noqa: BLE001 - closing what may be broken

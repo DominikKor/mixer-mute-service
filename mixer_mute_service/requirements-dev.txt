@@ -11,3 +11,6 @@ tree-sitter-javascript>=0.25
 # compares it with the display agent's; tests/test_camera_webrtc.py checks the
 # player script's syntax. Without it both skip those checks.
 quickjs>=1.19
+# tests/test_documents.py renders real PDFs like the display agent (desktop_agent/documents.py);
+# keep the version in step with desktop_agent/requirements.txt.
+pypdfium2==5.15.2
