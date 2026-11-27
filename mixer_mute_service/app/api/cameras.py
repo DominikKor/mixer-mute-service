@@ -163,6 +163,10 @@ async def camera_preset_save(camera: str, body: CameraPresetSaveRequest, request
             return fail(f"preset {body.preset} is in use", 409, exists=True, preset=body.preset,
                         label=existing["label"] if existing else None,
                         name=_preset_name(existing["label"]) if existing else None, users=users)
+        try:  # the name first: a refused name must not move the camera's preset
+            await store.check_preset_label(camera, body.preset, f"{camera.upper()} {name}")
+        except ValueError as exc:
+            return fail(str(exc), 400)
         try:
             await request.app.state.native_controls.store_visca_preset(camera, body.preset)
         except NativeControlError as exc:

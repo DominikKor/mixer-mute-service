@@ -208,7 +208,8 @@ async def lights_scene_save(request: Request, body: dict = Body(...)):
     try:
         scene = await scenes.save(entry, replace=body.get("replace") is True, scene_id=scene_id)
     except KeyError:  # before LookupError: KeyError is one
-        return fail("a light scene with this name already exists", 409)
+        return fail("Es gibt schon ein Preset mit diesem Namen – Namen von Presets müssen eindeutig sein "
+                    "(Groß-/Kleinschreibung zählt nicht).", 409)
     except LookupError:
         return fail("unknown light scene", 404)
     except SceneError as exc:
