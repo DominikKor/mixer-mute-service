@@ -107,6 +107,22 @@
   .song-dock button.sd-hide { min-width: 56px; padding: 0 8px; }
 }
 
+/* Half or third width section (iPad portrait, desktop gallery): no preview,
+   the slide chips get their own line, under them back, position, Aus,
+   Schwarz and Weiter; nothing reaches past the section. */
+@container (max-width: 600px) {
+  .song-dock .sd-preview { display: none; }
+  /* One column that never grows past the bar (a long title is cut, not pushed out). */
+  .song-dock .sd-main { grid-column: 1 / -1; grid-template-columns: minmax(0, 1fr); }
+  .song-dock-bar { grid-template-columns: 52px minmax(0, 1fr) auto auto 100px; gap: 6px; }
+  .song-dock .sd-mid { grid-column: 1 / -1; grid-row: 1; }
+  .song-dock .sd-status { min-width: 0; overflow: hidden; }
+  .song-dock button.sd-blank { min-width: 64px; padding: 0 6px; }
+  .song-dock button.sd-hide { min-width: 52px; padding: 0 6px; }
+  .song-dock button.sd-next { padding: 0 6px 0 10px; }
+  .song-dock-off button.sd-show { min-width: 72px; padding: 0 8px; }
+}
+
 /* Slide chips: one line, scrolled inside the strip (never the page) */
 .sd-mid { display: flex; min-width: 0; }
 .sd-chips {
