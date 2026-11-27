@@ -54,9 +54,12 @@ function confirmDelete(anchor, question, okLabel = "Löschen") {
     actions.append(cancel, ok);
     pop.append(text, actions);
     const dialog = anchor.closest("dialog[open]");
+    // A key of the sticky header ("Alles aus"): just below the header, fixed
+    // like it. The popup lies under the header, so Panic stays on top.
+    const header = !dialog && anchor.closest("header");
     // In a dialog: fixed to the window, so the dialog's own scrolling or
     // clipping cannot hide it.
-    if (dialog) pop.style.position = "fixed";
+    if (dialog || header) pop.style.position = "fixed";
     (dialog || document.body).appendChild(pop);
     // The dialog closed meanwhile: the question goes with it.
     if (dialog) dialog.addEventListener("close", () => {
@@ -67,9 +70,11 @@ function confirmDelete(anchor, question, okLabel = "Löschen") {
     const r = anchor.getBoundingClientRect();
     const w = pop.offsetWidth, h = pop.offsetHeight, margin = 8;
     const left = Math.min(Math.max(margin, r.right - w), innerWidth - w - margin);
-    const top = Math.min(Math.max(margin, r.top), innerHeight - h - margin);
-    pop.style.left = `${left + (dialog ? 0 : scrollX)}px`;
-    pop.style.top = `${top + (dialog ? 0 : scrollY)}px`;
+    const below = header ? header.getBoundingClientRect().bottom + 6 : margin;
+    const top = Math.min(Math.max(below, r.top), innerHeight - h - margin);
+    const fixed = dialog || header;
+    pop.style.left = `${left + (fixed ? 0 : scrollX)}px`;
+    pop.style.top = `${top + (fixed ? 0 : scrollY)}px`;
     // Start at the key's size and place, then grow into the popup.
     pop.style.transformOrigin = `${r.left + r.width / 2 - left}px ${r.top + r.height / 2 - top}px`;
     pop.style.transform = `scale(${Math.max(r.width / w, .1)}, ${Math.max(r.height / h, .1)})`;

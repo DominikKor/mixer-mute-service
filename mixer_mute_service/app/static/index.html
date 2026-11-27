@@ -19,6 +19,18 @@
     <input id="arrange-toggle" type="checkbox" /><span class="track"></span>Anordnen
   </label>
   <button id="arrange-reset-btn" type="button" class="arrange-reset" hidden title="Bereiche wieder in der ursprünglichen Reihenfolge">Standard</button>
+  <!-- Quick keys (js/controls.js): the same actions as in Steuerung. "Alles aus"
+       asks first and stays well away from Panic (Beamer, Update and the
+       status display lie between them). -->
+  <div class="header-quick">
+    <button id="header-power-off" type="button" class="header-power" disabled aria-label="Alles ausschalten" title="Alles ausschalten: die in Steuerung ausgewählten PCs und den Beamer (mit Rückfrage)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 3v8M6.3 6.8a8 8 0 1 0 11.4 0"/></svg><span class="hq-label">Alles aus</span></button>
+    <span id="header-beamer" class="header-beamer unknown" role="group" aria-label="Beamer">
+      <span class="hb-caption" aria-hidden="true">Beamer</span>
+      <button type="button" class="hb-key" data-header-beamer="beamer-hide" aria-pressed="false" aria-label="Beamer Hide" title="Beamer Hide (nur wenn er gerade zu sehen ist)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12s3.5-6 9-6c1.6 0 3 .5 4.2 1.2M21 12s-3.5 6-9 6c-1.6 0-3-.5-4.2-1.2M4 20L20 4"/></svg><span class="hq-label">Hide</span></button>
+      <button type="button" class="hb-key" data-header-beamer="beamer-unhide" aria-pressed="false" aria-label="Beamer Unhide" title="Beamer Unhide (nur wenn er gerade verborgen ist)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 12s3.5-6.5 9.5-6.5S21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="2.8"/></svg><span class="hq-label">Unhide</span></button>
+      <span id="header-freeze" class="hb-freeze" role="status" hidden title="Der Beamer ist eingefroren: erst ein Schritt „Beamer auftauen“ oder die Taste „Beamer freeze“ zeigt wieder Neues"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 3v18M4.2 7.5l15.6 9M4.2 16.5l15.6-9"/></svg><span class="sr-only">Beamer eingefroren</span></span>
+    </span>
+  </div>
   <div class="status">
     <button id="update-btn" class="update-key" hidden title="Mixer Service und Display Service dieses PCs aktualisieren">Update</button>
     <div class="status-display">
