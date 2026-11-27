@@ -1321,13 +1321,14 @@ button.program-go:disabled { opacity: .45; animation: none; }
   .program-cue { flex-wrap: wrap; }
   button.program-go { flex: 1; }
 }
-/* A narrower section: the display gets the whole line (Weiter below it);
-   in a narrow one (a third) the clock and the due time on one line, what
-   comes next on its own line below, so its title keeps room. */
+/* Below 1000 px (½, ⅓, the iPad in portrait): the display gets the whole
+   line (Weiter below it), the clock and the due time on one line, what comes
+   next on its own line below, so its title keeps room. */
 @container section (max-width: 999px) {
   .program-cue-lcd { flex: 1 1 100%; }
 }
-@container section (max-width: 640px) {
+@container section (max-width: 1299px) {
+  /* The next item on its own line up to the stage on an iPad / ½ on 2560 */
   .program-cue-lcd { flex-wrap: wrap; row-gap: 6px; }
   .program-cue-next { order: 1; flex: 1 1 100%; }
 }
