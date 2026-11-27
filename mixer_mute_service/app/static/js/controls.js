@@ -49,7 +49,55 @@ function renderBeamerState(data) {
     button.setAttribute("aria-pressed", String(BEAMER_HIDDEN === (button.dataset.beamerState === "true")));
   });
   syncBeamerCommandButtons();
+  syncHeaderBeamer();
 }
+
+// ---- Header quick keys (index.html .header-quick) ---------------------------
+// Beamer Hide | Unhide: the idempotent keys of Steuerung (only sent when the
+// remembered state differs); the lit one is the state, both locked while it
+// is unknown (set it in Steuerung). The snowflake: frozen.
+let HEADER_BEAMER_BUSY = false;
+
+function syncHeaderBeamer() {
+  const group = $("header-beamer");
+  const known = typeof BEAMER_HIDDEN === "boolean";
+  group.classList.toggle("unknown", !known);
+  for (const key of group.querySelectorAll("[data-header-beamer]")) {
+    const hide = key.dataset.headerBeamer === "beamer-hide";
+    key.setAttribute("aria-pressed", String(known && BEAMER_HIDDEN === hide));
+    key.disabled = !known || HEADER_BEAMER_BUSY;
+  }
+  group.title = known ? `Beamer: ${BEAMER_HIDDEN ? "Hide" : "Unhide"}`
+    : "Beamerzustand unbekannt: in Steuerung unter „Beamer-Zustand festlegen“ setzen";
+  $("header-freeze").hidden = BEAMER_FROZEN !== true;
+}
+
+$("header-beamer").addEventListener("click", async event => {
+  const key = event.target.closest("[data-header-beamer]");
+  if (!key || key.disabled || HEADER_BEAMER_BUSY) return;
+  const id = key.dataset.headerBeamer;
+  const label = id === "beamer-hide" ? "Beamer Hide" : "Beamer Unhide";
+  HEADER_BEAMER_BUSY = true;
+  syncHeaderBeamer();
+  try {
+    const result = await api("POST", `/companion/buttons/${id}/press`);
+    if (!result.ok || result.data.ok === false) {
+      toast(`${label}: ${result.data.reason || "HTTP " + result.status}`, false);
+      return;
+    }
+    toast(result.data.changed === false ? `${label}: bereits gesetzt, kein Toggle` : `${label}: ausgeführt`, true);
+    const state = await api("GET", "/beamer/state");
+    renderBeamerState(state.ok ? state.data : null);
+  } finally {
+    HEADER_BEAMER_BUSY = false;
+    syncHeaderBeamer();
+  }
+});
+
+// "Alles aus": usable exactly when "Ausschalten" in Steuerung is.
+$("header-power-off").addEventListener("click", event => powerOffSelected(event.currentTarget));
+new MutationObserver(() => { $("header-power-off").disabled = $("power-off-selected").disabled; })
+  .observe($("power-off-selected"), { attributes: true, attributeFilter: ["disabled"] });
 
 function renderPowerOffConfig(data) {
   if (POWER_OFF_CONFIG_BUSY) return;
@@ -549,12 +597,13 @@ $("power-off-targets").addEventListener("click", async event => {
   if (!result.ok || result.data.ok === false) toast(result.data.reason || `HTTP ${result.status}`, false);
   else toast(`${target.label}: Herunterfahren eingeleitet`, true);
 });
-$("power-off-selected").addEventListener("click", async event => {
-  const button = event.currentTarget;
+// "Ausschalten" in Steuerung and "Alles aus" in the header: the same question first.
+async function powerOffSelected(button) {
   if (POWER_OFF_BUSY || button.disabled) return;
   if (!(await confirmDelete(button, "Ausgewählte Agent-PCs und den Beamer wirklich ausschalten?", "Ausschalten"))) return;
+  if (POWER_OFF_BUSY) return;
   POWER_OFF_BUSY = true;
-  button.disabled = true;
+  $("power-off-selected").disabled = true;
   const result = await api("POST", "/power/off");
   POWER_OFF_BUSY = false;
   if (result.ok && result.data.ok !== false) {
@@ -565,7 +614,8 @@ $("power-off-selected").addEventListener("click", async event => {
     toast(details || result.data.reason || `HTTP ${result.status}`, false);
   }
   await refresh();
-});
+}
+$("power-off-selected").addEventListener("click", event => powerOffSelected(event.currentTarget));
 function companionEditing() {
   return $("companion-categories").classList.contains("editing");
 }

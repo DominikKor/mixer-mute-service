@@ -67,6 +67,50 @@ header h1 { margin: 0; line-height: 0; }
 .dot { width: 8px; height: 8px; border-radius: 50%; background: #3a3f47; box-shadow: inset 0 1px 1px rgba(0,0,0,.6); }
 .dot.ok { background: #3ee07f; box-shadow: 0 0 6px rgba(46,204,113,.85); }
 .dot.bad { background: #ff4b3a; box-shadow: 0 0 6px rgba(255,75,58,.85); }
+/* Quick keys in the header (js/controls.js): "Alles aus" (asks first) and the
+   beamer's Hide | Unhide with the lit one being its state. Far from Panic:
+   the beamer keys, Update and the status display lie between them. Icons
+   only below 1300 px (iPad portrait, small desktops); the caption names the beamer. */
+.header-quick { display: flex; align-items: center; gap: 14px; margin-left: auto; }
+.header-quick + .status { margin-left: 0; }
+.header-quick .hq-label { display: none; }
+.header-quick svg { width: 20px; height: 20px; flex-shrink: 0; }
+button.header-power, button.hb-key {
+  display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+  min-width: 44px; min-height: 44px; padding: 0 11px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase;
+}
+button.header-power { color: #ff8576; }
+button.header-power:hover:not(:disabled) { color: #ffb0a6; }
+.header-beamer { position: relative; display: inline-flex; }
+.header-beamer .hb-caption {
+  position: absolute; left: 2px; top: -12px; font: 700 9px/1 var(--mono); letter-spacing: .14em; text-transform: uppercase;
+  color: #8a919c; white-space: nowrap; pointer-events: none;
+}
+.header-beamer.unknown .hb-caption::after { content: " ?"; }
+.header-beamer button.hb-key:first-of-type { border-radius: 6px 0 0 6px; }
+.header-beamer button.hb-key:last-of-type { border-radius: 0 6px 6px 0; border-left-color: #000; }
+/* Frozen: an amber snowflake on the corner (taps go through to the key) */
+.hb-freeze {
+  position: absolute; top: -8px; right: -8px; display: grid; place-items: center; width: 20px; height: 20px; border-radius: 50%;
+  color: #2a1d00; background: linear-gradient(to bottom, #ffd27a, #ffbf4d); box-shadow: 0 0 8px rgba(255,191,77,.6), 0 1px 2px rgba(0,0,0,.6);
+  pointer-events: none;
+}
+.hb-freeze[hidden] { display: none; }
+.header-quick .hb-freeze svg { width: 13px; height: 13px; }
+@media (min-width: 1300px) {
+  .header-quick .hq-label { display: inline; }
+}
+/* Narrower: room for the quick keys in one row (iPad portrait 1024-1032 px,
+   with the Update key): tighter gaps, and the status display puts the data
+   age above the version instead of beside it. */
+@media (max-width: 1299px) {
+  header { column-gap: 12px; }
+  header .stage-switch { margin-left: 0; }
+  .status { gap: 8px; }
+  .header-quick { gap: 10px; }
+  .status-display { gap: 2px; padding: 4px 10px; }
+  .status-meta { flex-direction: column; align-items: flex-start; gap: 2px; }
+}
 /* The panic key sits in a striped guard frame */
 .panic-guard {
   display: inline-flex; padding: 3px; border-radius: 8px;
@@ -837,13 +881,27 @@ dialog.shortcut-dialog { width: min(1000px, calc(100vw - 32px)); }
 .program-sum-head { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
 .program-sum-title { font-size: 15px; font-weight: 800; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .program-sum-person { font-size: 13px; color: #9aa3b0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.program-sum-chips { display: flex; flex-wrap: wrap; gap: 4px; min-width: 0; }
+.program-sum-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; min-width: 0; }
 .program-chip {
   display: inline-flex; align-items: baseline; gap: 5px; max-width: 260px; padding: 3px 8px; border-radius: 10px;
   font-size: 11px; font-weight: 600; color: var(--lcd-text); background: #0b1418; border: 1px solid #000;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .program-chip b { font-size: 9px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; color: #7d8594; }
+/* A step of the running row that still plays or shows: its stop key, the
+   red stop of the Desktop music keys, small; the tap area is 44 x 44 px */
+.program-chip.has-stop { align-items: center; padding: 0 0 0 8px; overflow: visible; }
+.program-chip-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.program-step-stop { display: inline-grid; place-items: center; flex: none; width: 44px; height: 44px; cursor: pointer; }
+.program-step-stop::before, .program-step-stop::after { content: ""; grid-area: 1 / 1; }
+.program-step-stop::before {
+  width: 26px; height: 26px; border-radius: 6px; border: 1px solid #3d0a05;
+  background: linear-gradient(to bottom, #d9483a, #b02a1e 55%, #8f1f15);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.25), inset 0 -2px 0 rgba(0,0,0,.25), 0 1px 3px rgba(0,0,0,.55);
+}
+.program-step-stop::after { width: 9px; height: 9px; border-radius: 1px; background: rgba(255,255,255,.85); }
+.program-step-stop:focus-visible { outline: 2px solid var(--accent); outline-offset: -4px; border-radius: 8px; }
+.program-step-stop[aria-disabled="true"] { opacity: .5; }
 .program-chip.group { border-color: #3d2a0a; }
 .program-chip.light { border-color: #3d3a0a; }
 .program-chip.camera { border-color: #0d2a4d; }
@@ -1883,7 +1941,8 @@ button.display-menu-btn:hover:not(:disabled), button.display-menu-btn[aria-expan
 /* Chosen / pressed / open: one blue for every choice key on the page. */
 button.light-all[aria-pressed="true"], button.light-chip[aria-expanded="true"], button.light-pick-key[aria-pressed="true"],
 button.monitor-key[aria-checked="true"], button.camera-preset[aria-pressed="true"],
-button.camera-move-key.active, button.beamer-state-key[aria-pressed="true"], .tp-item button.tp-pick[aria-checked="true"],
+button.camera-move-key.active, button.beamer-state-key[aria-pressed="true"], button.hb-key[aria-pressed="true"],
+.tp-item button.tp-pick[aria-checked="true"],
 .program-table button.program-single[aria-pressed="true"], .program-table button.program-desktop-key[aria-pressed="true"] {
   color: #fff; border-color: var(--sel-border); background: var(--sel-bg);
   box-shadow: var(--sel-glow), inset 0 1px 0 rgba(255,255,255,.28), 0 2px 3px rgba(0,0,0,.55);
@@ -1938,3 +1997,6 @@ button.add-key.primary-add .plus-icon { color: #8fc2ff; opacity: 1; }
 .beamer-state-title {
   font-size: 12px; font-weight: 800; letter-spacing: .16em; text-transform: uppercase; color: var(--title); text-shadow: 0 1px 0 #000;
 }
+
+/* Quick keys make room for the Anordnen keys ("Standard") while arranging: the header stays one row. */
+body.arranging .header-quick { display: none; }

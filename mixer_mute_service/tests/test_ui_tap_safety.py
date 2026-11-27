@@ -9,6 +9,11 @@
    runs in quickjs with a small fake DOM whose hit() follows that stacking.
 2. Steuerung in "Bearbeiten" (js/controls.js): a tap on a key never presses
    it (no request); it opens the key's menu instead.
+3. The header's quick keys (index.html .header-quick, js/controls.js): they
+   lie in the header (so they too work with the first tap while a menu is
+   open), "Alles aus" never sits next to Panic and never switches off
+   without its question, and the beamer keys send nothing while the beamer's
+   state is unknown.
 
 Skips without quickjs; with REQUIRE_TK=1 (CI) a missing quickjs is an error.
 """
@@ -104,6 +109,7 @@ var CSS = { escape: function (s) { return s; } };
 function escapeAttr(s) { return s; }
 function setTimeout() { return 0; }
 function clearTimeout() {}
+function MutationObserver(fn) { this.observe = function () {}; }
 
 // Dispatch like a browser: window and document capture, then the target and
 // its ancestors (bubbling), then document and window.
@@ -117,7 +123,9 @@ function fire(type, target) {
   for (var i = 0; i < order.length && !ev.stopped; i++) {
     var owner = order[i][0], capture = order[i][1];
     LISTENERS.forEach(function (l) {
-      if (!ev.stopped && l.type === type && l.owner === owner && (l.capture === capture || owner === target)) l.fn(ev);
+      if (!ev.stopped && l.type === type && l.owner === owner && (l.capture === capture || owner === target)) {
+        ev.currentTarget = owner; l.fn(ev);
+      }
     });
   }
   return ev;
@@ -248,6 +256,107 @@ class MenuBackdropTests(unittest.TestCase):
     def test_nothing_in_the_way_without_a_menu(self):
         self.js.eval("tap(key); tap(slider); tap(panic)")
         self.assertEqual(self.val("LOG"), ["mute", "fader pointerdown", "fader click", "panic"])
+
+
+class HeaderQuickKeysLayoutTests(unittest.TestCase):
+    def setUp(self):
+        html = (STATIC / "index.html").read_text(encoding="utf-8")
+        self.header = re.search(r"(?s)<header>(.*?)</header>", html).group(1)
+
+    def test_the_quick_keys_are_in_the_header(self):
+        for marker in ('id="header-power-off"', 'data-header-beamer="beamer-hide"', 'data-header-beamer="beamer-unhide"'):
+            self.assertIn(marker, self.header)
+
+    def test_alles_aus_is_never_next_to_panic(self):
+        start, panic = self.header.index('id="header-power-off"'), self.header.index('id="panic-btn"')
+        self.assertLess(start, panic)
+        between = self.header[start:panic]
+        # The beamer keys and the Update key, and the status display, lie between them.
+        self.assertGreaterEqual(between.count("<button") - 1, 3)
+        self.assertIn('class="status-display"', between)
+
+    def test_its_question_lies_under_the_header(self):
+        css = (STATIC / "css" / "app.css").read_text(encoding="utf-8")
+        header = re.search(r"(?ms)^header \{(.*?)\}", css).group(1)
+        confirm = re.search(r"(?ms)^\.delete-confirm \{(.*?)\}", css).group(1)
+        self.assertLess(z_index(confirm), z_index(header))   # Panic stays on top of it
+        dialogs = (JS / "dialogs.js").read_text(encoding="utf-8")
+        self.assertIn('anchor.closest("header")', dialogs)  # and it opens below the header
+
+
+@unittest.skipIf(quickjs is None, "needs quickjs")
+class HeaderQuickKeysTapTests(unittest.TestCase):
+    def setUp(self):
+        self.js = quickjs.Context()
+        self.js.eval(FAKE_DOM)
+        self.js.eval((JS / "menus.js").read_text(encoding="utf-8"))
+        self.js.eval(PAGE)
+        self.js.eval("""
+          var power = new El("header-power", HEADER); power.button = true;
+          power.addEventListener("click", function () { LOG.push("power"); });
+          var hide = new El("hide", HEADER); hide.button = true;
+          hide.addEventListener("click", function () { LOG.push("hide"); });
+        """)
+
+    def val(self, expression):
+        return json.loads(self.js.eval(f"JSON.stringify({expression})"))
+
+    def test_first_tap_with_a_menu_open(self):
+        for name in ("power", "hide"):
+            self.js.eval('openActionMenu(trigger, [{ label: "x", run: function () {} }])')
+            self.js.eval(f"tap({name})")
+            self.assertTrue(self.val("OPEN_MENU === null"))
+        self.assertEqual(self.val("LOG"), ["power", "hide"])
+
+
+@unittest.skipIf(quickjs is None, "needs quickjs")
+class HeaderQuickKeysTests(unittest.TestCase):
+    def setUp(self):
+        self.js = quickjs.Context()
+        self.js.eval(FAKE_DOM)
+        self.js.eval("""
+          STUB_IDS = true;
+          var REQUESTS = [], ASKED = [], ANSWER = false;
+          function api(method, path) { REQUESTS.push(path); return Promise.resolve({ ok: true, status: 200, data: {} }); }
+          function toggleActionMenu() {} function toast() {} function refresh() {} function loadCompanionButtons() {}
+          function renderCameraControls() {}
+          function confirmDelete(anchor, question) { ASKED.push(anchor.name); return Promise.resolve(ANSWER); }
+        """)
+        self.js.eval((JS / "controls.js").read_text(encoding="utf-8"))
+        self.js.eval("""
+          var group = $("header-beamer");
+          var hide = new El("hide", group); hide.button = true; hide.dataset.headerBeamer = "beamer-hide";
+          var unhide = new El("unhide", group); unhide.button = true; unhide.dataset.headerBeamer = "beamer-unhide";
+          group.querySelectorAll = function () { return [hide, unhide]; };
+          var power = $("header-power-off"); power.button = true;
+        """)
+
+    def val(self, expression):
+        return json.loads(self.js.eval(f"JSON.stringify({expression})"))
+
+    def settle(self):
+        while self.js.execute_pending_job():
+            pass
+
+    def test_alles_aus_asks_first(self):
+        self.js.eval('fire("click", power)')
+        self.settle()
+        self.assertEqual(self.val("[ASKED, REQUESTS]"), [["header-power-off"], []])  # "Abbrechen": nothing
+        self.js.eval("ANSWER = true")
+        self.js.eval('fire("click", power)')
+        self.settle()
+        self.assertIn("/power/off", self.val("REQUESTS"))
+
+    def test_beamer_keys_locked_while_the_state_is_unknown(self):
+        self.js.eval("renderBeamerState({ ok: true })")
+        self.assertTrue(self.val("hide.disabled && unhide.disabled"))
+        self.js.eval('fire("click", hide)')
+        self.assertEqual(self.val("REQUESTS"), [])
+        self.js.eval("renderBeamerState({ ok: true, hidden: false, frozen: true })")
+        self.assertEqual(self.val('[hide.getAttribute("aria-pressed"), unhide.getAttribute("aria-pressed")]'), ["false", "true"])
+        self.assertFalse(self.val('$("header-freeze").hidden'))  # the snowflake
+        self.js.eval('fire("click", hide)')
+        self.assertEqual(self.val("REQUESTS"), ["/companion/buttons/beamer-hide/press"])
 
 
 @unittest.skipIf(quickjs is None, "needs quickjs")

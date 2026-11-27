@@ -261,31 +261,75 @@ async def _stop_all(state, tracker: ShownProfiles, stops: list) -> None:
     await asyncio.gather(*(_stop_one(state, tracker, profile_id, noted) for profile_id, noted in stops))
 
 
-async def _stop_one(state, tracker: ShownProfiles, profile_id: str, noted: tuple) -> None:
+async def _stop_one(state, tracker: ShownProfiles, profile_id: str, noted: tuple) -> Optional[str]:
+    """Stop one start the program noted; None when done, else why not."""
     target_ip, kind, stamp, confirmed = noted
     if tracker.latest(profile_id) != stamp:
         log.info("Not stopping %s: started again meanwhile", profile_id)
-        return
+        return None
     if tracker.is_down(target_ip):
         log.info("Not stopping %s on %s: the agent did not answer a moment ago", profile_id, target_ip)
         tracker.restore(profile_id, noted)
-        return
+        return "display agent unavailable"
     try:
         # A start without an answer: stopped by profile alone (the agent may
         # not know its stamp).
         answer = await _send_stop(state, profile_id, target_ip, kind, stamp if confirmed else None)
         log.info("Program moved on: %s %s on %s stopped (%s)", kind, profile_id, target_ip, answer)
+        return None
     except AgentError as exc:
         if exc.agent_status is None and exc.status == 502:
             tracker.mark_down(target_ip)
             tracker.restore(profile_id, noted)
             log.warning("Program moved on: %s on %s not stopped, agent unavailable (skipped for %.0f s)",
                         profile_id, target_ip, DOWN_SECONDS)
-        elif exc.agent_status == 404:
+            return "display agent unavailable"
+        if exc.agent_status == 404:
             log.warning("Program moved on: %s on %s not closed, the agent is older than POST /close "
                         "(update the desktop agent)", profile_id, target_ip)
-        else:
-            log.warning("Program moved on: %s on %s not stopped: %s", profile_id, target_ip, exc.reason)
+            return "the desktop agent there is too old to close it"
+        log.warning("Program moved on: %s on %s not stopped: %s", profile_id, target_ip, exc.reason)
+        return exc.reason
+
+
+def running_steps(state, row: Optional[dict]) -> list:
+    """The steps of a row the program started that are still noted (they
+    may still play or show): [{"step": the row's value, "start": the id the
+    agent knows it by, "kind": audio / image / file}]. The page puts a stop
+    key on their chips (only in the running row)."""
+    tracker: Optional[ShownProfiles] = getattr(state, "shown_profiles", None)
+    if tracker is None or not row:
+        return []
+    shown = tracker.shown()
+    running = []
+    values = [("desktop", step) for step in row.get("desktop") or [] if isinstance(step, str)]
+    values += [(field, row[field]) for field in ("playback", "translation", "lyrics")
+               if isinstance(row.get(field), str) and row.get(field)]
+    for field, value in values:
+        plain = value.removeprefix(DESKTOP_PREFIX) if field != "desktop" else value
+        start = step_start_id(plain)
+        if start is None or start not in shown:
+            # An older file step showing a document: its PC's document id.
+            start = next((doc_id for doc_id, shows in row_documents({"desktop": [plain]}).items()
+                          if doc_id in shown and tracker.source(doc_id) == plain), None)
+        if start is not None and start in shown:
+            running.append({"step": value, "start": start, "kind": shown[start][1]})
+    return running
+
+
+async def stop_started(state, start: str) -> tuple:
+    """A step's stop key (POST /program/stop {"step": start}): stop that one
+    start the program noted, the same way as when the program moves on (a
+    track with its fade-out, a window closes; only that start: a newer one
+    stays). Returns (answer, status)."""
+    tracker: Optional[ShownProfiles] = getattr(state, "shown_profiles", None)
+    if tracker is None or not tracker.program_has(start):
+        return {"ok": False, "reason": "not running from the program"}, 404
+    noted = tracker.take(start)
+    reason = await _stop_one(state, tracker, start, noted)
+    if reason:
+        return {"ok": False, "step": start, "reason": reason}, 502
+    return {"ok": True, "step": start, "kind": noted[1]}, 200
 
 
 async def _send_stop(state, profile_id: str, target_ip: str, kind: str, stamp: Optional[str]) -> dict:

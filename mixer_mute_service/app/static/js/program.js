@@ -860,9 +860,16 @@ function buildProgramSummary(draft) {
 }
 
 // What a row does, as short chips (from the saved row, not the fields being edited).
-function programChips(item) {
+// running: step value -> {start, kind} of the running row's steps the
+// program started (GET /program/status "running"): their chips get a stop key.
+function programChips(item, running = null) {
   const chips = [];
-  const add = (kind, label, text) => chips.push({ kind, label, text });
+  const add = (kind, label, text, step) => {
+    const chip = { kind, label, text };
+    const started = running && step && running.get(step);
+    if (started) chip.stop = started.start;
+    chips.push(chip);
+  };
   if (item.group) add("group", "Gruppe", item.group);
   if (item.light) add("light", "Licht", (PROGRAM_LIGHT_SCENES.find(scene => scene.id === item.light) || {}).name || "Gelöschtes Preset");
   for (const [field, label] of [["playback", "Playback"], ["translation", "Übersetzung"], ["lyrics", "Liedtext"]]) {
@@ -870,7 +877,7 @@ function programChips(item) {
     if (!value) continue;
     // A file without its Desktop key (older row, key deleted) is marked.
     const keyless = isFileAction(value) || (isViaAction(value) && !PROGRAM_DESKTOP_PROFILES.some(p => p.id === parseViaAction(value).profile));
-    add(keyless ? "warn" : "file", label, isRowFile(value) ? rowFileChipText(value) : programLegacyLabel(value));
+    add(keyless ? "warn" : "file", label, isRowFile(value) ? rowFileChipText(value) : programLegacyLabel(value), value);
   }
   if (item.song && !(item.desktop || []).includes(STEP_SONG)) {  // older: no Liedtext step of its own
     const song = SONG_INDEX.get(item.song);
@@ -886,7 +893,7 @@ function programChips(item) {
   (item.desktop || []).forEach((step, index) => {
     const label = programStepLabel(step, item.song);
     const own = isViaAction(step) ? ` · ${fileBaseName(parseViaAction(step).path)}` : "";
-    add(label.kind === "warn" || label.kind === "missing" ? "warn" : "desktop", `${index + 1}.`, label.text + own);
+    add(label.kind === "warn" || label.kind === "missing" ? "warn" : "desktop", `${index + 1}.`, label.text + own, step);
   });
   if (item.beamer) add("beamer", "Beamer", item.beamer);
   return chips;
@@ -897,7 +904,10 @@ function renderProgramSummary(row, item) {
   summary.querySelector(".program-sum-time").textContent = item.time || "--:--";
   summary.querySelector(".program-sum-title").textContent = item.title || "Ohne Titel";
   summary.querySelector(".program-sum-person").textContent = item.person || "";
-  renderProgramChips(summary.querySelector(".program-sum-chips"), programChips(item), !item.group);
+  // The running row: its steps still playing or showing get a stop key.
+  const running = item.id && item.id === PROGRAM_STATUS.current_id
+    ? new Map((PROGRAM_STATUS.running || []).map(entry => [entry.step, entry])) : null;
+  renderProgramChips(summary.querySelector(".program-sum-chips"), programChips(item, running), !item.group);
   if (!summary.disabled) summary.title = row.classList.contains("program-open") ? "Zuklappen" : "Bearbeiten";
 }
 
@@ -917,6 +927,22 @@ function renderProgramChips(box, chips, noGroup = false) {
     label.textContent = chip.label;
     element.append(label, ` ${chip.text}`);
     element.title = `${chip.label}: ${chip.text}`;
+    if (chip.stop) {
+      // The chips sit in the row's summary key, so the stop key is a
+      // role="button" (a button may not hold another one).
+      element.classList.add("has-stop");
+      const text = document.createElement("span");
+      text.className = "program-chip-text";
+      text.append(...element.childNodes);
+      const stop = document.createElement("span");
+      stop.className = "program-step-stop";
+      stop.setAttribute("role", "button");
+      stop.tabIndex = 0;
+      stop.dataset.stepStop = chip.stop;
+      stop.title = `${chip.text} stoppen`;
+      stop.setAttribute("aria-label", stop.title);
+      element.append(text, stop);
+    }
     return element;
   }) : [Object.assign(document.createElement("span"), { className: "program-chip none", textContent: "Keine Aktionen" })]));
 }
@@ -1225,6 +1251,29 @@ async function loadProgramLightScenes() {
 }
 
 // Starts and the current/next row as other devices see them (every 5 s).
+// A step's stop key (POST /program/stop {"step": start id}): music fades
+// out, a video or document closes; the row's other steps keep running.
+async function stopProgramStep(key) {
+  if (key.getAttribute("aria-disabled") === "true") return;
+  key.setAttribute("aria-disabled", "true");
+  const name = key.title.replace(/ stoppen$/, "");
+  try {
+    const result = await api("POST", "/program/stop", { step: key.dataset.stepStop });
+    if (!result.ok || result.data.ok === false) {
+      toast(`${name}: ${(result.data && result.data.reason) || "HTTP " + result.status}`, false);
+    } else {
+      toast(`${name} gestoppt`, true);
+    }
+  } finally {
+    key.removeAttribute("aria-disabled");
+    const status = await api("GET", "/program/status");
+    if (status.ok && status.data) {
+      PROGRAM_STATUS = status.data;
+      renderProgramItems();
+    }
+  }
+}
+
 async function refreshProgramState() {
   if (!STAGE.on && !$("program-items").closest(".panel").classList.contains("open")) return;
   const [items, status] = await Promise.all([api("GET", "/program/items"), api("GET", "/program/status")]);
@@ -1611,6 +1660,15 @@ $("program-items").addEventListener("change", event => {
   }
 });
 $("program-items").addEventListener("click", event => {
+  // A step's stop key in the running row's summary: stops that step only,
+  // and does not open or close the row.
+  const stepStop = event.target.closest("[data-step-stop]");
+  if (stepStop) {
+    event.preventDefault();
+    event.stopPropagation();
+    stopProgramStep(stepStop);
+    return;
+  }
   const button = event.target.closest("[data-program-action]");
   if (!button) return;
   const action = button.dataset.programAction;
@@ -1676,6 +1734,13 @@ onProgramEditors("focusin", event => {
 });
 // Esc closes the open row (not while a song search or menu is open on top of it).
 $("program-items").addEventListener("keydown", event => {
+  const stepStop = event.target.closest("[data-step-stop]");
+  if (stepStop && (event.key === "Enter" || event.key === " ")) {
+    event.preventDefault();
+    event.stopPropagation();
+    stopProgramStep(stepStop);
+    return;
+  }
   if (event.key !== "Escape" || SONG_SEARCH || OPEN_MENU) return;
   const row = event.target.closest("tr.program-open[data-program-id]");
   if (row) { event.preventDefault(); setProgramOpen(row, false); }
