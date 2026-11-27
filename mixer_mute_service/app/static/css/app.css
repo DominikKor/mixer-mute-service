@@ -1894,3 +1894,6 @@ button.add-key.primary-add .plus-icon { color: #8fc2ff; opacity: 1; }
 .beamer-state-title {
   font-size: 12px; font-weight: 800; letter-spacing: .16em; text-transform: uppercase; color: var(--title); text-shadow: 0 1px 0 #000;
 }
+
+/* Quick keys make room for the Anordnen keys ("Standard") while arranging: the header stays one row. */
+body.arranging .header-quick { display: none; }
