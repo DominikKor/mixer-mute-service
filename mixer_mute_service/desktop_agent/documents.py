@@ -198,6 +198,8 @@ if ($env:MIXER_DOC_KIND -eq 'powerpoint') {
 $started = @(Get-Process -Name $name -ErrorAction SilentlyContinue | Where-Object { $before -notcontains $_.Id } |
     ForEach-Object { $_.Id })
 if ($env:MIXER_DOC_PIDFILE) { Set-Content -LiteralPath $env:MIXER_DOC_PIDFILE -Value ($started -join ',') }
+# DisplayAlerts goes back as it was: COM may talk to the user's own PowerPoint.
+$alerts = $app.DisplayAlerts
 if ($env:MIXER_DOC_KIND -eq 'powerpoint') {
     try {
         $app.DisplayAlerts = 1  # ppAlertsNone
@@ -205,11 +207,12 @@ if ($env:MIXER_DOC_KIND -eq 'powerpoint') {
         $presentation = $app.Presentations.Open($source, -1, 0, 0)
         try { $presentation.SaveAs($target, 32) } finally { $presentation.Close() }
     } finally {
+        $app.DisplayAlerts = $alerts
         if ($app.Presentations.Count -eq 0) { $app.Quit() }
         [void][Runtime.InteropServices.Marshal]::ReleaseComObject($app)
     }
 } else {
-    $app.Visible = $false
+    # A Word started through COM is its own, invisible instance.
     $app.DisplayAlerts = 0
     try {
         # ConfirmConversions = false, ReadOnly = true, AddToRecentFiles = false,
@@ -217,12 +220,45 @@ if ($env:MIXER_DOC_KIND -eq 'powerpoint') {
         $document = $app.Documents.Open($source, $false, $true, $false, 'mixer-no-password')
         try { $document.ExportAsFixedFormat($target, 17) } finally { $document.Close(0) }
     } finally {
+        $app.DisplayAlerts = $alerts
         if ($app.Documents.Count -eq 0) { $app.Quit() }
         [void][Runtime.InteropServices.Marshal]::ReleaseComObject($app)
     }
 }
 """
 _OFFICE_IMAGES = {"powerpoint": "POWERPNT.EXE", "word": "WINWORD.EXE"}
+# The window class of an open presentation / document (a dialog the hung
+# conversion shows, e.g. a password prompt, is not one of these).
+_OFFICE_FRAMES = {"powerpoint": "PPTFrameClass", "word": "OpusApp"}
+
+
+def office_windows(pid: int) -> list | None:
+    """Window classes of the visible top-level windows of a process; None
+    when that cannot be told (then nothing is ended)."""
+    if os.name != "nt":
+        return None
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        user32 = ctypes.windll.user32
+        found = []
+
+        @ctypes.WINFUNCTYPE(ctypes.c_bool, wintypes.HWND, wintypes.LPARAM)
+        def callback(hwnd, _data):
+            owner = wintypes.DWORD()
+            user32.GetWindowThreadProcessId(hwnd, ctypes.byref(owner))
+            if owner.value == pid and user32.IsWindowVisible(hwnd):
+                name = ctypes.create_unicode_buffer(256)
+                user32.GetClassNameW(hwnd, name, 256)
+                found.append(name.value)
+            return True
+
+        user32.EnumWindows(callback, 0)
+        return found
+    except Exception:  # noqa: BLE001 - unknown: leave the process alone
+        logger.exception("Windows of pid %s could not be listed", pid)
+        return None
 
 
 def _taskkill(pid: int, run=None) -> None:
@@ -243,12 +279,15 @@ def _image_of(pid: int, run=None) -> str:
     return line[0].split(",")[0].strip('"') if line and line[0].startswith('"') else ""
 
 
-def end_started_office(pidfile: Path, kind: str, image_of=None, kill=None) -> list:
+def end_started_office(pidfile: Path, kind: str, image_of=None, kill=None, windows=None) -> list:
     """After a timeout: end the Office process this conversion started (from
-    the pid file), only if that pid still is POWERPNT.EXE / WINWORD.EXE. An
-    Office the user opened is never in the file. Returns the pids ended."""
+    the pid file), only if that pid still is POWERPNT.EXE / WINWORD.EXE and
+    shows no presentation / document window: an Office the user opened is
+    never in the file, and one the operator opened a file in meanwhile (in
+    this very instance) is left alone. Returns the pids ended."""
     image_of = image_of or _image_of
     kill = kill or _taskkill
+    windows = windows or office_windows
     try:
         text = pidfile.read_text(encoding="utf-8-sig").strip()
     except OSError:
@@ -259,6 +298,11 @@ def end_started_office(pidfile: Path, kind: str, image_of=None, kill=None) -> li
             continue
         pid = int(part)
         if image_of(pid).upper() != _OFFICE_IMAGES[kind]:
+            continue
+        shown = windows(pid)
+        if shown is None or _OFFICE_FRAMES[kind] in shown:
+            logger.warning("%s (pid %s) hung converting, but %s; left running", _OFFICE_IMAGES[kind], pid,
+                           "its windows are unknown" if shown is None else "someone has a file open in it")
             continue
         try:
             kill(pid)
@@ -453,11 +497,12 @@ class PdfPages:
     def render(self, index: int, width: int, height: int) -> Image.Image:
         """Page ``index`` (from 0) as large as fits into width x height."""
         key = (index, width, height)
-        if key in self._rendered:
-            return self._rendered[key]
+        # Cache and pdfium under one lock: keys and POST /document may render at once.
         with _pdfium_lock:
             if self.closed:
                 raise DocumentError("the document was closed")
+            if key in self._rendered:
+                return self._rendered[key]
             page = self._document[index]
             try:
                 page_width, page_height = page.get_size()
@@ -465,9 +510,9 @@ class PdfPages:
                 image = page.render(scale=max(scale, 0.01)).to_pil().convert("RGB")
             finally:
                 page.close()
-        if len(self._rendered) >= PAGE_CACHE:
-            self._rendered.pop(next(iter(self._rendered)))
-        self._rendered[key] = image
+            if len(self._rendered) >= PAGE_CACHE:
+                self._rendered.pop(next(iter(self._rendered)))
+            self._rendered[key] = image
         return image
 
     def close(self) -> None:

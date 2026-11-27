@@ -269,7 +269,8 @@ class ConversionTests(unittest.TestCase):
 
         def end_office(pidfile, kind):
             ended.extend(documents.end_started_office(
-                pidfile, kind, image_of={4711: "POWERPNT.EXE", 815: "notepad.exe"}.get, kill=lambda pid: None))
+                pidfile, kind, image_of={4711: "POWERPNT.EXE", 815: "notepad.exe"}.get, kill=lambda pid: None,
+                windows=lambda pid: ["#32770"]))  # only its (password) dialog: still the conversion's
 
         with tempfile.TemporaryDirectory() as name:
             with self.assertRaisesRegex(documents.DocumentError, "longer than 12 s"):
@@ -283,10 +284,28 @@ class ConversionTests(unittest.TestCase):
                                                           kill=lambda p: self.fail("never")), [])
             self.assertEqual(documents.end_started_office(Path(name, "none"), "word"), [])
 
+    def test_a_hung_office_the_operator_opened_a_file_in_stays(self):
+        with tempfile.TemporaryDirectory() as name:
+            pidfile = Path(name, "pid")
+            pidfile.write_text("4711", encoding="utf-8")
+            office = {"image_of": lambda pid: "POWERPNT.EXE", "kill": lambda pid: self.fail("never ended")}
+            with self.assertLogs(documents.logger, "WARNING") as logs:
+                self.assertEqual(documents.end_started_office(
+                    pidfile, "powerpoint", windows=lambda pid: ["PPTFrameClass", "#32770"], **office), [],
+                    "the operator's presentation in this instance")
+                self.assertEqual(documents.end_started_office(pidfile, "powerpoint", windows=lambda pid: None,
+                                                              **office), [], "windows unknown: left alone")
+            self.assertIn("someone has a file open in it", "\n".join(logs.output))
+            self.assertEqual(documents.end_started_office(pidfile, "word", image_of=lambda pid: "WINWORD.EXE",
+                                                          kill=lambda pid: None, windows=lambda pid: []), [4711])
+
     def test_office_script_fails_fast_on_protected_files(self):
         self.assertIn("'mixer-no-password'", documents._OFFICE_SCRIPT, "Word: a password file fails at once")
         self.assertIn("DisplayAlerts = 1", documents._OFFICE_SCRIPT, "PowerPoint: no dialogs")
         self.assertIn("MIXER_DOC_PIDFILE", documents._OFFICE_SCRIPT)
+        self.assertEqual(documents._OFFICE_SCRIPT.count("$app.DisplayAlerts = $alerts"), 2,
+                         "a user's PowerPoint keeps its own setting")
+        self.assertNotIn("$app.Visible", documents._OFFICE_SCRIPT, "never hides a user's window")
 
     def test_conversion_ends_by_the_deadline(self):
         lefts = []
@@ -324,6 +343,34 @@ class ConversionTests(unittest.TestCase):
                     documents.pdf_for(source, Path(name, "c"), deadline=documents.time.monotonic() + 0.2)
             finally:
                 documents._convert_lock.release()
+
+    def test_the_page_cache_is_used_under_the_lock(self):
+        held = []
+
+        class Page:
+            def get_size(self):
+                return (100.0, 50.0)
+
+            def render(self, scale):
+                held.append(documents._pdfium_lock.locked())
+                return SimpleNamespace(to_pil=lambda: Image.new("RGB", (int(100 * scale), int(50 * scale))))
+
+            def close(self):
+                pass
+
+        class Document(list):
+            def close(self):
+                pass
+
+        module = SimpleNamespace(PdfDocument=lambda path: Document([Page(), Page()]))
+        pages = documents.PdfPages(Path("x.pdf"), module=module)
+        import threading
+        threads = [threading.Thread(target=pages.render, args=(i % 2, 200, 100)) for i in range(8)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        self.assertEqual((held, len(pages._rendered)), ([True, True], 2), "each page rendered once, under the lock")
 
     def test_umlaut_paths(self):
         with tempfile.TemporaryDirectory() as name:
@@ -469,6 +516,7 @@ class AgentDocumentTests(unittest.TestCase):
         self.assertTrue(view.screens)
 
     def test_no_document_or_no_renderer_opens_the_default_app(self):
+        agent._opened_stamps[DOC_PROFILE["id"]] = "s1"  # this start is still the current one
         video = {**DOC_PROFILE, "path": "C:\\Videos\\a.mp4"}
         self.assertFalse(agent._open_document(video, Path(video["path"])))
         with self.assertLogs(agent.logger, "WARNING") as logs:
@@ -503,6 +551,33 @@ class AgentDocumentTests(unittest.TestCase):
         reply = agent._DocumentReply()
         self.assertTrue(self.open({**DOC_PROFILE, "reply": reply}, pdf_for=cancelled_in_line)[0])
         self.assertEqual((reply.done.is_set(), reply.shown), (True, False))
+
+    def test_a_failed_document_closed_meanwhile_opens_nothing(self):
+        agent._opened_stamps[DOC_PROFILE["id"]] = "s1"
+        reply = agent._DocumentReply()
+
+        def fails_after_close(_path, _deadline, _cancelled):
+            agent._close_profile_windows(DOC_PROFILE["id"], {}.get, lambda h: True, stamp="s1")
+            raise documents.DocumentError("Office: took longer than 150 s")
+
+        self.assertTrue(self.open({**DOC_PROFILE, "reply": reply}, pdf_for=fails_after_close)[0],
+                        "no late default app: the program moved on")
+        self.assertEqual((reply.done.is_set(), reply.shown), (True, False))
+
+    def test_a_framed_window_takes_its_real_client_size(self):
+        agent._opened_stamps[DOC_PROFILE["id"]] = "s1"
+        guessed = {**SCREEN, "client": (944, 481)}
+        self.open({**DOC_PROFILE, "fullscreen": False}, screens=lambda p: [guessed])
+        view = self.show()["view"]
+        threads = []
+        with patch.object(agent.threading, "Thread", lambda target, args, daemon: SimpleNamespace(
+                start=lambda: threads.append((target, args)))):
+            self.assertFalse(agent._fit_document_client(view, ["w"], client_size=lambda w: (945, 480)), "close enough")
+            self.assertTrue(agent._fit_document_client(view, ["w"], client_size=lambda w: (936, 466)), "150 %")
+        self.assertEqual(view.screens[0]["client"], (936, 466))
+        target, args = threads[0]
+        target(*args)
+        self.assertEqual(self.queue.get_nowait()["images"], ["page0@936"], "the page again for the real size")
 
     def test_a_close_between_prepared_and_shown(self):
         agent._opened_stamps[DOC_PROFILE["id"]] = "s1"
@@ -562,9 +637,13 @@ class AgentDocumentTests(unittest.TestCase):
 
     def test_focus_only_when_nothing_else_has_it(self):
         mine = agent.os.getpid()
+        classes = {88: "PPTFrameClass", 99: "Progman", 98: "WorkerW", 97: "Shell_TrayWnd"}.get
         self.assertTrue(agent._may_take_focus(0), "nothing in front")
-        self.assertTrue(agent._may_take_focus(77, {77: mine}.get), "the agent's own window in front")
-        self.assertFalse(agent._may_take_focus(88, {88: mine + 1}.get), "someone works on that PC")
+        self.assertTrue(agent._may_take_focus(77, {77: mine}.get, classes), "the agent's own window in front")
+        self.assertFalse(agent._may_take_focus(88, {88: mine + 1}.get, classes), "someone works on that PC")
+        for shell in (99, 98, 97):
+            self.assertTrue(agent._may_take_focus(shell, lambda h: mine + 1, classes),
+                            "the desktop or taskbar in front: a presenter works without a click")
 
     def test_kept_when_the_next_row_shows_the_same_file(self):
         agent._opened_stamps[DOC_PROFILE["id"]] = "s1"
@@ -599,6 +678,7 @@ class AgentDocumentTests(unittest.TestCase):
         self.assertEqual(closed.shown, False, "closed before it was shown")
 
     def test_not_shown_by_the_agent_answers_shown_false(self):
+        agent._opened_stamps[DOC_PROFILE["id"]] = "s1"
         reply = agent._DocumentReply()
         profile = {**DOC_PROFILE, "reply": reply, "path": "C:\\Predigt\\Text.docx"}
         with patch.object(agent, "_open_document", lambda p, path: agent.__dict__["_open_document_real"](

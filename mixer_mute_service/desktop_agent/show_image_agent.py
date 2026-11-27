@@ -590,7 +590,8 @@ def _remember_video_window(profile_id: str, process_id: int, before: set, find=N
 DOCUMENT_PENDING_SECONDS = 240.0  # how long a close cancels a document still being prepared
 # Converting (waiting for another conversion included) ends well before that.
 DOCUMENT_CONVERT_SECONDS = 200.0
-# A framed window's border and title bar, for the size the page is rendered at.
+# A framed window's border and title bar at 100 %, for the first rendering;
+# once the window is placed its real client size counts (_fit_document_client).
 DOCUMENT_FRAME = (16, 39)
 
 
@@ -719,6 +720,8 @@ def _open_document(profile: dict, path: Path, screens=None, pdf_for=None, pages_
         _finish_reply(profile, False)
         return True
     except Exception as exc:  # noqa: BLE001 - DocumentError, a missing monitor, a broken file
+        if _closed_meanwhile(profile, path):
+            return True
         logger.warning("Document %s cannot be shown by the agent (%s); opened with its default app", path, exc)
         return False
     view = _DocumentView(profile, pages, placed)
@@ -726,6 +729,8 @@ def _open_document(profile: dict, path: Path, screens=None, pdf_for=None, pages_
         images = view.render(0)
     except Exception:  # noqa: BLE001 - pdfium errors
         pages.close()
+        if _closed_meanwhile(profile, path):
+            return True
         logger.exception("Document %s: first page could not be rendered; opened with its default app", path)
         return False
     if _document_superseded(profile_id, stamp):
@@ -738,6 +743,17 @@ def _open_document(profile: dict, path: Path, screens=None, pdf_for=None, pages_
                 ", ".join(f"{s['monitor']} ({s['client'][0]}x{s['client'][1]})" for s in placed))
     requests.put({"kind": "document", "id": profile_id, "view": view, "images": images,
                   "reply": profile.get("reply")})
+    return True
+
+
+def _closed_meanwhile(profile: dict, path: Path) -> bool:
+    """A failed document that was closed or started again meanwhile: no late
+    default app for it (the program has moved on)."""
+    if not _document_superseded(profile["id"], profile.get("stamp")):
+        return False
+    logger.info("Document %s (profile=%s) failed after it was closed or started again; nothing opened",
+                path, profile["id"])
+    _finish_reply(profile, False)
     return True
 
 
@@ -826,9 +842,22 @@ def _set_document_image(label, image) -> None:
     label.image = photo
 
 
-def _may_take_focus(foreground=None, window_pid=None) -> bool:
-    """Only when nothing else has the keyboard: no window in front, or one of
-    the agent's own (an image, the song, the document)."""
+# The desktop and the taskbar in front: nobody is working in a window.
+SHELL_WINDOW_CLASSES = {"Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd"}
+
+
+def _window_class(hwnd: int) -> str:
+    import ctypes
+
+    name = ctypes.create_unicode_buffer(256)
+    ctypes.windll.user32.GetClassNameW(hwnd, name, 256)
+    return name.value
+
+
+def _may_take_focus(foreground=None, window_pid=None, window_class=None) -> bool:
+    """Only when nothing else has the keyboard: no window in front, the
+    desktop or taskbar, or one of the agent's own (an image, the song, the
+    document)."""
     if os.name != "nt" and foreground is None:
         return False
     if foreground is None:
@@ -838,7 +867,8 @@ def _may_take_focus(foreground=None, window_pid=None) -> bool:
     if not foreground:
         return True
     window_pid = window_pid or _window_process_id
-    return window_pid(foreground) == os.getpid()
+    window_class = window_class or _window_class
+    return window_pid(foreground) == os.getpid() or window_class(foreground) in SHELL_WINDOW_CLASSES
 
 
 def _place_document_window(window, screen: dict, fullscreen: bool, position: str) -> None:
@@ -898,12 +928,65 @@ def _show_document(root, request: dict, may_take_focus=None) -> bool:
         window.lift()
         if os.name == "nt":
             _place_document_window(window, screen, view.fullscreen, view.position)
+    _fit_document_client(view, [window for window, _label in windows[:len(view.screens)]])
     # The keys (a presenter on this PC) go to the document, unless someone works there.
     if (may_take_focus or _may_take_focus)():
         windows[0][0].focus_force()
     logger.info("Document shown profile=%s monitors=%s fullscreen=%s position=%s pages=%s", view.profile_id,
                 [s["monitor"] for s in view.screens], view.fullscreen, view.position, view.pages.count)
     return True
+
+
+def _client_size(window) -> tuple[int, int]:
+    """The real client area of a placed window (its frame's, as Windows has it)."""
+    if os.name != "nt":
+        window.update_idletasks()
+        return window.winfo_width(), window.winfo_height()
+    import ctypes
+    from ctypes import wintypes
+
+    user32 = ctypes.windll.user32
+    user32.GetParent.argtypes = [wintypes.HWND]
+    user32.GetParent.restype = wintypes.HWND
+    user32.GetClientRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+    hwnd = window.winfo_id()
+    hwnd = user32.GetParent(hwnd) or hwnd
+    rect = wintypes.RECT()
+    if not user32.GetClientRect(hwnd, ctypes.byref(rect)):
+        return 0, 0
+    return rect.right - rect.left, rect.bottom - rect.top
+
+
+def _fit_document_client(view: _DocumentView, windows: list, client_size=None) -> bool:
+    """Tk thread: a framed window's real client size (borders and title bar
+    depend on the display scaling) replaces the guess; the page is rendered
+    again for it in the background. True when something changed."""
+    if view.fullscreen:
+        return False
+    client_size = client_size or _client_size
+    changed = False
+    for window, screen in zip(windows, view.screens):
+        actual = client_size(window)
+        if actual[0] > 1 and actual[1] > 1 and any(abs(a - b) > 2 for a, b in zip(actual, screen["client"])):
+            screen["client"] = actual
+            changed = True
+    if changed:
+        threading.Thread(target=_refresh_document, args=(view,), daemon=True).start()
+    return changed
+
+
+def _refresh_document(view: _DocumentView) -> None:
+    """The current page again (a window's size changed)."""
+    with _document_lock:
+        page = view.page
+    try:
+        images = view.render(page)
+    except Exception:  # noqa: BLE001 - hidden meanwhile, pdfium errors: the old picture stays
+        return
+    with _document_lock:
+        if _document_view is view and view.page == page:
+            requests.put({"kind": "document-page", "id": view.profile_id, "view": view, "page": page,
+                          "images": images})
 
 
 def _show_document_page(request: dict) -> None:
