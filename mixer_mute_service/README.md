@@ -80,6 +80,14 @@ miniatures, and **Standard** restores the original one.
   then finds the service current and only brings that PC's agent up to date.
   Agents from before this self-update need the one-time download the dialog
   offers (`update.cmd`); the key also shows when only the agent is behind.
+  Quick keys left of it (the same actions as in Steuerung, which keeps its
+  own): **Alles aus** (switches off what is selected under "Alles
+  ausschalten", after the same question; usable exactly when that key is, and
+  never next to Panic) and **Beamer Hide | Unhide** (the idempotent keys; the
+  lit one is the remembered state, both locked while it is unknown, an amber
+  snowflake while the beamer is frozen). Below 1300 px they show icons only and
+  the status display stacks the data age above the version, so the header
+  stays one row down to iPad portrait (1024 px) with UPDATE showing.
 - **Stage** switch (next to the title, remembered per device): like Stage
   Manager, one section fills the screen and the others sit as live miniatures
   on the left; a tap on one flies it onto the stage. The page itself never
