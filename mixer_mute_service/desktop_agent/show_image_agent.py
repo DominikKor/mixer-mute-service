@@ -3136,7 +3136,9 @@ def _show_song(root: tk.Tk, canvas: tk.Canvas, body: dict) -> None:
     shows a song there, the next slide is only drawn over the old one: the
     window is not hidden, moved, restyled or raised, so nothing behind it
     shows for a moment. Placing and styling it happen when the monitor,
-    full screen or the size change, or when it was hidden."""
+    full screen or the size change, when it was hidden, or when Windows
+    moved it away (a full-screen window is checked against its real place
+    on every slide and made topmost again)."""
     global _song_place
     _close_mirrors()
     if body["action"] == "hide":
@@ -3145,7 +3147,8 @@ def _show_song(root: tk.Tk, canvas: tk.Canvas, body: dict) -> None:
         return
     width, height, x, y = _song_window(body["monitor"], body["fullscreen"])
     place = (body["monitor"], body["fullscreen"], width, height, x, y)
-    if place == _song_place and root.pack_slaves() == [canvas] and _keeps_style(root, body["fullscreen"]):
+    if (place == _song_place and root.pack_slaves() == [canvas] and _keeps_style(root, body["fullscreen"])
+            and (not body["fullscreen"] or _song_window_kept(root, x, y, width, height))):
         root.configure(background=body["style"]["background_color"])
         _draw_slide(canvas, width, height, body)
         if not body["fullscreen"]:
@@ -3167,6 +3170,36 @@ def _show_song(root: tk.Tk, canvas: tk.Canvas, body: dict) -> None:
     _song_place = place
     logger.info("Song %s monitor=%s fullscreen=%s size=%sx%s", body["action"], body["monitor"],
                 body["fullscreen"], width, height)
+
+
+def _song_window_kept(root, x: int, y: int, width: int, height: int) -> bool:
+    """Windows: the full-screen song window is still exactly on its monitor
+    (Windows moves it away when the beamer drops its signal for a moment);
+    then it is made topmost again (another topmost window, a document or
+    the taskbar, may be above it now) without moving, sizing, activating or
+    redrawing it. False when it was moved: it is placed again."""
+    import ctypes
+    from ctypes import wintypes
+
+    user32 = ctypes.windll.user32
+    user32.GetParent.argtypes = [wintypes.HWND]
+    user32.GetParent.restype = wintypes.HWND
+    user32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+    user32.SetWindowPos.argtypes = [
+        wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, wintypes.UINT,
+    ]
+    hwnd = root.winfo_id()
+    hwnd = user32.GetParent(hwnd) or hwnd
+    rect = wintypes.RECT()
+    if not user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+        return False
+    if (rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top) != (x, y, width, height):
+        logger.info("Song window was moved to %s,%s,%s,%s: placing it again", rect.left, rect.top, rect.right,
+                    rect.bottom)
+        return False
+    # HWND_TOPMOST, SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE
+    user32.SetWindowPos(hwnd, -1, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010)
+    return True
 
 
 def _place_song_window(root, x: int, y: int, width: int, height: int, restyled: bool) -> None:

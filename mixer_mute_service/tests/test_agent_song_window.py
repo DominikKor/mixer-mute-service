@@ -5,7 +5,9 @@ again, show it and place it with SWP_FRAMECHANGED: for a moment the app
 behind it showed. Now a slide change only redraws the canvas (the new items
 first, then the old ones go) while the window stays where and as it is;
 it is hidden and placed again only when the monitor, full screen or size
-change, or after it was hidden. The same for images that follow one another
+change, or after it was hidden. A full-screen window is checked against its
+real place on every slide (Windows moves it away when the beamer drops its
+signal: placed again) and made topmost again without moving or redrawing. The same for images that follow one another
 (and their windows on further monitors). Checked with the real Tk window and
 spies around the Tk and Windows calls; skips without tkinter or a display.
 """
@@ -55,11 +57,32 @@ class SongWindowTests(unittest.TestCase):
         for name in WINDOW_CALLS:
             original = getattr(self.root, name)
             setattr(self.root, name, self._spy(name, original))
-        self.placed = Mock()
+        # Windows: placing the window puts it there; GetWindowRect reports where it is.
+        self.actual = None
+        self.placed = Mock(side_effect=self._place)
+        self.windll = Mock()
+        self.windll.user32.GetParent.return_value = 0
+        self.windll.user32.GetWindowRect.side_effect = self._window_rect
         for target, value in (("_song_window", song_window), ("_place_song_window", self.placed)):
             patcher = patch.object(agent, target, value)
             patcher.start()
             self.addCleanup(patcher.stop)
+        patcher = patch.object(ctypes, "windll", self.windll, create=True)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _place(self, _root, x, y, width, height, _restyled):
+        self.actual = (x, y, x + width, y + height)
+
+    def _window_rect(self, _hwnd, pointer):
+        if self.actual is None:
+            return 0
+        rect = pointer._obj
+        rect.left, rect.top, rect.right, rect.bottom = self.actual
+        return 1
+
+    def topmost_calls(self):
+        return [c.args[1:] for c in self.windll.user32.SetWindowPos.call_args_list]
 
     def _spy(self, name, original):
         def spy(*args, **kwargs):
@@ -83,7 +106,9 @@ class SongWindowTests(unittest.TestCase):
         self.show(text="Dritte Zeile")
         self.show(text="Vierte Zeile")
         self.assertEqual(self.calls, [])                    # no withdraw, frame, topmost, geometry, update, raise
-        self.placed.assert_not_called()                     # no SetWindowPos, no SWP_FRAMECHANGED
+        self.placed.assert_not_called()                     # not placed again, no SWP_FRAMECHANGED
+        # Only made topmost again: HWND_TOPMOST, SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE.
+        self.assertEqual(self.topmost_calls(), [(-1, 0, 0, 0, 0, 0x0013)] * 2)
         self.assertIn("Vierte Zeile", self.texts())
         self.assertNotIn("Dritte Zeile", self.texts())
         self.assertEqual(self.root.state(), "normal")
@@ -134,6 +159,33 @@ class SongWindowTests(unittest.TestCase):
         self.calls.clear()
         self.show(monitor=2, fullscreen=False, text="Weiter")
         self.assertEqual(self.calls, ["lift"])              # framed: only raised, never hidden or moved
+
+    def test_a_window_windows_moved_away_is_placed_again(self):
+        self.show(monitor=2)
+        self.placed.reset_mock()
+        self.actual = (0, 0, 800, 600)                      # the beamer dropped out: moved to the main monitor
+        self.calls.clear()
+        self.show(monitor=2, text="Weiter")
+        self.placed.assert_called_once_with(self.root, 1000, 0, 800, 600, False)
+        self.assertNotIn("withdraw", self.calls)            # placed, not hidden
+        self.assertIn("Weiter", self.texts())
+        self.placed.reset_mock()
+        self.show(monitor=2, text="Danach")                 # back in place: the quick way again
+        self.placed.assert_not_called()
+
+    def test_an_unknown_window_place_is_placed_again(self):
+        self.show()
+        self.placed.reset_mock()
+        self.windll.user32.GetWindowRect.side_effect = lambda *_args: 0
+        self.show(text="Weiter")
+        self.placed.assert_called_once()
+
+    def test_a_framed_window_is_not_checked_or_made_topmost(self):
+        self.show(fullscreen=False)
+        self.windll.reset_mock()
+        self.show(fullscreen=False, text="Weiter")
+        self.windll.user32.GetWindowRect.assert_not_called()
+        self.windll.user32.SetWindowPos.assert_not_called()
 
     def test_an_image_in_between_sets_the_song_window_up_again(self):
         self.show()
