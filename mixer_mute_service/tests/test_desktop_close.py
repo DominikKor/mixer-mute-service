@@ -134,6 +134,7 @@ class AgentCloseAnswerTests(unittest.TestCase):
         agent._opened_windows.clear()
         agent._unknown_windows.clear()
         agent._opened_stamps.clear()
+        agent._video_processes.clear()
         agent._shown_image = agent._shown_image_stamp = None
 
     def test_an_image_still_shown(self):
@@ -162,6 +163,47 @@ class AgentCloseAnswerTests(unittest.TestCase):
             agent._remember_window("spotlight", 100, 7, {100: 7}.get)
             answer = self.close("spotlight")
         self.assertEqual((answer["windows_closed"], answer["was_open"]), (1, True))
+
+    class Mpv:
+        """The agent's own mpv process (its window may never have been found)."""
+        pid = 4711
+
+        def __init__(self):
+            self.ended = False
+
+        def poll(self):
+            return 0 if self.ended else None
+
+        def terminate(self):
+            self.ended = True
+
+    def test_an_mpv_whose_window_was_never_found_ends(self):
+        mpv = self.Mpv()
+        agent._video_processes["spotlight"] = mpv
+        answer = self.close("spotlight")
+        self.assertTrue(mpv.ended, "the agent's own process is ended")
+        self.assertEqual((answer["windows_closed"], answer["was_open"]), (1, True))
+        self.assertNotIn("spotlight", agent._video_processes)
+        self.assertEqual(self.close("spotlight")["was_open"], False, "the second time: War nicht offen")
+
+    def test_an_mpv_started_again_since_keeps_playing(self):
+        mpv = self.Mpv()
+        agent._video_processes["spotlight"] = mpv
+        agent._opened_stamps["spotlight"] = "s2"
+        answer = self.close("spotlight", stamp="s1")
+        self.assertFalse(mpv.ended, "the close names an older start: the newer video plays on")
+        self.assertIs(agent._video_processes["spotlight"], mpv)
+        self.assertEqual(answer["windows_closed"], 0)
+
+    def test_an_mpv_with_its_window_closes_by_its_window(self):
+        mpv = self.Mpv()
+        agent._video_processes["spotlight"] = mpv
+        with patch.object(agent, "_window_process_id", {100: 4711}.get), \
+                patch.object(agent, "_post_close", lambda hwnd: True):
+            agent._remember_window("spotlight", 100, 4711, {100: 4711}.get)
+            answer = self.close("spotlight")
+        self.assertFalse(mpv.ended, "its window's close lets mpv end by itself")
+        self.assertEqual(answer["windows_closed"], 1)
 
     def test_a_window_of_an_app_the_agent_did_not_start(self):
         agent._unknown_windows.add("spotlight")

@@ -554,7 +554,7 @@ class AgentCloseTests(unittest.TestCase):
         video = {"title": "Spotlight", "monitor": 2, "fullscreen": True, "position": "top-left"}
         with patch.object(agent, "agent_log_directory", return_value=WinPath("/tmp")):
             command = agent._video_command("mpv.exe", WinPath("I:/MS/01_Video.mp4"), video, 0)
-            self.assertTrue({"--screen=0", "--fs-screen=0", "--fs", "--keep-open=yes"} <= set(command), command)
+            self.assertTrue({"--screen=0", "--fs-screen=0", "--fs", "--ontop", "--keep-open=yes"} <= set(command), command)
             self.assertFalse(any("screen-name" in c or c.startswith("--geometry") for c in command),
                              "mpv on Windows knows screens by number only")
             self.assertEqual(command[-2:], ["--", str(WinPath("I:/MS/01_Video.mp4"))])
@@ -611,10 +611,12 @@ class AgentCloseTests(unittest.TestCase):
                 patch.object(agent, "agent_log_directory", return_value=WinPath("/tmp")), \
                 patch.object(agent.subprocess, "Popen", popen), \
                 patch.object(agent, "_find_window", return_value=200), \
+                patch.object(agent, "_bring_to_front") as front, patch.object(agent, "_allow_foreground"), \
                 self.assertLogs(agent.logger, "INFO") as logs:
             agent._launch_video("mpv.exe", WinPath("I:/MS/01_Video.mp4"), video, set())
         self.assertEqual(agent._opened_windows, {"ms": {(200, 8)}}, "the new window is remembered, not placed")
         self.assertTrue(Starting.ended, "the earlier mpv still starting is ended too")
+        front.assert_called_once_with(200, 8)
         self.assertIsInstance(agent._video_processes["ms"], Process)
         agent._video_processes.clear()
         text = "\n".join(logs.output)
@@ -628,12 +630,84 @@ class AgentCloseTests(unittest.TestCase):
             self.assertIn("ms", agent._cancelled)
             closed = []
             with patch.object(agent, "_window_process_id", {300: 9}.get), \
-                    patch.object(agent, "_post_close", lambda h: closed.append(h) or True):
+                    patch.object(agent, "_post_close", lambda h: closed.append(h) or True), \
+                    patch.object(agent, "_bring_to_front") as front:
                 agent._remember_video_window("ms", 9, set(), find=lambda pid, before: 300)
             self.assertEqual((closed, "ms" in agent._cancelled), ([300], False))
+            front.assert_not_called()  # closed at once: not brought to the front first
         finally:
             agent._launching.clear()
             agent._cancelled.clear()
+
+    class FakeWindows:
+        """user32 / kernel32 for _bring_to_front: records the calls; focus is
+        refused for the first `refusals` SetForegroundWindow calls."""
+
+        def __init__(self, refusals=0):
+            self.calls, self.refusals = [], refusals
+
+        def __getattr__(self, name):
+            def call(*args):
+                self.calls.append((name, args))
+                if name == "SetForegroundWindow":
+                    self.refusals -= 1
+                    return 1 if self.refusals < 0 else 0
+                return {"GetForegroundWindow": 555, "GetWindowThreadProcessId": 77,
+                        "GetCurrentThreadId": 11, "AttachThreadInput": 1}.get(name, 1)
+            return call
+
+    TOP = (300, -1, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0040 | 0x4000)  # HWND_TOPMOST, no move/size, shown, async
+
+    def front(self, api, *, allowed=True, foreground_pid=1):
+        return agent._bring_to_front(300, 9, api=(api, api), may_take_focus=lambda foreground: allowed,
+                                     window_pid=lambda hwnd: foreground_pid)
+
+    def test_the_video_window_comes_on_top_and_in_focus(self):
+        api = self.FakeWindows()
+        self.assertTrue(self.front(api))
+        self.assertEqual(api.calls[0], ("SetWindowPos", self.TOP))
+        self.assertEqual([name for name, _ in api.calls], ["SetWindowPos", "GetForegroundWindow", "SetForegroundWindow"])
+
+    def test_another_program_in_front_keeps_the_focus(self):
+        api = self.FakeWindows()
+        with self.assertLogs(agent.logger, "INFO") as logs:
+            self.assertFalse(self.front(api, allowed=False))
+        self.assertEqual([name for name, _ in api.calls], ["SetWindowPos", "GetForegroundWindow"],
+                         "on top, but no focus taken from Office, Explorer, ...")
+        self.assertIn("keeps the focus", "\n".join(logs.output))
+
+    def test_mpv_already_in_focus(self):
+        api = self.FakeWindows()
+        self.assertTrue(self.front(api, foreground_pid=9))
+        self.assertNotIn("SetForegroundWindow", [name for name, _ in api.calls])
+
+    def test_focus_refused_tries_the_input_thread_once_and_never_presses_keys(self):
+        api = self.FakeWindows(refusals=1)
+        self.assertTrue(self.front(api))
+        names = [name for name, _ in api.calls]
+        self.assertIn(("AttachThreadInput", (11, 77, True)), api.calls)
+        self.assertEqual(api.calls[-1], ("AttachThreadInput", (11, 77, False)), "detached again")
+        self.assertIn("ShowWindowAsync", names)
+        stubborn = self.FakeWindows(refusals=5)
+        with self.assertLogs(agent.logger, "INFO") as logs:
+            self.assertFalse(self.front(stubborn))
+        for fake in (api, stubborn):
+            self.assertFalse([name for name, _ in fake.calls if name in ("keybd_event", "SendInput")],
+                             "no key events: a lone Alt would leave Office in menu mode")
+        self.assertEqual([name for name, _ in stubborn.calls].count("SetForegroundWindow"), 2)
+        self.assertIn("stays on top", "\n".join(logs.output))
+
+    def test_a_found_video_window_is_brought_to_the_front(self):
+        with patch.object(agent, "_window_process_id", {400: 9}.get), patch.object(agent, "_bring_to_front") as front:
+            agent._remember_video_window("spot", 9, set(), find=lambda pid, before: 400)
+        front.assert_called_once_with(400, 9)
+        self.assertEqual(agent._opened_windows["spot"], {(400, 9)})
+
+    def test_without_windows_apis_nothing_breaks(self):
+        with patch.object(agent, "_win32", side_effect=AttributeError("no windll")), \
+                self.assertLogs(agent.logger, "ERROR"):
+            self.assertFalse(agent._bring_to_front(300, 9))
+            agent._allow_foreground()
 
     def test_closes_only_the_profiles_own_windows_still_there(self):
         owners = {100: 7, 101: 7, 102: 7, 200: 9}

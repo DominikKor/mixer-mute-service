@@ -670,10 +670,17 @@ Ordner ohne Jahr, z. B. `3.Quartal`, werden nicht mehr beachtet).
 Das Profilfenster zeigt das aktuelle Jahr, Quartal und die Woche.
 Videos (`.mp4`, `.mov`, `.mkv`, …; ein Datei-Profil wie Mission Spotlight
 oder eine Datei im Programmpunkt) spielt der Agent selbst in **mpv**, wenn er
-dort eine echte `mpv.exe` findet (nicht MPV.NET, keine Store-App): Vollbild per
-mpv (`--fs`) auf dem eingestellten Monitor (Monitor N wie bei Bildern; mpv
-bekommt dessen Nummer in Windows' eigener Reihenfolge, `--screen` /
-`--fs-screen`, denn `--screen-name` kennt mpv unter Windows nicht). Am Ende bleibt
+dort eine echte `mpv.exe` findet (nicht MPV.NET, keine Store-App) auf dem
+eingestellten Monitor (Monitor N wie bei Bildern; mpv bekommt dessen Nummer in
+Windows' eigener Reihenfolge, `--screen` / `--fs-screen`, denn `--screen-name`
+kennt mpv unter Windows nicht), bei Vollbild-Profilen im Vollbild per mpv
+(`--fs`). Das Video liegt immer **über allen anderen Fenstern** (`--ontop`, und
+der Agent setzt das Fenster nach dem Start noch einmal nach oben). Den Fokus
+nimmt es nur, wenn sonst niemand die Tastatur hat (nichts, der Desktop, die
+Taskleiste oder ein Fenster des Agenten vorne, auf dem Beamer-PC der
+Normalfall); ein anderes Programm vorne behält ihn. `--focus-on=open` ist mpvs
+Standard und wird nicht genannt, weil ältere mpv-Versionen unbekannte Optionen
+ablehnen und dann gar nicht starten. Am Ende bleibt
 das letzte Bild stehen, bis der nächste Programmpunkt es schließt. So kennt der
 Agent das Fenster, schließt es, wenn das Programm weitergeht, und startet nie
 zwei Player für dasselbe Profil. Befehlszeile und Monitor stehen im Agent-Log.
