@@ -212,3 +212,13 @@ button.song-target-toggle[aria-pressed="true"] .song-target-box::after {
   .song-target { grid-template-columns: 1fr; }
   .song-target-monitors .monitor-key { flex: 1; width: auto; }
 }
+
+/* "Aus": the calm stop key of the page (css/app.css, "Stop keys") */
+.song-dock button.sd-hide {
+  display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+  color: #ffd9d4; border-color: var(--stop-calm-border); background: var(--stop-calm-bg);
+}
+.song-dock button.sd-hide::before { content: ""; flex: none; width: 10px; height: 10px; border-radius: 2.5px; background: var(--stop-glyph); }
+.song-dock button.sd-hide:hover:not(:disabled), .song-dock button.sd-hide:active:not(:disabled) {
+  color: #fff; filter: none; border-color: var(--stop-live-border); background: var(--stop-live-bg);
+}
