@@ -7,7 +7,7 @@ import logging
 import re
 import uuid
 from copy import deepcopy
-from datetime import datetime, time as clock_time
+from datetime import datetime, time as clock_time, timedelta
 from pathlib import Path
 from typing import List, Optional
 
@@ -25,6 +25,23 @@ _DESCRIPTION_FIELDS = ("playback_description", "translation_description", "lyric
 MAX_DESKTOP_PROFILES = 16  # Desktop steps of a row (app/row_files.py MAX_STEPS)
 MAX_OBS_SCENE_LENGTH = 100
 _SHORTCUT_ID_RE = re.compile(r"^[0-9a-f]{32}$")
+
+
+def scheduled_occurrence(time_text: str, now: datetime, anchor: Optional[datetime] = None) -> datetime:
+    """The moment a row's "HH:MM" means. A row is meant for ONE day, and the list is sorted by
+    time within a day, so:
+    - With an anchor (the scheduled moment of a row that already ran in this run) it is that
+      anchor's day: the rows of a run stay together, also when the run is rehearsed at another
+      time of day or runs past midnight (no flipping at 12 hours between neighbours).
+    - Without one it is the occurrence closest to now: yesterday, today or tomorrow, whichever
+      is nearest (10:30 at 11:00 is 30 min late, 00:10 at 23:50 is in 20 min); exactly 12 h
+      away counts as today.
+    The same rule is in js/program.js (programDue)."""
+    clock = clock_time.fromisoformat(time_text)
+    if anchor is not None:
+        return datetime.combine(anchor.date(), clock, tzinfo=now.tzinfo)
+    days = [now.date() + timedelta(days=shift) for shift in (0, -1, 1)]
+    return min((datetime.combine(day, clock, tzinfo=now.tzinfo) for day in days), key=lambda at: abs(at - now))
 
 
 class ProgramItemError(ValueError):
@@ -507,19 +524,31 @@ class ProgramItemStore:
             self._persist()
             return True
 
+    def _run_anchor(self, now: datetime, skip_id: str) -> Optional[datetime]:
+        """The scheduled moment of the row that started last today (not skip_id): what it was
+        meant for is "played at - delay". None when no other row ran today."""
+        today = now.date().isoformat()
+        ran = [item for item in self._items if item["id"] != skip_id and isinstance(item.get("last_played_at"), str)
+               and item["last_played_at"].startswith(today) and isinstance(item.get("last_delay_seconds"), (int, float))]
+        if not ran:
+            return None
+        last = max(ran, key=lambda item: item["last_played_at"])
+        try:
+            return datetime.fromisoformat(last["last_played_at"]) - timedelta(seconds=last["last_delay_seconds"])
+        except ValueError:
+            return None
+
     async def mark_played(self, item_id: str, now: Optional[datetime] = None) -> Optional[dict]:
         now = now or datetime.now().astimezone()
         async with self._lock:
             item = next((entry for entry in self._items if entry["id"] == item_id), None)
             if item is None:
                 return None
-            scheduled = datetime.combine(now.date(), clock_time.fromisoformat(item["time"]), tzinfo=now.tzinfo)
-            delay = (now - scheduled).total_seconds()
-            if delay > 12 * 60 * 60:
-                delay -= 24 * 60 * 60
-            elif delay < -12 * 60 * 60:
-                delay += 24 * 60 * 60
-            item["last_delay_seconds"] = round(delay)
+            try:
+                scheduled = scheduled_occurrence(item["time"], now, self._run_anchor(now, item_id))
+                item["last_delay_seconds"] = round((now - scheduled).total_seconds())
+            except ValueError:  # a row without a usable time has no delay
+                item["last_delay_seconds"] = None
             item["last_played_at"] = now.isoformat(timespec="seconds")
             self._persist()
             return deepcopy(item)

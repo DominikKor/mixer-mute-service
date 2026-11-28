@@ -1316,6 +1316,35 @@ function clockText(date) {
   return [date.getHours(), date.getMinutes(), date.getSeconds()].map(n => String(n).padStart(2, "0")).join(":");
 }
 
+// The moment a row's "HH:MM" means (the same rule as scheduled_occurrence in app/program_items.py):
+// with an anchor (when a row that ran in this run was scheduled) the anchor's day, so the rows of
+// a run stay together; else the occurrence closest to now (yesterday, today or tomorrow), exactly
+// 12 h away counts as today.
+function programDue(time, now, anchor) {
+  const [h, m] = time.split(":").map(Number);
+  const on = (base, shift) => new Date(base.getFullYear(), base.getMonth(), base.getDate() + shift, h, m, 0, 0);
+  if (anchor) return on(anchor, 0);
+  return [0, -1, 1].map(shift => on(now, shift)).reduce((best, at) => Math.abs(at - now) < Math.abs(best - now) ? at : best);
+}
+
+// When the row that started last today was scheduled ("started at" minus its delay), or null.
+function programRunAnchor() {
+  const current = PROGRAM_ITEMS.find(item => item.id === PROGRAM_STATUS.current_id);
+  if (!current || !playedToday(current) || typeof current.last_delay_seconds !== "number") return null;
+  const at = new Date(current.last_played_at);
+  return isNaN(at) ? null : new Date(at.getTime() - current.last_delay_seconds * 1000);
+}
+
+// Only the duration: "12:30" (m:ss) to go, "1:05:30" (h:mm:ss) from an hour on; late with a minus
+// in front ("-12:30", "-1:05:30"; the cue turns red as well, class "late").
+function programCountdownText(diff) {
+  const abs = Math.abs(diff);
+  const pad = n => String(n).padStart(2, "0");
+  const text = abs >= 3600 ? `${Math.floor(abs / 3600)}:${pad(Math.floor(abs % 3600 / 60))}:${pad(abs % 60)}`
+    : `${Math.floor(abs / 60)}:${pad(abs % 60)}`;
+  return diff < 0 ? `-${text}` : text;
+}
+
 // Clock, the next row and the time until it is due.
 function updateProgramCue() {
   const stop = $("program-stop-btn");
@@ -1340,19 +1369,14 @@ function updateProgramCue() {
   $("program-cue-label").textContent = "Als Nächstes";
   $("program-cue-title").textContent = `${next.time} · ${programRowTitle(next)}${next.person ? " · " + next.person : ""}`;
   go.title = `„${next.title}“ starten`;
-  const [h, m] = next.time.split(":").map(Number);
-  const due = new Date(now);
-  due.setHours(h, m, 0, 0);
-  let diff = Math.round((due - now) / 1000);
-  if (diff < -12 * 3600) diff += 24 * 3600;
-  if (diff > 12 * 3600) diff -= 24 * 3600;
-  const abs = Math.abs(diff);
-  // Durations, not clock times: "4:12 min", "25 min", "1 h 05 min".
-  const text = abs >= 3600
-    ? `${Math.floor(abs / 3600)} h ${String(Math.floor(abs % 3600 / 60)).padStart(2, "0")} min`
-    : abs >= 600 ? `${Math.floor(abs / 60)} min`
-    : `${Math.floor(abs / 60)}:${String(abs % 60).padStart(2, "0")} min`;
-  count.textContent = diff >= 0 ? `in ${text}` : `seit ${text} fällig`;
+  if (!/^\d{2}:\d{2}$/.test(next.time || "")) {  // a row without a time has nothing to count down to
+    count.textContent = "";
+    count.classList.remove("late");
+    return;
+  }
+  const due = programDue(next.time, now, programRunAnchor());
+  const diff = Math.round((due - now) / 1000);
+  count.textContent = programCountdownText(diff);
   count.classList.toggle("late", diff < 0);
 }
 
