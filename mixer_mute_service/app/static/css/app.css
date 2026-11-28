@@ -1480,64 +1480,96 @@ button.person-edit-done { margin-left: auto; }
 /* Each title with its keys: they wrap together (iPad portrait) */
 .beamer-state-group { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; min-width: 0; }
 button.beamer-state-key { min-width: 88px; min-height: 44px; padding: 6px 12px; }
-/* "Alles ausschalten": a Steuerung category of its own. Each target is a key
-   whose LED turns red when it belongs to the all-off; the red console key
-   in the head switches them off. Agent PCs carry a small power key in the
-   corner to shut down just that PC. */
+/* "Alles ausschalten": a Steuerung card of its own.
+   - Every target is a compact chip (48 px): a round power sign shows its
+     state (grey: stays on; lit red: "Ausschalten" switches it off, the
+     chip tinted red), the name on one line, IP or "Projektor" below; a tap
+     toggles it (a hidden checkbox carries the state).
+   - Agent PCs: a 44 px key at the chip's right edge shuts down just that PC
+     (with "Bearbeiten" the chip's "⋮" stands there instead).
+   - "Ausschalten" in the head: the stop family's red while something is
+     chosen, grey while disabled; it asks first. */
 .power-off-panel {
-  display: grid; gap: 8px; min-width: 0; margin: 0 0 12px; padding: 4px 14px 14px; border-radius: var(--r-card);
+  display: grid; gap: 10px; min-width: 0; margin: 0 0 12px; padding: 4px 14px 12px; border-radius: var(--r-card);
   border: 1px solid #08090b; background: var(--panel-bg); box-shadow: var(--panel-shadow);
 }
 .power-off-head { display: flex; align-items: center; gap: 12px; min-height: 52px; }
 .power-off-title {
   flex: 1; display: flex; align-items: center; gap: 10px; min-width: 0; margin: 0; padding: 4px 2px;
-  color: #9aa3b2; font-size: 12px; font-weight: 800; letter-spacing: .16em; text-transform: uppercase; text-shadow: 0 1px 0 #000;
+  color: var(--title); font-size: 12px; font-weight: 800; letter-spacing: .16em; text-transform: uppercase; text-shadow: 0 1px 0 #000;
 }
 .power-off-title::after {
   content: ""; flex: 1; height: 1px; box-shadow: 0 1px 0 rgba(0,0,0,.6);
   background: linear-gradient(to right, #343a45, transparent);
 }
 button.power-off-button {
-  display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 16px 0 12px;
+  flex: none; display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 44px; padding: 0 16px 0 13px;
   font-weight: 800; letter-spacing: .08em; text-transform: uppercase;
 }
+button.power-off-button:not(:disabled) {
+  color: #fff; border-color: var(--stop-live-border); background: var(--stop-live-bg);
+  box-shadow: var(--stop-live-glow), inset 0 1px 0 rgba(255,255,255,.3), 0 2px 3px rgba(0,0,0,.55);
+}
+button.power-off-button:disabled { color: #9aa1ad; border-color: #07080a; background: linear-gradient(to bottom, #3b4049, #2b2f36 55%, #24272d); }
 button.power-off-button svg, button.power-agent-shutdown svg { width: 16px; height: 16px; flex-shrink: 0; }
-.power-off-targets { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
-.power-tile { position: relative; display: flex; min-width: 0; }
+.power-off-targets { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 240px), 1fr)); gap: 8px; }
+/* The chip: the target key and (agent PCs) the shutdown key, side by side */
+.power-tile {
+  position: relative; display: flex; align-items: stretch; min-width: 0; min-height: 48px; border-radius: var(--r-key);
+  border: 1px solid #07080a; background: linear-gradient(to bottom, #343941, #292d33);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.1), 0 2px 3px rgba(0,0,0,.5);
+}
+.power-tile:has(input:checked) {
+  border-color: rgba(255, 92, 74, .55); background: linear-gradient(to bottom, #43282a, #33201f);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.08), 0 0 0 1px rgba(255, 80, 60, .15), 0 2px 3px rgba(0,0,0,.5);
+}
 label.power-off-target {
-  position: relative; flex: 1; display: flex; flex-direction: column; justify-content: center; gap: 4px; min-width: 0; min-height: 64px;
-  padding: 10px 12px 10px 24px; border-radius: 6px; border: 1px solid #07080a; cursor: pointer; color: #c9ced6;
-  background: linear-gradient(to bottom, #3b4049, #2b2f36 55%, #24272d);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.13), inset 0 -2px 0 rgba(0,0,0,.3), 0 2px 3px rgba(0,0,0,.55);
+  position: relative; flex: 1; display: grid; grid-template-columns: 24px minmax(0, 1fr); align-items: center; column-gap: 9px;
+  min-width: 0; min-height: 46px; padding: 5px 10px; border-radius: var(--r-key); cursor: pointer; color: #c9ced6;
   -webkit-tap-highlight-color: transparent; user-select: none;
 }
-.power-tile.agent label.power-off-target { padding-right: 44px; }
-label.power-off-target:hover { color: #fff; filter: brightness(1.12); }
-label.power-off-target:active { transform: translateY(1px); box-shadow: inset 0 1px 3px rgba(0,0,0,.55), 0 1px 1px rgba(0,0,0,.5); }
+label.power-off-target:hover { color: #fff; background: rgba(255,255,255,.035); }
+label.power-off-target:active { background: rgba(255,255,255,.06); }
 .power-off-target input { position: absolute; opacity: 0; width: 1px; height: 1px; margin: 0; pointer-events: none; }
-label.power-off-target:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
-label.power-off-target::before {  /* LED: dark = stays on, red = switched off with "Ausschalten" */
-  content: ""; position: absolute; left: 10px; top: 50%; width: 7px; height: 7px; margin-top: -3.5px; border-radius: 50%;
-  background: #3a3f47; box-shadow: inset 0 1px 1px rgba(0,0,0,.6);
-}
+label.power-off-target:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: -2px; }
 label.power-off-target:has(input:checked) { color: #fff; }
-label.power-off-target:has(input:checked)::before { background: #ff4b3a; box-shadow: 0 0 6px rgba(255,75,58,.85); }
-label.power-off-target:has(input:disabled) { cursor: progress; filter: brightness(.8); }
-.power-off-name {
-  min-width: 0; overflow-wrap: break-word; -webkit-hyphens: auto; hyphens: auto;
-  font-size: 12px; font-weight: 800; line-height: 1.25; letter-spacing: .06em; text-transform: uppercase;
+label.power-off-target:has(input:disabled) { cursor: progress; opacity: .75; }
+/* The state sign: grey ring = stays on, lit red disc = switched off with "Ausschalten" */
+.power-off-state {
+  grid-row: 1 / 3; display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%;
+  color: #8a929e; border: 1px solid #4a505b; background: rgba(0,0,0,.25);
 }
-.power-off-meta { font: 600 10px/1 var(--mono); color: #7f8b98; overflow-wrap: anywhere; }
+.power-off-state svg { width: 14px; height: 14px; }
+label.power-off-target:has(input:checked) .power-off-state {
+  color: #fff; border-color: var(--stop-live-border); background: var(--stop-live-bg); box-shadow: 0 0 10px rgba(255, 80, 60, .35);
+}
+.power-off-name {  /* one line; the full name: the chip's title, and its field when renamed */
+  grid-column: 2; min-width: 0; font-size: 13px; font-weight: 700; line-height: 1.2;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.power-off-meta {
+  grid-column: 2; min-width: 0; margin-top: 2px; font: 600 10px/1.2 var(--mono); color: #7f8b98;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+label.power-off-target:has(input:checked) .power-off-meta { color: #d9a7a0; }
+/* Just this PC: a key of its own at the chip's right edge */
 button.power-agent-shutdown {
-  position: absolute; top: 0; right: 0; width: 44px; height: 44px; padding: 7px 7px 0 0;
-  display: flex; align-items: flex-start; justify-content: flex-end;
-  color: #6f8a93; background: none; border: none; box-shadow: none; transition: color .12s;
+  flex: none; display: grid; place-items: center; width: 44px; min-height: 44px; margin: 1px 1px 1px 0; padding: 0;
+  border-radius: 0 var(--r-key) var(--r-key) 0; border: none; border-left: 1px solid rgba(0,0,0,.45);
+  color: #8a929e; background: none; box-shadow: inset 1px 0 0 rgba(255,255,255,.05); transition: color .12s, background-color .12s;
 }
-button.power-agent-shutdown:hover:not(:disabled) { color: #ff8576; filter: none; }
-button.power-agent-shutdown:active:not(:disabled) { transform: none; box-shadow: none; }
+button.power-agent-shutdown:hover:not(:disabled), button.power-agent-shutdown:active:not(:disabled) {
+  color: #ff8576; filter: none; background: rgba(255, 92, 74, .1);
+}
+button.power-agent-shutdown:active:not(:disabled) { transform: none; }
+/* "Bearbeiten": the chip's "⋮" in the same place */
+.power-tile button.tile-menu-btn {
+  position: static; flex: none; align-self: center; width: 44px; height: 44px; padding: 0; display: grid; place-items: center;
+  border-radius: var(--r-key);
+}
 .power-off-status { min-height: 15px; color: var(--lcd-dim); font: 600 11px/1.4 var(--mono); }
 .power-off-status.bad { color: #ff8576; }
-@container section (max-width: 712px) { .power-off-targets { grid-template-columns: repeat(auto-fill, minmax(124px, 1fr)); } }
+
 .beamer-state-current { margin-left: auto; color: var(--lcd-dim); font: 600 11px/1.35 var(--mono); }
 .companion-categories { display: grid; gap: 12px; }
 .companion-category {
@@ -1906,7 +1938,7 @@ button.light-pick-key[aria-pressed="true"] .light-pick-now { color: #cfe2ff; }
 /* ---- Renaming in place (js/rename.js) ------------------------------------------ */
 .inline-rename { flex: 1; min-width: 0; min-height: 44px; }
 .companion-category-head .inline-rename { max-width: 360px; }
-.power-tile .inline-rename { width: 100%; min-height: 64px; }
+.power-tile .inline-rename { width: 100%; min-height: 46px; }
 .companion-button-item .inline-rename { width: 100%; min-height: 64px; }
 .tp-item .inline-rename { width: 100%; min-height: 52px; }
 .camera-preset-slot { display: grid; min-width: 0; }

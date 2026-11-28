@@ -120,7 +120,7 @@ function renderPowerOffConfig(data) {
     return;
   }
   const selected = new Set(config.selected_targets || []);
-  // One key per target; tapping it toggles whether "Ausschalten" includes it
+  // One chip per target; tapping it toggles whether "Ausschalten" includes it
   // (a hidden checkbox inside the key carries the state).
   const addTarget = (name, meta, checked, data, nameId, defaultName) => {
     const tile = document.createElement("div");
@@ -143,7 +143,12 @@ function renderPowerOffConfig(data) {
     sub.className = "power-off-meta";
     sub.textContent = meta;
     key.title = `${name}: ${checked ? "wird mit ausgeschaltet" : "bleibt an"} – tippen zum Umschalten`;
-    key.append(input, title, sub);
+    // The state sign (css: .power-off-state): grey = stays on, red = switched off.
+    const state = document.createElement("span");
+    state.className = "power-off-state";
+    state.setAttribute("aria-hidden", "true");
+    state.innerHTML = ICON_POWER;
+    key.append(input, state, title, sub);
     tile.append(key);
     // Renaming (its "⋮", shown with "Bearbeiten"): stored on the service for all devices.
     const menu = menuButton(`${name}: umbenennen`, `power:${nameId}`);
