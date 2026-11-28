@@ -159,7 +159,14 @@ miniatures, and **Standard** restores the original one.
   (`areas: {mixer: {ok, reason}, …}`, `ok`, `partial`) and the page shows
   one short line for what did not work ("„Predigt“ gestartet – Mischpult:
   nicht verbunden; Licht: keine Antwort"). The delay records the click
-  offset from the planned time. As soon as a row starts (Play, **Weiter**), the desktop
+  offset from the planned time. A row's `HH:MM` means one moment: with no other row
+  started today the occurrence closest to now (yesterday, today or tomorrow: 10:30 at
+  11:00 is "30 min zu spät", 00:10 at 23:50 is "in 20 min"; exactly 12 h away counts as
+  today); once a row has started today the rows of the run stay on that row's day, so
+  a rehearsal at another time of day or a run past midnight does not flip between
+  neighbours. The cue shows "in 12 min" / "12 min zu spät", from an hour on "in 1:05 h"
+  / "1:05 h zu spät" (`scheduled_occurrence` in app/program_items.py, `programDue` in
+  js/program.js). As soon as a row starts (Play, **Weiter**), the desktop
   profiles the rows before started stop, unless the new row starts them
   itself (app/profile_stops.py): music fades out with its profile's fade,
   a file's window (e.g. the Mission Spotlight video) closes and an image is
