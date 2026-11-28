@@ -8,7 +8,8 @@ the kind comes from the path; an older "file:" step runs on its PC as before;
 the old Playback / Übersetzung / Liedtext fields fold into steps (the
 production rows of 2026-11-26 as examples), once, also in the stores and
 template song slots; the steps run in order with the beamer freeze where the
-row puts it, never sent while its state is unknown, skipped after a failed
+row puts it (live after the service's start), never sent while its state is
+unknown (a Freeze that may not have arrived), skipped after a failed
 step, a no-op when it already is; a picture the agent confirms ("shown") is
 not waited for, others get the settle time before a freeze; the song step
 runs where it stands, a row's song without a step last; "Stopp" stops what
@@ -114,6 +115,15 @@ class Fixture:
 
     def frozen(self, value):
         self.test.assertEqual(self.client.post("/beamer/state", json={"frozen": value}).status_code, 200)
+
+    def freeze_times_out(self):
+        """The Beamer-freeze key, and the beamer does not answer: the Freeze may
+        or may not have arrived, so the state is unknown."""
+        def no_answer(*_args):
+            raise nc.NativeControlError("Beamer did not answer in time", maybe_sent=True)
+        with patch.object(nc, "_post_beamer_form", no_answer), self.test.assertLogs("mixer", "WARNING"):
+            self.client.post("/companion/buttons/beamer-freeze/press")
+        self.test.assertIsNone(self.client.get("/beamer/state").json()["frozen"])
 
 
 TRANSLATION_STEP = row_files.via_value("beamer2", TRANSLATION)
@@ -242,7 +252,8 @@ class MigrationTests(unittest.TestCase):
 class StepOrderTests(unittest.TestCase):
     def test_show_freeze_song(self):
         with Fixture(self) as f:
-            f.frozen(False)
+            # Live after the start: a freeze step works without setting the state by hand.
+            self.assertIs(f.client.get("/beamer/state").json()["frozen"], False)
             item = f.create(desktop=[TRANSLATION_STEP, "@freeze", "@song"], song="lied.foil")
             answer = f.play(item)
             self.assertTrue(answer["ok"], answer)
@@ -259,7 +270,8 @@ class StepOrderTests(unittest.TestCase):
 
     def test_unknown_freeze_state_sends_nothing(self):
         with Fixture(self) as f:
-            self.assertIsNone(f.client.get("/beamer/state").json()["frozen"])  # after a start
+            f.freeze_times_out()
+            f.events.log.clear()
             item = f.create(desktop=[TRANSLATION_STEP, "@freeze", "@song"], song="lied.foil")
             with self.assertLogs("mixer.program", "WARNING"):
                 answer = f.play(item)
@@ -269,11 +281,19 @@ class StepOrderTests(unittest.TestCase):
 
     def test_unknown_freeze_state_fails_at_once(self):
         with Fixture(self, settle=0.5) as f:
+            f.freeze_times_out()
             item = f.create(desktop=[TRANSLATION_STEP, "@freeze"])
             started = time.monotonic()
             answer = f.play(item)
             self.assertLess(time.monotonic() - started, 0.4, "no settle wait for a freeze that cannot be sent")
             self.assertIn("freeze state is unknown", answer["areas"]["desktop"]["reason"])
+
+    def test_power_on_or_off_makes_it_live_again(self):
+        with Fixture(self) as f:
+            for key in ("beamer-power-on", "beamer-power-off"):
+                f.freeze_times_out()
+                self.assertTrue(f.client.post(f"/companion/buttons/{key}/press").json()["ok"])
+                self.assertIs(f.client.get("/beamer/state").json()["frozen"], False, key)
 
     def test_a_document_not_shown_in_time_skips_the_freeze(self):
         with Fixture(self) as f:

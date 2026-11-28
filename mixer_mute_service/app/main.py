@@ -177,7 +177,11 @@ async def lifespan(app: FastAPI):
         # is worthless after it restarted: like choosing "Unhide" in the
         # Beamerzustand selector, nothing is sent to the beamer.
         await app.state.native_controls.set_beamer_state(False)
-        log.info("Beamer: remembered state set to visible (service start)")
+        # Freeze likewise: live (the beamer starts live, and the operator
+        # works from that); unknown only once a Freeze may or may not have
+        # arrived (app/native_controls.py).
+        await app.state.native_controls.set_beamer_frozen_state(False)
+        log.info("Beamer: remembered state set to visible and live (service start)")
         camera_program = _optional(
             app, "program camera presets", lambda: device_camera_program(app.state.native_controls))
     app.state.camera_program = camera_program
