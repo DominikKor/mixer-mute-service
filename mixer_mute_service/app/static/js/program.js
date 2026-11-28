@@ -326,7 +326,6 @@ async function loadProgramObsScenes() {
 const ICON_SHORTCUT_SAVE = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="1.5"/><path d="M9 20h6M12 16v4M10 7.5l4 2.5-4 2.5z"/></svg>`;
 const ICON_SHORTCUT_LOAD = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v11M7.5 9.5L12 14l4.5-4.5"/><path d="M4 15v4a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-4"/></svg>`;
 const ICON_EARLIER = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg>`;
-const ICON_PLUS = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>`;
 
 // ---- Desktop steps (app/row_files.py) ---------------------------------------
 // A row's "desktop" list runs in its order: Desktop keys (optionally with
@@ -508,7 +507,7 @@ function syncProgramDesktop(box) {
       return key;
     }));
   }
-  add.innerHTML = `${ICON_PLUS}<span>${steps.length ? "Schritt" : "Desktop-Taste, Freeze, Liedtext"}</span>`;
+  add.innerHTML = `${ICON_PLUS}<span>${steps.length ? "Schritt hinzufügen" : "Desktop-Taste, Freeze oder Liedtext hinzufügen"}</span>`;
   add.title = "Desktop-Taste, Beamer einfrieren / auftauen oder Liedtext hinzufügen";
   add.setAttribute("aria-label", add.title);
   box.querySelector(".program-desktop-note").textContent = !profiles.length ? "Keine Desktop-Tasten – unter Desktop anlegen" : "";
@@ -1132,16 +1131,10 @@ function renderShortcuts() {
       tile.append(button, menu);
       return tile;
     });
-    const add = document.createElement("button");
-    add.type = "button";
-    add.className = "display-add";
-    add.dataset.shortcutNew = "1";
-    add.title = "Neuer Shortcut";
-    add.setAttribute("aria-label", "Neuer Shortcut");
-    add.innerHTML = '<svg class="plus-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 4v16M4 12h16"/></svg>';
+    const add = ghostAddButton("shortcut", "Shortcut hinzufügen", { size: "tile" });
     const label = document.createElement("span");
     label.className = "desktop-launch-status";
-    label.textContent = PROGRAM_SHORTCUTS.length ? "Shortcuts" : "Shortcuts – mit + anlegen oder im Programm über „⋮“ speichern";
+    label.textContent = PROGRAM_SHORTCUTS.length ? "Shortcuts" : "Shortcuts – oder im Programm über „⋮“ speichern";
     wrap.replaceChildren(...tiles, add, label);
   }
   wrap.hidden = false;
@@ -1678,7 +1671,6 @@ function startProgramDraft() {
   document.querySelector('#program-items .program-draft-row [data-program-field="title"]')?.focus();
 }
 $("program-add-btn").addEventListener("click", startProgramDraft);
-$("program-add-row").addEventListener("click", startProgramDraft);
 $("program-items").addEventListener("change", event => {
   const field = event.target.closest("[data-program-field]");
   if (field && field.dataset.programField === "time") field.value = normalizeProgramTime(field.value);
@@ -1777,7 +1769,6 @@ $("program-items").addEventListener("keydown", event => {
   if (row) { event.preventDefault(); setProgramOpen(row, false); }
 });
 $("desktop-shortcuts").addEventListener("click", event => {
-  if (event.target.closest("[data-shortcut-new]")) return openShortcutDialog(null);
   const menu = event.target.closest("[data-shortcut-menu]");
   if (menu) {
     if (menu.getAttribute("aria-expanded") === "true") closeTileMenu();

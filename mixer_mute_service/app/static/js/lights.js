@@ -498,13 +498,6 @@ function renderLightScenes(scenes) {
   box.dataset.sig = sig;
   box.replaceChildren();
   $("light-presets-hint").hidden = !scenes.length;
-  if (!scenes.length) {
-    const empty = document.createElement("div");
-    empty.className = "empty-state light-empty";
-    empty.textContent = "Noch kein Preset. Licht einstellen und mit „+ Preset“ speichern.";
-    box.appendChild(empty);
-    return;
-  }
   for (const scene of scenes) {
     const changed = !scene.active && scene.id === data.last_scene;
     const tile = document.createElement("div");
@@ -535,6 +528,10 @@ function renderLightScenes(scenes) {
     tile.append(key, menu);
     box.appendChild(tile);
   }
+  // The next preset's place: saves the light as it is now.
+  box.appendChild(ghostAddButton("preset", "Preset hinzufügen", {
+    size: "tile", hint: scenes.length ? "" : "Licht einstellen, dann hier speichern",
+  }));
 }
 
 function presetMenuItems(scene) {
@@ -886,7 +883,6 @@ $("light-scenes").addEventListener("click", async event => {
     }
   }
 });
-$("light-scene-add").addEventListener("click", () => openLightSceneCreate());
 $("light-scene-cancel").addEventListener("click", closeLightSceneCreate);
 $("light-scene-save").addEventListener("click", () => saveLightScene());
 $("light-scene-name").addEventListener("keydown", event => {

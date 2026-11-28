@@ -652,7 +652,10 @@ function renderPersons(force = false) {
 
 function buildPersonsHtml() {
   const list = loadPersons();
-  if (!list.length) return `<div class="empty-state">Noch keine Mute Gruppe. Mit „+ Mute Gruppe“ anlegen oder „Aus Pult-Status…“ übernehmen.</div>`;
+  // The next group's place, always the last card.
+  const ghost = ghostAddHtml("person", "Mute Gruppe hinzufügen",
+    { size: "card", hint: list.length ? "" : "Noch keine Mute Gruppe – oder oben „Aus Pult-Status…“" });
+  if (!list.length) return ghost;
   let html = "";
   const chans = LAST_STATE.channels || {};
   const allChNums = Object.keys(chans).map(Number).sort((a, b) => a - b);
@@ -753,7 +756,7 @@ function buildPersonsHtml() {
       </div>
     </div>`;
   }
-  return html;
+  return html + ghost;
 }
 
 // renderPersons runs with every 1 s refresh. Replacing the cards each time

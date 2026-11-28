@@ -93,7 +93,6 @@ document.addEventListener("click", (e) => {
 });
 
 
-$("new-person-btn").addEventListener("click", openPersonCreateRow);
 $("new-snapshot-btn").addEventListener("click", openSnapshotCreateRow);
 $("snapshot-cancel-btn").addEventListener("click", closeSnapshotCreateRow);
 $("snapshot-save-btn").addEventListener("click", saveCurrentMuteSnapshot);
