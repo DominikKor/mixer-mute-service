@@ -1123,7 +1123,9 @@ def _close_profile_windows(profile_id: str, window_pid=None, post_close=None, st
     does). A window that is gone, or whose handle now belongs to another
     process, is left alone; so is everything when the close names an older
     start than the latest open of the profile. A profile still being opened
-    is closed once its window appears. Returns how many were asked."""
+    is closed once its window appears. The profile's own mpv (the agent
+    started it) ends even if its window was never found. Returns how many
+    were asked (an mpv ended without a window counts as one)."""
     with _opened_lock:
         latest = _opened_stamps.get(profile_id)
         if stamp is not None and latest is not None and latest != stamp:
@@ -1133,7 +1135,15 @@ def _close_profile_windows(profile_id: str, window_pid=None, post_close=None, st
         if _launch_pending(profile_id):
             _cancelled.add(profile_id)
             logger.info("Close profile=%s: still opening, closed once its window is there", profile_id)
-    return _close_remembered(profile_id, window_pid, post_close)
+        process = _video_processes.pop(profile_id, None)
+    closed = _close_remembered(profile_id, window_pid, post_close)
+    if process is not None and process.poll() is None and not closed:
+        # Its window was not found (or not yet): the agent's own process
+        # ends directly. With a window, its close lets mpv end by itself.
+        process.terminate()
+        logger.info("Close profile=%s: its mpv pid=%s ended (no window known)", profile_id, process.pid)
+        closed = 1
+    return closed
 
 
 def _close_if_cancelled(profile_id: str, window_pid=None, post_close=None) -> bool:
