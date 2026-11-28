@@ -454,21 +454,11 @@ button.display-key {
 .display-tile { position: relative; display: inline-flex; max-width: 100%; }
 .display-tile button.display-key { padding-right: 42px; }
 /* Music tile, and every tile that shows something (image, video, document;
-   not programs): one wide key; Stop is a red stop square inside it on the
-   right (34 px, tap area 44 px), with "Stop" faintly engraved: music stops,
-   a shown thing closes on its PC. The dots stay in the top-right corner
-   like on every tile. */
+   not programs): one wide key; its stop key sits inside it on the right,
+   left of the dots (look: "Stop keys" at the end): music stops, a shown
+   thing closes on its PC. The dots stay in the top-right corner. */
 .display-tile.has-stop button.display-key { padding-right: 96px; }
-button.display-audio-stop {
-  position: absolute; top: 50%; right: 50px; width: 34px; height: 34px; margin-top: -17px; padding: 0;
-  display: grid; place-items: center; border-radius: 7px; border: 1px solid #3d0a05;
-  font-size: 8px; font-weight: 900; letter-spacing: .08em; text-transform: uppercase;
-  color: rgba(255,255,255,.2); text-shadow: 0 1px 0 rgba(255,255,255,.12), 0 -1px 0 rgba(0,0,0,.4);
-  background: linear-gradient(to bottom, #d9483a, #b02a1e 55%, #8f1f15);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.25), inset 0 -2px 0 rgba(0,0,0,.25), 0 1px 3px rgba(0,0,0,.55);
-}
-button.display-audio-stop::after { content: ""; position: absolute; inset: -6px; }  /* -6 from inside the 1 px border: 44 px */
-button.display-audio-stop:hover:not(:disabled) { color: rgba(255,255,255,.3); }
+button.display-audio-stop { position: absolute; top: 50%; display: block; }
 /* The tile menu: a small console panel under the dots */
 .tile-menu {
   position: fixed; z-index: 40; min-width: 200px; max-width: calc(100vw - 16px); padding: 5px; border-radius: 9px; border: 1px solid #000;
@@ -2027,3 +2017,83 @@ button.add-key.primary-add .plus-icon { color: #8fc2ff; opacity: 1; }
 
 /* Quick keys make room for the Anordnen keys ("Standard") while arranging: the header stays one row. */
 body.arranging .header-quick { display: none; }
+
+/* ---- Stop keys ------------------------------------------------------------------
+   One family for every key that ends something: the media "stop" sign, a
+   white rounded square, on a rounded-square key.
+   - Lit red where the page knows something runs: the running row's steps
+     (with a slow halo while they run) and the program's "Stopp" while the
+     program has started something (grey while it is disabled).
+   - Calm dark red where it does not know: the Desktop tiles (music, image,
+     video, document) and the song window's "Aus"; they light up on press.
+   Every one is at least 44 x 44 px to tap; the small ones draw a smaller
+   shape inside their tap area. */
+:root {
+  --stop-glyph: #fff;
+  --stop-calm-bg: linear-gradient(to bottom, #4d2622, #3a1b18);
+  --stop-calm-border: rgba(255, 112, 96, .45);
+  --stop-live-bg: linear-gradient(to bottom, #ea5444, #c4352b 60%, #a5281f);
+  --stop-live-border: #5a120c;
+  --stop-live-glow: 0 0 0 1px rgba(255, 92, 74, .3), 0 0 14px rgba(255, 80, 60, .32);
+  --stop-key-shadow: var(--stop-live-glow), inset 0 1px 0 rgba(255,255,255,.3), 0 2px 3px rgba(0,0,0,.55);
+  --stop-calm-shadow: inset 0 1px 0 rgba(255,255,255,.1), 0 1px 3px rgba(0,0,0,.55);
+}
+/* Desktop tiles: a 44 x 44 key (clear of the "⋮"); the 34 px calm shape and
+   the sign are drawn inside it */
+button.display-audio-stop {
+  right: 45px; width: 44px; height: 44px; margin-top: -22px; padding: 0; border-radius: 10px;
+  font-size: 0; color: transparent; text-shadow: none;
+  border: none; background: none; box-shadow: none;
+}
+button.display-audio-stop::before, button.display-audio-stop::after { content: ""; position: absolute; }
+button.display-audio-stop::before {
+  inset: 5px; border-radius: 9px;
+  border: 1px solid var(--stop-calm-border); background: var(--stop-calm-bg); box-shadow: var(--stop-calm-shadow);
+  transition: background-color .15s, box-shadow .15s, border-color .15s;
+}
+button.display-audio-stop::after {
+  left: 50%; top: 50%; width: 11px; height: 11px; margin: -5.5px 0 0 -5.5px; border-radius: 2.5px;
+  background: var(--stop-glyph); box-shadow: 0 0 6px rgba(255,255,255,.25);
+}
+button.display-audio-stop:hover:not(:disabled), button.display-audio-stop:active:not(:disabled) {
+  color: transparent; filter: none; background: none; box-shadow: none;
+}
+button.display-audio-stop:hover:not(:disabled)::before, button.display-audio-stop:active:not(:disabled)::before {
+  border-color: var(--stop-live-border); background: var(--stop-live-bg); box-shadow: var(--stop-key-shadow);
+}
+button.display-audio-stop:active:not(:disabled) { transform: translateY(1px); }
+button.display-audio-stop:disabled::after { background: #9aa1ad; box-shadow: none; }
+button.display-audio-stop:focus-visible { outline-offset: -2px; }
+/* The running row's steps: lit, 28 px inside a 44 px tap area, a slow halo */
+.program-step-stop::before {
+  width: 28px; height: 28px; border-radius: 8px;
+  border: 1px solid var(--stop-live-border); background: var(--stop-live-bg);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.3), 0 0 0 0 rgba(255, 80, 60, .5);
+  animation: stop-live 2.4s ease-out infinite;
+}
+.program-step-stop::after { width: 10px; height: 10px; border-radius: 2.5px; background: var(--stop-glyph); }
+@keyframes stop-live {
+  0% { box-shadow: inset 0 1px 0 rgba(255,255,255,.3), 0 0 0 0 rgba(255, 80, 60, .5); }
+  70%, 100% { box-shadow: inset 0 1px 0 rgba(255,255,255,.3), 0 0 0 7px rgba(255, 80, 60, 0); }
+}
+.program-step-stop[aria-disabled="true"]::before { animation: none; }
+/* The program's "Stopp": the sign and the word; lit while the program has
+   started something (otherwise the key is disabled and grey) */
+button.program-stop { display: inline-flex; align-items: center; justify-content: center; gap: 9px; padding: 0 16px; }
+button.program-stop::before {
+  content: ""; flex: none; width: 11px; height: 11px; border-radius: 2.5px; background: currentColor;
+}
+button.program-stop:not(:disabled) {
+  color: #fff; border-color: var(--stop-live-border); background: var(--stop-live-bg); box-shadow: var(--stop-key-shadow);
+}
+button.program-stop:not(:disabled)::before { background: var(--stop-glyph); box-shadow: 0 0 6px rgba(255,255,255,.3); }
+/* The song window's "Aus" (Liedanzeige; the dock: css/song-dock.css): calm */
+button#song-hide-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  color: #ffd9d4; border-color: var(--stop-calm-border); background: var(--stop-calm-bg);
+}
+button#song-hide-btn::before { content: ""; flex: none; width: 10px; height: 10px; border-radius: 2.5px; background: var(--stop-glyph); }
+button#song-hide-btn:hover:not(:disabled), button#song-hide-btn:active:not(:disabled) {
+  color: #fff; filter: none; border-color: var(--stop-live-border); background: var(--stop-live-bg);
+}
+@media (prefers-reduced-motion: reduce) { .program-step-stop::before { animation: none; } }
