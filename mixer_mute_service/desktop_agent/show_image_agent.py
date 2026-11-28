@@ -510,6 +510,10 @@ def _video_command(mpv: str, path: Path, profile: dict, screen: int | None = Non
     POST /close or the next start ends it."""
     command = [
         mpv, "--no-config", "--force-window=yes", "--keep-open=yes", "--no-terminal", "--hwdec=auto-safe",
+        # Above everything while it plays, never behind other windows (mpv
+        # takes the focus on opening by its own default, --focus-on=open;
+        # not named, since older mpv builds refuse options they do not know).
+        "--ontop",
         f"--title={profile['title']}", f"--log-file={agent_log_directory() / 'mpv-video.log'}",
     ]
     if screen is not None:
@@ -544,6 +548,7 @@ def _launch_video(mpv: str, path: Path, profile: dict, before: set) -> None:
     command = _video_command(mpv, path, profile, screen)
     logger.info("Video %s in mpv on monitor %s (mpv screen %s, %s): %s", path, profile["monitor"], screen,
                 device or "no device name", subprocess.list2cmdline(command))
+    _allow_foreground()
     process = subprocess.Popen(
         command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
@@ -554,19 +559,96 @@ def _launch_video(mpv: str, path: Path, profile: dict, before: set) -> None:
 
 
 def _remember_video_window(profile_id: str, process_id: int, before: set, find=None, timeout: float = 20.0) -> None:
-    """Find mpv's window to remember it (for keep and close); it is never
-    placed by the agent."""
+    """Find mpv's window to remember it (for keep and close) and bring it
+    to the front; it is never placed by the agent."""
     find = find or _find_window
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         hwnd = find(process_id, before)
         if hwnd and _remember_if_own(profile_id, hwnd, process_id):
             logger.info("Video window pid=%s hwnd=%s remembered for profile=%s", process_id, hwnd, profile_id)
-            _close_if_cancelled(profile_id)
+            if not _close_if_cancelled(profile_id):
+                _bring_to_front(hwnd, process_id)
             return
         time.sleep(0.25)
     _remember_unknown(profile_id)
     logger.warning("Video window of pid=%s (profile=%s) not found within %.0f s", process_id, profile_id, timeout)
+
+
+def _win32():
+    """user32 and kernel32 with the argument types used here (Windows only)."""
+    import ctypes
+    from ctypes import wintypes
+
+    user32, kernel32 = ctypes.windll.user32, ctypes.windll.kernel32
+    user32.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+                                    ctypes.c_int, wintypes.UINT]
+    user32.SetForegroundWindow.argtypes = [wintypes.HWND]
+    user32.BringWindowToTop.argtypes = [wintypes.HWND]
+    user32.ShowWindowAsync.argtypes = [wintypes.HWND, ctypes.c_int]
+    user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+    user32.AttachThreadInput.argtypes = [wintypes.DWORD, wintypes.DWORD, wintypes.BOOL]
+    user32.AllowSetForegroundWindow.argtypes = [wintypes.DWORD]
+    user32.GetForegroundWindow.restype = wintypes.HWND
+    return user32, kernel32
+
+
+def _allow_foreground() -> None:
+    """Let the player about to start take the foreground (ASFW_ANY); works
+    when the agent may itself, harmless otherwise."""
+    try:
+        user32, _kernel32 = _win32()
+        user32.AllowSetForegroundWindow(0xFFFFFFFF)
+    except Exception:  # noqa: BLE001 - the window still comes up topmost
+        logger.debug("AllowSetForegroundWindow not possible", exc_info=True)
+
+
+def _bring_to_front(hwnd: int, process_id: int, api=None, may_take_focus=None, window_pid=None) -> bool:
+    """A video's window above everything (topmost, shown: always, so the
+    operator never has to look for it behind other windows) and in focus
+    when nobody else is using the keyboard (_may_take_focus: nothing, the
+    desktop or taskbar, or one of the agent's own windows in front: the
+    normal case on the Beamer PC). Another program in front keeps its focus;
+    the video is still on top. Windows keeps background processes from
+    taking the focus, so after a plain SetForegroundWindow the agent
+    attaches to the foreground window's input thread once. No key presses.
+    Asynchronous window calls: a player that hangs cannot block the agent.
+    Returns whether the video has the focus."""
+    HWND_TOPMOST, SWP_NOSIZE, SWP_NOMOVE, SWP_SHOWWINDOW, SWP_ASYNCWINDOWPOS = -1, 0x0001, 0x0002, 0x0040, 0x4000
+    SW_SHOW = 5
+    window_pid = window_pid or _window_process_id
+    may_take_focus = may_take_focus or _may_take_focus
+    try:
+        user32, kernel32 = api or _win32()
+        user32.SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0,
+                            SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW | SWP_ASYNCWINDOWPOS)
+        foreground = user32.GetForegroundWindow()
+        if foreground and window_pid(foreground) == process_id:
+            logger.info("Video window hwnd=%s pid=%s on top and in focus (mpv took it)", hwnd, process_id)
+            return True
+        if not may_take_focus(foreground):
+            logger.info("Video window hwnd=%s pid=%s on top; another program in front keeps the focus",
+                        hwnd, process_id)
+            return False
+        if user32.SetForegroundWindow(hwnd):
+            logger.info("Video window hwnd=%s pid=%s on top and in focus", hwnd, process_id)
+            return True
+        theirs = user32.GetWindowThreadProcessId(foreground, None) if foreground else 0
+        ours = kernel32.GetCurrentThreadId()
+        attached = bool(theirs and theirs != ours and user32.AttachThreadInput(ours, theirs, True))
+        try:
+            user32.ShowWindowAsync(hwnd, SW_SHOW)
+            user32.BringWindowToTop(hwnd)
+            focused = bool(user32.SetForegroundWindow(hwnd))
+        finally:
+            if attached:
+                user32.AttachThreadInput(ours, theirs, False)
+        logger.info("Video window hwnd=%s pid=%s on top; focus %s", hwnd, process_id,
+                    "taken" if focused else "refused by Windows (it stays on top)")
+        return focused
+    except Exception:  # noqa: BLE001 - mpv's own --ontop still keeps it on top
+        logger.exception("Video window hwnd=%s: could not bring it to the front", hwnd)
+        return False
 
 
 # -- documents page by page ------------------------------------------------------
