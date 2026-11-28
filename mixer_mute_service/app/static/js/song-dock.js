@@ -361,7 +361,7 @@ function renderSongDockPreview(cell) {
   box.classList.toggle("off", state === "off");
   box.classList.toggle("blank", state === "blank");
   box.setAttribute("aria-label", state === "off" ? "Bildschirme: kein Lied" : state === "blank" ? "Bildschirme: schwarz"
-    : `Bildschirme: ${song.title}, Folie ${SONG_LIVE.slide + 1}`);
+    : `Bildschirme: ${songLabel(song)}, Folie ${SONG_LIVE.slide + 1}`);
   if (!SONG_SETTINGS || !box.clientWidth) return;
   // layout_rev: the service laid the song out anew (slide sizes, splitting).
   const sig = JSON.stringify([state, song && song.id, song && song.layout_rev, SONG_LIVE.slide, SONG_SETTINGS,
@@ -399,7 +399,7 @@ function renderSongDock() {
   cell.classList.toggle("busy", SONG_BUSY);   // keys wait for the last press (no grey flash)
   if (!live) {
     const known = SONG_INDEX.get(target.item.song);
-    const title = known ? known.title : target.item.song.replace(/\.(foil|pptx)$/i, "");
+    const title = known ? songLabel(known) : target.item.song.replace(/\.(foil|pptx)$/i, "");
     cell.querySelector(".sd-off-text").textContent = known
       ? `${title} – nicht auf dem Bildschirm` : `${title} – nicht in der Liedbibliothek`;
     const show = cell.querySelector(".sd-show");

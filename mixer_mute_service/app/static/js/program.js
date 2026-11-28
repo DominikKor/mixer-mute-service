@@ -370,7 +370,7 @@ function stepProfile(step) {
 function programStepLabel(step, song) {
   if (step === STEP_SONG) {
     const known = song && SONG_INDEX.get(song);
-    return song ? { text: `Liedtext · ${known ? known.title : song.replace(/\.(foil|pptx)$/i, "")}`, kind: "pseudo" }
+    return song ? { text: `Liedtext · ${known ? songLabel(known) : song.replace(/\.(foil|pptx)$/i, "")}`, kind: "pseudo" }
       : { text: "Liedtext · kein Lied gewählt", kind: "missing" };
   }
   if (STEP_PSEUDO[step]) return { text: STEP_PSEUDO[step], kind: "pseudo" };
@@ -881,7 +881,7 @@ function programChips(item, running = null) {
   }
   if (item.song && !(item.desktop || []).includes(STEP_SONG)) {  // older: no Liedtext step of its own
     const song = SONG_INDEX.get(item.song);
-    add("song", "Lied", song ? song.title : item.song.replace(/\.(foil|pptx)$/i, ""));
+    add("song", "Lied", song ? songLabel(song) : item.song.replace(/\.(foil|pptx)$/i, ""));
   }
   for (const [cam, camLabel] of PROGRAM_CAMERAS) {
     const preset = item[`${cam}_preset`];
@@ -899,10 +899,17 @@ function programChips(item, running = null) {
   return chips;
 }
 
+// The row's title as shown: a row named like its song gets the number in front ("GHS 123 · Titel").
+function programRowTitle(item) {
+  const song = item.song ? SONG_INDEX.get(item.song) : null;
+  const same = (a, b) => String(a).trim().toLocaleLowerCase("de") === String(b).trim().toLocaleLowerCase("de");
+  return song && item.title && same(item.title, song.title) ? songLabel(song) : item.title;
+}
+
 function renderProgramSummary(row, item) {
   const summary = row.querySelector(".program-summary");
   summary.querySelector(".program-sum-time").textContent = item.time || "--:--";
-  summary.querySelector(".program-sum-title").textContent = item.title || "Ohne Titel";
+  summary.querySelector(".program-sum-title").textContent = programRowTitle(item) || "Ohne Titel";
   summary.querySelector(".program-sum-person").textContent = item.person || "";
   // The running row: its steps still playing or showing get a stop key.
   const running = item.id && item.id === PROGRAM_STATUS.current_id
@@ -1331,7 +1338,7 @@ function updateProgramCue() {
     return;
   }
   $("program-cue-label").textContent = "Als Nächstes";
-  $("program-cue-title").textContent = `${next.time} · ${next.title}${next.person ? " · " + next.person : ""}`;
+  $("program-cue-title").textContent = `${next.time} · ${programRowTitle(next)}${next.person ? " · " + next.person : ""}`;
   go.title = `„${next.title}“ starten`;
   const [h, m] = next.time.split(":").map(Number);
   const due = new Date(now);
