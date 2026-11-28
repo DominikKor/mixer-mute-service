@@ -62,7 +62,7 @@ class DuplicateKeyTests(unittest.TestCase):
         self.assertEqual(ids[:3], ["native-obs-cam2-live", "beamer-live", "user-1"])
         self.assertEqual(migrated["buttons"][2]["target_button_id"], "native-obs-cam2-live")
         self.assertIn("native-obs-transition-slower", ids)
-        self.assertEqual(migrated["native_catalog_version"], 10)
+        self.assertEqual(migrated["native_catalog_version"], 11)
 
     def test_renamed_or_moved_old_key_stays_as_an_own_key(self):
         categories = deepcopy(DEFAULT_CATEGORIES) + [{"id": "category-gd", "name": "Gottesdienst", "visible": True}]
@@ -178,7 +178,7 @@ class ObsStatusTests(unittest.IsolatedAsyncioTestCase):
             status = obs_status_blocking()
         batch.assert_called_once()
         self.assertEqual(status, {"program": "Cam 1", "preview": "Cam 2", "studio_mode": True,
-                                  "transition": {"name": "Fade", "duration_ms": 400}})
+                                  "transition": {"name": "Fade", "duration_ms": 400}, "overlays": []})
 
     def test_without_studio_mode_there_is_no_preview(self):
         answers = [{"currentProgramSceneName": "PC2"}, {"studioModeEnabled": False}, None,

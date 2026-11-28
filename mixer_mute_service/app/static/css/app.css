@@ -1718,10 +1718,36 @@ body.stage-on button.companion-key {
   padding: 6px 14px 14px; border-radius: var(--r-card); border: 1px solid #08090b;
   background: var(--panel-bg); box-shadow: var(--panel-shadow);
 }
-.light-grid { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); gap: 12px; margin-top: 12px; align-items: start; }
-.light-block-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; min-height: 44px; margin-bottom: 8px; }
-.light-block-title { font-size: 12px; font-weight: 800; letter-spacing: .16em; text-transform: uppercase; color: var(--title); text-shadow: 0 1px 0 #000; }
-.light-block-hint { font-size: 12px; color: var(--muted); min-width: 0; }
+/* Presets, Raumlicht, Bühne: one below the other, each folds on its own. The
+   head is one row: the toggle (chevron, title, a hint or, folded, a summary)
+   takes the whole free width; the block's keys and its "⋮" sit at the end. */
+.light-block + .light-block { margin-top: 12px; }
+.light-block-head { display: flex; align-items: center; gap: 4px 10px; flex-wrap: wrap; min-height: 52px; }
+.light-block:not(.folded) .light-block-head { margin-bottom: 8px; }
+.light-block.folded { padding-bottom: 6px; }
+.light-block.folded [data-open-only] { display: none; }
+button.light-block-toggle {
+  flex: 1 1 180px; display: flex; align-items: center; gap: 10px; min-width: 0; min-height: 52px; padding: 4px 2px;
+  color: var(--title); background: none; border: none; box-shadow: none; text-align: left; border-radius: 6px;
+  -webkit-tap-highlight-color: transparent;
+}
+button.light-block-toggle:hover:not(:disabled) { color: #d9dde3; filter: none; }
+button.light-block-toggle:active:not(:disabled) { transform: none; box-shadow: none; }
+button.light-block-toggle::before { /* chevron, as the section heads and the Steuerung categories */
+  content: ""; flex-shrink: 0; display: inline-block; width: 14px; height: 14px; font-size: 0;
+  background: #6c7482; -webkit-mask: var(--chevron) center / contain no-repeat; mask: var(--chevron) center / contain no-repeat;
+  transition: transform .15s;
+}
+button.light-block-toggle:hover:not(:disabled)::before { background: #9aa3b2; }
+button.light-block-toggle[aria-expanded="true"]::before { transform: rotate(90deg); }
+.light-block-title { flex-shrink: 0; font-size: 12px; font-weight: 800; letter-spacing: .16em; text-transform: uppercase; color: inherit; text-shadow: 0 1px 0 #000; }
+.light-block-hint { font-size: 12px; color: var(--muted); min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.light-block-summary {
+  display: none; min-width: 0; font: 700 12px/1.2 var(--mono); color: var(--lcd-text);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.light-block.folded .light-block-summary { display: block; }
+.light-block-body[hidden] { display: none; }
 .light-block-tools { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-left: auto; }
 button.light-all { min-height: 44px; min-width: 88px; padding: 0 14px; font-size: 12px; }
 
@@ -1884,7 +1910,6 @@ button.light-pick-key {
 .light-pick-key .light-pick-now { min-width: 0; font: 700 11px/1 var(--mono); color: #8d96a3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 button.light-pick-key[aria-pressed="true"] .light-pick-now { color: #cfe2ff; }
 @container section (max-width: 1052px) {
-  .light-grid { grid-template-columns: minmax(0, 1fr); }
   .light-pick { grid-template-columns: minmax(0, 1fr); }
 }
 

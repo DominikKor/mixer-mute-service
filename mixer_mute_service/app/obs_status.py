@@ -11,14 +11,19 @@ import asyncio
 import time
 from typing import Callable
 
+from .companion_buttons import OVERLAY_SOURCES
 from .native_controls import NativeControlError, obs_status_blocking
+
+
+def _fetch() -> dict:
+    return obs_status_blocking(OVERLAY_SOURCES)
 
 STATUS_TTL_SECONDS = 1.0
 ERROR_TTL_SECONDS = 5.0
 
 
 class ObsStatus:
-    def __init__(self, fetch: Callable[[], dict] = obs_status_blocking,
+    def __init__(self, fetch: Callable[[], dict] = _fetch,
                  clock: Callable[[], float] = time.monotonic) -> None:
         self._fetch = fetch
         self._clock = clock

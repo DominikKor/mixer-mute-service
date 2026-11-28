@@ -45,6 +45,11 @@ CIRCUIT_CACHE_SECONDS = 2.0
 # How long GET /lights waits for the Shellys' answers; a later answer is
 # shown by the next poll.
 CIRCUIT_WAIT_SECONDS = 0.4
+# A Shelly on Wi-Fi misses a question now and then. A circuit with a known
+# state counts as unreachable only after this many failed questions in a
+# row (with the 2 s cache: several seconds); until then it keeps its last
+# state, marked stale. A good answer or a switch clears it at once.
+CIRCUIT_FAILURES_UNREACHABLE = 3
 
 
 class SceneError(ValueError):
@@ -260,6 +265,10 @@ class CircuitCache:
     circuit never holds up the page or the others. At most one question
     per Shelly is open at a time. An answer to a question asked before the
     circuit was last switched is dropped: it may show the old state.
+
+    All pages share it: however many poll GET /lights, each Shelly gets at
+    most one question per CIRCUIT_CACHE_SECONDS. A failed question does not
+    make a known circuit unreachable at once (CIRCUIT_FAILURES_UNREACHABLE).
     """
 
     def __init__(self) -> None:
@@ -267,6 +276,7 @@ class CircuitCache:
         self._asked_at: dict = {}    # target -> monotonic start of the last question
         self._set_at: dict = {}      # target -> monotonic time of the last switch
         self._pending: dict = {}     # target -> task asking it now
+        self._failures: dict = {}    # target -> failed questions in a row
 
     def _ask(self, native, target: str) -> asyncio.Task:
         task = self._pending.get(target)
@@ -283,8 +293,18 @@ class CircuitCache:
         except Exception:  # noqa: BLE001 - a background question must not die silently
             log.exception("Room light %s: state question failed", target)
             on = None
-        if self._set_at.get(target, float("-inf")) < started:
+        if self._set_at.get(target, float("-inf")) >= started:
+            return  # switched meanwhile: that state is newer
+        if on is not None:
+            self._failures[target] = 0
             self._states[target] = on
+            return
+        failures = self._failures.get(target, 0) + 1
+        self._failures[target] = failures
+        if failures >= CIRCUIT_FAILURES_UNREACHABLE or self._states.get(target) is None:
+            if self._states.get(target) is not None:
+                log.info("Room light %s: no answer %d times in a row, unreachable", target, failures)
+            self._states[target] = None
 
     async def get(self, native, fresh: bool = False) -> dict:
         """The states; ``fresh``: ask every Shelly now and wait for all
@@ -299,11 +319,22 @@ class CircuitCache:
         tasks = [task for target, task in asked.items() if full or self._states.get(target) is not None]
         if tasks:
             await asyncio.wait(tasks, timeout=None if full else CIRCUIT_WAIT_SECONDS)
-        return self.snapshot()
+        states = self.snapshot()
+        if fresh:
+            # Saving needs the light as it is now: a circuit that did not
+            # answer just now is unknown, not its last state.
+            states.update({target: None for target in self.stale()})
+        return states
 
     def snapshot(self) -> dict:
         """The states as known now, without asking any Shelly."""
         return {target: self._states.get(target) for target in SHELLY_HOSTS}
+
+    def stale(self) -> set:
+        """Circuits shown with their last state although the latest
+        question(s) got no answer (not yet unreachable)."""
+        return {target for target in SHELLY_HOSTS
+                if self._failures.get(target, 0) and self._states.get(target) is not None}
 
     def update(self, states: dict) -> None:
         """Circuits just switched (their Shelly confirmed it)."""
@@ -311,6 +342,7 @@ class CircuitCache:
         for target, on in states.items():
             self._states[target] = on
             self._set_at[target] = now
+            self._failures[target] = 0
 
 
 # -- shared with program rows ---------------------------------------------------
