@@ -1740,7 +1740,9 @@ button.light-block-toggle::before { /* chevron, as the section heads and the Ste
 }
 button.light-block-toggle:hover:not(:disabled)::before { background: #9aa3b2; }
 button.light-block-toggle[aria-expanded="true"]::before { transform: rotate(90deg); }
-.light-block-title { flex-shrink: 0; font-size: 12px; font-weight: 800; letter-spacing: .16em; text-transform: uppercase; color: inherit; text-shadow: 0 1px 0 #000; }
+.light-block-title { flex-shrink: 0; font-size: 12px; font-weight: 800; letter-spacing: .16em; text-transform: uppercase; color: var(--title); text-shadow: 0 1px 0 #000; }
+/* In a block's toggle the title follows the toggle (lighter on hover). */
+.light-block-toggle .light-block-title { color: inherit; }
 .light-block-hint { font-size: 12px; color: var(--muted); min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .light-block-summary {
   display: none; min-width: 0; font: 700 12px/1.2 var(--mono); color: var(--lcd-text);
@@ -1898,7 +1900,7 @@ button.light-circuit.pending .light-lamp { animation: light-pending .7s ease-in-
 .light-block button.busy { opacity: .6; pointer-events: none; }
 /* Saving a preset: name, then which lights belong to it (toggle keys, blue = chosen) */
 .light-pick-hint { margin-bottom: 4px; }
-.light-pick { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); gap: 4px 20px; }
+.light-pick { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 4px 20px; }  /* Raumlicht (7 circuits), Bühne (4 lights) */
 .light-pick-head { display: flex; align-items: center; gap: 10px; min-height: 44px; }
 button.light-pick-all { min-height: 44px; min-width: 64px; padding: 0 12px; font-size: 12px; }
 .light-pick-keys { display: grid; grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); gap: 6px; }
