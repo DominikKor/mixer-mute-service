@@ -1,6 +1,6 @@
 """Licht: stage zones, room light, scenes (app/lights.py has the logic).
 
-GET    /lights                       stage, circuits (on/off/null), scenes
+GET    /lights                       stage, circuits (on/off/null, stale), scenes
 POST   /lights/stage {zones, warm, cold, fade}   zones: {zone: {on, level,
                                      warm, cold}} (any of them) or {zone:
                                      level} (0 = off, the level is kept);
@@ -52,6 +52,7 @@ def _unavailable():
 async def _view(request: Request, fresh: bool = False) -> dict:
     native = _native(request)
     circuits = await request.app.state.light_circuits.get(native, fresh=fresh)
+    stale = request.app.state.light_circuits.stale()
     scenes = request.app.state.light_scenes
     store = request.app.state.names
     zone_names = store.get("light-zone") if store else {}
@@ -66,8 +67,10 @@ async def _view(request: Request, fresh: bool = False) -> dict:
         # The user's names (app/names.py), else the built-in ones.
         "zone_labels": {k: zone_names.get(k) or v for k, v in ARTNET_ZONE_LABELS.items()},
         "zone_defaults": ARTNET_ZONE_LABELS,
+        # stale: the last question(s) got no answer; "on" is the last state.
         "circuits": [{"id": k, "label": circuit_names.get(k) or SHELLY_LABELS.get(k, k),
-                      "default_label": SHELLY_LABELS.get(k, k), "on": circuits.get(k)} for k in SHELLY_HOSTS],
+                      "default_label": SHELLY_LABELS.get(k, k), "on": circuits.get(k),
+                      "stale": k in stale} for k in SHELLY_HOSTS],
         "scenes": scene_list,
         # The scene applied last (from this page, a program row, ...).
         "last_scene": getattr(request.app.state, "light_last_scene", None),

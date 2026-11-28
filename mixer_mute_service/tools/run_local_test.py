@@ -37,6 +37,7 @@ import argparse
 import asyncio
 import logging
 import os
+import random
 import sys
 import threading
 import time
@@ -91,6 +92,8 @@ class FakeDevices:
         self.shelly = {host: target == "light-tech" for target, host in native.SHELLY_HOSTS.items()}
         self.dead_hosts = set()   # Shellys that never answer
         self.shelly_delay = 0.0   # seconds every other Shelly takes to answer
+        self.flaky_hosts = set()  # Shellys that miss a question now and then
+        self.flaky_rate = 0.3
         self.scene = "Cam 1"
         self.preview = "Cam 2"   # studio mode, as on the streaming PC
         self.transition_ms = 300
@@ -107,6 +110,10 @@ class FakeDevices:
             time.sleep(self.native.SHELLY_CONNECT_TIMEOUT * attempts)
             raise self.native.NativeControlError(f"Shelly {host} unreachable")
         time.sleep(self.shelly_delay)
+        if host in self.flaky_hosts and random.random() < self.flaky_rate:
+            time.sleep(self.native.SHELLY_CONNECT_TIMEOUT)  # a lost connect on Wi-Fi
+            log.info("FAKE Shelly %s missed %s", host, method)
+            raise self.native.NativeControlError(f"Shelly {host} unreachable")
         if method == "Switch.GetStatus":
             return {"id": 0, "output": self.shelly.get(host, False)}
         if method == "Switch.Set":
@@ -276,6 +283,10 @@ def main() -> None:
                         help="room light circuit that never answers, e.g. light-front (repeatable)")
     parser.add_argument("--dead-agent", action="append", default=[], metavar="IP",
                         help="PC whose display agent never answers, e.g. 192.168.188.20 (repeatable)")
+    parser.add_argument("--flaky-shelly", action="append", default=[], metavar="CIRCUIT",
+                        help="room light circuit that misses a share of the calls (repeatable)")
+    parser.add_argument("--flaky-rate", type=float, default=0.3, metavar="SHARE",
+                        help="share of calls a flaky Shelly misses (default 0.3)")
     parser.add_argument("--shelly-delay", type=float, default=0.0, metavar="SECONDS",
                         help="time every other fake Shelly takes to answer")
     args = parser.parse_args()
@@ -290,11 +301,13 @@ def main() -> None:
 
     fakes = install_fakes()
     import app.native_controls as native
-    unknown = [c for c in args.dead_shelly if c not in native.SHELLY_HOSTS]
+    unknown = [c for c in args.dead_shelly + args.flaky_shelly if c not in native.SHELLY_HOSTS]
     if unknown:
         parser.error(f"unknown circuit {unknown}; known: {', '.join(native.SHELLY_HOSTS)}")
     fakes.dead_hosts = {native.SHELLY_HOSTS[c] for c in args.dead_shelly}
     fakes.shelly_delay = max(0.0, args.shelly_delay)
+    fakes.flaky_hosts = {native.SHELLY_HOSTS[c] for c in args.flaky_shelly}
+    fakes.flaky_rate = min(1.0, max(0.0, args.flaky_rate))
     fakes.dead_agents = set(args.dead_agent)
     start_fake_mixer(args.mixer_port)
 

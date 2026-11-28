@@ -15,6 +15,7 @@ from copy import deepcopy
 from pathlib import Path
 from unittest import mock
 
+import app.lights as lights_mod
 import app.native_controls as native_mod
 from app.companion_buttons import (
     CATALOG_ONLY_IDS, COMPANION_BUTTONS, DEFAULT_CATEGORIES, CompanionButtonStore,
@@ -108,8 +109,11 @@ class LightsApiTests(unittest.TestCase):
         self.assertEqual({c["id"]: c["on"] for c in data["circuits"]}["light-tech"], True)
         self.assertEqual(data["scenes"], [])
         self.devices.offline.add("light-left")
-        data = self.client.get("/lights").json()
-        self.assertIsNone({c["id"]: c["on"] for c in data["circuits"]}["light-left"])
+        for _ in range(lights_mod.CIRCUIT_FAILURES_UNREACHABLE - 1):
+            left = next(c for c in self.client.get("/lights").json()["circuits"] if c["id"] == "light-left")
+            self.assertEqual((left["on"], left["stale"]), (False, True))  # one miss: last state, stale
+        left = next(c for c in self.client.get("/lights").json()["circuits"] if c["id"] == "light-left")
+        self.assertEqual((left["on"], left["stale"]), (None, False))  # misses in a row: unreachable
 
     def test_stage_set_absolute_and_validated(self):
         r = self.client.post("/lights/stage", json={"zones": {"left": 200, "right": 0}, "warm": 180})
@@ -187,6 +191,60 @@ class LightsApiTests(unittest.TestCase):
         release.set()
         self._wait_for_query("light-front")
         self.assertFalse(self.client.app.state.light_circuits.snapshot()["light-front"])
+
+    def _count_status_questions(self):
+        calls = []
+        rpc = self.devices.rpc
+
+        def counting(host, method, params):
+            if method == "Switch.GetStatus":
+                calls.append((host, threading.current_thread().name))
+            return rpc(host, method, params)
+        return mock.patch.object(native_mod, "_shelly_rpc", counting), calls
+
+    def test_many_pages_share_one_question_per_shelly(self):
+        counting, calls = self._count_status_questions()
+        with counting, mock.patch("app.lights.CIRCUIT_CACHE_SECONDS", 60):
+            pages = [threading.Thread(target=self.client.get, args=("/lights",)) for _ in range(6)]
+            for page in pages:
+                page.start()
+            for page in pages:
+                page.join(5)
+            for _ in range(5):  # the pages poll again within the interval
+                self.client.get("/lights")
+        hosts = [host for host, _ in calls]
+        self.assertEqual(sorted(hosts), sorted(native_mod.SHELLY_HOSTS.values()))  # each once
+        # In the service's own Shelly threads, not the shared default pool.
+        self.assertTrue(all(name.startswith("shelly") for _, name in calls), calls)
+
+    def test_one_missed_answer_keeps_the_state(self):
+        self.client.get("/lights")
+        self.devices.offline.add("light-tech")
+        tech = next(c for c in self.client.get("/lights").json()["circuits"] if c["id"] == "light-tech")
+        self.assertEqual((tech["on"], tech["stale"]), (True, True))
+        self.devices.offline.discard("light-tech")
+        tech = next(c for c in self.client.get("/lights").json()["circuits"] if c["id"] == "light-tech")
+        self.assertEqual((tech["on"], tech["stale"]), (True, False))  # a good answer clears it
+        # Misses must be in a row: the good answer started the count again.
+        self.devices.offline.add("light-tech")
+        for _ in range(lights_mod.CIRCUIT_FAILURES_UNREACHABLE - 1):
+            self.client.get("/lights")
+        tech = next(c for c in self.client.get("/lights").json()["circuits"] if c["id"] == "light-tech")
+        self.assertIsNone(tech["on"])
+
+    def test_a_circuit_that_never_answered_is_unreachable_at_once(self):
+        self.devices.offline.add("light-front")
+        front = next(c for c in self.client.get("/lights").json()["circuits"] if c["id"] == "light-front")
+        self.assertEqual((front["on"], front["stale"]), (None, False))
+
+    def test_a_switch_clears_stale(self):
+        self.client.get("/lights")
+        self.devices.offline.add("light-left")
+        self.client.get("/lights")
+        self.devices.offline.discard("light-left")
+        r = self.client.post("/lights/circuits", json={"states": {"light-left": True}})
+        self.assertTrue(r.json()["circuits"]["light-left"])
+        self.assertNotIn("light-left", self.client.app.state.light_circuits.stale())
 
     def test_one_question_per_shelly_at_a_time(self):
         self.client.get("/lights")

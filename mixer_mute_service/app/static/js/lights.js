@@ -375,7 +375,11 @@ function renderLightCircuits(circuits) {
     key.classList.toggle("pending", pending);
     key.querySelector(".light-circuit-state").textContent = { on: "An", off: "Aus", unknown: "Offline" }[state];
     key.setAttribute("aria-pressed", String(on === true));
-    key.title = LIGHTS.renaming === "room" ? `${circuit.label} umbenennen` : state === "unknown" ? `${circuit.label}: nicht erreichbar – antippen versucht einzuschalten` : `${circuit.label} ${state === "on" ? "ausschalten" : "einschalten"}`;
+    // stale: the last question got no answer, the state is the last known
+    // one. Only the tooltip says so: a Shelly missing one answer must not
+    // make the key flicker.
+    const stale = circuit.stale === true && !pending ? " (letzte Abfrage ohne Antwort)" : "";
+    key.title = LIGHTS.renaming === "room" ? `${circuit.label} umbenennen` : state === "unknown" ? `${circuit.label}: nicht erreichbar – antippen versucht einzuschalten` : `${circuit.label} ${state === "on" ? "ausschalten" : "einschalten"}${stale}`;
   }
 }
 

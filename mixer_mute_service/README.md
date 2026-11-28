@@ -45,7 +45,8 @@ handshake, commands change its state, no echo), replaces every device
 connection raises) and keeps its data in `local-test/` (ignored by git;
 delete it to start fresh). `--dead-shelly light-front` plays a room light circuit that
 is off the network (each call hangs for the 1 s connect timeout, then fails), `--shelly-delay 0.3` slows
-the other fake Shellys' answers.
+the other fake Shellys' answers, `--flaky-shelly light-left --flaky-rate 0.3`
+makes one miss a share of the calls (a Shelly on poor Wi-Fi).
 
 ## Web UI
 
@@ -1293,7 +1294,13 @@ weiter über `/companion/buttons/{id}/press` drücken.
   erreichbar: …“). Ein Shelly, der nicht im Netz ist, wird nach 1 s Verbindungsaufbau
   aufgegeben (`SHELLY_CONNECT_TIMEOUT`); ein verbundener hat 2,5 s für die Antwort.
   Schalten versucht den Verbindungsaufbau ein zweites Mal (WLAN-Aussetzer; vor dem
-  Verbinden ist nichts gesendet, es schaltet also nie doppelt), Abfragen nicht. Angetippt zeigt die Taste den
+  Verbinden ist nichts gesendet, es schaltet also nie doppelt), Abfragen nicht.
+  Eine einzelne verpasste Abfrage ändert nichts: Ein Kreis mit bekanntem Zustand
+  gilt erst nach 3 Abfragen ohne Antwort in Folge als nicht erreichbar
+  (`CIRCUIT_FAILURES_UNREACHABLE`); bis dahin zeigt er seinen letzten Zustand
+  (`"stale": true` in `GET /lights`, nur im Tooltip sichtbar). Alle offenen Seiten
+  teilen sich die Abfragen: Jeder Shelly wird höchstens einmal je 2 s gefragt,
+  egal wie viele Seiten offen sind, in eigenen Threads des Dienstes. Angetippt zeigt die Taste den
   neuen Zustand sofort (die Lampe pulsiert), bis der Shelly ihn bestätigt; schlägt
   es fehl, kommt der echte Zustand zurück. Jeder Shelly wird für sich gefragt:
   `GET /lights` wartet höchstens 0,4 s und nie auf einen Kreis, der schon zuletzt

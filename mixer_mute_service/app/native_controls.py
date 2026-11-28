@@ -11,6 +11,7 @@ import socket
 import struct
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from pathlib import Path
 from typing import Callable, Optional
@@ -151,6 +152,19 @@ def _shelly_connect(host: str, attempts: int) -> http.client.HTTPConnection:
                 raise NativeControlError(f"Shelly {host} unreachable") from exc
             log.info("Shelly %s: connect failed (%s), trying again", host, exc)
     raise NativeControlError(f"Shelly {host} unreachable")  # attempts < 1
+
+
+# The Shelly calls run in their own threads: a dead Shelly (a thread held
+# for its connect timeout) or other blocking work of the service never
+# delays a room light question or switch. Room for one question and one
+# switch per circuit at the same time; the CircuitCache keeps questions to
+# one per Shelly.
+_SHELLY_POOL = ThreadPoolExecutor(max_workers=2 * len(SHELLY_HOSTS), thread_name_prefix="shelly")
+
+
+async def _shelly_call(host: str, method: str, params: dict) -> dict:
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(_SHELLY_POOL, _shelly_rpc, host, method, params)
 
 
 def _shelly_rpc(host: str, method: str, params: dict) -> dict:
@@ -828,7 +842,7 @@ class NativeControlService:
         """On/off of one room light circuit as its Shelly reports it; None
         when it does not answer."""
         try:
-            data = await asyncio.to_thread(_shelly_rpc, SHELLY_HOSTS[target], "Switch.GetStatus", {"id": 0})
+            data = await _shelly_call(SHELLY_HOSTS[target], "Switch.GetStatus", {"id": 0})
         except NativeControlError:
             return None
         return data.get("output") if isinstance(data.get("output"), bool) else None
@@ -849,7 +863,7 @@ class NativeControlService:
 
         async def one(target: str, on: bool):
             try:
-                await asyncio.to_thread(_shelly_rpc, SHELLY_HOSTS[target], "Switch.Set", {"id": 0, "on": on})
+                await _shelly_call(SHELLY_HOSTS[target], "Switch.Set", {"id": 0, "on": on})
                 return None
             except NativeControlError as exc:
                 return str(exc)
@@ -881,9 +895,9 @@ class NativeControlService:
             if host is None:
                 raise NativeControlError("unknown Shelly target")
             if action_type == "shelly-toggle":
-                await asyncio.to_thread(_shelly_rpc, host, "Switch.Toggle", {"id": 0})
+                await _shelly_call(host, "Switch.Toggle", {"id": 0})
             else:
-                await asyncio.to_thread(_shelly_rpc, host, "Switch.Set", {"id": 0, "on": bool(action.get("on"))})
+                await _shelly_call(host, "Switch.Set", {"id": 0, "on": bool(action.get("on"))})
             return {"ok": True}
 
         if action_type in {"shelly-set-all", "shelly-set-group"}:
