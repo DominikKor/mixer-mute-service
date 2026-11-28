@@ -180,6 +180,7 @@ function renderFixtures() {
   const link = $("light-link");
   link.setAttribute("aria-pressed", String(LIGHTS.link));
   $("light-fixtures").classList.toggle("linked", LIGHTS.link);
+  renderLightBlockHeads();
 }
 
 // ---- settings: two chips, one slider below them -------------------------------------
@@ -236,6 +237,58 @@ function renderLights() {
   renderLightCircuits(LIGHTS.data.circuits);
   renderLightScenes(LIGHTS.data.scenes);
   renderLightPick();
+  renderLightBlockHeads();
+}
+
+// ---- the three blocks fold on their own -------------------------------------------
+// Folded per device (localStorage, also without it the page works); a
+// folded block's head says in a few words what it holds.
+const LIGHT_BLOCKS_KEY = "mixer_light_blocks_folded";
+
+function lightBlocksFolded() {
+  try { return new Set(JSON.parse(storeGet(LIGHT_BLOCKS_KEY) || "[]")); } catch (_) { return new Set(); }
+}
+
+function setLightBlockFolded(block, folded) {
+  const all = lightBlocksFolded();
+  if (folded) all.add(block); else all.delete(block);
+  storeSet(LIGHT_BLOCKS_KEY, JSON.stringify([...all]));
+  applyLightBlocks();
+}
+
+function applyLightBlocks() {
+  const folded = lightBlocksFolded();
+  for (const block of document.querySelectorAll("[data-light-block]")) {
+    const name = block.dataset.lightBlock;
+    // Renaming in a block keeps it open (its names are what is being changed).
+    const isFolded = folded.has(name) && LIGHTS.renaming !== name;
+    block.classList.toggle("folded", isFolded);
+    block.querySelector(".light-block-body").hidden = isFolded;
+    const toggle = block.querySelector("[data-light-block-toggle]");
+    toggle.setAttribute("aria-expanded", String(!isFolded));
+    const title = block.querySelector(".light-block-title").textContent;
+    toggle.title = `${title} ${isFolded ? "aufklappen" : "zuklappen"}`;
+  }
+  renderLightBlockHeads();
+}
+
+// What a folded head shows: Presets the active one(s), Raumlicht how many
+// circuits are on (and how many do not answer), Bühne how many lights are on.
+function renderLightBlockHeads() {
+  const data = LIGHTS.data;
+  const set = (name, text) => { document.querySelector(`[data-light-summary="${name}"]`).textContent = text; };
+  if (!data) { for (const name of ["presets", "room", "stage"]) set(name, ""); return; }
+  const active = data.scenes.filter(s => s.active).map(s => s.name);
+  const last = data.scenes.find(s => s.id === data.last_scene);
+  set("presets", active.length ? active.join(", ")
+    : last ? `${last.name} (geändert)`
+    : data.scenes.length ? "keins aktiv" : "keine");
+  const states = data.circuits.map(c => (c.id in LIGHTS.circuitWant ? LIGHTS.circuitWant[c.id] : c.on));
+  const on = states.filter(v => v === true).length;
+  const unknown = states.filter(v => v !== true && v !== false).length;
+  set("room", [on ? `${on} an` : "alle aus", unknown ? `${unknown} ?` : ""].filter(Boolean).join(" · "));
+  const lit = Object.values(data.stage.fixtures).filter(f => f.on).length;
+  set("stage", lit ? `${lit} an` : "alle aus");
 }
 
 // ---- sliders: one request per slider at a time ---------------------------------------
@@ -347,6 +400,7 @@ for (const type of ["pointerup", "pointercancel"]) {
 // ---- room light -------------------------------------------------------------------
 
 function renderLightCircuits(circuits) {
+  renderLightBlockHeads();  // a folded Raumlicht head counts what is on
   const box = $("light-circuits");
   for (const circuit of circuits) {
     let key = box.querySelector(`[data-light-circuit="${circuit.id}"]`);
@@ -527,6 +581,7 @@ function showLightRenaming(which) {
   $("light-fixtures").classList.toggle("renaming", which === "stage");
   $("light-circuits").classList.toggle("renaming", which === "room");
   if (LIGHTS.data) { renderFixtures(); renderLightCircuits(LIGHTS.data.circuits); }
+  applyLightBlocks();
 }
 
 function startLightRename(target) {
@@ -852,6 +907,15 @@ $("light-scene-create").addEventListener("click", event => {
 
 // The blocks' "⋮": renaming the lights (stored on the service; an empty
 // name goes back to the built-in one).
+for (const toggle of document.querySelectorAll("[data-light-block-toggle]")) {
+  toggle.addEventListener("click", () => {
+    const block = toggle.dataset.lightBlockToggle;
+    if (LIGHTS.renaming === block) setLightRenaming(null);
+    setLightBlockFolded(block, toggle.getAttribute("aria-expanded") === "true");
+  });
+}
+applyLightBlocks();
+
 $("light-stage-menu").addEventListener("click", event => toggleActionMenu(event.currentTarget, [
   { label: LIGHTS.renaming === "stage" ? "Umbenennen beenden" : "Scheinwerfer umbenennen", icon: ICON_PENCIL,
     run: () => setLightRenaming(LIGHTS.renaming === "stage" ? null : "stage") },
