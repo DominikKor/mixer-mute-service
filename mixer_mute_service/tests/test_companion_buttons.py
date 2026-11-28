@@ -35,7 +35,7 @@ class CompanionButtonCatalogTests(unittest.TestCase):
 
         migrated_ids = {button["id"] for button in migrated["buttons"]}
         migrated_live = next(button for button in migrated["buttons"] if button["id"] == live["id"])
-        self.assertEqual(migrated["native_catalog_version"], 11)
+        self.assertEqual(migrated["native_catalog_version"], 12)
         self.assertEqual(migrated_live["native_action"]["scene"], "Cam 1")
         self.assertIn("native-obs-cam1-toggle", migrated_ids)
         self.assertIn("beamer-unhide", migrated_ids)
@@ -45,12 +45,8 @@ class CompanionButtonCatalogTests(unittest.TestCase):
         self.assertEqual(len(migrated_ids), len(migrated["buttons"]))
 
     def test_v4_migration_keeps_deleted_v3_buttons_deleted(self):
-        macro = deepcopy(next(
-            button for button in COMPANION_BUTTONS if button["id"] == "native-overall-predigt"
-        ))
-        macro["native_action"] = {"type": "group-macro", "group": "Predigt",
-                                  "buttons": ["native-artnet-zone-left-toggle"]}
-        stored = {"categories": deepcopy(DEFAULT_CATEGORIES), "buttons": [macro],
+        live = deepcopy(COMPANION_BUTTONS_BY_ID["native-obs-cam1-live"])
+        stored = {"categories": deepcopy(DEFAULT_CATEGORIES), "buttons": [live],
                   "native_catalog_version": 3}
 
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -59,14 +55,11 @@ class CompanionButtonCatalogTests(unittest.TestCase):
             CompanionButtonStore(path, COMPANION_BUTTONS)
             migrated = json.loads(path.read_text(encoding="utf-8"))
 
-        self.assertEqual(migrated["native_catalog_version"], 11)
+        self.assertEqual(migrated["native_catalog_version"], 12)
         self.assertEqual([b["id"] for b in migrated["buttons"]][:4], [
-            "native-overall-predigt", "beamer-unhide", "beamer-power-off", "beamer-power-on",
+            "native-obs-cam1-live", "beamer-unhide", "beamer-power-off", "beamer-power-on",
         ])
         self.assertEqual({b["id"] for b in migrated["buttons"][4:]}, _NATIVE_CATALOG_V9_IDS | _NATIVE_CATALOG_V10_IDS)
-        action = migrated["buttons"][0]["native_action"]
-        self.assertEqual(action["stage"], {"on": ["left", "right"], "off": ["center-left", "center-right"]})
-        self.assertNotIn("native-artnet-zone-left-toggle", action["buttons"])
 
     def test_v4_migration_updates_hide_and_adds_unhide(self):
         hide = deepcopy(next(button for button in COMPANION_BUTTONS if button["id"] == "beamer-hide"))
@@ -80,7 +73,7 @@ class CompanionButtonCatalogTests(unittest.TestCase):
             migrated = json.loads(path.read_text(encoding="utf-8"))
 
         by_id = {button["id"]: button for button in migrated["buttons"]}
-        self.assertEqual(migrated["native_catalog_version"], 11)
+        self.assertEqual(migrated["native_catalog_version"], 12)
         self.assertEqual(by_id["beamer-hide"]["native_action"], {"type": "beamer-set", "hidden": True})
         self.assertEqual(by_id["beamer-unhide"]["native_action"], {"type": "beamer-set", "hidden": False})
 
@@ -96,7 +89,7 @@ class CompanionButtonCatalogTests(unittest.TestCase):
             migrated = json.loads(path.read_text(encoding="utf-8"))
 
         by_id = {button["id"]: button for button in migrated["buttons"]}
-        self.assertEqual(migrated["native_catalog_version"], 11)
+        self.assertEqual(migrated["native_catalog_version"], 12)
         self.assertEqual(by_id["beamer-freeze"]["native_action"], {"type": "beamer-command", "command": "freeze"})
         self.assertEqual(by_id["beamer-power-off"]["native_action"]["command"], "power-off")
         self.assertEqual(by_id["beamer-power-on"]["native_action"]["command"], "power-on")
@@ -108,19 +101,18 @@ class CompanionButtonCatalogTests(unittest.TestCase):
             stored = json.loads(path.read_text(encoding="utf-8"))
             camera_buttons = asyncio.run(store.camera_buttons())
 
-        self.assertEqual(stored["native_catalog_version"], 11)
+        self.assertEqual(stored["native_catalog_version"], 12)
         self.assertFalse(CAMERA_BUTTON_IDS & {button["id"] for button in stored["buttons"]})
         self.assertNotIn("cameras", {category["id"] for category in stored["categories"]})
-        self.assertIn("native-overall-predigt", {button["id"] for button in stored["buttons"]})
+        self.assertIn("native-obs-cam1-live", {button["id"] for button in stored["buttons"]})
         self.assertEqual({button["id"] for button in camera_buttons}, CAMERA_BUTTON_IDS)
 
-    def test_v7_migration_removes_camera_keys_and_keeps_macros(self):
+    def test_v7_migration_removes_camera_keys(self):
         legacy_categories = deepcopy(DEFAULT_CATEGORIES) + [{"id": "cameras", "name": "Kameras", "visible": True}]
         stored_buttons = deepcopy(COMPANION_BUTTONS)
         by_id = {button["id"]: button for button in stored_buttons}
         by_id["native-cam1-preset-1"]["label"] = "CAM1 Kanzel"   # renamed by the user
         by_id["native-cam2-zoom-in"]["category_id"] = "obs"     # moved by the user
-        macro_before = deepcopy(by_id["native-overall-gebet"])
         stored = {"categories": legacy_categories, "buttons": stored_buttons, "native_catalog_version": 6}
 
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -132,16 +124,9 @@ class CompanionButtonCatalogTests(unittest.TestCase):
             reloaded = asyncio.run(CompanionButtonStore(path, COMPANION_BUTTONS).camera_buttons())
 
         migrated_ids = [button["id"] for button in migrated["buttons"]]
-        self.assertEqual(migrated["native_catalog_version"], 11)
+        self.assertEqual(migrated["native_catalog_version"], 12)
         self.assertFalse(CAMERA_BUTTON_IDS & set(migrated_ids))
         self.assertNotIn("cameras", {category["id"] for category in migrated["categories"]})
-        macro = next(button for button in migrated["buttons"] if button["id"] == "native-overall-gebet")
-        self.assertEqual(macro, macro_before)
-        self.assertEqual(macro["native_action"]["cameras"], {"cam1": 8, "cam2": 8})  # the prayer presets
-        # Every macro still links catalog camera actions that exist.
-        for button in migrated["buttons"]:
-            for linked_id in button.get("native_action", {}).get("buttons", []):
-                self.assertIn(linked_id, COMPANION_BUTTONS_BY_ID)
         # The camera section keeps the user's label.
         self.assertEqual(migrated["camera_labels"], {"native-cam1-preset-1": "CAM1 Kanzel"})
         self.assertEqual(camera_buttons["native-cam1-preset-1"]["label"], "CAM1 Kanzel")
@@ -164,16 +149,6 @@ class CompanionButtonCatalogTests(unittest.TestCase):
 
         self.assertEqual([b for b in migrated["buttons"] if b["id"] not in _NATIVE_CATALOG_V9_IDS | _NATIVE_CATALOG_V10_IDS], [own])
         self.assertIn("cameras", {category["id"] for category in migrated["categories"]})
-
-    def test_macros_link_only_existing_native_actions(self):
-        by_id = {button["id"]: button for button in COMPANION_BUTTONS}
-        for button in COMPANION_BUTTONS:
-            action = button.get("native_action", {})
-            if action.get("type") != "group-macro":
-                continue
-            for linked_id in action["buttons"]:
-                self.assertEqual(by_id[linked_id]["kind"], "native", linked_id)
-                self.assertNotIn("toggle", by_id[linked_id]["native_action"]["type"], linked_id)
 
 
 if __name__ == "__main__":

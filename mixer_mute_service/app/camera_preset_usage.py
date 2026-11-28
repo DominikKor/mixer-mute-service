@@ -1,6 +1,6 @@
 """Who uses a camera's VISCA preset number: program rows, shortcuts,
 template rows (their camera presets or a preset key as an action) and keys
-in Steuerung (Overall macros, keys running a preset). The camera section asks
+in Steuerung (keys running a preset). The camera section asks
 before it stores a new position at a number something already relies on."""
 
 from __future__ import annotations
@@ -49,8 +49,7 @@ def _add(used: Dict[int, List[str]], numbers: Iterable[int], label: str) -> None
 
 async def camera_preset_usage(state, camera: str) -> Dict[int, List[str]]:
     """Number -> readable list of what uses it ("Programm: 10:00 Predigt",
-    "Shortcut: Abendmahl", "Vorlage „Sonntag“: Predigt", "Taste: Overall
-    Predigt"). Numbers nothing uses are left out."""
+    "Shortcut: Abendmahl", "Vorlage „Sonntag“: Predigt", "Taste: Kanzel"). Numbers nothing uses are left out."""
     key_ids = _preset_key_ids(camera)
     used: Dict[int, List[str]] = {}
     program = getattr(state, "program_items", None)
@@ -72,11 +71,7 @@ async def camera_preset_usage(state, camera: str) -> Dict[int, List[str]]:
         for button in (await store.snapshot())["buttons"]:
             action = native_action_of(button) or {}
             numbers = set()
-            if action.get("type") == "group-macro":
-                preset = (action.get("cameras") or {}).get(camera)
-                if type(preset) is int:
-                    numbers.add(preset)
-            elif action.get("type") == "visca-preset" and action.get("camera") == camera:
+            if action.get("type") == "visca-preset" and action.get("camera") == camera:
                 numbers.add(action.get("preset"))
             _add(used, numbers, f"Taste: {button.get('label', button.get('id'))}")
     return {n: labels for n, labels in sorted(used.items()) if CAMERA_PRESET_MIN <= n <= CAMERA_PRESET_MAX}

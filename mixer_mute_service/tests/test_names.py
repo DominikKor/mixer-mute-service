@@ -80,7 +80,7 @@ class RenameTests(unittest.TestCase):
 
         r = self.client.post("/companion/categories/obs/rename", json={"name": "Stream"})
         self.assertEqual((r.status_code, r.json()["category"]["name"]), (200, "Stream"))
-        self.assertEqual(self.client.post("/companion/categories/overall/rename", json={"name": "stream"}).status_code, 409)
+        self.assertEqual(self.client.post("/companion/categories/beamer/rename", json={"name": "stream"}).status_code, 409)
         self.assertEqual(self.client.post("/companion/categories/nope/rename", json={"name": "X"}).status_code, 404)
         names = {c["id"]: c["name"] for c in self.client.get("/companion/buttons").json()["categories"]}
         self.assertEqual(names["obs"], "Stream")

@@ -322,7 +322,7 @@ def artnet_status(host: Optional[str] = None) -> Optional[dict]:
 
 # Memory commands, 81 01 04 3F 0p pp FF: 01 stores the current position as
 # preset pp, 02 drives to it. The service uses presets 1 to 16 (program rows
-# and Overall keys name them, app/camera_program.py).
+# name them, app/camera_program.py).
 VISCA_PRESET_SET = 0x01
 VISCA_PRESET_RECALL = 0x02
 VISCA_PRESET_MIN, VISCA_PRESET_MAX = 1, 16
@@ -941,26 +941,6 @@ class NativeControlService:
 
             target = await self._update_dmx(toggle)
             return {"ok": True, "level": target[zone["white"] - 1]}
-
-        if action_type == "artnet-zones-set":
-            # Companion's Overall keys: these zones on (a zone that is on keeps
-            # its level, one that is off comes up to the start brightness),
-            # those off; zones not named stay as they are.
-            on, off = action.get("on") or [], action.get("off") or []
-            if not isinstance(on, list) or not isinstance(off, list) or not (on or off) \
-                    or any(z not in ARTNET_ZONES for z in [*on, *off]) or set(on) & set(off):
-                raise NativeControlError("invalid Art-Net zone set")
-
-            def switch(frame: list[int]) -> list[int]:
-                for zone_name in on:
-                    white = frame[ARTNET_ZONES[zone_name]["white"] - 1]
-                    self._set_zone(frame, zone_name, white or self._levels["start"])
-                for zone_name in off:
-                    self._set_zone(frame, zone_name, 0)
-                return frame
-
-            await self._update_dmx(switch)
-            return {"ok": True}
 
         if action_type in {"artnet-zone-adjust", "artnet-all-adjust"}:
             zones = list(ARTNET_ZONES) if action_type == "artnet-all-adjust" else [action.get("zone")]

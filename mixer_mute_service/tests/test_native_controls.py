@@ -58,27 +58,12 @@ class NativeControlTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.controls._dmx[12], 40)  # right zone white: two steps
         self.assertEqual(self.controls._dmx[0], 20)   # left zone white: one step
 
-    async def test_zones_set_switches_the_pattern_and_keeps_lit_zones(self):
-        # The lights' state (the frame is made from it).
-        self.controls._fixtures["right"].update(on=True, level=90)          # already lit
-        self.controls._fixtures["center-left"].update(on=True, level=200)   # lit, to be switched off
-        self.controls._fixtures["center-right"].update(on=True, level=70)   # not named: stays
-        with patch.object(self.controls, "_fade_to", new_callable=AsyncMock):
-            for _ in range(2):  # pressing an Overall twice must not toggle
-                await self.controls.press({"type": "artnet-zones-set",
-                                           "on": ["left", "right"], "off": ["center-left"]})
-
-        self.assertEqual(self.controls._dmx[0], 255)   # left: off -> start brightness
-        self.assertEqual(self.controls._dmx[12], 90)   # right: keeps its level
-        self.assertEqual(self.controls._dmx[4], 0)     # center-left: off
-        self.assertEqual(self.controls._fixtures["center-left"]["level"], 200)  # keeps its level
-        self.assertEqual(self.controls._dmx[8], 70)    # center-right: untouched
-
-    async def test_zones_set_rejects_bad_patterns(self):
-        for action in ({"on": [], "off": []}, {"on": ["left"], "off": ["left"]},
-                       {"on": ["stage"]}, {"on": "left"}):
-            with self.subTest(action=action), self.assertRaises(NativeControlError):
-                await self.controls.press({"type": "artnet-zones-set", **action})
+    async def test_overall_zone_pattern_action_is_gone(self):
+        # Only the Overall keys used it (removed with catalog v12).
+        before = list(self.controls._dmx)
+        with self.assertRaisesRegex(NativeControlError, "unsupported native action"):
+            await self.controls.press({"type": "artnet-zones-set", "on": ["left"], "off": ["right"]})
+        self.assertEqual(self.controls._dmx, before)
 
     async def test_shelly_group_tries_every_circuit_and_names_the_silent_ones(self):
         called = []

@@ -72,7 +72,7 @@ class ProgramFileNameTests(unittest.TestCase):
         with app_client(CONFIG) as (client, _):
             setup(client)
             store = client.app.state.companion_button_store
-            key = asyncio.run(store.create_button("Kollekte Musik", "overall", {"kind": "channel", "channel": 1, "operation": "mute"}))
+            key = asyncio.run(store.create_button("Kollekte Musik", "beamer", {"kind": "channel", "channel": 1, "operation": "mute"}))
             self.assertTrue(key["id"].startswith("user-"))
             row = client.get("/program/items").json()[0]
             # (a key that switches mutes may not share a row with a group)
@@ -96,7 +96,7 @@ class ProgramFileNameTests(unittest.TestCase):
         with app_client(CONFIG) as (client, _):
             setup(client)
             store = client.app.state.companion_button_store
-            key = asyncio.run(store.create_button("Beamer hide", "overall", {"kind": "companion", "target_button_id": "beamer-hide"}))
+            key = asyncio.run(store.create_button("Beamer hide", "beamer", {"kind": "companion", "target_button_id": "beamer-hide"}))
             payload = export(client)
             payload["items"][0].pop("desktop_names")
             payload["items"][0].update(desktop=["key:beamer HIDE", "key:beamer-hide"], group="")
@@ -110,8 +110,8 @@ class ProgramFileNameTests(unittest.TestCase):
             setup(client)
             store = client.app.state.companion_button_store
             action = {"kind": "channel", "channel": 1, "operation": "mute"}
-            first = asyncio.run(store.create_button("Kollekte", "overall", action))
-            asyncio.run(store.create_button("Segen", "overall", action))
+            first = asyncio.run(store.create_button("Kollekte", "beamer", action))
+            asyncio.run(store.create_button("Segen", "beamer", action))
             payload = export(client)
             # edited by hand: the step says "Kollekte", the name next to it is still the old one
             payload["items"][0].update(desktop=["key:kollekte", "key:user-000000000000"], group="",
@@ -125,7 +125,7 @@ class ProgramFileNameTests(unittest.TestCase):
         with app_client(CONFIG) as (client, _):
             setup(client)
             key = asyncio.run(client.app.state.companion_button_store.create_button(
-                "Kollekte Musik", "overall", {"kind": "channel", "channel": 1, "operation": "mute"}))
+                "Kollekte Musik", "beamer", {"kind": "channel", "channel": 1, "operation": "mute"}))
             client.post("/program/items", json={"time": "10:30", "title": "Zweite Zeile", "person": "", "group": "",
                                                 "song": "b.foil", "desktop": ["key:" + key["id"], "logo",
                                                                              "via:qr|C:\\Bilder\\b.pdf", "@freeze"]})
@@ -227,15 +227,15 @@ class UniqueNamesTests(unittest.TestCase):
         with app_client(CONFIG) as (client, _):
             store = client.app.state.companion_button_store
             action = {"kind": "channel", "channel": 1, "operation": "mute"}
-            first = asyncio.run(store.create_button("Kollekte", "overall", action))
+            first = asyncio.run(store.create_button("Kollekte", "beamer", action))
             with self.assertRaises(DuplicateLabelError) as caught:
-                asyncio.run(store.create_button("  kollekte ", "overall", action))
+                asyncio.run(store.create_button("  kollekte ", "beamer", action))
             self.assertIn("eindeutig", str(caught.exception))
-            other = asyncio.run(store.create_button("Andere", "overall", action))
+            other = asyncio.run(store.create_button("Andere", "beamer", action))
             with self.assertRaises(DuplicateLabelError):
-                asyncio.run(store.update_button(other["id"], "KOLLEKTE", "overall"))
-            asyncio.run(store.update_button(first["id"], "Kollekte", "overall"))  # its own name is fine
-            asyncio.run(store.create_button("Beamer hide", "overall", action))  # a catalog key's name is fine:
+                asyncio.run(store.update_button(other["id"], "KOLLEKTE", "beamer"))
+            asyncio.run(store.update_button(first["id"], "Kollekte", "beamer"))  # its own name is fine
+            asyncio.run(store.create_button("Beamer hide", "beamer", action))  # a catalog key's name is fine:
             # catalog keys keep their readable IDs, and the named key comes first when a file says "Beamer hide"
             asyncio.run(store.save_camera_preset("cam1", 9, "CAM1 Kanzel"))
             asyncio.run(store.save_camera_preset("cam1", 9, "CAM1 Kanzel"))  # saving the same preset again is fine
@@ -244,9 +244,9 @@ class UniqueNamesTests(unittest.TestCase):
             with self.assertRaises(DuplicateLabelError):
                 asyncio.run(store.set_camera_label("native-cam1-preset-9", "Kollekte"))
             with self.assertRaises(DuplicateLabelError):  # and a user key may not take its name
-                asyncio.run(store.create_button("cam1 KANZEL", "overall", action))
+                asyncio.run(store.create_button("cam1 KANZEL", "beamer", action))
             # the page gets the German reason
-            r = client.post("/companion/buttons", json={"label": "kollekte", "category_id": "overall", "kind": "channel",
+            r = client.post("/companion/buttons", json={"label": "kollekte", "category_id": "beamer", "kind": "channel",
                                                         "channel": 1, "operation": "mute"})
             self.assertEqual(r.status_code, 400)
             self.assertIn("eindeutig", r.json()["reason"])
@@ -301,8 +301,8 @@ class UniqueNamesTests(unittest.TestCase):
         with app_client(CONFIG) as (client, _):
             store = client.app.state.companion_button_store
             action = {"kind": "channel", "channel": 1, "operation": "mute"}
-            asyncio.run(store.create_button("Zwilling", "overall", action))
-            store._buttons.append({"id": "user-" + "a" * 12, "label": "zwilling", "category_id": "overall", **action})
+            asyncio.run(store.create_button("Zwilling", "beamer", action))
+            store._buttons.append({"id": "user-" + "a" * 12, "label": "zwilling", "category_id": "beamer", **action})
             self.assertEqual(asyncio.run(store.duplicate_labels()), [("Zwilling", 2)])
 
     def test_a_duplicate_camera_preset_name_does_not_touch_the_camera(self):
@@ -334,17 +334,17 @@ class UniqueNamesTests(unittest.TestCase):
         with app_client(CONFIG) as (client, _):
             store = client.app.state.companion_button_store
             action = {"kind": "channel", "channel": 1, "operation": "mute"}
-            first = asyncio.run(store.create_button("Zwilling", "overall", action))
+            first = asyncio.run(store.create_button("Zwilling", "beamer", action))
             twin_id = "user-" + "a" * 12
-            store._buttons.append({"id": twin_id, "label": "zwilling", "category_id": "overall", **action})
+            store._buttons.append({"id": twin_id, "label": "zwilling", "category_id": "beamer", **action})
             categories = asyncio.run(store.snapshot())["categories"]
-            other = next(c["id"] for c in categories if c["id"] != "overall")
+            other = next(c["id"] for c in categories if c["id"] != "beamer")
             moved = asyncio.run(store.update_button(twin_id, "zwilling", other))  # same name, new category
             self.assertEqual(moved["category_id"], other)
-            asyncio.run(store.update_button(first["id"], " ZWILLING ", "overall"))
+            asyncio.run(store.update_button(first["id"], " ZWILLING ", "beamer"))
             from app.companion_buttons import DuplicateLabelError
             with self.assertRaises(DuplicateLabelError):  # but a new key with a taken name is still refused
-                asyncio.run(store.create_button("zwilling", "overall", action))
+                asyncio.run(store.create_button("zwilling", "beamer", action))
             # a saved preset keeps its name through an unchanged rename, too
             asyncio.run(store.save_camera_preset("cam1", 9, "CAM1 Kanzel"))
             store._saved_presets["native-cam2-preset-9"] = "CAM1 Kanzel"
@@ -357,7 +357,7 @@ class UniqueNamesTests(unittest.TestCase):
             store = client.app.state.companion_button_store
             action = {"kind": "channel", "channel": 1, "operation": "mute"}
             for label in ("desktop:qr", "file:x", "via:y", "key:z", "@Anna", "beamer-hide"):
-                key = asyncio.run(store.create_button(label, "overall", action))
+                key = asyncio.run(store.create_button(label, "beamer", action))
                 row = client.get("/program/items").json()[0]
                 client.put(f"/program/items/{row['id']}", json={**row, "desktop": ["key:" + key["id"]], "group": ""})
                 payload = export(client)

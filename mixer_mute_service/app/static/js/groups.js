@@ -287,8 +287,8 @@ async function runGroupSync() {
   await syncPresetsFromBackend();   // values of new (e.g. duplicated) groups
 }
 
-// The service renames the group together with its Programm rows, Steuerung
-// keys and Overall macros. A group that only exists here (no channels yet) is
+// The service renames the group together with its Programm rows and
+// Steuerung keys. A group that only exists here (no channels yet) is
 // just renamed locally.
 function renamePerson(personId, oldName, newName) {
   const err = groupNameError(newName, personId);

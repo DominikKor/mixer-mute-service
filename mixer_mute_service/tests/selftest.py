@@ -4,7 +4,6 @@ smoke test (no real mixer -> sends must be blocked)."""
 import os
 import sys
 import time
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from app.companion_buttons import CAMERA_BUTTONS, CATALOG_ONLY_BUTTONS, CATALOG_ONLY_IDS, COMPANION_BUTTONS
@@ -299,26 +298,10 @@ with TestClient(app) as client:
         check("native Beamer button dispatched", companion_press.status_code == 200 and companion_press.json()["ok"] is True)
         check("Beamer allowlist action selected",
               native_press.call_args.args[0] == {"type": "beamer-command", "command": "freeze"})
-    camera_run = AsyncMock(return_value={"ok": True, "message": "Cam 2 fährt Preset 1 an"})
-    with patch.object(app.state.controller, "group_set", AsyncMock(return_value={"ok": True})) as macro_group, \
-            patch.object(app.state.native_controls, "press", AsyncMock(return_value={"ok": True})) as macro_native, \
-            patch.object(app.state, "camera_program", SimpleNamespace(run=camera_run, cancel=lambda: None)):
-        macro = client.post("/companion/buttons/native-overall-predigt/press")
-        macro_types = [call.args[0]["type"] for call in macro_native.await_args_list]
-        check("Overall macro activates its group", macro.status_code == 200
-              and macro_group.await_args.args == ("Predigt", False))
-        check("Overall macro sets the stage pattern and hands the cameras to the camera program",
-              macro_types == ["artnet-zones-set"]
-              and camera_run.await_args.args[:2] == ({"cam1": 1, "cam2": 1}, 4.0))
-        alias_macro = client.post("/companion/buttons", json={
-            "label": "Predigt", "category_id": "overall",
-            "kind": "companion", "target_button_id": "native-overall-predigt",
-        })
-        alias_macro_id = alias_macro.json()["button"]["id"]
-        alias_macro_press = client.post(f"/companion/buttons/{alias_macro_id}/press")
-        check("user key pointing at a macro runs the macro",
-              alias_macro_press.status_code == 200 and macro_group.await_count == 2)
-        client.post(f"/companion/buttons/{alias_macro_id}/delete")
+    with patch.object(app.state.controller, "group_set", AsyncMock(return_value={"ok": True})) as macro_group:
+        gone = client.post("/companion/buttons/native-overall-predigt/press")
+        check("removed Overall key is unknown and sets no mute group",
+              gone.status_code == 404 and macro_group.await_count == 0)
     with patch.object(app.state.native_controls, "press", AsyncMock(side_effect=NativeControlError("OBS WebSocket unavailable"))):
         failed_native = client.post("/companion/buttons/native-obs-start/press")
         check("failed native action -> 503 with reason", failed_native.status_code == 503
@@ -339,7 +322,7 @@ with TestClient(app) as client:
         check("normal group capture passes name",
               capture_group.call_args.args == ("Captured",))
     category_names = {category["name"] for category in companion_buttons.json()["categories"]}
-    check("native categories loaded", {"OBS", "Overall"} <= category_names and not {"Licht", "Mixer"} & category_names)
+    check("native categories loaded", "OBS" in category_names and not {"Licht", "Mixer", "Overall"} & category_names)
     check("camera keys are not in Steuerung", "Kameras" not in category_names
           and not any(b["id"].startswith(("native-cam1-", "native-cam2-")) for b in companion_buttons.json()["buttons"]))
     new_category = client.post("/companion/categories", json={"name": "Streaming"})
@@ -502,7 +485,7 @@ with TestClient(app) as client:
     client.post("/groups", json={"name": "Altname", "channels": [1, 2]})
     rename_row = client.post("/program/items", json={"time": "12:00", "title": "Umbenennen", "group": "Altname"}).json()["item"]
     rename_key = client.post("/companion/buttons", json={
-        "label": "Altname an", "category_id": "overall", "kind": "group", "group": "Altname", "operation": "unmute",
+        "label": "Altname an", "category_id": "obs", "kind": "group", "group": "Altname", "operation": "unmute",
     }).json()["button"]
     renamed = client.post("/groups/Altname/rename", json={"name": "Neuname"})
     groups_now = client.get("/groups").json()

@@ -76,8 +76,8 @@ async def delete_group(group: str, request: Request):
 
 @router.post("/groups/{group}/rename")
 async def rename_group(group: str, body: GroupRename, request: Request):
-    """Rename a group and every reference to it (Programm rows, Steuerung keys,
-    Overall macros), so nothing that used the old name breaks."""
+    """Rename a group and every reference to it (Programm rows, Steuerung
+    keys), so nothing that used the old name breaks."""
     state = request.app.state
     try:
         channels = await state.groups.rename(group, body.name)

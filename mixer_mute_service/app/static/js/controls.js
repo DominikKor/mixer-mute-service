@@ -4,7 +4,7 @@
 
 // ---- Steuerung (control keys) ----------------------------------------------
 // Keys whose press is still running. Only the same key waits; any other key
-// works at once (one global flag swallowed every press while an Overall ran).
+// works at once (one global flag used to swallow every press while a slow one ran).
 const COMPANION_BUTTON_BUSY = new Set();
 const COMPANION_CATEGORY_BUSY = new Set();
 let COMPANION_DATA = { categories: [], buttons: [], companion_targets: [] };
@@ -551,9 +551,7 @@ $("companion-categories").addEventListener("click", async (event) => {
       if (isBeamerMode) {
         toast(result.data.changed === false ? `${button.textContent}: bereits gesetzt, kein Toggle` : `${button.textContent}: ausgeführt`, true);
       } else {
-        // Overall: the camera cut follows after the wait; say so.
-        const camera = result.data.camera && result.data.camera.message;
-        toast(`${button.textContent}: ausgeführt${camera ? ` – ${camera}` : ""}`, true);
+        toast(`${button.textContent}: ausgeführt`, true);
         // Done, but something needs a look (e.g. an OBS source was renamed).
         if (result.data.warning) toast(`${button.textContent}: ${result.data.warning}`, false);
       }

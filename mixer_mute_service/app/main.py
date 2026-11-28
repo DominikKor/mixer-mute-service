@@ -46,7 +46,7 @@ from .program_items import ProgramItemStore
 from .program_pdf import ProgramPdfStore
 from .shortcuts import ShortcutStore
 from .profile_stops import ShownProfiles
-from .row_files import migrate_stores
+from .row_files import migrate_stores, remove_overall_references
 from .program_templates import ProgramTemplateStore
 from .api import router
 from .songs import SongService
@@ -204,6 +204,13 @@ async def lifespan(app: FastAPI):
         log.exception("Desktop steps migration failed; the rows keep their fields as they are")
     app.state.companion_button_store = _optional(
         app, "control keys", lambda: CompanionButtonStore(data_dir / "companion_buttons.json", COMPANION_BUTTONS))
+    # The Overall keys are gone (catalog v12): rows, templates and shortcuts
+    # drop the steps that ran one (logged; idempotent).
+    try:
+        store = app.state.companion_button_store
+        await remove_overall_references(app.state, store.removed_overall_keys if store is not None else ())
+    except Exception:  # noqa: BLE001 - such a row only refuses to start
+        log.exception("Removing Overall key steps failed; those rows refuse to start until edited")
     camera_streams = _optional(
         app, "cameras", lambda: CameraStreamStore(data_dir / "camera_streams.json"))
     camera_relay = _optional(app, "camera relay", lambda: MediaMTXRelay(data_dir))

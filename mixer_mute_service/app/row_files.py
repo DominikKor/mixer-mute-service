@@ -270,6 +270,60 @@ async def migrate_stores(state) -> dict:
     return summary
 
 
+def drop_key_steps(row: dict, gone) -> list:
+    """Drop the steps of a row (template row, shortcut) that run a key that
+    is gone (gone(button_id) is true), and an old Playback / Übersetzung /
+    Liedtext value naming one; in place. Returns the dropped key IDs."""
+    dropped = []
+    for field in FIELDS:
+        value = row.get(field)
+        if isinstance(value, str) and gone(value):
+            dropped.append(value)
+            row[field] = None
+    steps = row.get("desktop")
+    if isinstance(steps, list):
+        kept = []
+        for step in steps:
+            if isinstance(step, str) and step.startswith(KEY_PREFIX) and gone(step.removeprefix(KEY_PREFIX)):
+                dropped.append(step.removeprefix(KEY_PREFIX))
+            else:
+                kept.append(step)
+        if len(kept) != len(steps):
+            row["desktop"] = kept
+    return dropped
+
+
+async def remove_overall_references(state, removed_keys=()) -> dict:
+    """Catalog v12 removed the Overall keys (app/companion_buttons.py): the
+    program rows, templates and shortcuts drop the steps that ran one, or an
+    own key that ran one (removed_keys: removed by the migration at this
+    start). Logged per row; the rest of a row stays as it is. Returns
+    {store: rows changed}."""
+    from .companion_buttons import is_overall_id
+
+    removed = set(removed_keys)
+
+    def gone(button_id: str) -> bool:
+        return is_overall_id(button_id) or button_id in removed
+
+    summary = {"program": 0, "templates": 0, "shortcuts": 0}
+    for name, attr in (("program", "program_items"), ("templates", "program_templates"), ("shortcuts", "shortcuts")):
+        store = getattr(state, attr, None)
+        if store is None:
+            continue
+
+        def change(row, where, song_slot=False, _name=name):
+            dropped = drop_key_steps(row, gone)
+            if dropped:
+                log.warning("Overall keys removed: %s %s no longer runs %s", _name, where, ", ".join(dropped))
+            return bool(dropped)
+
+        summary[name] = await store.map_rows(change)
+    if any(summary.values()):
+        log.warning("Overall keys removed: steps dropped from %s", summary)
+    return summary
+
+
 async def streaming_pc_ips(state) -> list:
     """The streaming PC's LAN address(es), for 127.0.0.1 in old file values."""
     from .target_pcs import DEFAULT_PCS  # the service's own PC by default

@@ -1,5 +1,5 @@
 """Running things by their ID: Steuerung keys, catalog keys (light, cameras,
-OBS, beamer, Overall macros), desktop profiles and files on a PC.
+OBS, beamer), desktop profiles and files on a PC.
 
 Steuerung, the camera section and Programm rows all go through here, so a
 key behaves the same wherever it is pressed. Every function returns
@@ -14,7 +14,6 @@ Values of a program action field:
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from copy import deepcopy
 from pathlib import PureWindowsPath
@@ -24,7 +23,6 @@ from typing import Optional
 from fastapi import Request
 
 from . import display_agent, documents
-from .camera_program import CAMERAS, DEFAULT_WAIT_SECONDS
 from .companion_buttons import CATALOG_ONLY_IDS, COMPANION_BUTTONS_BY_ID, resolve_alias
 from .display_agent import AgentError
 from .file_actions import (PLAYER_FAILURE_PREFIX, is_file_action, no_file_reason, run_file_action,
@@ -80,20 +78,15 @@ def native_action_of(button: dict) -> Optional[dict]:
 
 
 def switches_mutes(button: dict) -> bool:
-    """Channel and group keys and the Overall macros change mutes."""
-    if button["kind"] in ("channel", "group"):
-        return True
-    action = native_action_of(button)
-    return bool(action) and action.get("type") == "group-macro"
+    """Channel and group keys change mutes."""
+    return button["kind"] in ("channel", "group")
 
 
 async def press_native(request: Request, button_id: str, action: dict) -> Result:
-    """Run one catalog action (light, camera, OBS, beamer, Overall macro)."""
-    if action.get("type") == "group-macro":
-        return await _press_group_macro(request, button_id, action)
+    """Run one catalog action (light, camera, OBS, beamer)."""
     if action.get("type") in _OBS_PROGRAM_ACTIONS:
         # A key that puts something on air wins over a camera cut still
-        # waiting from an Overall key or a program row.
+        # waiting from a program row.
         camera_program = getattr(request.app.state, "camera_program", None)
         if camera_program is not None:
             camera_program.cancel()
@@ -107,80 +100,6 @@ async def press_native(request: Request, button_id: str, action: dict) -> Result
         if obs_status is not None and action.get("type") in _OBS_STATUS_ACTIONS:
             obs_status.invalidate()  # the next poll shows the cut at once
     return {**result, "button": button_id}, 200
-
-
-async def _press_group_macro(request: Request, button_id: str, action: dict) -> Result:
-    """Overall (see the catalog in app/companion_buttons.py): the group's
-    mutes first; a blocked group stops the key before the light, the cameras
-    or OBS change (a camera cut still waiting from an earlier key is dropped:
-    OBS stays as it is). Then
-    the stage light fades while the cameras and keys run: only the camera
-    that is off air moves now, the cut follows in the background after the
-    wait. Every part is tried even if another one fails (a camera that does
-    not answer must not keep OBS or the light from switching); the answer
-    lists what failed."""
-    state = request.app.state
-    camera_program = getattr(state, "camera_program", None)
-    presets = {cam: (action.get("cameras") or {}).get(cam) for cam in CAMERAS}
-    # Its place in the camera order, taken now (this stops a cut still
-    # waiting from an earlier key): a key pressed while the mutes are being
-    # set wins over this one's cameras.
-    camera_token = camera_program.cancel() if camera_program is not None and any(presets.values()) else None
-    result = await state.controller.group_set(action["group"], False)
-    if not result.get("ok"):
-        return controller_result({**result, "button": button_id})
-    failed = []
-    stage = action.get("stage")
-    light = None
-    if stage and (stage.get("on") or stage.get("off")):
-        light = asyncio.create_task(state.native_controls.press(
-            {"type": "artnet-zones-set", "on": stage.get("on") or [], "off": stage.get("off") or []}))
-
-    camera = None
-    if any(presets.values()):
-        if camera_program is None:
-            camera = {"ok": False, "reason": "camera presets unavailable"}
-        else:
-            camera = await camera_program.run(
-                presets, action.get("camera_wait_seconds") or DEFAULT_WAIT_SECONDS,
-                COMPANION_BUTTONS_BY_ID.get(button_id, {}).get("label", button_id),
-                switch_if_none_live="cam1", token=camera_token)
-        if not camera.get("ok"):
-            failed.append(f"cameras: {camera.get('reason')}")
-
-    # Its OBS key (PC2, Ende) also cancels a camera cut still waiting from an
-    # earlier key (press_native).
-    linked = []
-    for linked_id in action.get("buttons", []):
-        # Linked steps come from the built-in catalog, so renaming or
-        # deleting a key in Steuerung does not break the macro.
-        target = COMPANION_BUTTONS_BY_ID.get(linked_id)
-        if target is None or target["kind"] != "native" or target["native_action"].get("type") == "group-macro":
-            data, status = {"ok": False, "reason": "unknown linked action"}, 500
-        else:
-            data, status = await press_native(request, linked_id, target["native_action"])
-        linked.append({"button": linked_id, **data})
-        if status != 200 or data.get("ok") is False:
-            failed.append(f"{target['label'] if target else linked_id}: {data.get('reason')}")
-
-    light_result = None
-    if light is not None:
-        try:
-            light_result = await light
-        except NativeControlError as exc:
-            light_result = {"ok": False, "reason": str(exc)}
-            failed.append(f"light: {exc}")
-            log.warning("Overall light failed button=%s reason=%s", button_id, exc)
-
-    answer = {"ok": not failed, "button": button_id, "group_result": result,
-              "light": light_result, "camera": camera, "linked_actions": linked}
-    warnings = [data["warning"] for data in linked if data.get("warning")]
-    if warnings:
-        answer["warning"] = "; ".join(warnings)
-    if failed:
-        log.warning("Overall %s: mute group set, but %s", button_id, "; ".join(failed))
-        return {**answer, "reason": "group set, but " + "; ".join(failed)}, 502
-    return answer, 200
 
 
 async def press_button(request: Request, button_id: str) -> Result:

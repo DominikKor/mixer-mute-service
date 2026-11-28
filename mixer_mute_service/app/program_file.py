@@ -30,7 +30,7 @@ from fastapi import Request
 
 from .actions import DESKTOP_PREFIX, PROGRAM_ACTION_FIELDS, pressable_button
 from .camera_program import CAMERAS
-from .companion_buttons import CATALOG_ONLY_IDS, COMPANION_BUTTONS_BY_ID, _saved_preset_key, label_key
+from .companion_buttons import CATALOG_ONLY_IDS, COMPANION_BUTTONS_BY_ID, _saved_preset_key, is_overall_id, label_key
 from .file_actions import is_file_action
 from .row_files import KEY_PREFIX, PSEUDO_STEPS, STEP_FREEZE, STEP_SONG, STEP_UNFREEZE, is_via, parse_via, via_value
 
@@ -246,6 +246,10 @@ async def resolve(row: dict, names: Names) -> Tuple[dict, List[dict]]:
         dropped.append({"field": field, "kind": kind, "name": name,
                         "reason": f"{kind} „{name}“ {problem}; Verweis entfernt"})
 
+    # The Overall keys are gone (catalog v12): never looked up by their name,
+    # which could be another key's now.
+    overall_gone = "ist eine Overall-Taste, die es nicht mehr gibt"
+
     value = _text(row.get("light"))
     if value and value not in names.scenes:
         found, problem, name = _lookup(value, _text(row.get("light_name")),
@@ -258,6 +262,10 @@ async def resolve(row: dict, names: Names) -> Tuple[dict, List[dict]]:
         if not value or is_file_action(value):
             continue
         name = _text(row.get(f"{field}_name"))
+        if is_overall_id(value):
+            row[field] = None
+            drop(field, "Taste", name or value, overall_gone)
+            continue
         if is_via(value):  # a file through a Desktop key: the key by its name, the path stays
             try:
                 profile_id, path = parse_via(value)
@@ -299,6 +307,9 @@ async def resolve(row: dict, names: Names) -> Tuple[dict, List[dict]]:
                 continue
             if step.startswith(KEY_PREFIX):  # a key stays one: only keys are searched, named ones first
                 key = step.removeprefix(KEY_PREFIX)
+                if is_overall_id(key):
+                    drop("desktop", "Taste", title or key, overall_gone)
+                    continue
                 if await pressable_button(names.request, key) is not None:
                     kept.append(step)
                     continue

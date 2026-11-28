@@ -132,61 +132,23 @@ NATIVE_BUTTONS.extend([
     {"id": "native-obs-transition-faster", "label": "Übergang Schneller", "kind": "native", "category_id": "obs", "native_action": {"type": "obs-transition-adjust", "delta": -50}},
 ])
 
-# The Overall keys as Companion runs them (pages 2 and 7 of its config):
-#   1. the four stage zones to a fixed pattern: these on (a zone that is on
-#      keeps its level, one that is off comes up to the start brightness),
-#      the others off;
-#   2. the camera that is NOT on air drives to its preset and, after
-#      OVERALL_CAMERA_WAIT_SECONDS, goes live (app/camera_program.py); the
-#      camera that was live follows to its preset once it is off air. With
-#      no camera on air both move and Cam 1 goes live;
-#   3. the keys named in "buttons" (OBS: PC2, Ende);
-#   4. the mute group (run first here: a blocked group stops the key before
-#      anything changes).
-# Zones: _L = left, _ML = center-left (Klavier), _MR = center-right (Logo), _R = right.
-_L, _ML, _MR, _R = "left", "center-left", "center-right", "right"
-_STAGE_ZONES = [_L, _ML, _MR, _R]
-OVERALL_CAMERA_WAIT_SECONDS = 4.0  # Companion's delayBeforeCamChange
-_PRESET_PRAYER = 8
-_OVERALL = [
-    # id, label, mute group, zones on, cam1 preset, cam2 preset, keys
-    ("gemeinsam-singen", "Gemeinsam Singen", "GemeinsamSingen", [_ML], 5, 5, []),
-    ("predigt", "Predigt", "Predigt", [_L, _R], 1, 1, []),
-    ("musik-klavier", "Musik Klavier", "Klavier", [_ML], 3, 3, []),
-    ("pult-klavier", "Musik Pult Klavier", "PultKlavier", [_L, _ML, _R], 2, 2, []),
-    ("pult-playback", "Musik Pult Playback", "PultPlayback", [_L, _R], 2, 2, []),
-    ("handmik-klavier", "Musik Handmik Klavier", "HandmikKlavier", [_L, _ML, _R], 5, 2, []),
-    ("handmik-playback", "Musik Handmik Playback", "HandmikPlayback", [_L, _R], 5, 2, []),
-    ("hintergrundmusik", "Hintergrundmusik", "Hintergrundmusik", [], 5, 5, []),
-    ("gebet", "Gebet", "Gebet", [_L, _R], _PRESET_PRAYER, _PRESET_PRAYER, []),
-    ("qr", "QR", "Hintergrundmusik", [_R], 5, 5, []),
-    ("mission-video", "Mission Video", "Missionsvideo", [], None, None, ["native-obs-pc2-live"]),
-    ("instrumental", "Instrumental", "Instrumental", [_ML], 3, 5, []),
-    ("ende", "Ende", "Klavier", [_MR], None, None, ["native-obs-end"]),
-]
+# The Overall keys (native-overall-*, catalog v4 to v11) are gone since v12:
+# the migration removes them, the own keys that ran them and the empty
+# Overall category (_remove_overall_keys); stored program rows, templates and
+# shortcuts drop their steps (remove_overall_references in app/row_files.py).
+OVERALL_PREFIX = "native-overall-"
+OVERALL_CATEGORY_ID = "overall"
 
 
-def _overall_action(group, zones_on, cam1, cam2, keys) -> dict:
-    action = {
-        "type": "group-macro", "group": group,
-        "stage": {"on": list(zones_on), "off": [zone for zone in _STAGE_ZONES if zone not in zones_on]},
-        "buttons": list(keys),
-    }
-    if cam1 or cam2:
-        action["cameras"] = {"cam1": cam1, "cam2": cam2}
-        action["camera_wait_seconds"] = OVERALL_CAMERA_WAIT_SECONDS
-    return action
+def is_overall_id(button_id) -> bool:
+    """An ID of a removed Overall key."""
+    return isinstance(button_id, str) and button_id.startswith(OVERALL_PREFIX)
 
-
-NATIVE_BUTTONS.extend({
-    "id": f"native-overall-{button_id}", "label": label, "kind": "native", "category_id": "overall",
-    "native_action": _overall_action(group, zones_on, cam1, cam2, keys),
-} for button_id, label, group, zones_on, cam1, cam2, keys in _OVERALL)
 
 COMPANION_BUTTONS = COMPANION_BUTTONS + NATIVE_BUTTONS
 COMPANION_BUTTONS_BY_ID = {button["id"]: button for button in COMPANION_BUTTONS}
-# The VISCA keys (presets, zoom) stay catalog actions: the Overall macros,
-# program rows and the camera section use them by ID. Since v7 they are no
+# The VISCA keys (presets, zoom) stay catalog actions: program rows and the
+# camera section use them by ID. Since v7 they are no
 # longer keys in Steuerung; the camera section shows them instead.
 CAMERA_BUTTONS = [button for button in COMPANION_BUTTONS if button.get("category_id") == "cameras"]
 CAMERA_BUTTON_IDS = {button["id"] for button in CAMERA_BUTTONS}
@@ -291,8 +253,9 @@ def _stored_label(value) -> bool:
 # pattern, only the off-air camera moves, then the cut) and adds the missing
 # Companion keys (Overall Ende, OBS scenes, Bibel). v10 drops the duplicate
 # OBS keys (BUTTON_ALIASES) and adds the transition time keys. v11: the
-# Bibel keys put the other camera in the OBS preview, as in Companion.
-_NATIVE_CATALOG_VERSION = 11
+# Bibel keys put the other camera in the OBS preview, as in Companion. v12
+# removes the Overall keys (_remove_overall_keys).
+_NATIVE_CATALOG_VERSION = 12
 _NATIVE_CATALOG_V3_IDS = {
     "native-artnet-start-up", "native-artnet-start-down",
     "native-artnet-steps-up", "native-artnet-steps-down",
@@ -302,7 +265,6 @@ _NATIVE_CATALOG_V3_IDS = {
 _NATIVE_CATALOG_V5_IDS = {"beamer-unhide"}
 _NATIVE_CATALOG_V6_IDS = {"beamer-power-off", "beamer-power-on"}
 _NATIVE_CATALOG_V9_IDS = {
-    "native-overall-ende",
     "native-obs-cam1-cam2-small", "native-obs-cam2-cam1-small", "native-obs-droidcam-live",
     "native-obs-cam1-presentation", "native-obs-cam2-presentation", "native-obs-picture",
     "native-obs-bible-cam1", "native-obs-bible-cam2",
@@ -312,25 +274,18 @@ _NATIVE_CATALOG_V10_IDS = {"native-obs-transition-slower", "native-obs-transitio
 DEFAULT_CATEGORIES = [
     {"id": "beamer", "name": "Beamer", "visible": True},
     {"id": "obs", "name": "OBS", "visible": True},
-    {"id": "overall", "name": "Overall", "visible": True},
 ]
 
 
 def _updated_action(current: dict, seed_button: dict) -> dict:
-    """The catalog's new action for a stored key. A macro keeps its mute group,
-    since the user may have renamed that group."""
-    action = deepcopy(seed_button["native_action"])
-    old = current.get("native_action")
-    if action.get("type") == "group-macro" and isinstance(old, dict) and old.get("group"):
-        action["group"] = old["group"]
-    return action
+    """The catalog's new action for a stored key."""
+    return deepcopy(seed_button["native_action"])
 
 
 def _remove_camera_keys(buttons: List[dict], categories: List[dict], camera_labels: dict):
     """v7: the catalog's camera keys leave Steuerung, wherever the user moved
     them; a renamed one keeps its label for the camera section. The Kameras
-    category goes too, unless the user put keys of their own in it. Overall
-    macros link catalog actions by ID and stay as they are."""
+    category goes too, unless the user put keys of their own in it."""
     for button in buttons:
         if button.get("id") not in CAMERA_BUTTON_IDS:
             continue
@@ -351,6 +306,37 @@ def _remove_light_mixer_keys(buttons: List[dict], categories: List[dict]):
     used = {button.get("category_id") for button in buttons}
     categories = [c for c in categories if c.get("id") not in ("light", "mixer") or c.get("id") in used]
     return buttons, categories
+
+
+def _runs_overall(button: dict) -> bool:
+    """An Overall key, or an own key that ran one."""
+    action = button.get("native_action")
+    return (is_overall_id(button.get("id"))
+            or (isinstance(action, dict) and action.get("type") == "group-macro")
+            or (button.get("kind") == "companion" and is_overall_id(button.get("target_button_id"))))
+
+
+def _remove_overall_keys(buttons: List[dict], categories: List[dict]):
+    """v12: the Overall keys leave Steuerung, wherever the user moved them,
+    and so do the own keys that ran one (logged: a program row that ran such
+    a key drops that step, see remove_overall_references). The Overall
+    category goes too, unless the user put other keys of their own in it.
+    Returns (buttons, categories, IDs of the own keys removed)."""
+    removed_own = []
+    kept = []
+    for button in buttons:
+        if not _runs_overall(button):
+            kept.append(button)
+            continue
+        if is_overall_id(button.get("id")):
+            log.info("Overall key %s (%s) removed", button.get("id"), button.get("label"))
+        else:
+            removed_own.append(button.get("id"))
+            log.warning("Key „%s“ (%s) ran the Overall key %s, which is gone; key removed",
+                        button.get("label"), button.get("id"), button.get("target_button_id"))
+    used = {button.get("category_id") for button in kept}
+    categories = [c for c in categories if c.get("id") != OVERALL_CATEGORY_ID or c.get("id") in used]
+    return kept, categories, removed_own
 
 
 def resolve_alias(button_id: str) -> str:
@@ -400,6 +386,9 @@ class CompanionButtonStore:
         # key: their ID (native-cam1-preset-9) -> label ("CAM1 Kanzel").
         self._saved_presets: dict = {}
         self._catalog_version = _NATIVE_CATALOG_VERSION
+        # Own keys the v12 migration removed because they ran an Overall key
+        # (program rows that run them drop that step, app/row_files.py).
+        self.removed_overall_keys: List[str] = []
         self._load()
         duplicates = self._duplicate_labels()
         if duplicates:  # kept working (rows refer by ID), but a program file cannot name them
@@ -517,6 +506,8 @@ class CompanionButtonStore:
                     buttons, categories = _remove_light_mixer_keys(buttons, categories)
                 if self._catalog_version < 10:
                     buttons = _merge_duplicate_obs_keys(buttons)
+                if self._catalog_version < 12:
+                    buttons, categories, self.removed_overall_keys = _remove_overall_keys(buttons, categories)
                 self._catalog_version = _NATIVE_CATALOG_VERSION
                 migrated = True
             category_ids = {item["id"] for item in categories}
@@ -699,16 +690,12 @@ class CompanionButtonStore:
             return deepcopy(button)
 
     async def rename_group(self, old: str, new: str) -> int:
-        """Point keys at a renamed mute group (group keys and Overall macros)."""
+        """Point the group keys at a renamed mute group."""
         async with self._lock:
             changed = 0
             for button in self._buttons:
                 if button.get("kind") == "group" and button.get("group") == old:
                     button["group"] = new
-                    changed += 1
-                action = button.get("native_action")
-                if isinstance(action, dict) and action.get("type") == "group-macro" and action.get("group") == old:
-                    action["group"] = new
                     changed += 1
             if changed:
                 self._persist()

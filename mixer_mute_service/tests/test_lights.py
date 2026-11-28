@@ -432,7 +432,7 @@ class CatalogV8Tests(unittest.TestCase):
         buttons = deepcopy([b for b in COMPANION_BUTTONS if b.get("category_id") != "cameras"])
         own = {"id": "user-1", "label": "Mein Mute", "category_id": "mixer", "kind": "group",
                "group": "Band", "operation": "mute"}
-        macro_before = deepcopy(next(b for b in buttons if b["id"] == "native-overall-predigt"))
+        obs_before = deepcopy(next(b for b in buttons if b["id"] == "native-obs-cam1-live"))
         stored = {"categories": legacy, "buttons": buttons + [own], "native_catalog_version": 7}
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "buttons.json"
@@ -442,13 +442,13 @@ class CatalogV8Tests(unittest.TestCase):
             self.assertEqual(list(Path(folder).glob("*.corrupt*")), [])
             snapshot = asyncio.run(store.snapshot())
         ids = {b["id"] for b in migrated["buttons"]}
-        self.assertEqual(migrated["native_catalog_version"], 11)
+        self.assertEqual(migrated["native_catalog_version"], 12)
         self.assertFalse(CATALOG_ONLY_IDS & ids)
         self.assertIn("user-1", ids)
         categories = {c["id"] for c in migrated["categories"]}
         self.assertNotIn("light", categories)  # empty now
         self.assertIn("mixer", categories)  # still holds the user's own key
-        self.assertEqual(next(b for b in migrated["buttons"] if b["id"] == "native-overall-predigt"), macro_before)
+        self.assertEqual(next(b for b in migrated["buttons"] if b["id"] == "native-obs-cam1-live"), obs_before)
         self.assertEqual(len(snapshot["buttons"]), len(migrated["buttons"]))
 
     def test_fresh_store_has_no_light_or_mixer_keys(self):

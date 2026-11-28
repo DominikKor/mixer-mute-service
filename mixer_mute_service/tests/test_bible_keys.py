@@ -129,7 +129,7 @@ class CatalogV11Tests(unittest.TestCase):
             CompanionButtonStore(path, COMPANION_BUTTONS)
             migrated = json.loads(path.read_text(encoding="utf-8"))
         by_id = {b["id"]: b for b in migrated["buttons"]}
-        self.assertEqual(migrated["native_catalog_version"], 11)
+        self.assertEqual(migrated["native_catalog_version"], 12)
         self.assertEqual(by_id["native-obs-bible-cam1"]["native_action"]["preview_after"], "Cam 2")
         self.assertEqual((by_id["native-obs-bible-cam1"]["label"], by_id["native-obs-bible-cam1"]["category_id"]),
                          ("Bibeltext anzeigen", "category-gd"))

@@ -265,8 +265,8 @@ async function recallCameraPresetNumber(form) {
 
 // ---- Aktuelle Position speichern -----------------------------------------
 // Number and name. Suggested is the lowest number that has no name here and
-// that nothing uses (program rows, shortcuts, templates, Steuerung keys such
-// as the Overall macros). The camera stores its current position at that
+// that nothing uses (program rows, shortcuts, templates, Steuerung keys
+// running a preset). The camera stores its current position at that
 // number, the service names it. A number with a name or a user is only
 // overwritten after asking. "No name in the app" is not "free": the camera
 // may hold a position there that Companion or the remote stored.
@@ -353,7 +353,7 @@ async function saveCameraPreset(event) {
     let result = await api("POST", path, { preset, name });
     if (result.status === 409 && result.data.exists) {
       // The service's answer: its name here and who uses the number
-      // (Overall keys, program rows, shortcuts, templates).
+      // (program rows, shortcuts, templates, keys).
       const users = result.data.users || [];
       const what = result.data.name ? `Nr. ${preset} „${result.data.name}“` : `Nr. ${preset}`;
       const by = users.length ? ` Benutzt von: ${cameraPresetUserList(users, 6)}.` : "";

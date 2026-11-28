@@ -268,8 +268,7 @@ class CameraPresetRouteTests(unittest.TestCase):
         r = self.client.post("/cameras/cam1/presets", json={"preset": 3, "name": "Flügel"})
         self.assertEqual(r.status_code, 409)
         self.assertEqual(r.json()["name"], "Klavier")
-        # The Overall keys that drive Cam 1 to 3 are named in the question.
-        self.assertEqual(r.json()["users"], ["Taste: Musik Klavier", "Taste: Instrumental"])
+        self.assertEqual(r.json()["users"], [])
         r = self.client.post("/cameras/cam1/presets", json={"preset": 3, "name": "Flügel", "overwrite": True})
         self.assertEqual(r.status_code, 200)
         self.assertEqual(self.sent(), [(*CAM1, store(3))])
@@ -305,13 +304,16 @@ class CameraPresetRouteTests(unittest.TestCase):
             "time": "10:30", "title": "Chor", "person": "", "group": "", "playback": "native-cam1-preset-12",
         })
         self.assertEqual(self.client.post("/program/templates", json={"name": "Sonntag"}).status_code, 200)
+        r = self.client.post("/companion/buttons", json={"label": "Kanzel nah", "category_id": "obs",
+                                                         "kind": "companion", "target_button_id": "native-cam1-preset-1"})
+        self.assertEqual(r.status_code, 200, r.text)
         self.sent()
 
         used = self.client.get("/cameras/cam1/presets/usage").json()["used"]
         self.assertEqual(used["10"], ["Programm: 10:00 Predigt", "Vorlage „Sonntag“: 10:00 Predigt"])
         self.assertEqual(used["11"], ["Shortcut: Taufe"])
         self.assertEqual(used["12"], ["Programm: 10:30 Chor", "Vorlage „Sonntag“: 10:30 Chor"])
-        self.assertIn("Taste: Predigt", used["1"])
+        self.assertEqual(used["1"], ["Taste: Kanzel nah"])
         self.assertNotIn("13", used)
         self.assertNotIn("10", self.client.get("/cameras/cam2/presets/usage").json()["used"])
         self.assertEqual(self.client.get("/cameras/cam9/presets/usage").status_code, 404)

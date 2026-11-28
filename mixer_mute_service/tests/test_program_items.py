@@ -4,7 +4,6 @@ import unittest
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from app.companion_buttons import COMPANION_BUTTONS, CompanionButtonStore
 from app.program_items import ProgramItemStore
 
 
@@ -189,22 +188,6 @@ class ProgramHiddenRouteTests(unittest.TestCase):
                     self.assertEqual(len(current), 1)
                     self.assertEqual(current[0]["id"], imported_id)
                     self.assertEqual(current[0]["title"], "Aus Datei bearbeitet")
-
-
-class MacroRenameTests(unittest.IsolatedAsyncioTestCase):
-    async def test_renamed_macro_group_survives_catalog_update(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
-            path = Path(temp_dir) / "buttons.json"
-            store = CompanionButtonStore(path, COMPANION_BUTTONS)
-            self.assertGreaterEqual(await store.rename_group("Predigt", "Predigt neu"), 1)
-            data = json.loads(path.read_text(encoding="utf-8"))
-            # Pretend an older catalog version: the update rewrites native
-            # actions, but must keep the renamed group.
-            data["native_catalog_version"] = 3
-            path.write_text(json.dumps(data), encoding="utf-8")
-            reloaded = CompanionButtonStore(path, COMPANION_BUTTONS)
-            macro = await reloaded.get_button("native-overall-predigt")
-            self.assertEqual(macro["native_action"]["group"], "Predigt neu")
 
 
 if __name__ == "__main__":

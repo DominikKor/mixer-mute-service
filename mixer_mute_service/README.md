@@ -201,7 +201,7 @@ miniatures, and **Standard** restores the original one.
   the list, but **Weiter** skips it (its own Play still works); tap it again
   to show the row. Times can be typed as `930`, `9:30` or `9.30`.
 - **Steuerung**: the keys imported from the former Companion setup (lights,
-  OBS, beamer, "Overall" scene macros), grouped in categories; the camera
+  OBS, beamer), grouped in categories; the camera
   keys live in the Kameras section. With
   **Bearbeiten** switched on, every key, category and *Alles ausschalten*
   target shows a "⋮" (Umbenennen; keys also Nach „…“ verschieben and Löschen),
@@ -291,26 +291,14 @@ replaying its raw HEX. Categories and key changes are stored in
 built-in actions, a mixer channel or a mute group; arbitrary shell commands and
 raw HEX are not accepted.
 
-"Overall" keys run as they did in Companion (catalog version 9, table in
-`app/companion_buttons.py`):
+The "Overall" scene macros (mute group, stage zones, cameras and OBS in one
+key, catalog versions 4 to 11) are gone since catalog version 12: the
+migration removes them, own keys that ran one and the empty Overall
+category (other categories and keys stay as they are). Program rows,
+templates and shortcuts drop the steps that ran one at the next start
+(logged); `POST /program/import` drops them with a warning.
 
-1. the mute group (unmuted exclusively); a blocked group stops the key before
-   anything else changes;
-2. the four stage zones go to the key's pattern (e.g. Predigt: Links and
-   Rechts on, Klavier and Logo off); a zone that is already on keeps its
-   level, one that comes on gets the start brightness; the light fades while
-   the next steps run;
-3. only the camera that is off air drives to its preset; 4 s later it goes
-   live, then the other camera follows to its preset (the same sequence as
-   program rows, `app/camera_program.py`). With no camera on air both move and
-   Cam 1 goes live after the wait; if OBS was switched meanwhile (in OBS or
-   with an OBS key here), nothing is cut. The key pressed last wins: a second
-   Overall or an OBS key pressed right after an Overall stops its cameras,
-   even while its mute group is still being set;
-4. their OBS key, if any (Mission Video: PC2, Ende: the end scene).
-
-Every part is tried even if another fails; the answer (and the toast) names
-what failed. "Licht AN/AUS" leave the Technik circuit alone, as in Companion,
+"Licht AN/AUS" leave the Technik circuit alone, as in Companion,
 and switch all other circuits at once. "Cam N Live" makes the camera's source
 visible in its own scene and puts that scene on air; a scene without the
 source no longer stops the switch; the page then shows a warning (renamed
@@ -392,7 +380,7 @@ The connection closes when the service stops.
 | POST | `/groups/{group}/delete` | delete a group |
 | GET  | `/groups/{group}/settings-snapshot` | saved gain/HPF/EQ/gate/compressor of the group's channels |
 | POST | `/groups/{group}/settings-snapshot` | save them now, read from the mixer's state dump (nothing is sent) |
-| POST | `/groups/{group}/rename` | rename `{name}`; Programm rows, Steuerung keys and Overall macros follow |
+| POST | `/groups/{group}/rename` | rename `{name}`; Programm rows and Steuerung keys follow |
 | PUT  | `/groups/{group}` | legacy alias for group update |
 | DELETE | `/groups/{group}` | legacy alias for group deletion |
 | GET  | `/desktop/profiles` | list desktop profiles |
@@ -595,8 +583,7 @@ der App keinen Namen hat und die nichts benutzt. Die Kamera speichert dort
 ihre aktuelle Position (VISCA `81 01 04 3F 01 pp FF`), der Dienst den Namen
 (`POST /cameras/{cam1|cam2}/presets` mit `{"preset", "name", "overwrite"}`).
 Hat die Nummer schon einen Namen oder benutzt sie eine Programmzeile, ein
-Shortcut, eine Vorlage oder eine Taste der Steuerung (z. B. eine
-Overall-Taste), antwortet der Dienst ohne `"overwrite": true` mit 409, dem
+Shortcut, eine Vorlage oder eine Taste der Steuerung, antwortet der Dienst ohne `"overwrite": true` mit 409, dem
 Namen und der Liste `users`, und die Seite fragt, ob überschrieben werden
 soll (`GET /cameras/{cam1|cam2}/presets/usage` liefert diese Liste für alle
 Nummern). „In der App ohne Namen“ heißt nicht, dass die Kamera dort nichts
@@ -607,8 +594,7 @@ derselben Kamera laufen nacheinander. Nummern ohne Katalog-Taste stehen als
 Die Kamera-Tasten (Presets, Zoom) stehen seit Katalog-Version 7 nicht mehr in
 der Steuerung; eine bestehende `companion_buttons.json` wird beim Start
 umgestellt (umbenannte Presets behalten ihre Beschriftung im Kamera-Bereich).
-Programmpunkte rufen die Presets weiter per ID auf; die Overall-Tasten nennen
-ihre Presets selbst (seit Katalog-Version 9).
+Programmpunkte rufen die Presets weiter per ID auf.
 
 ## Dateien und Programme auf Netzwerk-PCs oeffnen
 
@@ -1250,7 +1236,7 @@ das PDF schicken, z. B.
 
 Die Section **Licht** steuert das ganze Licht; in der Steuerung gibt es die
 Kategorien Licht und Mixer nicht mehr (Katalog v8 räumt sie aus, eigene Tasten
-darin bleiben). Programmzeilen, Overall-Makros und eigene Tasten, die diese
+darin bleiben). Programmzeilen und eigene Tasten, die diese
 Tasten per ID nutzen, funktionieren weiter; Companion/Stream Deck kann sie auch
 weiter über `/companion/buttons/{id}/press` drücken.
 
@@ -1291,10 +1277,9 @@ weiter über `/companion/buttons/{id}/press` drücken.
   Chips: *Übergang* und *Einschalten auf* (Antippen öffnet den Regler). Der
   Dimmschritt der Heller/Dunkler-Tasten (über Companion/Stream Deck) steht nicht
   mehr auf der Seite, bleibt aber gespeichert (`PUT /lights/settings {"steps"}`).
-  Die Tasten der Steuerung und Overall-Makros arbeiten wie bisher: An/Aus-Taste
-  einer Zone bringt den gemerkten Wert zurück, Overall-Tasten schalten eine
-  ausgeschaltete Zone auf *Einschalten auf* (eine, die das Makro ausschaltet,
-  behält ihren Wert), Wärmer/Kälter ändert jeden Scheinwerfer um denselben
+  Die Tasten der Steuerung arbeiten wie bisher: An/Aus-Taste einer Zone
+  bringt den gemerkten Wert zurück (ohne gemerkten Wert *Einschalten auf*),
+  Wärmer/Kälter ändert jeden Scheinwerfer um denselben
   Schritt (Antwort `level`: der gemeinsame Wert bzw. der Mittelwert, sobald die
   Scheinwerfer sich unterscheiden; `levels`: je Scheinwerfer). Eine ungültige
   Eingabe an `POST /lights/stage` (unbekannte Zone, Wert außerhalb 0–255, leere
@@ -1320,7 +1305,7 @@ weiter über `/companion/buttons/{id}/press` drücken.
   „Node 1“) mischt zwei Quellen nach HTP, pro Kanal gewinnt der höhere Wert:
   Solange Companion mitsendet, kann die App nicht unter Companions Werte
   dimmen oder ausschalten. Jeder Bühnenbefehl schaltet das Dauersenden ein,
-  auch eine Programmzeile mit Lichtszene oder eine Overall-Taste, und es
+  auch eine Programmzeile mit Lichtszene, und es
   bleibt an. Ein Zurückgeben an Companion gibt es nicht. Ist der gespeicherte
   Frame nach einem Neustart ungültig, wartet das Dauersenden auf den nächsten
   Befehl (kein Null-Frame, keine Verdunkelung). `GET /lights/artnet` fragt den Knoten per ArtPoll und

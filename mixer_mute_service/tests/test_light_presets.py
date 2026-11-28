@@ -101,8 +101,8 @@ class FixtureTests(unittest.IsolatedAsyncioTestCase):
         result = await self.controls.press({"type": "artnet-zone-toggle", "zone": "left"})
         self.assertEqual(result["level"], 77)
 
-    async def test_overall_zones_on_and_colour_keys_still_work(self):
-        await self.controls.press({"type": "artnet-zones-set", "on": ["left", "right"]})
+    async def test_colour_keys_still_work(self):
+        await self.controls.set_stage({"left": {"on": True}, "right": {"on": True}})
         self.assertEqual(channels(self.frames[-1], "left"), [255, 255, 50])
         self.assertEqual(channels(self.frames[-1], "center-left")[0], 0)
         await self.controls.set_stage({"left": {"warm": 100}})
@@ -114,16 +114,6 @@ class FixtureTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["levels"]["left"], 150)
         await self.controls.press({"type": "artnet-zone-adjust", "zone": "right", "delta": -1})
         self.assertEqual(self.controls.stage_state()["zones"]["right"], 205)
-
-    async def test_overall_switching_off_keeps_the_level(self):
-        await self.controls.set_stage({"left": 170, "right": 90})
-        await self.controls.press({"type": "artnet-zones-set", "on": ["right"], "off": ["left"]})
-        state = self.controls.stage_state()
-        self.assertEqual(state["fixtures"]["left"], {"on": False, "level": 170, "warm": 255, "cold": 50})
-        self.assertEqual(channels(self.frames[-1], "left")[0], 0)
-        self.assertEqual(state["zones"]["right"], 90)                 # was on: keeps its level
-        await self.controls.set_stage({"left": {"on": True}})
-        self.assertEqual(channels(self.frames[-1], "left")[0], 170)
 
     async def test_saved_and_reloaded(self):
         await self.controls.set_stage({"left": {"on": True, "level": 40, "warm": 10, "cold": 20}})

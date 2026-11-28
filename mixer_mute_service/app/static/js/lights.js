@@ -187,7 +187,7 @@ function renderFixtures() {
 
 const LIGHT_SETTINGS = {
   fade_ms: { label: "Übergang", max: 10000, step: 250, hint: "So lange blenden Presets und An/Aus über." },
-  start: { label: "Einschalten auf", max: 255, step: 1, hint: "Helligkeit für einen Scheinwerfer ohne gemerkten Wert und für die Overall-Tasten." },
+  start: { label: "Einschalten auf", max: 255, step: 1, hint: "Helligkeit für einen Scheinwerfer ohne gemerkten Wert." },
 };
 
 function settingText(kind, raw) {

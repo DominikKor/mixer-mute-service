@@ -62,7 +62,7 @@ class DuplicateKeyTests(unittest.TestCase):
         self.assertEqual(ids[:3], ["native-obs-cam2-live", "beamer-live", "user-1"])
         self.assertEqual(migrated["buttons"][2]["target_button_id"], "native-obs-cam2-live")
         self.assertIn("native-obs-transition-slower", ids)
-        self.assertEqual(migrated["native_catalog_version"], 11)
+        self.assertEqual(migrated["native_catalog_version"], 12)
 
     def test_renamed_or_moved_old_key_stays_as_an_own_key(self):
         categories = deepcopy(DEFAULT_CATEGORIES) + [{"id": "category-gd", "name": "Gottesdienst", "visible": True}]
