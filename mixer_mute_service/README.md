@@ -164,8 +164,8 @@ miniatures, and **Standard** restores the original one.
   11:00 is "30 min zu spät", 00:10 at 23:50 is "in 20 min"; exactly 12 h away counts as
   today); once a row has started today the rows of the run stay on that row's day, so
   a rehearsal at another time of day or a run past midnight does not flip between
-  neighbours. The cue shows only the duration: `12:30` to go, `1:05:30` from an hour on, late with a minus (`-12:30`) and in the amber of late rows (`scheduled_occurrence` in app/program_items.py, `programDue` in
-  js/program.js). As soon as a row starts (Play, **Weiter**), the desktop
+  neighbours. The cue shows only the duration: `12:30` to go, `1:05:30` from an hour on, late with a minus (`-12:30`) and in the amber of late rows
+  (`scheduled_occurrence` in app/program_items.py, `programDue` in js/program.js). As soon as a row starts (Play, **Weiter**), the desktop
   profiles the rows before started stop, unless the new row starts them
   itself (app/profile_stops.py): music fades out with its profile's fade,
   a file's window (e.g. the Mission Spotlight video) closes and an image is
