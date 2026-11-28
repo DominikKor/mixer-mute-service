@@ -47,7 +47,7 @@ class SongLabelTest(unittest.TestCase):
         cls.js = quickjs.Context()
         cls.js.eval("const SONG_INDEX = new Map(); let SONG_LIST = [];")
         for name in ("bookAbbr", "bookNumber", "isPreferredBook", "songBookList", "songMainBook", "bookText",
-                     "songNumberText", "songLabel", "songBooks", "songMatches"):
+                     "songNumberText", "songLabel", "songBooks", "bookSearchText", "songMatches"):
             cls.js.eval(function_body(SONGS, name))
         cls.js.eval(function_body(PROGRAM, "programRowTitle"))
         cls.js.eval(f"SONG_LIST = {json.dumps(LIBRARY)}; for (const s of SONG_LIST) SONG_INDEX.set(s.id, s);")
@@ -96,6 +96,17 @@ class SongLabelTest(unittest.TestCase):
         exact = self.found("12")
         self.assertEqual(set(exact[:2]), {"d.foil", "e.foil"})
         self.assertLess(exact.index("e.foil"), exact.index("f.foil"))  # 12 before 112
+
+    def test_a_book_in_front_of_a_number_ranks_that_book_first(self):
+        # GHS 12 is "Eins" (e.foil); "Nur anderes Buch" has Feiert Jesus 12, "Zwölf Apostel" GHS 112
+        self.assertEqual(self.found("GHS 12")[0], "e.foil")
+        self.assertEqual(self.found("ghs12")[0], "e.foil")
+        self.assertEqual(self.found("Glauben Hoffen Singen 12")[0], "e.foil")
+        self.assertEqual(self.found("FJ 12")[0], "d.foil")
+        self.assertEqual(self.found("Feiert Jesus 12")[0], "d.foil")
+        self.assertEqual(self.found("12")[:2].count("d.foil") + self.found("12")[:2].count("e.foil"), 2)  # no book: both exact
+        # exact number of another book comes after the right book's, before a longer number
+        self.assertLess(self.found("GHS 12").index("e.foil"), self.found("GHS 12").index("f.foil"))
 
     def test_picker_still_finds_by_title(self):
         self.assertEqual(self.found("herzens"), ["a.foil"])

@@ -590,20 +590,38 @@ function closeSongSearch() {
   SONG_SEARCH = null;
 }
 
+// The words of a book that a search can use: its name, its abbreviation ("FJ"); GHS is "GHS" and
+// "Glauben Hoffen Singen" whichever way the library spells it.
+function bookSearchText(book) {
+  return `${book.name} ${bookAbbr(book.name)}${isPreferredBook(book.name) ? " ghs glauben hoffen singen" : ""}`.toLocaleLowerCase("de");
+}
+
 function songMatches(query) {
   // "GHS123" is "GHS 123"
   const q = query.trim().toLocaleLowerCase("de").replace(/\b([a-zäöüß]+)(\d+)\b/g, "$1 $2");
   if (!q) return SONG_LIST.slice(0, 40);
   const words = q.split(/\s+/);
   const matches = SONG_LIST.filter(song => {
-    const hay = `${song.title} ${(song.books || []).map(b => `${b.name} ${bookAbbr(b.name)} ${b.number}`).join(" ")}`.toLocaleLowerCase("de");
+    const hay = `${song.title} ${(song.books || []).map(b => `${bookSearchText(b)} ${b.number}`).join(" ")}`.toLocaleLowerCase("de");
     return words.every(w => hay.includes(w));
   });
   // A typed number lists the songs with exactly that hymnal number first ("12" before 112, 120 or 12a).
-  const numbers = words.filter(w => /^\d+$/.test(w)).map(w => w.replace(/^0+(?=\d)/, ""));
-  if (numbers.length) {
-    const exact = song => (song.books || []).some(b => numbers.includes(String(b.number ?? "").trim().replace(/^0+(?=\d)/, "")));
-    matches.sort((a, b) => exact(b) - exact(a));
+  // A book in front of it ("GHS 12", "Feiert Jesus 12") ranks the songs where THAT book has that number first.
+  const number = word => word.replace(/^0+(?=\d)/, "");
+  const wanted = [];  // {number, book: the words in front of it}
+  let run = [];
+  for (const word of words) {
+    if (/^\d+$/.test(word)) { wanted.push({ number: number(word), book: run }); run = []; } else run.push(word);
+  }
+  if (wanted.length) {
+    const hasNumber = (book, n) => String(book.number ?? "").trim().replace(/^0+(?=\d)/, "") === n;
+    const inBook = (book, texts) => texts.every(w => bookSearchText(book).includes(w));
+    const rank = song => {
+      const books = song.books || [];
+      if (wanted.some(w => w.book.length && books.some(b => hasNumber(b, w.number) && inBook(b, w.book)))) return 0;
+      return wanted.some(w => books.some(b => hasNumber(b, w.number))) ? 1 : 2;
+    };
+    matches.sort((a, b) => rank(a) - rank(b));
   }
   return matches.slice(0, 40);
 }
