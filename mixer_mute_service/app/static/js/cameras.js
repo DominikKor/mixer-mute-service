@@ -135,7 +135,8 @@ function renderCameraControls() {
     controls.hidden = !list.length;
     const name = controls.closest(".camera-card").querySelector(".camera-card-title").textContent;
     // Rebuild only on a real change, so a held key is never replaced.
-    const signature = JSON.stringify([name, list]);
+    const obsKeys = cameraObsKeys(cam);
+    const signature = JSON.stringify([name, list, obsKeys]);
     if (controls.dataset.signature === signature) continue;
     controls.dataset.signature = signature;
     stopCameraMoves(cam);
@@ -162,13 +163,71 @@ function renderCameraControls() {
           aria-pressed="${CAMERA_LAST_PRESET[cam] === p.id}" title="Preset ${p.preset}: ${escapeAttr(cameraPresetLabel(p.label))}"><b class="camera-preset-num">${p.preset}</b> · ${escapeHtml(cameraPresetLabel(p.label))}</button>`).join("")}
       </div>
       <div class="camera-controls-label">Schwenken &amp; Zoom – gedrückt halten</div>
-      <div class="camera-ptz">${arrows}
-        <button type="button" class="camera-move-key camera-zoom-key" data-camera-move="zoom" data-direction="in" data-camera="${c}" aria-label="${n} hineinzoomen, gedrückt halten">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5L21 21M7.5 10.5h6M10.5 7.5v6"/></svg>Nah</button>
-        <button type="button" class="camera-move-key camera-zoom-key" data-camera-move="zoom" data-direction="out" data-camera="${c}" aria-label="${n} herauszoomen, gedrückt halten">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5L21 21M7.5 10.5h6"/></svg>Weit</button>
+      <div class="camera-ptz${obsKeys.length ? "" : " no-obs"}">${arrows}
+        <button type="button" class="camera-move-key camera-zoom-key" data-camera-move="zoom" data-direction="out" data-camera="${c}"
+          title="${n} Zoom − (weiter), gedrückt halten" aria-label="${n} Zoom minus, herauszoomen, gedrückt halten">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5L21 21M7.5 10.5h6"/></svg></button>
+        <button type="button" class="camera-move-key camera-zoom-key" data-camera-move="zoom" data-direction="in" data-camera="${c}"
+          title="${n} Zoom + (näher), gedrückt halten" aria-label="${n} Zoom plus, hineinzoomen, gedrückt halten">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5L21 21M7.5 10.5h6M10.5 7.5v6"/></svg></button>
+        ${obsKeys.map(cameraObsKeyHtml).join("")}
       </div>`;
     setCameraRenaming(cam, CAMERA_RENAMING.has(cam));
+  }
+  // New Live/Bibel keys get their colour now, not at the next poll.
+  if (typeof applyObsStatus === "function") applyObsStatus();
+}
+
+// ---- Live and Bibel keys of a camera ----------------------------------------
+// Shortcuts to the Steuerung keys "Cam N Live" and "Bibel CamN": the same
+// key IDs, pressed through the same route, coloured by the same OBS status
+// (controls.js applyObsStatus: red = on air, green = preview / Bibel text
+// shown in a scene that is not on air). A key the user removed from
+// Steuerung is not shown here either (it could not be pressed).
+const CAMERA_OBS_KEYS = [
+  { kind: "live", id: cam => `native-obs-${cam}-live` },
+  { kind: "bible", id: cam => `native-obs-bible-${cam}` },
+];
+
+function cameraObsKeys(cam) {
+  const keys = [];
+  for (const { kind, id } of CAMERA_OBS_KEYS) {
+    const info = (COMPANION_DATA.buttons || []).find(item => item.id === id(cam));
+    if (!info) continue;
+    const role = obsKeyRole(info);
+    keys.push({ kind, id: info.id, label: info.label, scene: role.scene || null, overlay: role.overlay || null });
+  }
+  return keys;
+}
+
+function cameraObsKeyHtml(key) {
+  const role = key.overlay
+    ? ` data-obs-overlay-scene="${escapeAttr(key.overlay.scene)}" data-obs-overlay-source="${escapeAttr(key.overlay.source)}"`
+    : key.scene ? ` data-obs-scene="${escapeAttr(key.scene)}"` : "";
+  return `
+        <button type="button" class="companion-key native camera-obs-key camera-obs-${key.kind}" data-camera-obs-press="${escapeAttr(key.id)}"${role}
+          title="${escapeAttr(key.label)} (wie in der Steuerung)">${escapeHtml(key.label)}</button>`;
+}
+
+const CAMERA_OBS_BUSY = new Set();
+
+// Exactly the Steuerung key's press (POST /companion/buttons/{id}/press).
+async function pressCameraObsKey(key) {
+  const id = key.dataset.cameraObsPress;
+  if (CAMERA_OBS_BUSY.has(id)) return;
+  CAMERA_OBS_BUSY.add(id);
+  key.disabled = true;
+  try {
+    const result = await api("POST", `/companion/buttons/${encodeURIComponent(id)}/press`);
+    if (!result.ok || result.data.ok === false) {
+      toast(`${key.textContent.trim()}: ${result.data.reason || "HTTP " + result.status}`, false);
+      return;
+    }
+    if (result.data.warning) toast(`${key.textContent.trim()}: ${result.data.warning}`, false);
+    refreshObsStatus();  // show the cut without waiting for the poll
+  } finally {
+    CAMERA_OBS_BUSY.delete(id);
+    key.disabled = false;
   }
 }
 
@@ -646,6 +705,10 @@ async function deleteDesktopProfile(profileId, anchor) {
 
 const ICON_PRESET_SAVE = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M5 4h11l3 3v13H5z"/><path d="M8 4v5h7V4M8 20v-6h8v6"/></svg>`;
 
+$("camera-grid").addEventListener("click", event => {
+  const key = event.target.closest("button[data-camera-obs-press]");
+  if (key && !key.disabled) pressCameraObsKey(key);
+});
 $("camera-grid").addEventListener("submit", event => {
   const form = event.target.closest("form[data-camera-recall]");
   if (!form) return;

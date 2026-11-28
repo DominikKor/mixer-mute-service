@@ -422,23 +422,35 @@ button.camera-recall-go { min-height: 44px; padding: 0 14px; font-size: 12px; }
 .camera-preset-dialog .update-actions button { min-height: 44px; }
 .pf-grid.camera-preset-fields { grid-template-columns: 120px minmax(0, 1fr); }
 .pf-hint.warn { color: var(--amber); }
+/* The pad like a keyboard's arrow keys, two rows: Zoom − / ↑ / Zoom + over
+   ← / ↓ / →. To its right the camera's Live key, its Bibel key below
+   (js/cameras.js). In a narrow card those two go under the pad. */
+.camera-controls { container-type: inline-size; }
 .camera-ptz {
   display: grid; gap: 6px;
-  grid-template-columns: repeat(3, minmax(44px, 1fr)) minmax(76px, 1.3fr);
-  grid-template-areas: ". up . in" "left down right out";
+  grid-template-columns: repeat(3, minmax(48px, 1fr)) minmax(116px, 1.5fr);
+  grid-template-rows: repeat(2, minmax(56px, auto));
+  grid-template-areas: "zout up zin live" "left down right bible";
+}
+.camera-ptz.no-obs { grid-template-columns: repeat(3, minmax(48px, 1fr)); grid-template-areas: "zout up zin" "left down right"; }
+@container (max-width: 320px) {
+  .camera-ptz { grid-template-columns: repeat(3, minmax(44px, 1fr)); grid-template-rows: repeat(4, minmax(56px, auto)); grid-template-areas: "zout up zin" "left down right" "live live live" "bible bible bible"; }
 }
 button.camera-move-key {
-  display: flex; align-items: center; justify-content: center; gap: 8px; min-width: 0; min-height: 48px; padding: 0 8px;
+  display: flex; align-items: center; justify-content: center; gap: 8px; min-width: 0; min-height: 56px; padding: 0 8px;
   font-size: 12px; touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
 }
 button.camera-move-key svg { width: 20px; height: 20px; flex-shrink: 0; }
+button.camera-zoom-key svg { width: 24px; height: 24px; }
 .camera-ptz [data-direction="up"] { grid-area: up; }
 .camera-ptz [data-direction="left"] { grid-area: left; }
 .camera-ptz [data-direction="down"] { grid-area: down; }
 .camera-ptz [data-direction="right"] { grid-area: right; }
-.camera-ptz [data-direction="in"] { grid-area: in; }
-.camera-ptz [data-direction="out"] { grid-area: out; }
-button.camera-zoom-key { margin-left: 6px; }
+.camera-ptz [data-direction="in"] { grid-area: zin; }
+.camera-ptz [data-direction="out"] { grid-area: zout; }
+.camera-ptz button.camera-obs-key { min-height: 56px; height: 100%; font-size: 13px; }
+.camera-ptz .camera-obs-live { grid-area: live; font-size: 14px; }
+.camera-ptz .camera-obs-bible { grid-area: bible; }
 button.camera-move-key.active { transform: translateY(1px); }
 button.display-key {
   display: inline-grid; grid-template-columns: auto 1fr; align-items: center; gap: 4px 10px;
