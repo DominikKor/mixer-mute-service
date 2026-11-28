@@ -42,17 +42,11 @@ function onProgramEditors(type, handler) {
   });
 }
 
+// A row's recorded start offset (seconds after its time; null = not started) as the cue shows time:
+// "-12:30" when it started late, "12:30" when early (same format and minus as programCountdownText).
 function formatProgramDelay(seconds) {
   if (seconds === null || seconds === undefined) return "—";
-  const value = Number(seconds);
-  const absolute = Math.abs(value);
-  const hours = Math.floor(absolute / 3600);
-  const minutes = Math.floor((absolute % 3600) / 60);
-  const remainder = absolute % 60;
-  const body = hours
-    ? `${hours}:${String(minutes).padStart(2, "0")}:${String(remainder).padStart(2, "0")}`
-    : `${String(minutes).padStart(2, "0")}:${String(remainder).padStart(2, "0")}`;
-  return `${value > 0 ? "+" : value < 0 ? "−" : "±"}${body}`;
+  return programCountdownText(-Number(seconds));
 }
 
 function nextProgramTime() {
@@ -1553,7 +1547,7 @@ function programPlayToast(result) {
     toast(`${title}: ${(result.data && result.data.reason) || "HTTP " + result.status}${detail}`, false);
   } else {
     const camera = result.data.camera && result.data.camera.message ? ` · ${result.data.camera.message}` : "";
-    toast(`${title} gestartet · Verzögerung ${formatProgramDelay(result.data.delay_seconds)}${camera}`, true);
+    toast(`${title} gestartet · ${formatProgramDelay(result.data.delay_seconds)}${camera}`, true);
     noteSongScreensFailed(result.data.song);   // js/song-screens.js: a lyrics screen that missed it
     // Switching follows in the background: ask for the outcome once it is due.
     const wait = result.data.camera && result.data.camera.switch_in_seconds;

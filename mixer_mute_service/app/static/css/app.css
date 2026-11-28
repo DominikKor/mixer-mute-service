@@ -991,7 +991,7 @@ dialog.shortcut-dialog { width: min(1000px, calc(100vw - 32px)); }
   background: var(--lcd-bg); border: 1px solid #000; box-shadow: var(--lcd-shadow);
   font: 700 14px/1 var(--mono); color: var(--lcd-dim); white-space: nowrap;
 }
-.program-delay.late { color: #ffbf4d; text-shadow: 0 0 6px rgba(255,191,77,.45); }    /* started after its time */
+.program-delay.late { color: #ff8576; text-shadow: 0 0 6px rgba(231,76,60,.45); }    /* started after its time ("-12:30") */
 .program-delay.early { color: #7ff0a8; text-shadow: 0 0 6px rgba(46,204,113,.45); }   /* started before */
 .program-delay.ontime { color: var(--lcd-text); text-shadow: var(--lcd-glow); }
 /* Play (the big key), hide and the "⋮" menu (duplicate, shortcut, delete) side by side */
@@ -1218,7 +1218,7 @@ button.program-play:hover:not(:disabled) { color: #fff; }
 .program-cue-label { font-size: 10px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; color: var(--lcd-dim); text-shadow: none; }
 .program-cue-title { font-size: 14px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .program-cue-count { margin-left: auto; font-size: 16px; font-weight: 700; white-space: nowrap; }
-.program-cue-count.late { color: #ffbf4d; text-shadow: 0 0 6px rgba(255,191,77,.45); }
+.program-cue-count.late { color: #ff8576; text-shadow: 0 0 6px rgba(231,76,60,.45); }
 button.program-go { min-width: 132px; min-height: 52px; font-size: 15px; }
 /* Stopp: what the program started ends (app/api/program.py /program/stop) */
 button.program-stop { min-width: 88px; min-height: 52px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }

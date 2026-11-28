@@ -136,7 +136,7 @@ class CueTest(unittest.TestCase):
         cls.js = quickjs.Context()
         cls.js.eval("let PROGRAM_ITEMS = []; let PROGRAM_STATUS = {};")
         cls.js.eval(body("playedToday"))
-        for name in ("programDue", "programRunAnchor", "programCountdownText"):
+        for name in ("programDue", "programRunAnchor", "programCountdownText", "formatProgramDelay"):
             cls.js.eval(body(name))
 
     def text(self, time_text: str, now: tuple, anchor=None) -> str:
@@ -158,6 +158,25 @@ class CueTest(unittest.TestCase):
                            (252, "4:12"), (-252, "-4:12"), (0, "0:00"), (5, "0:05"), (-5, "-0:05"), (599, "9:59"),
                            (600, "10:00"), (3599, "59:59"), (40000, "11:06:40")):
             self.assertEqual(self.js.eval(f"programCountdownText({diff})"), text, diff)
+
+    def test_row_badge_uses_the_same_sign_and_format_as_the_cue(self):
+        # a row's delay is seconds after its time: late = minus, early = plain, one minus glyph everywhere
+        for delay, text in ((48 * 60 + 18, "-48:18"), (3930, "-1:05:30"), (-750, "12:30"), (-3930, "1:05:30"),
+                            (0, "0:00"), (5, "-0:05"), (-5, "0:05")):
+            self.assertEqual(self.js.eval(f"formatProgramDelay({delay})"), text, delay)
+        self.assertEqual(self.js.eval("formatProgramDelay(null)"), "—")  # not started
+        self.assertEqual(self.js.eval("formatProgramDelay(undefined)"), "—")
+        for delay in (-86000, -5, 0, 5, 3930, 86000):  # badge and cue show the same text for the same moment
+            self.assertEqual(self.js.eval(f"formatProgramDelay({delay})"), self.js.eval(f"programCountdownText({-delay})"))
+
+    def test_no_old_sign_is_left_in_the_program(self):
+        for name in ("formatProgramDelay", "programCountdownText"):
+            body = re.search(rf"function {name}\(.*?\n\}}\n", PROGRAM_JS, re.S).group(0)
+            self.assertNotIn("\u2212", body, name)  # the typographic minus of the old badge
+            self.assertNotIn('"+"', body, name)
+        css = (Path(__file__).resolve().parent.parent / "app" / "static" / "css" / "app.css").read_text(encoding="utf-8")
+        red = re.search(r"\.program-delay\.late \{ color: (#\w+)", css).group(1)
+        self.assertEqual(re.search(r"\.program-cue-count\.late \{ color: (#\w+)", css).group(1), red)  # late is one red
 
     def test_no_flip_at_12_hours(self):
         self.assertEqual(self.text("10:00", (2026, 11, 10, 21, 0)), "-11:00:00")
