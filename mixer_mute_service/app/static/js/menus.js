@@ -235,3 +235,54 @@ document.addEventListener("scroll", () => {
   if (!trigger.isConnected || Math.abs(r.top - OPEN_MENU.top) > 2 || Math.abs(r.left - OPEN_MENU.left) > 2) closeTileMenu();
 }, { passive: true, capture: true });
 window.addEventListener("resize", () => closeTileMenu());
+
+// ---- "+ … hinzufügen": the placeholder of the next object ------------------
+// Every list that can grow ends in one: a dashed, see-through stand-in for
+// the object it creates, as large as that object (a tile in a tile grid, a
+// card or row in a list), with "+" and "… hinzufügen". One look (class
+// ghost-add, css "Placeholders"), one dispatcher: data-ghost-add names the
+// create flow below. Not while arranging the sections.
+const ICON_PLUS = `<svg class="plus-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 4v16M4 12h16"/></svg>`;
+
+// kind: a key of GHOST_ADD_FLOWS; size: "tile", "card", "row" or "key".
+function ghostAddButton(kind, label, { size = "tile", hint = "", data = {} } = {}) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = `ghost-add ghost-${size}`;
+  button.dataset.ghostAdd = kind;
+  Object.assign(button.dataset, data);
+  button.innerHTML = `<span class="ghost-add-main">${ICON_PLUS}<span></span></span>`;
+  button.querySelector(".ghost-add-main span").textContent = label;
+  if (hint) {
+    const note = document.createElement("span");
+    note.className = "ghost-add-hint";
+    note.textContent = hint;
+    button.appendChild(note);
+  }
+  return button;
+}
+
+// The same placeholder as markup (lists built from HTML strings).
+function ghostAddHtml(kind, label, { size = "tile", hint = "" } = {}) {
+  return `<button type="button" class="ghost-add ghost-${size}" data-ghost-add="${escapeAttr(kind)}" data-card="__ghost-${escapeAttr(kind)}">`
+    + `<span class="ghost-add-main">${ICON_PLUS}<span>${escapeHtml(label)}</span></span>`
+    + (hint ? `<span class="ghost-add-hint">${escapeHtml(hint)}</span>` : "") + `</button>`;
+}
+
+// What each placeholder creates: the existing create flows.
+const GHOST_ADD_FLOWS = {
+  profile: () => openProfileDialog(null),
+  shortcut: () => openShortcutDialog(null),
+  program: () => startProgramDraft(),
+  person: () => openPersonCreateRow(),
+  preset: () => openLightSceneCreate(),
+  category: () => openCompanionCategoryDialog(),
+  key: button => openCompanionButtonDialog(button.dataset.category || ""),
+};
+
+document.addEventListener("click", event => {
+  const button = event.target.closest("button[data-ghost-add]");
+  if (!button || button.disabled) return;
+  const flow = GHOST_ADD_FLOWS[button.dataset.ghostAdd];
+  if (flow) flow(button);
+});

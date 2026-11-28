@@ -53,7 +53,7 @@
   </div>
   <div id="desktop-body" class="panel-body">
     <div id="desktop-profiles" class="desktop-launch-actions">
-      <button id="new-profile-btn" class="display-add" title="Neues Profil" aria-label="Neues Profil"><svg class="plus-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 4v16M4 12h16"/></svg></button>
+      <button id="new-profile-btn" type="button" class="ghost-add ghost-tile" data-ghost-add="profile" title="Neue Desktop-Taste anlegen"><span class="ghost-add-main"><svg class="plus-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 4v16M4 12h16"/></svg><span>Desktop-Taste hinzufügen</span></span></button>
       <span id="desktop-launch-status" class="desktop-launch-status">Profile werden geladen</span>
     </div>
     <div id="desktop-shortcuts" class="desktop-launch-actions desktop-shortcuts" aria-label="Programm-Shortcuts" hidden></div>
@@ -127,9 +127,9 @@
         </tr></thead>
         <tbody id="program-items"></tbody>
       </table>
-      <button type="button" id="program-add-row" class="program-add-row" hidden>
-        <span class="program-add-row-main"><svg class="plus-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 4v16M4 12h16"/></svg>Programmpunkt hinzufügen</span>
-        <span id="program-add-row-hint" class="program-add-row-hint">Noch keine Programmpunkte – oder unter „Vorlagen…“ eine Vorlage anwenden</span>
+      <button type="button" id="program-add-row" class="ghost-add ghost-row program-add-row" data-ghost-add="program" hidden>
+        <span class="ghost-add-main"><svg class="plus-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 4v16M4 12h16"/></svg>Programmpunkt hinzufügen</span>
+        <span id="program-add-row-hint" class="ghost-add-hint">Noch keine Programmpunkte – oder unter „Vorlagen…“ eine Vorlage anwenden</span>
       </button>
     </div>
     <div id="program-empty" class="empty-state program-empty" hidden>Noch keine Programmpunkte. Mit „+ Programmpunkt“ anlegen oder unter „Vorlagen…“ eine Vorlage anwenden.</div>
@@ -169,7 +169,7 @@
 <section class="panel" data-section="lights">
   <div class="panel-head">
     <button class="section-toggle" aria-expanded="true" aria-controls="lights-body">Licht</button>
-    <div class="panel-tools"><button id="light-scene-add" class="add-key" title="Licht, wie es gerade ist, als Preset speichern"><svg class="plus-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 4v16M4 12h16"/></svg>Preset</button></div>
+    <div class="panel-tools"></div>
   </div>
   <div id="lights-body" class="panel-body">
     <div id="light-status" class="light-status" role="status" aria-live="polite" hidden></div>
@@ -243,7 +243,6 @@
     <button class="section-toggle" aria-expanded="true" aria-controls="groups-body">Mute Gruppen</button>
     <div class="panel-tools">
       <button id="new-snapshot-btn" class="add-key" title="Neue Mute Gruppe aus allen Channels, die am Pult gerade nicht gemutet sind"><svg class="plus-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>Aus Pult-Status…</button>
-      <button id="new-person-btn" class="add-key primary-add"><svg class="plus-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 4v16M4 12h16"/></svg>Mute Gruppe</button>
     </div>
   </div>
   <div id="groups-body" class="panel-body">
@@ -271,9 +270,7 @@
   <div class="panel-head">
     <button class="section-toggle" aria-expanded="true" aria-controls="companion-body">Steuerung</button>
     <div class="panel-tools">
-      <label class="compact-switch" title="Tasten, Kategorien und Abschaltziele umbenennen, verschieben und löschen (⋮ an jedem Teil)"><input id="companion-edit-toggle" type="checkbox" /><span class="track"></span>Bearbeiten</label>
-      <button id="new-companion-category" class="add-key"><svg class="plus-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 4v16M4 12h16"/></svg>Kategorie</button>
-      <button id="new-companion-button" class="add-key primary-add"><svg class="plus-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 4v16M4 12h16"/></svg>Taste</button>
+      <label class="compact-switch" title="Tasten und Kategorien anlegen; Tasten, Kategorien und Abschaltziele umbenennen, verschieben und löschen (⋮ an jedem Teil)"><input id="companion-edit-toggle" type="checkbox" /><span class="track"></span>Bearbeiten</label>
     </div>
   </div>
   <div id="companion-body" class="panel-body">

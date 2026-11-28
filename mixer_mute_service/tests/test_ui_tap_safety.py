@@ -360,6 +360,49 @@ class HeaderQuickKeysTests(unittest.TestCase):
 
 
 @unittest.skipIf(quickjs is None, "needs quickjs")
+class GhostAddTests(unittest.TestCase):
+    """A "+ … hinzufügen" placeholder runs exactly its create flow."""
+
+    def setUp(self):
+        self.js = quickjs.Context()
+        self.js.eval(FAKE_DOM)
+        self.js.eval("""
+          var CALLS = [];
+          function openProfileDialog(id) { CALLS.push("profile:" + id); }
+          function openShortcutDialog(id) { CALLS.push("shortcut:" + id); }
+          function startProgramDraft() { CALLS.push("program"); }
+          function openPersonCreateRow() { CALLS.push("person"); }
+          function openLightSceneCreate() { CALLS.push("preset"); }
+          function openCompanionCategoryDialog() { CALLS.push("category"); }
+          function openCompanionButtonDialog(category) { CALLS.push("key:" + category); }
+          function escapeHtml(s) { return s; }
+        """)
+        self.js.eval((JS / "menus.js").read_text(encoding="utf-8"))
+
+    def tap(self, kind, data="", disabled=False):
+        self.js.eval(f"""
+          var g = new El("ghost", BODY); g.button = true; g.dataset.ghostAdd = {json.dumps(kind)};
+          {data}
+          g.disabled = {json.dumps(disabled)};
+          fire("click", g);
+        """)
+        return json.loads(self.js.eval("JSON.stringify(CALLS)"))
+
+    def test_each_kind_opens_its_flow(self):
+        for kind, call in (("profile", "profile:null"), ("shortcut", "shortcut:null"), ("program", "program"),
+                           ("person", "person"), ("preset", "preset"), ("category", "category")):
+            with self.subTest(kind=kind):
+                self.js.eval("CALLS = []")
+                self.assertEqual(self.tap(kind), [call])
+
+    def test_key_brings_its_category_and_disabled_does_nothing(self):
+        self.assertEqual(self.tap("key", 'g.dataset.category = "obs";'), ["key:obs"])
+        self.js.eval("CALLS = []")
+        self.assertEqual(self.tap("person", disabled=True), [])
+        self.assertEqual(self.tap("unknown"), [])
+
+
+@unittest.skipIf(quickjs is None, "needs quickjs")
 class CompanionEditingTests(unittest.TestCase):
     def setUp(self):
         self.js = quickjs.Context()

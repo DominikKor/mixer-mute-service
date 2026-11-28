@@ -190,7 +190,7 @@ miniatures, and **Standard** restores the original one.
   new shortcut (`shortcuts.json`). Shortcuts are keys in the Desktop
   section: a tap runs them without touching the program's order or start
   times; their "⋮" edits all their assignments (same fields as a row),
-  duplicates or deletes them; **+** makes a new one.
+  duplicates or deletes them; "+ Shortcut hinzufügen" makes a new one.
   The eye key top right of a row hides it: the row turns grey and stays in
   the list, but **Weiter** skips it (its own Play still works); tap it again
   to show the row. Times can be typed as `930`, `9:30` or `9.30`.
@@ -199,7 +199,8 @@ miniatures, and **Standard** restores the original one.
   keys live in the Kameras section. With
   **Bearbeiten** switched on, every key, category and *Alles ausschalten*
   target shows a "⋮" (Umbenennen; keys also Nach „…“ verschieben and Löschen),
-  and a tap on a key opens its menu instead of pressing it.
+  a tap on a key opens its menu instead of pressing it, and each category
+  ends in "+ Taste hinzufügen", the list in "+ Kategorie hinzufügen".
 
 **One pattern for editing:** everything that can be renamed, moved or deleted
 has one "⋮" key (desktop keys, shortcuts, program rows, mute groups, light
@@ -207,6 +208,14 @@ presets, cameras, templates, Steuerung in Bearbeiten); the menu lists what can
 be done, deleting asks once at the "⋮". A tap outside an open menu only closes
 it. Section heads show their tools with an icon (the main "+" lit blue), rare
 ones sit in the head's "⋮".
+
+**One pattern for adding:** a list that can grow ends in the next object's
+place, a dashed, see-through placeholder as large as that object with
+"+ … hinzufügen": Desktop-Taste, Shortcut, Programmpunkt, Mute Gruppe (head:
+only "Aus Pult-Status…"), Preset (no head key any more), a Desktop step in a
+row, and with Steuerung *Bearbeiten* Taste and Kategorie (no head keys any
+more). All share one class (`ghost-add`) and one dispatcher (`data-ghost-add`,
+`js/menus.js`); they hide while arranging and while that object is created.
 
 The page polls `/state`, `/health` and `/groups` about once per second.
 
@@ -815,8 +824,8 @@ mpv spielte, aber seine Steuer-Pipe antwortete nicht. Seit das Einblenden
 ohne Steuerkanal läuft, startet die Musik trotzdem. mpvs eigenes Protokoll des letzten Starts liegt auf dem Ziel-PC
 unter `%LOCALAPPDATA%\MixerMuteDisplayAgent\mpv-last.log`.
 
-Profile lassen sich auch in der Weboberflaeche anlegen (graue **+**-Kachel
-hinter den Profilen) und ueber das Drei-Punkte-Menue bearbeiten, duplizieren
+Profile lassen sich auch in der Weboberflaeche anlegen (gestrichelte Kachel
+„+ Desktop-Taste hinzufügen“ hinter den Profilen) und ueber das Drei-Punkte-Menue bearbeiten, duplizieren
 (die Kopie "… (Kopie)" steht direkt hinter dem Original) oder loeschen;
 die Buttons erscheinen sofort, ohne Neustart. Fuer ein Audio-Profil **Audio**
 waehlen, Titel und den vollstaendigen Musikdatei-Pfad auf dem Ziel-PC eintragen
@@ -1240,7 +1249,8 @@ weiter über `/companion/buttons/{id}/press` drücken.
   nicht). Das zuletzt abgerufene Preset, das danach
   von Hand verändert wurde, zeigt „geändert“. Die Punkte auf der Kachel zeigen
   jeden Scheinwerfer (Farbe und Helligkeit, Ring = aus, Strich = bleibt, wie er
-  ist), dazu die Raumlicht-Kreise („Raum 2 an · 1 aus“). *+ Preset* speichert
+  ist), dazu die Raumlicht-Kreise („Raum 2 an · 1 aus“). *+ Preset hinzufügen*
+  (die gestrichelte Kachel hinter den Presets) speichert
   das aktuelle Licht der gewählten Lichter: jeder gewählte Scheinwerfer mit
   an/aus, Helligkeit und Farbe, jeder gewählte Kreis mit seinem Zustand.
   Das „⋮“ jeder Kachel hat Umbenennen, Mit aktuellem Licht überschreiben… (die

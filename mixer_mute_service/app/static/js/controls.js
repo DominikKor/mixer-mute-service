@@ -332,9 +332,13 @@ function renderCompanionButtons() {
       item.append(press, menu);
       grid.appendChild(item);
     }
+    // With "Bearbeiten": the next key's place in this category.
+    grid.appendChild(ghostAddButton("key", "Taste hinzufügen", { size: "key", data: { category: category.id } }));
     section.append(header, grid);
     wrap.appendChild(section);
   }
+  // With "Bearbeiten": the next category's place.
+  wrap.appendChild(ghostAddButton("category", "Kategorie hinzufügen", { size: "row" }));
   syncBeamerCommandButtons();
   applyObsStatus();
   renderCameraControls();
@@ -458,19 +462,23 @@ async function saveCurrentMuteSnapshot() {
   }
 }
 
-$("new-companion-category").addEventListener("click", () => {
+// New category / new key (their placeholders show with "Bearbeiten"); a
+// key's placeholder brings its category along.
+function openCompanionCategoryDialog() {
   $("companion-category-name").value = "";
   $("companion-category-dialog").showModal();
   $("companion-category-name").focus();
-});
-$("new-companion-button").addEventListener("click", () => {
+}
+
+function openCompanionButtonDialog(categoryId = "") {
   replaceSelectOptions($("companion-button-category"), COMPANION_DATA.categories.map(category => ({ value: category.id, label: category.name })), "Kategorie wählen …");
+  if (categoryId) $("companion-button-category").value = categoryId;
   $("companion-button-kind").value = "companion";
   $("companion-button-name").value = "";
   updateCompanionButtonForm();
   $("companion-button-dialog").showModal();
   $("companion-button-name").focus();
-});
+}
 $("companion-category-form").addEventListener("submit", saveCompanionCategory);
 $("companion-button-form").addEventListener("submit", saveCompanionButton);
 $("companion-button-kind").addEventListener("change", updateCompanionButtonForm);

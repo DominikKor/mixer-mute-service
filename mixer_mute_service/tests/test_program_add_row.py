@@ -32,11 +32,13 @@ class ProgramAddRowTest(unittest.TestCase):
         self.assertLess(table_end, add)
         self.assertLess(HTML.index("</table>", table_end), add)
         self.assertIn('id="program-add-row-hint"', HTML)
-        self.assertRegex(HTML, r'<button type="button" id="program-add-row" class="program-add-row" hidden>')
+        self.assertRegex(HTML, r'<button type="button" id="program-add-row" class="ghost-add ghost-row program-add-row" data-ghost-add="program" hidden>')
 
     def test_same_code_as_the_head_key(self):
         self.assertIn('$("program-add-btn").addEventListener("click", startProgramDraft);', PROGRAM_JS)
-        self.assertIn('$("program-add-row").addEventListener("click", startProgramDraft);', PROGRAM_JS)
+        # The row is a placeholder (js/menus.js): "program" runs startProgramDraft.
+        menus = (STATIC / "js" / "menus.js").read_text(encoding="utf-8")
+        self.assertIn("program: () => startProgramDraft(),", menus)
         self.assertIn("PROGRAM_DRAFT = true;", function_body(PROGRAM_JS, "startProgramDraft"))
 
     def test_shown_by_the_list(self):
@@ -46,11 +48,13 @@ class ProgramAddRowTest(unittest.TestCase):
         self.assertIn('$("program-add-row-hint").hidden = PROGRAM_ITEMS.length > 0;', body)
 
     def test_style(self):
-        rule = re.search(r"button\.program-add-row \{(.*?)\}", CSS, re.S).group(1)
-        self.assertIn("dashed", rule)
-        self.assertIn("background: transparent", rule)
+        # The shared placeholder look (dashed, see-through), as high as a closed row.
+        shared = re.search(r"(?m)^button\.ghost-add \{(.*?)\}", CSS, re.S).group(1)
+        self.assertIn("dashed", shared)
+        self.assertIn("background: var(--ghost-bg)", shared)
+        rule = re.search(r"button\.ghost-add\.program-add-row \{(.*?)\}", CSS, re.S).group(1)
         self.assertGreaterEqual(int(re.search(r"min-height: (\d+)px", rule).group(1)), 44)
-        self.assertIn("body.arranging button.program-add-row { display: none; }", CSS)
+        self.assertIn("body.arranging button.ghost-add { display: none; }", CSS)
 
 
 if __name__ == "__main__":

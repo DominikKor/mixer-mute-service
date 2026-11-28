@@ -18,6 +18,7 @@
   /* One look for the same thing everywhere (see "Shared components" at the end) */
   --r-card: 10px;            /* cards: groups, light blocks, categories, program rows */
   --r-key: 7px;              /* keys */
+  --r-row: 8px;              /* program rows */
   --title: #9aa3b2;          /* card titles (engraved, upper case) */
   --label: #7d8594;          /* field labels */
   --sel-border: #0a2550;     /* chosen / pressed: blue */
@@ -479,11 +480,6 @@ dialog .menu-backdrop { z-index: 39; }
 .tile-menu svg { width: 17px; height: 17px; flex-shrink: 0; opacity: .85; }
 .tile-menu button:disabled { opacity: .35; }
 .menu-sep { height: 1px; margin: 4px 8px; background: rgba(255,255,255,.07); box-shadow: 0 -1px 0 rgba(0,0,0,.5); }
-/* The grey "+" tile after the last profile */
-button.display-add {
-  display: grid; place-items: center; align-self: stretch; min-width: 72px; min-height: 48px; padding: 0 20px;
-  color: #9aa1ad;
-}
 /* Drawn plus: a text "+" sits off-centre depending on the font */
 .plus-icon { display: block; width: 22px; height: 22px; }
 button.add-key { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 16px 0 12px; }
@@ -768,23 +764,9 @@ button.collapse-btn:active:not(:disabled) .collapse-chip { transform: translateY
    Every field carries its own engraved label (the table head is kept for
    screen readers only). Narrow screens fall back to two columns. */
 .program-table-wrap { min-width: 0; }
-/* The last "row": an empty, dashed program row with "+ Programmpunkt
-   hinzufügen" in the middle (as high as a closed row). Not while arranging
-   the sections (it would look like a place to drop one). */
-button.program-add-row {
-  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
-  width: 100%; min-height: 77px; margin-top: 8px; padding: 10px 16px; border-radius: 8px;
-  border: 1px dashed #353b46; background: transparent; box-shadow: none; text-shadow: none;
-  color: var(--muted); font-size: 14px; font-weight: 700; letter-spacing: .02em;
-}
-button.program-add-row:hover:not(:disabled) { color: var(--text); border-color: #4a5260; background: rgba(255,255,255,.03); filter: none; }
-button.program-add-row:active:not(:disabled) {
-  transform: none; color: var(--text); border-color: #3584e6; background: rgba(79,156,255,.08); box-shadow: none;
-}
-.program-add-row-main { display: inline-flex; align-items: center; gap: 8px; }
-.program-add-row-main .plus-icon { width: 18px; height: 18px; color: #8fc2ff; }
-.program-add-row-hint { font-size: 12px; font-weight: 500; letter-spacing: 0; }
-body.arranging button.program-add-row { display: none; }
+/* The last "row": the program's placeholder ("+ Programmpunkt hinzufügen",
+   look: "Placeholders" at the end), as high as a closed row. */
+button.ghost-add.program-add-row { width: 100%; min-height: 77px; margin-top: 8px; border-radius: var(--r-row); }
 .program-table, .program-table tbody { display: block; width: 100%; }
 .program-table colgroup { display: none; }
 .program-table thead {
@@ -792,7 +774,7 @@ body.arranging button.program-add-row { display: none; }
 }
 .program-table tbody { display: grid; gap: 8px; }
 .program-table tr {
-  display: grid; align-items: start; gap: 10px 12px; padding: 6px 10px 6px 12px; border-radius: 8px;
+  display: grid; align-items: start; gap: 10px 12px; padding: 6px 10px 6px 12px; border-radius: var(--r-row);
   grid-template-columns: 96px minmax(0, 1.55fr) minmax(0, 1fr) minmax(0, 1.1fr) minmax(0, 1fr) auto;
   border: 1px solid #08090b; background: var(--panel-bg); box-shadow: var(--panel-shadow);
   transition: box-shadow .2s, opacity .2s;
@@ -992,14 +974,8 @@ dialog.shortcut-dialog { width: min(1000px, calc(100vw - 32px)); }
 .program-desktop-note { font: 600 12px/1.3 var(--mono); color: var(--lcd-dim); }
 .program-desktop-note:empty { display: none; }
 .program-desktop-chip:has(.program-desktop-earlier) { padding-left: 0; }
-.program-table button.program-desktop-add {
-  display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 0 16px; font-size: 12px; font-weight: 700;
-  color: var(--muted); background: transparent; border: 1px dashed #353b46; box-shadow: none; text-shadow: none;
-}
-.program-table button.program-desktop-add:hover:not(:disabled) { color: var(--text); border-color: #4a5260; background: rgba(255,255,255,.03); filter: none; }
-.program-table button.program-desktop-add:active:not(:disabled) { transform: none; box-shadow: none; }
-.program-table button.program-desktop-add[aria-expanded="true"] { color: var(--text); border-color: #3584e6; background: rgba(79,156,255,.08); }
-.program-table button.program-desktop-add .plus-icon, .program-table button.program-desktop-add svg { color: #8fc2ff; }
+/* The next step's place (a placeholder, look: "Placeholders"), chip-sized */
+.program-table button.program-desktop-add { flex-direction: row; gap: 6px; padding: 0 16px; font-size: 12px; }
 .program-table button.program-desktop-key.pseudo { color: #e6f4f8; border-style: dashed; }
 .program-desktop-pick {
   display: flex; flex-wrap: wrap; gap: 6px; padding: 8px; border-radius: 6px;
@@ -1083,7 +1059,7 @@ button.shortcut-load-item {
   padding: 12px; border-radius: 8px; border: 1px solid #08090b; background: var(--panel-bg); box-shadow: var(--panel-shadow);
 }
 .song-live[hidden] { display: none; }
-.song-live.idle { grid-template-columns: 1fr; border-style: dashed; border-color: #353b46; background: rgba(0,0,0,.16); box-shadow: none; }
+.song-live.idle { grid-template-columns: 1fr; border-style: dashed; border-color: var(--ghost-border); background: rgba(0,0,0,.16); box-shadow: none; }
 .song-live.idle .song-live-title { color: var(--muted); font-weight: 600; }
 .song-live.idle .song-stage, .song-live.idle .song-controls, .song-live.idle .song-slides { display: none; }
 @container section (max-width: 852px) { .song-live { grid-template-columns: 1fr; } }
@@ -1974,7 +1950,7 @@ button.add-key.primary-add .plus-icon { color: #8fc2ff; opacity: 1; }
 /* Empty lists: one quiet dashed box that says how to start. */
 .empty-state {
   grid-column: 1 / -1; display: flex; align-items: center; min-height: 56px; padding: 12px 16px;
-  border-radius: var(--r-card); border: 1px dashed #353b46; background: rgba(0,0,0,.16);
+  border-radius: var(--r-card); border: 1px dashed var(--ghost-border); background: rgba(0,0,0,.16);
   color: var(--muted); font-size: 13px; line-height: 1.45;
 }
 .empty-state[hidden] { display: none; }
@@ -2097,3 +2073,46 @@ button#song-hide-btn:hover:not(:disabled), button#song-hide-btn:active:not(:disa
   color: #fff; filter: none; border-color: var(--stop-live-border); background: var(--stop-live-bg);
 }
 @media (prefers-reduced-motion: reduce) { .program-step-stop::before { animation: none; } }
+
+/* ---- Placeholders ("+ … hinzufügen", js/menus.js ghostAddButton) --------------
+   Where a list can grow, it ends in the next object's place: dashed,
+   see-through, as large as that object, "+" and "… hinzufügen". Hidden while
+   arranging the sections and while that object is being created; the
+   Steuerung ones only with "Bearbeiten". */
+:root {
+  --ghost-border: #353b46;
+  --ghost-border-hover: #4a5260;
+  --ghost-border-active: #3584e6;
+  --ghost-bg: rgba(255,255,255,.015);
+  --ghost-bg-hover: rgba(255,255,255,.04);
+  --ghost-bg-active: rgba(79,156,255,.08);
+  --ghost-text: var(--muted);
+  --ghost-plus: #8fc2ff;
+}
+button.ghost-add {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+  min-width: 44px; min-height: 44px; padding: 8px 16px; border-radius: var(--r-key);
+  border: 1px dashed var(--ghost-border); background: var(--ghost-bg); box-shadow: none; text-shadow: none;
+  color: var(--ghost-text); font-size: 13px; font-weight: 700; letter-spacing: .02em; text-align: center;
+}
+button.ghost-add:hover:not(:disabled) { color: var(--text); border-color: var(--ghost-border-hover); background: var(--ghost-bg-hover); filter: none; }
+button.ghost-add:active:not(:disabled), button.ghost-add[aria-expanded="true"] {
+  transform: none; box-shadow: none; color: var(--text); border-color: var(--ghost-border-active); background: var(--ghost-bg-active);
+}
+.ghost-add-main { display: inline-flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 4px 8px; min-width: 0; }
+.ghost-add-main > span { min-width: 0; overflow-wrap: break-word; }
+button.ghost-add { max-width: 100%; }
+button.ghost-add .plus-icon { flex: none; width: 18px; height: 18px; color: var(--ghost-plus); }
+.ghost-add-hint { font-size: 12px; font-weight: 500; letter-spacing: 0; }
+body.arranging button.ghost-add { display: none; }
+/* As large as what they create */
+.desktop-launch-actions button.ghost-tile { align-self: stretch; min-width: 200px; min-height: 48px; }
+.light-scenes button.ghost-tile { min-height: 88px; border-radius: var(--r-card); }
+#persons button.ghost-card { min-height: 58px; border-radius: var(--r-card); }
+.companion-grid button.ghost-key { min-height: 64px; }
+body.stage-on .companion-grid button.ghost-key { min-height: 50px; }
+.companion-categories > button.ghost-row { min-height: 52px; border-radius: var(--r-card); }
+.companion-categories:not(.editing) button.ghost-add { display: none; }
+/* Not while that object is being created */
+#lights-body:has(.light-scene-create.visible) button.ghost-add[data-ghost-add="preset"],
+#groups-body:has(.person-create-row.visible) button.ghost-add[data-ghost-add="person"] { display: none; }
