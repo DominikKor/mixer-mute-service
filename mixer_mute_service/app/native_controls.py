@@ -419,11 +419,12 @@ class NativeControlService:
         self._fixtures = {name: _new_fixture() for name in ARTNET_ZONES}
         self._beamer_hidden: Optional[bool] = None
         # Freeze is a toggle on the beamer too. The service keeps what it knows:
-        # unknown after its start (a freeze may still be on), flipped by every
-        # Freeze it sends (the Beamer-freeze key too), not frozen after power
-        # on/off, set by hand in the Beamer section ("Freeze-Zustand"), unknown
-        # once a Freeze may or may not have arrived. While unknown, program
-        # steps send nothing (a toggle could do the opposite).
+        # live after the service's start (app/main.py sets it, like Unhide),
+        # flipped by every Freeze it sends (the Beamer-freeze key too), live
+        # after power on/off, set by hand in the Beamer section
+        # ("Freeze-Zustand"), unknown once a Freeze may or may not have
+        # arrived (a timeout). While unknown, program steps send nothing (a
+        # toggle could do the opposite). None until the service sets it.
         self._beamer_frozen: Optional[bool] = None
         # Stage sending: one frame at a time (fade steps and the keepalive),
         # when the last one went out, and whether this service drives the

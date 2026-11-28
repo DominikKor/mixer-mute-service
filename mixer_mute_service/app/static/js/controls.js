@@ -40,7 +40,7 @@ function renderBeamerState(data) {
   badge.classList.toggle("unknown", BEAMER_FROZEN === null);
   badge.textContent = BEAMER_FROZEN === null ? "Freeze: unbekannt" : "Beamer eingefroren";
   badge.title = BEAMER_FROZEN === null
-    ? "Der Dienst weiß nicht, ob der Beamer eingefroren ist: Freeze-Schritte senden nichts. In Steuerung unter „Freeze-Zustand festlegen“ setzen."
+    ? "Ein Freeze kam vielleicht nicht am Beamer an (keine Antwort): der Dienst weiß nicht, ob er eingefroren ist, Freeze-Schritte senden nichts. In Steuerung unter „Freeze-Zustand festlegen“ setzen."
     : "Der Beamer ist eingefroren: erst ein Schritt „Beamer auftauen“ oder die Taste „Beamer freeze“ zeigt wieder Neues";
   BEAMER_HIDDEN = data && typeof data.hidden === "boolean" ? data.hidden : null;
   const label = BEAMER_HIDDEN === null ? "Zustand unbekannt" : `Ist-Zustand: ${BEAMER_HIDDEN ? "Hide" : "Unhide"}`;

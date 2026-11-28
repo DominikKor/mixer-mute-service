@@ -865,10 +865,12 @@ rückt er vor, **✕** entfernt ihn:
   Datei der Taste. Gespeichert als `via:<profil-id>|<pfad>`.
 - **Beamer einfrieren** / **Beamer auftauen** (`@freeze` / `@unfreeze`) – Freeze
   ist am Beamer ein Umschalter; der Dienst merkt sich den Zustand und sendet nur,
-  wenn er anders ist. Nach einem Neustart des Dienstes ist er unbekannt: dann
-  wird nichts gesendet (im Log, der Schritt meldet es) – im Steuerung-Bereich
-  unter *Freeze-Zustand festlegen* setzen. Beamer an/aus heißt: nicht
-  eingefroren; die Taste „Beamer freeze“ schaltet um. Aufgetaut wird nur durch
+  wenn er anders ist. Nach dem Start des Dienstes gilt er als *live* (nicht
+  eingefroren, wie „Unhide“ beim Beamer-Zustand), ebenso nach Beamer an/aus;
+  die Taste „Beamer freeze“ schaltet um. Unbekannt wird er nur, wenn ein Freeze
+  vielleicht nicht ankam (keine Antwort vom Beamer): dann wird nichts gesendet
+  (im Log, der Schritt meldet es, der Programmkopf zeigt „Freeze: unbekannt“) – im Steuerung-Bereich unter *Freeze-Zustand festlegen* setzen.
+  Ist der Beamer am Gerät selbst eingefroren, dort ebenso. Aufgetaut wird nur durch
   einen Schritt *Beamer auftauen* oder die Taste. Solange er eingefroren ist,
   zeigen der Programmkopf („Beamer eingefroren“) und der Steuerung-Bereich das an.
 - **Liedtext** (`@song`) – das oben gewählte Lied aus der Liedbibliothek, höchstens
