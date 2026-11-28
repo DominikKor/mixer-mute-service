@@ -562,7 +562,8 @@ sollte die Kamera H.264 ohne B-Frames liefern.
 Heisst eine Kamera **Cam1** oder **Cam2** (Gross-/Kleinschreibung und
 Leerzeichen egal), zeigt ihre Kachel unter dem Bild die VISCA-Steuerung dieser
 Kamera: ihre Preset-Tasten (das zuletzt aufgerufene Preset leuchtet), vier
-Pfeiltasten zum Schwenken/Neigen und zwei Zoom-Tasten **Weit**/**Nah**.
+Pfeiltasten zum Schwenken/Neigen in zwei Reihen wie die Pfeiltasten einer
+Tastatur, oben neben ↑ **Zoom −** (links) und **Zoom +** (rechts).
 Pfeile und Zoom bewegen die Kamera nur, solange die Taste gedrueckt ist;
 Loslassen (auch neben der Taste), Fensterwechsel oder spaetestens 30 s
 (Schwenken) bzw. 15 s (Zoom) stoppen sie
@@ -572,6 +573,13 @@ Loslassen (auch neben der Taste), Fensterwechsel oder spaetestens 30 s
 Eine gehaltene Pfeiltaste wiederholt ihre Richtung jede Sekunde; kommt 3 s
 lang weder Wiederholung noch Stop an (z. B. WLAN weg), stoppt der Dienst die
 Kamera selbst.
+
+Rechts daneben steht **Cam N Live**, darunter **Bibel CamN**: dieselben
+Tasten wie in der Steuerung (`native-obs-camN-live`, `native-obs-bible-camN`,
+gedrückt über `POST /companion/buttons/{id}/press`) mit denselben Farben aus
+`GET /obs/status` (rot = live, grün = in der Vorschau bzw. Bibeltext in einer
+Szene, die nicht live ist). Eine Taste, die aus der Steuerung entfernt wurde,
+fehlt auch hier. In einer schmalen Kachel stehen beide unter den Pfeiltasten.
 
 Jede Preset-Taste zeigt ihre Nummer vor dem Namen („3 · Kanzel“), ebenso die
 Preset-Auswahl der Programmzeilen. Rechts neben „Presets“ fährt
