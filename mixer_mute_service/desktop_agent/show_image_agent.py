@@ -2494,18 +2494,25 @@ def _show_image(root: tk.Tk, image_label: tk.Label, profile: dict) -> None:
     monitors = profile.get("monitors") or [profile["monitor"]]
     for monitor in monitors:  # all monitors present, or nothing is shown
         monitor_bounds(monitor)
-    _close_mirrors()
+    # The same further monitors: their windows stay (and show the next image
+    # without disappearing in between).
+    if [getattr(window, "monitor", None) for window in _mirrors] != monitors[1:]:
+        _close_mirrors()
     _show_widget(root, image_label)
     _show_image_on(root, image_label, profile, monitors[0])
-    for monitor in monitors[1:]:
-        window = tk.Toplevel(root, background="black")
-        window.withdraw()
-        window.protocol("WM_DELETE_WINDOW", lambda: _hide_all(root))
-        window.bind("<Escape>", lambda _event: _hide_all(root))
-        label = tk.Label(window, background="black", borderwidth=0)
-        label.pack(fill="both", expand=True)
-        _mirrors.append(window)
-        _show_image_on(window, label, profile, monitor)
+    for index, monitor in enumerate(monitors[1:]):
+        if index < len(_mirrors):
+            window = _mirrors[index]
+        else:
+            window = tk.Toplevel(root, background="black")
+            window.withdraw()
+            window.protocol("WM_DELETE_WINDOW", lambda: _hide_all(root))
+            window.bind("<Escape>", lambda _event: _hide_all(root))
+            window.image_label = tk.Label(window, background="black", borderwidth=0)
+            window.image_label.pack(fill="both", expand=True)
+            window.monitor = monitor
+            _mirrors.append(window)
+        _show_image_on(window, window.image_label, profile, monitor)
 
 
 # Extra windows showing the current image on further monitors.
@@ -2514,7 +2521,38 @@ _mirrors: list[tk.Toplevel] = []
 
 def _close_mirrors() -> None:
     while _mirrors:
-        _mirrors.pop().destroy()
+        window = _mirrors.pop()
+        _window_style.pop(str(window), None)
+        window.destroy()
+
+
+# How each agent window was last set up (full screen: no frame, topmost) and
+# where the song window is. Changing that needs the window hidden for a
+# moment (Tk changes the frame only while it is hidden), so it is done only
+# when it changes: the next slide or image never uncovers what is behind.
+_window_style: dict[str, bool] = {}
+_song_place: tuple | None = None
+
+
+def _keeps_style(window, fullscreen: bool) -> bool:
+    """The window is on screen with that frame (or none) already."""
+    try:
+        showing = window.state() == "normal"
+    except tk.TclError:
+        return False
+    return showing and _window_style.get(str(window)) == fullscreen
+
+
+def _set_style(window, fullscreen: bool) -> bool:
+    """Frame and topmost for a window about to be shown; hides it for that
+    only when they change. True when it did (the frame changed)."""
+    if _keeps_style(window, fullscreen):
+        return False
+    window.withdraw()
+    window.overrideredirect(fullscreen)
+    window.attributes("-topmost", fullscreen)
+    _window_style[str(window)] = fullscreen
+    return True
 
 
 def _hide_all(root: tk.Tk) -> None:
@@ -2541,9 +2579,7 @@ def _show_image_on(root: tk.Wm, image_label: tk.Label, profile: dict, monitor: i
 
     image = fitted(right - left, bottom - top)
     photo = ImageTk.PhotoImage(image)
-    root.withdraw()
-    root.overrideredirect(profile["fullscreen"])
-    root.attributes("-topmost", profile["fullscreen"])
+    restyled = _set_style(root, fullscreen)
     x, y = _window_position(
         (left, top, right, bottom), image.width, image.height, profile["position"]
     )
@@ -2625,7 +2661,8 @@ def _show_image_on(root: tk.Wm, image_label: tk.Label, profile: dict, monitor: i
             (left, top, right, bottom), window_width, window_height, invisible, profile["position"]
         )
     insert_after = -1 if profile["fullscreen"] else -2
-    flags = 0x0040 | (0x0020 if profile["fullscreen"] else 0)
+    # SWP_SHOWWINDOW, and SWP_FRAMECHANGED only when the frame was just taken away.
+    flags = 0x0040 | (0x0020 if profile["fullscreen"] and restyled else 0)
     if not user32.SetWindowPos(
         hwnd, insert_after, x, y, window_width, window_height, flags
     ):
@@ -2977,9 +3014,21 @@ def _preview_layout(measure, lines: list[str], next_lines: list[str], px: float,
 
 
 def _draw_slide(canvas: tk.Canvas, width: int, height: int, body: dict) -> None:
+    """The slide replaces the one on the canvas: its items are made first and
+    the old ones deleted after them, in the same Tk call (never an empty or
+    half-drawn canvas on screen)."""
     style = body["style"]
-    canvas.delete("all")
+    old = canvas.find_all()
     canvas.configure(background=style["background_color"])
+    try:
+        _draw_slide_items(canvas, width, height, body)
+    finally:
+        if old:
+            canvas.delete(*old)
+
+
+def _draw_slide_items(canvas: tk.Canvas, width: int, height: int, body: dict) -> None:
+    style = body["style"]
     if body["action"] == "blank":
         return
     align = style.get("align", "center")
@@ -3087,17 +3136,32 @@ def _measure_chars(font: str, chars: str) -> list[int]:
 
 
 def _show_song(root: tk.Tk, canvas: tk.Canvas, body: dict) -> None:
+    """A slide (or black) in the song window. While the window already
+    shows a song there, the next slide is only drawn over the old one: the
+    window is not hidden, moved, restyled or raised, so nothing behind it
+    shows for a moment. Placing and styling it happen when the monitor,
+    full screen or the size change, when it was hidden, or when Windows
+    moved it away (a full-screen window is checked against its real place
+    on every slide and made topmost again)."""
+    global _song_place
     _close_mirrors()
     if body["action"] == "hide":
         root.withdraw()
         logger.info("Song window hidden")
         return
     width, height, x, y = _song_window(body["monitor"], body["fullscreen"])
+    place = (body["monitor"], body["fullscreen"], width, height, x, y)
+    if (place == _song_place and root.pack_slaves() == [canvas] and _keeps_style(root, body["fullscreen"])
+            and (not body["fullscreen"] or _song_window_kept(root, x, y, width, height))):
+        root.configure(background=body["style"]["background_color"])
+        _draw_slide(canvas, width, height, body)
+        if not body["fullscreen"]:
+            root.lift()   # a framed window may have been covered (a full-screen one is topmost)
+        logger.info("Song %s monitor=%s", body["action"], body["monitor"])
+        return
     _show_widget(root, canvas)
     root.configure(background=body["style"]["background_color"])
-    root.withdraw()
-    root.overrideredirect(body["fullscreen"])
-    root.attributes("-topmost", body["fullscreen"])
+    restyled = _set_style(root, body["fullscreen"])
     root.geometry(f"{width}x{height}+{x}+{y}")
     _draw_slide(canvas, width, height, body)
     root.deiconify()
@@ -3106,22 +3170,58 @@ def _show_song(root: tk.Tk, canvas: tk.Canvas, body: dict) -> None:
     root.geometry(f"{width}x{height}+{x}+{y}")
     root.lift()
     if body["fullscreen"]:
-        import ctypes
-        from ctypes import wintypes
-
-        user32 = ctypes.windll.user32
-        user32.GetParent.argtypes = [wintypes.HWND]
-        user32.GetParent.restype = wintypes.HWND
-        user32.SetWindowPos.argtypes = [
-            wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, wintypes.UINT,
-        ]
-        hwnd = root.winfo_id()
-        hwnd = user32.GetParent(hwnd) or hwnd
-        # HWND_TOPMOST, SWP_SHOWWINDOW | SWP_FRAMECHANGED
-        if not user32.SetWindowPos(hwnd, -1, x, y, width, height, 0x0040 | 0x0020):
-            raise ctypes.WinError()
+        _place_song_window(root, x, y, width, height, restyled)
+    _song_place = place
     logger.info("Song %s monitor=%s fullscreen=%s size=%sx%s", body["action"], body["monitor"],
                 body["fullscreen"], width, height)
+
+
+def _song_window_kept(root, x: int, y: int, width: int, height: int) -> bool:
+    """Windows: the full-screen song window is still exactly on its monitor
+    (Windows moves it away when the beamer drops its signal for a moment);
+    then it is made topmost again (another topmost window, a document or
+    the taskbar, may be above it now) without moving, sizing, activating or
+    redrawing it. False when it was moved: it is placed again."""
+    import ctypes
+    from ctypes import wintypes
+
+    user32 = ctypes.windll.user32
+    user32.GetParent.argtypes = [wintypes.HWND]
+    user32.GetParent.restype = wintypes.HWND
+    user32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+    user32.SetWindowPos.argtypes = [
+        wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, wintypes.UINT,
+    ]
+    hwnd = root.winfo_id()
+    hwnd = user32.GetParent(hwnd) or hwnd
+    rect = wintypes.RECT()
+    if not user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+        return False
+    if (rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top) != (x, y, width, height):
+        logger.info("Song window was moved to %s,%s,%s,%s: placing it again", rect.left, rect.top, rect.right,
+                    rect.bottom)
+        return False
+    # HWND_TOPMOST, SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE
+    user32.SetWindowPos(hwnd, -1, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010)
+    return True
+
+
+def _place_song_window(root, x: int, y: int, width: int, height: int, restyled: bool) -> None:
+    """Windows: the full-screen song window exactly on its monitor, topmost."""
+    import ctypes
+    from ctypes import wintypes
+
+    user32 = ctypes.windll.user32
+    user32.GetParent.argtypes = [wintypes.HWND]
+    user32.GetParent.restype = wintypes.HWND
+    user32.SetWindowPos.argtypes = [
+        wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, wintypes.UINT,
+    ]
+    hwnd = root.winfo_id()
+    hwnd = user32.GetParent(hwnd) or hwnd
+    # HWND_TOPMOST, SWP_SHOWWINDOW, and SWP_FRAMECHANGED when the frame was just taken away
+    if not user32.SetWindowPos(hwnd, -1, x, y, width, height, 0x0040 | (0x0020 if restyled else 0)):
+        raise ctypes.WinError()
 
 
 class DisplayHandler(BaseHTTPRequestHandler):
