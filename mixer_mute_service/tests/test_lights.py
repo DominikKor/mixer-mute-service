@@ -442,7 +442,7 @@ class CatalogV8Tests(unittest.TestCase):
             self.assertEqual(list(Path(folder).glob("*.corrupt*")), [])
             snapshot = asyncio.run(store.snapshot())
         ids = {b["id"] for b in migrated["buttons"]}
-        self.assertEqual(migrated["native_catalog_version"], 10)
+        self.assertEqual(migrated["native_catalog_version"], 11)
         self.assertFalse(CATALOG_ONLY_IDS & ids)
         self.assertIn("user-1", ids)
         categories = {c["id"] for c in migrated["categories"]}

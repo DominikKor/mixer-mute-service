@@ -97,6 +97,7 @@ class FakeDevices:
         self.scene = "Cam 1"
         self.preview = "Cam 2"   # studio mode, as on the streaming PC
         self.transition_ms = 300
+        self.bible = {}          # scene -> BibleShow visible
         self.agent_started = {}  # "ip:port" of a fake display agent -> its start time
         self.dead_agents = set()  # IPs whose display agent never answers
         self.artnet_frames = 0
@@ -159,8 +160,15 @@ class FakeDevices:
         if request_type in ("GetSceneItemList", "GetGroupSceneItemList"):
             scene = data.get("sceneName", "")
             source = {"Cam 1": "Cam1", "Cam 2": "Cam2"}.get(scene, "Capture_PC2")
-            return {"sceneItems": [{"sceneItemId": 1, "sourceName": source, "sceneItemEnabled": True,
-                                    "isGroup": False}]}
+            items = [{"sceneItemId": 1, "sourceName": source, "sceneItemEnabled": True, "isGroup": False}]
+            if scene in ("Cam 1", "Cam 2"):  # the Bible text (Companion's "Bibel Cam N Beamer")
+                items.append({"sceneItemId": 2, "sourceName": "BibleShow", "isGroup": False,
+                              "sceneItemEnabled": self.bible.get(scene, False)})
+            return {"sceneItems": items}
+        if request_type == "SetSceneItemEnabled" and data.get("sceneItemId") == 2:
+            self.bible[data["sceneName"]] = data["sceneItemEnabled"]
+            log.info("FAKE OBS BibleShow in %s -> %s", data["sceneName"], data["sceneItemEnabled"])
+            return {}
         if request_type == "GetCurrentSceneTransition":
             return {"transitionName": "Fade", "transitionFixed": False, "transitionDuration": self.transition_ms}
         if request_type == "SetCurrentSceneTransitionDuration":

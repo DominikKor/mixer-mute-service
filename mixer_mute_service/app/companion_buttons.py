@@ -125,8 +125,8 @@ NATIVE_BUTTONS.extend([
     {"id": "native-obs-cam1-presentation", "label": "Cam 1 & Präsi", "kind": "native", "category_id": "obs", "native_action": {"type": "obs-scene", "scene": "Cam 1 & Droidcam"}},
     {"id": "native-obs-cam2-presentation", "label": "Cam 2 & Präsi", "kind": "native", "category_id": "obs", "native_action": {"type": "obs-scene", "scene": "Cam 2 & Droidcam"}},
     {"id": "native-obs-picture", "label": "Bild", "kind": "native", "category_id": "obs", "native_action": {"type": "obs-scene", "scene": "Bild / Gebet"}},
-    {"id": "native-obs-bible-cam1", "label": "Bibel Cam1 Beamer", "kind": "native", "category_id": "obs", "native_action": {"type": "obs-overlay-toggle", "scene": "Cam 1", "source": "BibleShow", "hide_beamer_while_shown": True}},
-    {"id": "native-obs-bible-cam2", "label": "Bibel Cam2 Beamer", "kind": "native", "category_id": "obs", "native_action": {"type": "obs-overlay-toggle", "scene": "Cam 2", "source": "BibleShow", "hide_beamer_while_shown": True}},
+    {"id": "native-obs-bible-cam1", "label": "Bibel Cam1 Beamer", "kind": "native", "category_id": "obs", "native_action": {"type": "obs-overlay-toggle", "scene": "Cam 1", "source": "BibleShow", "hide_beamer_while_shown": True, "preview_after": "Cam 2"}},
+    {"id": "native-obs-bible-cam2", "label": "Bibel Cam2 Beamer", "kind": "native", "category_id": "obs", "native_action": {"type": "obs-overlay-toggle", "scene": "Cam 2", "source": "BibleShow", "hide_beamer_while_shown": True, "preview_after": "Cam 1"}},
     # v10: Companion's "Übergang Langsam/Schneller": OBS's transition time.
     {"id": "native-obs-transition-slower", "label": "Übergang Langsamer", "kind": "native", "category_id": "obs", "native_action": {"type": "obs-transition-adjust", "delta": 50}},
     {"id": "native-obs-transition-faster", "label": "Übergang Schneller", "kind": "native", "category_id": "obs", "native_action": {"type": "obs-transition-adjust", "delta": -50}},
@@ -290,8 +290,9 @@ def _stored_label(value) -> bool:
 # the light and mixer keys. v9 runs the Overall keys as Companion does (zone
 # pattern, only the off-air camera moves, then the cut) and adds the missing
 # Companion keys (Overall Ende, OBS scenes, Bibel). v10 drops the duplicate
-# OBS keys (BUTTON_ALIASES) and adds the transition time keys.
-_NATIVE_CATALOG_VERSION = 10
+# OBS keys (BUTTON_ALIASES) and adds the transition time keys. v11: the
+# Bibel keys put the other camera in the OBS preview, as in Companion.
+_NATIVE_CATALOG_VERSION = 11
 _NATIVE_CATALOG_V3_IDS = {
     "native-artnet-start-up", "native-artnet-start-down",
     "native-artnet-steps-up", "native-artnet-steps-down",
@@ -720,3 +721,11 @@ class CompanionButtonStore:
             if len(self._buttons) == before:
                 raise KeyError(button_id)
             self._persist()
+
+
+# The overlay sources the Bibel keys switch, for their live state in GET
+# /obs/status: (scene, source) pairs.
+OVERLAY_SOURCES = sorted({
+    (button["native_action"]["scene"], button["native_action"]["source"])
+    for button in COMPANION_BUTTONS if button.get("native_action", {}).get("type") == "obs-overlay-toggle"
+})
