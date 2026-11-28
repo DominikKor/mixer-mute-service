@@ -192,24 +192,41 @@
         </div>
       </div>
     </div>
-    <div id="light-presets" class="light-block light-presets">
+    <!-- Three blocks, each folds on its own (state per device); folded, its
+         head shows a short summary. -->
+    <div id="light-presets" class="light-block light-presets" data-light-block="presets">
       <div class="light-block-head">
-        <span class="light-block-title">Presets</span>
-        <span id="light-presets-hint" class="light-block-hint">Antippen blendet ein</span>
+        <button type="button" class="light-block-toggle" data-light-block-toggle="presets" aria-expanded="true" aria-controls="light-presets-body"><span class="light-block-title">Presets</span><span id="light-presets-hint" class="light-block-hint" data-open-only>Antippen blendet ein</span><span class="light-block-summary" data-light-summary="presets"></span></button>
       </div>
-      <div id="light-scenes" class="light-scenes"></div>
+      <div id="light-presets-body" class="light-block-body">
+        <div id="light-scenes" class="light-scenes"></div>
+      </div>
     </div>
-    <div class="light-grid">
-      <div class="light-block light-stage">
-        <div class="light-block-head">
-          <span class="light-block-title">Bühne</span>
-          <div class="light-block-tools">
-            <button type="button" id="light-stage-on" class="light-all">Alle an</button>
-            <button type="button" id="light-stage-off" class="light-all">Alle aus</button>
-            <button type="button" id="light-link" class="light-all light-link" aria-pressed="false" title="Regler gemeinsam: Helligkeit und Farbe eines Scheinwerfers gelten für alle vier">Alle gleich</button>
-            <button type="button" id="light-stage-menu" class="menu-btn" data-menu-key="light-stage" aria-haspopup="menu" aria-expanded="false" title="Bühne: weitere Aktionen" aria-label="Bühne: weitere Aktionen"><svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg></button>
-          </div>
+    <div class="light-block light-room" data-light-block="room">
+      <div class="light-block-head">
+        <button type="button" class="light-block-toggle" data-light-block-toggle="room" aria-expanded="true" aria-controls="light-room-body"><span class="light-block-title">Raumlicht</span><span class="light-block-summary" data-light-summary="room"></span></button>
+        <div class="light-block-tools">
+          <button type="button" id="light-room-on" class="light-all" data-open-only>Alle an</button>
+          <button type="button" id="light-room-off" class="light-all" data-open-only>Alle aus</button>
+          <button type="button" id="light-room-menu" class="menu-btn" data-menu-key="light-room" aria-haspopup="menu" aria-expanded="false" title="Raumlicht: weitere Aktionen" aria-label="Raumlicht: weitere Aktionen"><svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg></button>
         </div>
+      </div>
+      <div id="light-room-body" class="light-block-body">
+        <div class="rename-bar" data-rename-bar="room" hidden><span>Kreis antippen zum Umbenennen</span><button type="button" class="primary" data-rename-done="room">Fertig</button></div>
+        <div id="light-circuits" class="light-circuits"></div>
+      </div>
+    </div>
+    <div class="light-block light-stage" data-light-block="stage">
+      <div class="light-block-head">
+        <button type="button" class="light-block-toggle" data-light-block-toggle="stage" aria-expanded="true" aria-controls="light-stage-body"><span class="light-block-title">Bühne</span><span class="light-block-summary" data-light-summary="stage"></span></button>
+        <div class="light-block-tools">
+          <button type="button" id="light-stage-on" class="light-all" data-open-only>Alle an</button>
+          <button type="button" id="light-stage-off" class="light-all" data-open-only>Alle aus</button>
+          <button type="button" id="light-link" class="light-all light-link" data-open-only aria-pressed="false" title="Regler gemeinsam: Helligkeit und Farbe eines Scheinwerfers gelten für alle vier">Alle gleich</button>
+          <button type="button" id="light-stage-menu" class="menu-btn" data-menu-key="light-stage" aria-haspopup="menu" aria-expanded="false" title="Bühne: weitere Aktionen" aria-label="Bühne: weitere Aktionen"><svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg></button>
+        </div>
+      </div>
+      <div id="light-stage-body" class="light-block-body">
         <div class="rename-bar" data-rename-bar="stage" hidden><span>Namen antippen zum Umbenennen</span><button type="button" class="primary" data-rename-done="stage">Fertig</button></div>
         <div id="light-fixtures" class="light-fixtures"></div>
         <div class="light-settings-bar">
@@ -217,18 +234,6 @@
           <button type="button" class="light-chip" data-light-setting="start" aria-expanded="false" aria-controls="light-setting-pop"><span class="light-chip-label">Einschalten auf</span><span class="light-chip-value"></span></button>
         </div>
         <div id="light-setting-pop" class="light-setting-pop" hidden></div>
-      </div>
-      <div class="light-block light-room">
-        <div class="light-block-head">
-          <span class="light-block-title">Raumlicht</span>
-          <div class="light-block-tools">
-            <button type="button" id="light-room-on" class="light-all">Alle an</button>
-            <button type="button" id="light-room-off" class="light-all">Alle aus</button>
-            <button type="button" id="light-room-menu" class="menu-btn" data-menu-key="light-room" aria-haspopup="menu" aria-expanded="false" title="Raumlicht: weitere Aktionen" aria-label="Raumlicht: weitere Aktionen"><svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg></button>
-          </div>
-        </div>
-        <div class="rename-bar" data-rename-bar="room" hidden><span>Kreis antippen zum Umbenennen</span><button type="button" class="primary" data-rename-done="room">Fertig</button></div>
-        <div id="light-circuits" class="light-circuits"></div>
       </div>
     </div>
   </div>
