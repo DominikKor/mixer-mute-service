@@ -212,7 +212,6 @@ $("camera-grid").addEventListener("contextmenu", (event) => {
 window.addEventListener("blur", stopAllCameraMoves);
 window.addEventListener("pagehide", stopAllCameraMoves);
 document.addEventListener("visibilitychange", () => { if (document.hidden) stopAllCameraMoves(); });
-$("new-profile-btn").addEventListener("click", () => openProfileDialog(null));
 $("target-pcs-btn").addEventListener("click", openTargetPcsDialog);
 document.addEventListener("click", event => {
   if (event.target.closest("[data-open-target-pcs]")) openTargetPcsDialog();
