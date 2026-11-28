@@ -170,8 +170,50 @@ async function fetchSongLayout(request, settings) {
   return result.ok && result.data && result.data.ok ? result.data.song : null;
 }
 
+// "Glauben Hoffen Singen" -> "GHS"; a one-word name ("GHS") stays as it is.
+function bookAbbr(name) {
+  const words = String(name || "").trim().split(/\s+/).filter(Boolean);
+  return words.length > 1 ? words.map(w => w[0]).join("").toLocaleUpperCase("de") : words[0] || "";
+}
+
+function bookNumber(book) { return String(book.number ?? "").trim(); }
+
+// The preferred songbook (GHS) as the service prefers it when a number is in several (app/program_templates.py).
+function isPreferredBook(name) {
+  const words = String(name || "").toLocaleLowerCase("de").split(/\s+/).filter(Boolean).join(" ");
+  return ["ghs", "glauben hoffen singen"].some(alias => words === alias || words.startsWith(alias + " "));
+}
+
+function songBookList(song) {
+  return (song && (song.books || (SONG_INDEX.get(song.id) || {}).books)) || [];
+}
+
+// The book whose number goes in front of the title: GHS if the song has a number there, else the first numbered one.
+function songMainBook(song) {
+  const numbered = songBookList(song).filter(book => bookNumber(book));
+  return numbered.find(book => isPreferredBook(book.name)) || numbered[0] || null;
+}
+
+function bookText(book) {
+  return [bookAbbr(book.name), bookNumber(book)].filter(Boolean).join(" ");
+}
+
+// "GHS 123": the number in front of the title; "" for a song without one.
+function songNumberText(song) {
+  const book = songMainBook(song);
+  return book ? bookText(book) : "";
+}
+
+// "GHS 123 · Aus meines Herzens Grunde"; the title alone when there is no number (no dangling separator).
+function songLabel(song) {
+  const number = songNumberText(song);
+  return number ? `${number} · ${song.title}` : song.title;
+}
+
+// The other songbooks of a song (the main one is in front of the title already).
 function songBooks(song) {
-  return (song.books || []).map(b => [b.name && b.name.split(" ").map(w => w[0]).join(""), b.number].filter(Boolean).join(" ")).join(" · ");
+  const main = songMainBook(song);
+  return songBookList(song).filter(book => book !== main).map(bookText).filter(Boolean).join(" · ");
 }
 
 function renderSongLive() {
@@ -180,7 +222,7 @@ function renderSongLive() {
   const wrap = $("song-live");
   const song = SONG_LIVE.song;
   wrap.classList.toggle("idle", !song);
-  $("song-live-title").textContent = song ? song.title
+  $("song-live-title").textContent = song ? songLabel(song)
     : SONG_LIVE.blank ? "Bildschirm schwarz" : "Kein Lied auf dem Bildschirm";
   $("song-live-pos").textContent = song
     ? (SONG_LIVE.blank ? "Schwarz" : `${SONG_LIVE.slide + 1} / ${songDisplaySlides(song, SONG_SETTINGS || {}).length}`) : "";
@@ -535,8 +577,8 @@ function syncSongPicker(wrap) {
   const song = SONG_INDEX.get(id);
   const button = wrap.querySelector(".song-pick-btn");
   button.classList.toggle("empty", !id);
-  button.textContent = id ? `♪ ${song ? song.title : id.replace(/\.(foil|pptx)$/i, "")}` : "♪ Lied wählen";
-  button.title = id ? (song ? `${song.title} · ${song.slide_count} Strophen/Refrains` : "Lied nicht in der geladenen Bibliothek") : "Lied aus der FoilPresenter-Bibliothek";
+  button.textContent = id ? `♪ ${song ? songLabel(song) : id.replace(/\.(foil|pptx)$/i, "")}` : "♪ Lied wählen";
+  button.title = id ? (song ? `${songLabel(song)} · ${song.slide_count} Strophen/Refrains` : "Lied nicht in der geladenen Bibliothek") : "Lied aus der FoilPresenter-Bibliothek";
 }
 
 let SONG_SEARCH = null;
@@ -549,11 +591,12 @@ function closeSongSearch() {
 }
 
 function songMatches(query) {
-  const q = query.trim().toLocaleLowerCase("de");
+  // "GHS123" is "GHS 123"
+  const q = query.trim().toLocaleLowerCase("de").replace(/\b([a-zäöüß]+)(\d+)\b/g, "$1 $2");
   if (!q) return SONG_LIST.slice(0, 40);
   const words = q.split(/\s+/);
   const matches = SONG_LIST.filter(song => {
-    const hay = `${song.title} ${(song.books || []).map(b => `${b.name} ${b.number}`).join(" ")}`.toLocaleLowerCase("de");
+    const hay = `${song.title} ${(song.books || []).map(b => `${b.name} ${bookAbbr(b.name)} ${b.number}`).join(" ")}`.toLocaleLowerCase("de");
     return words.every(w => hay.includes(w));
   });
   // A typed number lists the songs with exactly that hymnal number first ("12" before 112, 120 or 12a).
@@ -611,7 +654,7 @@ function openSongSearch(anchor, onPick, allowNone = true, options = {}) {
       button.setAttribute("role", "option");
       if (i === 0 && input.value.trim()) button.classList.add("active");
       const title = document.createElement("span");
-      title.textContent = song.title;
+      title.textContent = songLabel(song);
       const books = document.createElement("span");
       books.className = "books";
       books.textContent = songBooks(song);

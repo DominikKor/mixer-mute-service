@@ -122,7 +122,7 @@ function renderTemplateMatches() {
     line.textContent = defaulted ? `${match.line} · Mehrdeutig – ${match.preferred_book} gewählt` : match.line;
     const found = document.createElement("span");
     found.className = "tp-song";
-    found.textContent = song ? `♪ ${song.title}`
+    found.textContent = song ? `♪ ${songLabel(song)}`
       : match.candidates.length ? "Nicht eindeutig – bitte wählen" : "Nicht gefunden – kommt als Text in den Titel";
     if (defaulted) {
       const badge = document.createElement("span");
