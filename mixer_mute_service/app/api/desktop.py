@@ -17,6 +17,7 @@ from ..config import DesktopProfileConfig, default_config_path
 from ..desktop_profiles import ProfileEditError, add_profile, delete_profile, duplicate_profile, update_profile
 from ..models import StagePreferenceRequest
 from ..profile_kind import profile_kind
+from ..profile_stops import close_profile
 from ..youtube import normalize_youtube_url
 from ..responses import fail, reply
 from ..songs import SongSettings, clean_targets, relayout_live
@@ -156,6 +157,13 @@ async def open_desktop_profile(profile_id: str, request: Request):
 @router.post("/desktop/{profile_id}/audio/{action}")
 async def control_desktop_audio(profile_id: str, action: str, request: Request):
     return reply(*await control_audio(request, profile_id, action))
+
+
+@router.post("/desktop/{profile_id}/close")
+async def close_desktop_profile(profile_id: str, request: Request):
+    """The stop key of a Desktop key that shows something: close it on its
+    PC (app/profile_stops.py close_profile)."""
+    return reply(*await close_profile(request.app.state, profile_id))
 
 
 # The Stage switch is kept per browser. The page stores it in localStorage, but

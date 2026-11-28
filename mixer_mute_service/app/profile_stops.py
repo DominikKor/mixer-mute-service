@@ -66,7 +66,7 @@ from .row_files import is_via, parse_via, path_kind, profile_of_start, step_star
 log = logging.getLogger("mixer.profile_stops")
 
 DESKTOP_PREFIX = "desktop:"
-CLOSE_TIMEOUT_SECONDS = 1.5
+CLOSE_TIMEOUT_SECONDS = 2.0  # the agent answers within 0.8 s (it asks its tk thread what it hid)
 AUDIO_STOP_TIMEOUT_SECONDS = 3.0  # the agent answers at once and fades in the background
 DOWN_SECONDS = 30.0
 # Kinds whose output a new one of the same kind replaces on the same PC.
@@ -356,3 +356,47 @@ async def _send_stop(state, profile_id: str, target_ip: str, kind: str, stamp: O
     # but no audio of the new row is on this PC, see stop_previous).
     log.warning("Agent %s is older than the targeted audio stop (update the desktop agent)", target_ip)
     return await display_agent.call(cfg, target_ip, "/audio", payload, timeout=AUDIO_STOP_TIMEOUT_SECONDS)
+
+
+async def close_profile(state, profile_id: str) -> tuple:
+    """A Desktop key's stop (POST /desktop/{id}/close): close what the key
+    shows on its PC, started by hand or by the program: its windows (an
+    mpv video ends), its image if still the one shown, its document. Also a
+    program row's start of the key with another file (its start id). Each
+    close names the latest start the service knows (the agent ignores it for
+    a newer one); after a restart it closes by profile. Programs (OBS) are
+    never closed. Returns (answer, status); answer["was_open"]: False when
+    the agent says nothing of it was open, None when it cannot tell."""
+    cfg = state.cfg.desktop_display
+    profile = cfg.profiles.get(profile_id)
+    if profile is None:
+        return {"ok": False, "reason": "unknown desktop profile"}, 404
+    if profile.kind == "program":
+        return {"ok": False, "reason": "programs are not closed from here"}, 400
+    if profile.kind == "audio":
+        return {"ok": False, "reason": "audio profiles use the audio stop"}, 400
+    tracker: Optional[ShownProfiles] = getattr(state, "shown_profiles", None)
+    starts = [profile_id]
+    if tracker is not None:
+        starts += [start for start in tracker.shown() if start != profile_id and profile_of_start(start) == profile_id]
+
+    async def close(start: str) -> dict:
+        stamp = tracker.latest(start) if tracker is not None else None
+        body = {"id": start} if stamp is None else {"id": start, "stamp": stamp}
+        answer = await display_agent.call(cfg, profile.target_ip, "/close", body, timeout=CLOSE_TIMEOUT_SECONDS)
+        if tracker is not None:
+            tracker.forget(start)  # closed: not the program's to keep or stop any more
+        return answer
+
+    try:
+        answers = await asyncio.gather(*(close(start) for start in starts))
+    except AgentError as exc:
+        if exc.agent_status is None and exc.status == 502 and tracker is not None:
+            tracker.mark_down(profile.target_ip)
+        log.warning("Desktop key %s: not closed on %s: %s", profile_id, profile.target_ip, exc.reason)
+        return {"ok": False, "profile": profile_id, "reason": exc.reason}, exc.status
+    states = [answer.get("was_open") for answer in answers]
+    was_open = True if True in states else (False if states and all(state is False for state in states) else None)
+    log.info("Desktop key %s closed on %s (was open: %s)", profile_id, profile.target_ip, was_open)
+    return {"ok": True, "profile": profile_id, "was_open": was_open,
+            "windows_closed": sum(answer.get("windows_closed") or 0 for answer in answers)}, 200

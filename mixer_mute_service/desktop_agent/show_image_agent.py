@@ -1053,6 +1053,10 @@ def _valid_stamp(value) -> bool:
     return isinstance(value, str) and 0 < len(value) <= 64 and value.replace("-", "").replace("_", "").isalnum()
 
 
+# POST /close waits this long for the tk thread to say what it hid.
+CLOSE_REPLY_SECONDS = 0.8
+
+
 def _launch_pending(profile_id: str) -> bool:
     """Being opened (call with _opened_lock held)."""
     return _launching.get(profile_id, (0.0, ""))[0] > time.monotonic()
@@ -3325,9 +3329,30 @@ class DisplayHandler(BaseHTTPRequestHandler):
         ):
             self.send_error(400)
             return
-        closed = _close_profile_windows(body["id"], stamp=body.get("stamp"))
-        requests.put({"kind": "close", "id": body["id"], "stamp": body.get("stamp")})
-        self._send_json(200, {"ok": True, "profile": body["id"], "windows_closed": closed})
+        profile_id = body["id"]
+        with _opened_lock:
+            opening = _launch_pending(profile_id) and profile_id not in _cancelled
+            unknown = profile_id in _unknown_windows and profile_id not in _opened_windows
+        closed = _close_profile_windows(profile_id, stamp=body.get("stamp"))
+        # The image and the document are hidden on the tk thread; its answer
+        # says whether one of them was this profile's (a Desktop key's stop:
+        # "War nicht offen" otherwise).
+        reply: queue.Queue = queue.Queue(maxsize=1)
+        requests.put({"kind": "close", "id": profile_id, "stamp": body.get("stamp"), "reply": reply})
+        try:
+            hidden = reply.get(timeout=CLOSE_REPLY_SECONDS)
+        except queue.Empty:
+            hidden = None
+        image = hidden["image"] if hidden else None
+        document = hidden["document"] if hidden else None
+        if closed or opening or image or document:
+            was_open = True
+        elif hidden is None or unknown:
+            was_open = None  # cannot tell (a window of an app the agent did not start)
+        else:
+            was_open = False
+        self._send_json(200, {"ok": True, "profile": profile_id, "windows_closed": closed, "opening": opening,
+                              "image_hidden": image, "document_hidden": document, "was_open": was_open})
 
     def _handle_audio(self, body: dict) -> None:
         if (
@@ -3615,10 +3640,13 @@ def handle_request(root, image_label, canvas, profile: dict) -> None:
         # Only the image of that profile, and only the start the close names:
         # a newer image, the same one shown again, or a song stays.
         stamp = profile.get("stamp")
-        if _shown_image == profile["id"] and (stamp is None or _shown_image_stamp in (None, stamp)):
+        image = _shown_image == profile["id"] and (stamp is None or _shown_image_stamp in (None, stamp))
+        if image:
             _hide_all(root)
             logger.info("Image hidden profile=%s", profile["id"])
-        _hide_document(profile["id"], stamp)
+        document = _hide_document(profile["id"], stamp)
+        if profile.get("reply") is not None:
+            profile["reply"].put_nowait({"image": image, "document": document})
     elif profile["kind"] == "document":
         shown = False
         try:

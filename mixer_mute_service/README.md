@@ -714,7 +714,14 @@ nicht, nennt die Meldung die durchsuchten Orte; der Update-Dialog zeigt pro PC
 `agent_localappdata` (das Windows-Konto, unter dem der Agent laeuft: ein
 Programm, das ein anderes Konto nur fuer sich installiert hat, findet er nicht). Die Audio-Kachel spielt den Titel ohne Player-Fenster ab; ein
 erneuter Play-Klick ersetzt die laufende, vom Agenten gestartete Wiedergabe.
-Stop beendet nur diesen Agenten-Player, keine anderen mpv-Instanzen. Der Agent
+Stop beendet nur diesen Agenten-Player, keine anderen mpv-Instanzen.
+Auch jede Kachel, die etwas zeigt (Bild, Video, Dokument; nicht Programme wie
+OBS), hat ein rotes **Stop**: es schließt das auf ihrem PC, egal ob von Hand
+oder vom Programmablauf gestartet (`POST /desktop/{id}/close`; ein mpv-Video
+endet, ein Dokument wird ausgeblendet, ein Bild nur, wenn es noch das dieser
+Kachel ist; der Agent ignoriert es für einen neueren Start). Meldet der Agent,
+dass nichts davon offen war, kommt „War nicht offen“; ein PC, der nicht
+antwortet, meldet sich nach 2 s. Der Agent
 laeuft im angemeldeten Benutzerkonto, sodass die normale Windows-Audioausgabe
 des Ziel-PCs verwendet wird. Bei Netzwerkdateien muss der Pfad fuer dieses
 Benutzerkonto erreichbar sein; ein UNC-Pfad ist robuster als ein verbundenes

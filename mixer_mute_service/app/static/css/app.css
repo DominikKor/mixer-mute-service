@@ -453,10 +453,12 @@ button.display-key {
    and delete live in the menu, so nothing covers the title. */
 .display-tile { position: relative; display: inline-flex; max-width: 100%; }
 .display-tile button.display-key { padding-right: 42px; }
-/* Music tile: one wide key; Stop is a red stop square inside it on the right
-   (34 px, tap area 44 px), with "Stop" faintly engraved; the dots stay in
-   the top-right corner like on every tile. */
-.display-tile.audio button.display-key { padding-right: 96px; }
+/* Music tile, and every tile that shows something (image, video, document;
+   not programs): one wide key; Stop is a red stop square inside it on the
+   right (34 px, tap area 44 px), with "Stop" faintly engraved: music stops,
+   a shown thing closes on its PC. The dots stay in the top-right corner
+   like on every tile. */
+.display-tile.has-stop button.display-key { padding-right: 96px; }
 button.display-audio-stop {
   position: absolute; top: 50%; right: 50px; width: 34px; height: 34px; margin-top: -17px; padding: 0;
   display: grid; place-items: center; border-radius: 7px; border: 1px solid #3d0a05;
