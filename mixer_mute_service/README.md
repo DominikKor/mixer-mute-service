@@ -311,6 +311,14 @@ OBS is red, one in the preview (studio mode) green. The page asks
 second, and while OBS does not answer no key is coloured and OBS is asked
 only every 5 s.
 
+"Bibel Cam1 Beamer" / "Bibel Cam2 Beamer" (Companion page 7) show or hide
+the Bible text (OBS source "BibleShow") in the camera's scene and put that
+camera on air, then the other camera in the preview (studio mode). While the
+text shows, the projector is hidden; hiding the text brings the projector
+back (Companion ran its "Beamer hide" script on every press). The key is red
+while the text shows in the scene on air, green while it shows in a scene
+not on air (`overlays` in `GET /obs/status`).
+
 The service keeps ONE WebSocket connection to OBS open (`app/obs_client.py`)
 for every key, program row, camera sequence and status query; OBS no longer
 reports a new client and a disconnect on every click. Requests from several

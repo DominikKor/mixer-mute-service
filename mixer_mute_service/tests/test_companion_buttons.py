@@ -35,7 +35,7 @@ class CompanionButtonCatalogTests(unittest.TestCase):
 
         migrated_ids = {button["id"] for button in migrated["buttons"]}
         migrated_live = next(button for button in migrated["buttons"] if button["id"] == live["id"])
-        self.assertEqual(migrated["native_catalog_version"], 10)
+        self.assertEqual(migrated["native_catalog_version"], 11)
         self.assertEqual(migrated_live["native_action"]["scene"], "Cam 1")
         self.assertIn("native-obs-cam1-toggle", migrated_ids)
         self.assertIn("beamer-unhide", migrated_ids)
@@ -59,7 +59,7 @@ class CompanionButtonCatalogTests(unittest.TestCase):
             CompanionButtonStore(path, COMPANION_BUTTONS)
             migrated = json.loads(path.read_text(encoding="utf-8"))
 
-        self.assertEqual(migrated["native_catalog_version"], 10)
+        self.assertEqual(migrated["native_catalog_version"], 11)
         self.assertEqual([b["id"] for b in migrated["buttons"]][:4], [
             "native-overall-predigt", "beamer-unhide", "beamer-power-off", "beamer-power-on",
         ])
@@ -80,7 +80,7 @@ class CompanionButtonCatalogTests(unittest.TestCase):
             migrated = json.loads(path.read_text(encoding="utf-8"))
 
         by_id = {button["id"]: button for button in migrated["buttons"]}
-        self.assertEqual(migrated["native_catalog_version"], 10)
+        self.assertEqual(migrated["native_catalog_version"], 11)
         self.assertEqual(by_id["beamer-hide"]["native_action"], {"type": "beamer-set", "hidden": True})
         self.assertEqual(by_id["beamer-unhide"]["native_action"], {"type": "beamer-set", "hidden": False})
 
@@ -96,7 +96,7 @@ class CompanionButtonCatalogTests(unittest.TestCase):
             migrated = json.loads(path.read_text(encoding="utf-8"))
 
         by_id = {button["id"]: button for button in migrated["buttons"]}
-        self.assertEqual(migrated["native_catalog_version"], 10)
+        self.assertEqual(migrated["native_catalog_version"], 11)
         self.assertEqual(by_id["beamer-freeze"]["native_action"], {"type": "beamer-command", "command": "freeze"})
         self.assertEqual(by_id["beamer-power-off"]["native_action"]["command"], "power-off")
         self.assertEqual(by_id["beamer-power-on"]["native_action"]["command"], "power-on")
@@ -108,7 +108,7 @@ class CompanionButtonCatalogTests(unittest.TestCase):
             stored = json.loads(path.read_text(encoding="utf-8"))
             camera_buttons = asyncio.run(store.camera_buttons())
 
-        self.assertEqual(stored["native_catalog_version"], 10)
+        self.assertEqual(stored["native_catalog_version"], 11)
         self.assertFalse(CAMERA_BUTTON_IDS & {button["id"] for button in stored["buttons"]})
         self.assertNotIn("cameras", {category["id"] for category in stored["categories"]})
         self.assertIn("native-overall-predigt", {button["id"] for button in stored["buttons"]})
@@ -132,7 +132,7 @@ class CompanionButtonCatalogTests(unittest.TestCase):
             reloaded = asyncio.run(CompanionButtonStore(path, COMPANION_BUTTONS).camera_buttons())
 
         migrated_ids = [button["id"] for button in migrated["buttons"]]
-        self.assertEqual(migrated["native_catalog_version"], 10)
+        self.assertEqual(migrated["native_catalog_version"], 11)
         self.assertFalse(CAMERA_BUTTON_IDS & set(migrated_ids))
         self.assertNotIn("cameras", {category["id"] for category in migrated["categories"]})
         macro = next(button for button in migrated["buttons"] if button["id"] == "native-overall-gebet")

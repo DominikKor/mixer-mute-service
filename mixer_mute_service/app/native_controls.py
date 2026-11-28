@@ -382,13 +382,23 @@ def close_obs_clients() -> None:
 OBS_TRANSITION_MS = (50, 20000)
 
 
-def obs_status_blocking() -> dict:
-    """What OBS has on air, in the preview (studio mode only) and its
-    transition, over one connection. Raises NativeControlError."""
-    program, studio, preview, transition = _obs_batch(OBS_HOST, OBS_PORT, [
+def obs_status_blocking(overlays=()) -> dict:
+    """What OBS has on air, in the preview (studio mode only), its
+    transition and whether each overlay source ((scene, source) pairs, e.g.
+    the Bible text in "Cam 1") is visible, over the one connection. Raises
+    NativeControlError."""
+    scenes = sorted({scene for scene, _source in overlays})
+    program, studio, preview, transition, *items = _obs_batch(OBS_HOST, OBS_PORT, [
         ("GetCurrentProgramScene", None), ("GetStudioModeEnabled", None),
         ("GetCurrentPreviewScene", None), ("GetCurrentSceneTransition", None),
+        *(("GetSceneItemList", {"sceneName": scene}) for scene in scenes),
     ])
+    by_scene = dict(zip(scenes, items))
+
+    def shown(scene, source):
+        listed = (by_scene.get(scene) or {}).get("sceneItems")
+        item = next((i for i in listed or [] if i.get("sourceName") == source), None)
+        return None if item is None else bool(item.get("sceneItemEnabled"))
     if program is None or not isinstance(program.get("currentProgramSceneName"), str):
         raise NativeControlError("OBS did not name its program scene")
     studio_mode = bool(studio and studio.get("studioModeEnabled"))
@@ -402,6 +412,9 @@ def obs_status_blocking() -> dict:
             "duration_ms": None if (transition or {}).get("transitionFixed") or not isinstance(duration, (int, float))
             else int(duration),
         },
+        # None: scene or source not found.
+        "overlays": [{"scene": scene, "source": source, "shown": shown(scene, source)}
+                     for scene, source in overlays],
     }
 
 
@@ -1079,10 +1092,11 @@ class NativeControlService:
 
     async def _overlay_toggle(self, action: dict) -> dict:
         """Companion's "Bibel Cam N Beamer": show or hide an overlay source
-        (the Bible text) in a camera scene and put that scene on air. While the
-        overlay shows, the projector is hidden (the stream shows the text);
-        hiding the overlay shows the projector again. The scene is switched
-        even if the projector fails; the failure is reported."""
+        (the Bible text) in a camera scene and put that scene on air, then
+        the other camera in the preview (studio mode). While the overlay
+        shows, the projector is hidden (the stream shows the text); hiding the
+        overlay shows the projector again. The scene is switched even if the
+        projector fails; the failure is reported."""
         scene, source = action.get("scene"), action.get("source")
         if not isinstance(scene, str) or not scene or not isinstance(source, str) or not source:
             raise NativeControlError("invalid OBS overlay action")
@@ -1101,6 +1115,12 @@ class NativeControlService:
             except NativeControlError as exc:
                 beamer_error = str(exc)
         await asyncio.to_thread(_obs_request, OBS_HOST, OBS_PORT, "SetCurrentProgramScene", {"sceneName": scene})
+        preview = action.get("preview_after")
+        if isinstance(preview, str) and preview:
+            # As Companion: the other camera ready in the preview. OBS refuses
+            # this outside studio mode; that is fine (the answer is None).
+            await asyncio.to_thread(_obs_batch, OBS_HOST, OBS_PORT,
+                                    [("SetCurrentPreviewScene", {"sceneName": preview})])
         if beamer_error:
             raise NativeControlError(f"{source} {'shown' if shown else 'hidden'}, but beamer: {beamer_error}")
         return {"ok": True, "shown": shown}

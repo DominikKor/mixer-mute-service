@@ -239,6 +239,10 @@ function obsKeyRole(info) {
   }
   if (!action) return {};
   if (action.type === "obs-transition-adjust") return { transition: true };
+  // The Bibel keys: whether their text is visible (GET /obs/status, overlays).
+  if (action.type === "obs-overlay-toggle" && action.scene && action.source) {
+    return { overlay: { scene: action.scene, source: action.source } };
+  }
   const placeholder = action.scene === "Current Scene" || action.scene === "Preview Scene";
   return (action.type === "obs-live" || action.type === "obs-scene") && action.scene && !placeholder ? { scene: action.scene } : {};
 }
@@ -255,6 +259,19 @@ function applyObsStatus() {
     else if (preview) key.setAttribute("aria-description", "in der OBS-Vorschau");
     else key.removeAttribute("aria-description");
   }
+  // Bibel keys: red while the text shows in the scene on air, green while it
+  // shows in a scene that is not on air; no colour while hidden or unknown.
+  const overlays = status && Array.isArray(status.overlays) ? status.overlays : [];
+  for (const key of document.querySelectorAll("button.companion-key[data-obs-overlay-scene]")) {
+    const entry = overlays.find(o => o.scene === key.dataset.obsOverlayScene && o.source === key.dataset.obsOverlaySource);
+    const shown = !!entry && entry.shown === true;
+    const onAir = shown && status.program === entry.scene;
+    key.classList.toggle("obs-program", onAir);
+    key.classList.toggle("obs-preview", shown && !onAir);
+    if (onAir) key.setAttribute("aria-description", "Bibeltext live");
+    else if (shown) key.setAttribute("aria-description", "Bibeltext eingeblendet, Szene nicht live");
+    else key.removeAttribute("aria-description");
+  }
   const ms = status && status.transition ? status.transition.duration_ms : null;
   for (const key of document.querySelectorAll("button.companion-key[data-obs-transition]")) {
     if (typeof ms === "number") key.dataset.value = `${ms} ms`;
@@ -263,7 +280,7 @@ function applyObsStatus() {
 }
 
 async function refreshObsStatus() {
-  if (!document.querySelector("button.companion-key[data-obs-scene], button.companion-key[data-obs-transition]")) return;
+  if (!document.querySelector("button.companion-key[data-obs-scene], button.companion-key[data-obs-transition], button.companion-key[data-obs-overlay-scene]")) return;
   const result = await api("GET", "/obs/status");
   OBS_STATUS = result.ok ? result.data : null;
   applyObsStatus();
@@ -303,6 +320,10 @@ function renderCompanionButtons() {
       const obs = obsKeyRole(info);
       if (obs.scene) press.dataset.obsScene = obs.scene;
       if (obs.transition) press.dataset.obsTransition = "";
+      if (obs.overlay) {
+        press.dataset.obsOverlayScene = obs.overlay.scene;
+        press.dataset.obsOverlaySource = obs.overlay.source;
+      }
       press.title = info.kind === "native" ? "Direkt über den lokalen Dienst ausführen" : "Über den sicheren Dienst ausführen";
       // With "Bearbeiten": the key's "⋮" (rename, move, delete).
       const menu = menuButton(`${info.label}: umbenennen, verschieben oder löschen`, `key:${info.id}`);
@@ -530,7 +551,8 @@ $("companion-categories").addEventListener("click", async (event) => {
       }
       if (button.classList.contains("channel") || button.classList.contains("group")) await refresh();
       // Show the cut (or the new transition time) without waiting for the poll.
-      if (button.dataset.obsScene !== undefined || button.dataset.obsTransition !== undefined) refreshObsStatus();
+      if (button.dataset.obsScene !== undefined || button.dataset.obsTransition !== undefined
+          || button.dataset.obsOverlayScene !== undefined) refreshObsStatus();
     }
   } finally {
     COMPANION_BUTTON_BUSY.delete(pressId);
