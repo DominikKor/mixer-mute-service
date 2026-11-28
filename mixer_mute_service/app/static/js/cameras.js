@@ -491,15 +491,27 @@ function renderDesktopProfiles(data) {
       stop.title = profile.fade ? `Musik auf ${profile.target_ip} langsam ausblenden und stoppen` : `Musik auf ${profile.target_ip} stoppen`;
       stop.setAttribute("aria-label", stop.title);
       stop.disabled = !data.ready;
+    } else if (profile.kind !== "program") {
+      // Something shown (an image, a video, a document): its stop closes it
+      // on its PC, started by hand or by the program. Programs (OBS) have none.
+      stop.type = "button";
+      stop.className = "display-audio-stop";
+      stop.dataset.displayClose = profile.id;
+      stop.dataset.label = profile.title;
+      stop.textContent = "Stop";
+      stop.title = `${profile.title} auf ${profile.target_ip} schließen`;
+      stop.setAttribute("aria-label", stop.title);
+      stop.disabled = !data.ready;
     }
+    const closable = audio || profile.kind !== "program";
     // Edit/duplicate/delete sit in the "⋮" menu; it works even while the agent is not set up.
     const menuBtn = menuButton(`${profile.title}: bearbeiten, duplizieren oder löschen`, `profile:${profile.id}`);
     menuBtn.classList.add("tile-menu-btn");
     menuBtn.dataset.profileMenu = profile.id;
     const tile = document.createElement("span");
-    tile.className = audio ? "display-tile audio" : "display-tile";
+    tile.className = "display-tile" + (audio ? " audio" : "") + (closable ? " has-stop" : "");
     tile.append(button);
-    if (audio) tile.append(stop);
+    if (closable) tile.append(stop);
     tile.append(menuBtn);
     wrap.insertBefore(tile, addTile);
   }

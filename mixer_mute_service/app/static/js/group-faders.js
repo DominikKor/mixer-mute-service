@@ -129,8 +129,30 @@ $("desktop-profiles").addEventListener("click", (event) => {
   const open = event.target.closest("button[data-display-profile]");
   if (open && !open.disabled) {
     act("POST", `/desktop/${encodeURIComponent(open.dataset.displayProfile)}/open`, undefined, open.dataset.label);
+    return;
   }
+  const close = event.target.closest("button[data-display-close]");
+  if (close && !close.disabled) closeDesktopProfile(close);
 });
+
+// A Desktop key's stop: close what it shows on its PC (image, video,
+// document); calm when nothing of it was open there.
+async function closeDesktopProfile(button) {
+  const label = button.dataset.label;
+  button.disabled = true;
+  try {
+    const result = await api("POST", `/desktop/${encodeURIComponent(button.dataset.displayClose)}/close`, undefined,
+                             { timeout: 6000 });
+    if (!result.ok || result.data.ok === false) {
+      const reason = (result.data && result.data.reason) || `HTTP ${result.status}`;
+      toast(`${label}: ${/unavailable|timed? ?out/i.test(reason) ? "keine Antwort vom PC" : reason}`, false);
+    } else {
+      toast(result.data.was_open === false ? `${label}: War nicht offen` : `${label} geschlossen`, true);
+    }
+  } finally {
+    button.disabled = false;
+  }
+}
 $("desktop-profiles").addEventListener("click", (event) => {
   const button = event.target.closest("button[data-audio-action]");
   if (!button || button.disabled) return;
