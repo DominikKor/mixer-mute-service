@@ -1335,14 +1335,14 @@ function programRunAnchor() {
   return isNaN(at) ? null : new Date(at.getTime() - current.last_delay_seconds * 1000);
 }
 
-// "in 12 min" / "12 min zu spät"; from an hour on "in 1:05 h" / "1:05 h zu spät";
-// under 10 minutes with seconds ("in 4:12 min").
+// Only the duration: "12:30" (m:ss) to go, "1:05:30" (h:mm:ss) from an hour on; late with a minus
+// in front ("-12:30", "-1:05:30"; the cue turns red as well, class "late").
 function programCountdownText(diff) {
   const abs = Math.abs(diff);
-  const text = abs >= 3600 ? `${Math.floor(abs / 3600)}:${String(Math.floor(abs % 3600 / 60)).padStart(2, "0")} h`
-    : abs >= 600 ? `${Math.floor(abs / 60)} min`
-    : `${Math.floor(abs / 60)}:${String(abs % 60).padStart(2, "0")} min`;
-  return diff >= 0 ? `in ${text}` : `${text} zu spät`;
+  const pad = n => String(n).padStart(2, "0");
+  const text = abs >= 3600 ? `${Math.floor(abs / 3600)}:${pad(Math.floor(abs % 3600 / 60))}:${pad(abs % 60)}`
+    : `${Math.floor(abs / 60)}:${pad(abs % 60)}`;
+  return diff < 0 ? `-${text}` : text;
 }
 
 // Clock, the next row and the time until it is due.

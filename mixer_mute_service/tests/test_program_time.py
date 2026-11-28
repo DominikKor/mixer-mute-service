@@ -1,7 +1,7 @@
 """When a program row's "HH:MM" is: the occurrence closest to now (yesterday, today or
 tomorrow), and the rows of a run stay on one day (app/program_items.py
 scheduled_occurrence, js/program.js programDue). No flipping at 12 hours, no "always the
-next 24 hours". The cue's text: "in 12 min", "12 min zu spät", "in 1:05 h", "1:05 h zu spät".
+next 24 hours". The cue's text is only the duration: "12:30", "1:05:30", late with a minus in front.
 
 Run from mixer_mute_service:  python -m tests.test_program_time
 """
@@ -148,25 +148,25 @@ class CueTest(unittest.TestCase):
             f"return programCountdownText(Math.round((due - now) / 1000)); }})()")
 
     def test_the_examples(self):
-        self.assertEqual(self.text("10:30", (2026, 11, 10, 11, 0)), "30 min zu spät")
-        self.assertEqual(self.text("10:00", (2026, 11, 10, 9, 50)), "in 10 min")
-        self.assertEqual(self.text("00:10", (2026, 11, 10, 23, 50)), "in 20 min")
-        self.assertEqual(self.text("23:50", (2026, 11, 11, 0, 10)), "20 min zu spät")
+        self.assertEqual(self.text("10:30", (2026, 11, 10, 11, 0)), "-30:00")
+        self.assertEqual(self.text("10:00", (2026, 11, 10, 9, 50)), "10:00")
+        self.assertEqual(self.text("00:10", (2026, 11, 10, 23, 50)), "20:00")
+        self.assertEqual(self.text("23:50", (2026, 11, 11, 0, 10)), "-20:00")
 
     def test_formats(self):
-        for diff, text in ((-720, "12 min zu spät"), (720, "in 12 min"), (3900, "in 1:05 h"), (-3900, "1:05 h zu spät"),
-                           (3600, "in 1:00 h"), (252, "in 4:12 min"), (-252, "4:12 min zu spät"), (0, "in 0:00 min"),
-                           (599, "in 9:59 min"), (600, "in 10 min"), (40000, "in 11:06 h")):
+        for diff, text in ((-750, "-12:30"), (750, "12:30"), (3930, "1:05:30"), (-3930, "-1:05:30"), (3600, "1:00:00"),
+                           (252, "4:12"), (-252, "-4:12"), (0, "0:00"), (5, "0:05"), (-5, "-0:05"), (599, "9:59"),
+                           (600, "10:00"), (3599, "59:59"), (40000, "11:06:40")):
             self.assertEqual(self.js.eval(f"programCountdownText({diff})"), text, diff)
 
     def test_no_flip_at_12_hours(self):
-        self.assertEqual(self.text("10:00", (2026, 11, 10, 21, 0)), "11:00 h zu spät")
-        self.assertEqual(self.text("10:00", (2026, 11, 10, 23, 0)), "in 11:00 h")
-        self.assertEqual(self.text("10:00", (2026, 11, 10, 22, 0)), "12:00 h zu spät")
+        self.assertEqual(self.text("10:00", (2026, 11, 10, 21, 0)), "-11:00:00")
+        self.assertEqual(self.text("10:00", (2026, 11, 10, 23, 0)), "11:00:00")
+        self.assertEqual(self.text("10:00", (2026, 11, 10, 22, 0)), "-12:00:00")
 
     def test_anchor_keeps_the_run_on_one_day(self):
-        self.assertEqual(self.text("10:10", (2026, 11, 10, 22, 40)), "in 11:30 h")
-        self.assertEqual(self.text("10:10", (2026, 11, 10, 22, 40), (2026, 11, 10, 10, 0)), "12:30 h zu spät")
+        self.assertEqual(self.text("10:10", (2026, 11, 10, 22, 40)), "11:30:00")
+        self.assertEqual(self.text("10:10", (2026, 11, 10, 22, 40), (2026, 11, 10, 10, 0)), "-12:30:00")
 
     def test_run_anchor_comes_from_the_current_row(self):
         now = datetime.now().astimezone()
